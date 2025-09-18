@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  # Aplicación CRM
+  crm-app:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=${DATABASE_URL}
+      - NEXTAUTH_URL=${NEXTAUTH_URL}
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
+      - JWT_SECRET=${JWT_SECRET}
+    depends_on:
+      - postgres
+    volumes:
+      - ./prisma:/app/prisma
+    networks:
+      - crm-network
+
+  # Base de datos PostgreSQL (para desarrollo local)
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_DB=crm_db
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - crm-network
+
+  # Redis para cache (opcional)
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - crm-network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  crm-network:
+    driver: bridge

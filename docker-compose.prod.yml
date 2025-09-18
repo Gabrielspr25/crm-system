@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  # Aplicación CRM
+  crm-app:
+    image: crm-system:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://postgres:Gaby0824@a@138.197.66.85:5432/bs_postgres
+      - NEXTAUTH_URL=http://138.197.66.85:3000
+      - NEXTAUTH_SECRET=your-production-secret-here-change-this
+      - JWT_SECRET=your-production-jwt-secret-here-change-this
+    volumes:
+      - ./prisma:/app/prisma
+      - ./logs:/app/logs
+    restart: unless-stopped
+    networks:
+      - crm-network
+
+  # Nginx como reverse proxy (opcional pero recomendado)
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf
+      - ./ssl:/etc/ssl/certs
+    depends_on:
+      - crm-app
+    restart: unless-stopped
+    networks:
+      - crm-network
+
+networks:
+  crm-network:
+    driver: bridge

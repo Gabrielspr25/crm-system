@@ -1,0 +1,583 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Modelo de Usuario con roles y permisos
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  password  String
+  role      Role     @default(USER)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Permisos específicos por área
+  permissions UserPermission[]
+  
+  // Relaciones con otros modelos
+  createdContacts    Contact[]  @relation("CreatedByUser")
+  assignedContacts   Contact[]  @relation("AssignedToUser")
+  createdLeads       Lead[]     @relation("CreatedByUser")
+  assignedLeads      Lead[]     @relation("AssignedToUser")
+  createdOpportunities Opportunity[] @relation("CreatedByUser")
+  assignedOpportunities Opportunity[] @relation("AssignedToUser")
+  createdActivities  Activity[] @relation("CreatedByUser")
+  assignedActivities Activity[] @relation("AssignedToUser")
+  
+  // Relaciones específicas de telecomunicaciones
+  ventas             Venta[]    @relation("VentasVendedor")
+  finanzasPeriodos   FinanzasPeriodo[] @relation("FinanzasVendedor")
+  
+  @@map("users")
+}
+
+// Enum para roles de usuario
+enum Role {
+  ADMIN
+  MANAGER
+  SALES
+  SUPPORT
+  USER
+}
+
+// Enum para áreas de permisos
+enum PermissionArea {
+  CONTACTS
+  LEADS
+  OPPORTUNITIES
+  ACTIVITIES
+  PRODUCTS
+  REPORTS
+  SETTINGS
+  USERS
+}
+
+// Enum para tipos de permisos
+enum PermissionType {
+  READ
+  CREATE
+  UPDATE
+  DELETE
+  EXPORT
+}
+
+// Modelo de permisos de usuario por área
+model UserPermission {
+  id     String         @id @default(cuid())
+  userId String
+  area   PermissionArea
+  type   PermissionType
+  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, area, type])
+  @@map("user_permissions")
+}
+
+// Modelo base para campos dinámicos
+model CustomField {
+  id          String          @id @default(cuid())
+  name        String
+  label       String
+  fieldType   CustomFieldType
+  isRequired  Boolean         @default(false)
+  isActive    Boolean         @default(true)
+  options     String?         // JSON para opciones de select/radio
+  validation  String?         // JSON para reglas de validación
+  entity      String          // contacts, leads, opportunities, etc.
+  order       Int             @default(0)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  
+  // Valores de campos personalizados
+  values CustomFieldValue[]
+  
+  @@map("custom_fields")
+}
+
+// Enum para tipos de campos personalizados
+enum CustomFieldType {
+  TEXT
+  TEXTAREA
+  NUMBER
+  EMAIL
+  PHONE
+  DATE
+  SELECT
+  MULTISELECT
+  CHECKBOX
+  RADIO
+  FILE
+}
+
+// Valores de campos personalizados
+model CustomFieldValue {
+  id            String      @id @default(cuid())
+  customFieldId String
+  entityId      String      // ID de la entidad (contact, lead, etc.)
+  entityType    String      // Tipo de entidad (contact, lead, ban, suscriptor, etc.)
+  value         String?
+  
+  customField CustomField @relation(fields: [customFieldId], references: [id], onDelete: Cascade)
+  
+  @@unique([customFieldId, entityId])
+  @@map("custom_field_values")
+}
+
+// Modelo de Contactos
+model Contact {
+  id          String   @id @default(cuid())
+  firstName   String
+  lastName    String?
+  email       String?  @unique
+  phone       String?
+  company     String?
+  position    String?
+  website     String?
+  address     String?
+  city        String?
+  state       String?
+  country     String?
+  postalCode  String?
+  
+  // Información de seguimiento
+  source      String?
+  status      ContactStatus @default(ACTIVE)
+  tags        String[]      @default([])
+  notes       String?
+  
+  // Fechas importantes
+  birthday    DateTime?
+  lastContact DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Relaciones
+  createdById String
+  assignedToId String?
+  createdBy   User @relation("CreatedByUser", fields: [createdById], references: [id])
+  assignedTo  User? @relation("AssignedToUser", fields: [assignedToId], references: [id])
+  
+  // Relaciones con otros modelos
+  leads         Lead[]
+  opportunities Opportunity[]
+  activities    Activity[]
+  
+  // Relaciones específicas de telecomunicaciones
+  bans          BAN[]
+  ventas        Venta[]
+  
+  @@map("contacts")
+}
+
+// Enum para estado de contactos
+enum ContactStatus {
+  ACTIVE
+  INACTIVE
+  PROSPECT
+  CUSTOMER
+  BLOCKED
+}
+
+// Modelo de Leads
+model Lead {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  value       Float?
+  source      String?
+  status      LeadStatus @default(NEW)
+  priority    Priority   @default(MEDIUM)
+  stage       String     @default("New Lead")
+  
+  // Información de contacto
+  contactId   String?
+  
+  // Fechas importantes
+  expectedCloseDate DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  // Relaciones
+  createdById  String
+  assignedToId String?
+  createdBy    User @relation("CreatedByUser", fields: [createdById], references: [id])
+  assignedTo   User? @relation("AssignedToUser", fields: [assignedToId], references: [id])
+  contact      Contact? @relation(fields: [contactId], references: [id])
+  
+  // Relaciones con otros modelos
+  opportunities Opportunity[]
+  activities    Activity[]
+  
+  @@map("leads")
+}
+
+// Enum para estado de leads
+enum LeadStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  PROPOSAL
+  NEGOTIATION
+  WON
+  LOST
+  ON_HOLD
+}
+
+// Modelo de Oportunidades
+model Opportunity {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  value       Float
+  probability Int      @default(50) // Porcentaje de probabilidad
+  stage       OpportunityStage @default(PROSPECTING)
+  status      OpportunityStatus @default(OPEN)
+  priority    Priority @default(MEDIUM)
+  
+  // Información de contacto/lead
+  contactId String?
+  leadId    String?
+  
+  // Fechas importantes
+  expectedCloseDate DateTime?
+  actualCloseDate   DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  // Relaciones
+  createdById  String
+  assignedToId String?
+  createdBy    User @relation("CreatedByUser", fields: [createdById], references: [id])
+  assignedTo   User? @relation("AssignedToUser", fields: [assignedToId], references: [id])
+  contact      Contact? @relation(fields: [contactId], references: [id])
+  lead         Lead? @relation(fields: [leadId], references: [id])
+  
+  // Relaciones con otros modelos
+  activities Activity[]
+  
+  @@map("opportunities")
+}
+
+// Enum para etapas de oportunidades
+enum OpportunityStage {
+  PROSPECTING
+  QUALIFICATION
+  PROPOSAL
+  NEGOTIATION
+  DECISION
+  CLOSED_WON
+  CLOSED_LOST
+}
+
+// Enum para estado de oportunidades
+enum OpportunityStatus {
+  OPEN
+  WON
+  LOST
+  ON_HOLD
+}
+
+// Enum para prioridades
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+// Modelo de Actividades/Tareas
+model Activity {
+  id          String       @id @default(cuid())
+  title       String
+  description String?
+  type        ActivityType @default(TASK)
+  status      ActivityStatus @default(PENDING)
+  priority    Priority     @default(MEDIUM)
+  
+  // Fechas importantes
+  dueDate     DateTime?
+  startDate   DateTime?
+  endDate     DateTime?
+  completedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Relaciones
+  createdById    String
+  assignedToId   String?
+  contactId      String?
+  leadId         String?
+  opportunityId  String?
+  
+  createdBy    User @relation("CreatedByUser", fields: [createdById], references: [id])
+  assignedTo   User? @relation("AssignedToUser", fields: [assignedToId], references: [id])
+  contact      Contact? @relation(fields: [contactId], references: [id])
+  lead         Lead? @relation(fields: [leadId], references: [id])
+  opportunity  Opportunity? @relation(fields: [opportunityId], references: [id])
+  
+  @@map("activities")
+}
+
+// Enum para tipos de actividades
+enum ActivityType {
+  TASK
+  CALL
+  EMAIL
+  MEETING
+  DEMO
+  FOLLOW_UP
+  NOTE
+}
+
+// Enum para estado de actividades
+enum ActivityStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  OVERDUE
+}
+
+// Modelo de Productos/Servicios
+model Product {
+  id          String  @id @default(cuid())
+  name        String
+  description String?
+  sku         String? @unique
+  price       Float?
+  cost        Float?
+  categoryId  String? // Relación con ProductCategory
+  isActive    Boolean @default(true)
+  inventory   Int?
+  
+  // Relaciones
+  category    ProductCategory? @relation("ProductToCategory", fields: [categoryId], references: [id])
+  ventas      Venta[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@map("products")
+}
+
+// Modelo para configuraciones del sistema
+model SystemConfig {
+  id    String @id @default(cuid())
+  key   String @unique
+  value String
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@map("system_config")
+}
+
+// ==========================================
+// MODELOS ESPECÍFICOS DE TELECOMUNICACIONES
+// ==========================================
+
+// Modelo BAN (Billing Account Number) - Número de cuenta de 9 dígitos
+model BAN {
+  id          String   @id @default(cuid())
+  numero      String   @unique // 9 dígitos
+  contactId   String
+  isActive    Boolean  @default(true)
+  fechaAlta   DateTime @default(now())
+  fechaBaja   DateTime?
+  notas       String?
+  
+  // Relaciones
+  contact     Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  suscriptores Suscriptor[]
+  ventas      Venta[] @relation("VentaBAN")
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@map("bans")
+}
+
+// Modelo Suscriptor - Número de teléfono de 10 dígitos
+model Suscriptor {
+  id          String           @id @default(cuid())
+  numero      String           @unique // 10 dígitos
+  banId       String
+  estado      SuscriptorEstado @default(ACTIVO)
+  fechaAlta   DateTime         @default(now())
+  fechaBaja   DateTime?
+  notas       String?
+  
+  // Información adicional del suscriptor
+  plan        String?
+  limiteMensual Float?
+  consumoActual Float?
+  
+  // Relaciones
+  ban         BAN @relation(fields: [banId], references: [id], onDelete: Cascade)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@map("suscriptores")
+}
+
+// Enum para estados de suscriptor
+enum SuscriptorEstado {
+  ACTIVO
+  SUSPENDIDO
+  CANCELADO
+  PENDIENTE
+  BLOQUEADO
+}
+
+// Modelo de Categorías de Productos (Claro vs Externos)
+model ProductCategory {
+  id          String @id @default(cuid())
+  nombre      String @unique
+  tipo        ProductCategoryType @default(EXTERNO)
+  descripcion String?
+  isActive    Boolean @default(true)
+  orden       Int     @default(0)
+  
+  // Relaciones
+  productos   Product[] @relation("ProductToCategory")
+  pasos       ProductStep[]
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@map("product_categories")
+}
+
+// Enum para tipos de categorías
+enum ProductCategoryType {
+  CLARO     // Productos de Claro
+  EXTERNO   // Productos externos
+}
+
+// Modelo de Pasos por Categoría
+model ProductStep {
+  id          String @id @default(cuid())
+  categoryId  String
+  descripcion String
+  orden       Int
+  isRequired  Boolean @default(false)
+  
+  // Relaciones
+  category    ProductCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@map("product_steps")
+}
+
+// Modelo de Ventas (expandido)
+model Venta {
+  id          String @id @default(cuid())
+  contactId   String
+  productId   String
+  banId       String? // Opcional para productos que no requieren BAN
+  vendedorId  String?
+  
+  cantidad    Int     @default(1)
+  precioUnitario Float
+  precioTotal Float
+  comision    Float?  @default(0)
+  
+  estado      VentaEstado @default(PENDIENTE)
+  fechaVenta  DateTime    @default(now())
+  fechaEntrega DateTime?
+  
+  notas       String?
+  
+  // Relaciones
+  contact     Contact @relation(fields: [contactId], references: [id])
+  product     Product @relation(fields: [productId], references: [id])
+  ban         BAN?    @relation("VentaBAN", fields: [banId], references: [id])
+  vendedor    User?   @relation("VentasVendedor", fields: [vendedorId], references: [id])
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@map("ventas")
+}
+
+// Enum para estados de venta
+enum VentaEstado {
+  PENDIENTE
+  PROCESANDO
+  COMPLETADA
+  CANCELADA
+  DEVOLUCION
+}
+
+// Modelo de Finanzas y Metas (por período)
+model FinanzasPeriodo {
+  id                String   @id @default(cuid())
+  vendedorId        String?
+  periodo           String   // "2024-09", "2024-Q3", etc.
+  tipoMeta          TipoMeta @default(MENSUAL)
+  
+  // Metas
+  metaVentas        Float    @default(0) // Meta de ventas en dinero
+  metaCantidad      Int      @default(0) // Meta de cantidad de ventas
+  metaBAN           Int      @default(0) // Meta de BANs nuevos
+  metaSuscriptores  Int      @default(0) // Meta de suscriptores nuevos
+  
+  // Logros actuales (calculados)
+  ventasActuales    Float    @default(0)
+  cantidadActual    Int      @default(0)
+  banActuales       Int      @default(0)
+  suscriptoresActuales Int   @default(0)
+  
+  // Fechas
+  fechaInicio       DateTime
+  fechaFin          DateTime
+  
+  // Relaciones
+  vendedor          User? @relation("FinanzasVendedor", fields: [vendedorId], references: [id])
+  
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  @@unique([vendedorId, periodo])
+  @@map("finanzas_periodo")
+}
+
+// Enum para tipos de meta
+enum TipoMeta {
+  DIARIO
+  SEMANAL
+  MENSUAL
+  TRIMESTRAL
+  ANUAL
+}
+
+// Modelo para logs de auditoría
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String
+  action    String   // CREATE, UPDATE, DELETE
+  entity    String   // contacts, leads, opportunities, etc.
+  entityId  String
+  oldValues String?  // JSON
+  newValues String?  // JSON
+  ipAddress String?
+  userAgent String?
+  
+  createdAt DateTime @default(now())
+  
+  @@map("audit_logs")
+}

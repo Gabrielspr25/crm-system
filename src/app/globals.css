@@ -1,26 +1,112 @@
-@import "tailwindcss";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
+/* Configuración base para modo oscuro */
+@layer base {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    color-scheme: dark;
+  }
+  
+  html {
+    @apply bg-gray-900 text-white;
+  }
+  
+  body {
+    @apply bg-dark-900 text-white min-h-screen;
+  }
+  
+  /* Estilos para inputs oscuros como especificaste */
+  input, select, textarea {
+    @apply bg-gray-800 text-white border-gray-600 focus:border-primary-500 focus:ring-primary-500;
+  }
+  
+  input::placeholder, textarea::placeholder {
+    @apply text-gray-400;
+  }
+  
+  /* Scrollbars oscuras */
+  ::-webkit-scrollbar {
+    @apply w-2;
+  }
+  
+  ::-webkit-scrollbar-track {
+    @apply bg-dark-800;
+  }
+  
+  ::-webkit-scrollbar-thumb {
+    @apply bg-gray-600 rounded-full;
+  }
+  
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-gray-500;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@layer components {
+  /* Componentes personalizados para el CRM */
+  .btn-primary {
+    @apply bg-primary-600 hover:bg-primary-700 text-white px-4 py-2 rounded-lg font-medium transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 focus:ring-offset-dark-900;
+  }
+  
+  .btn-secondary {
+    @apply bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white px-4 py-2 rounded-lg font-medium transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 focus:ring-offset-dark-900;
+  }
+  
+  .btn-danger {
+    @apply bg-danger-600 hover:bg-danger-700 text-white px-4 py-2 rounded-lg font-medium transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-danger-500 focus:ring-offset-2 focus:ring-offset-dark-900;
+  }
+  
+  .btn-ghost {
+    @apply text-gray-300 hover:text-white hover:bg-gray-800 px-3 py-2 rounded-lg transition-colors duration-200;
+  }
+  
+  .card {
+    @apply bg-gray-800 border border-gray-700 rounded-xl shadow-dark;
+  }
+  
+  .input-dark {
+    @apply bg-gray-800 text-white border-gray-600 rounded-lg px-3 py-2 focus:border-primary-500 focus:ring-1 focus:ring-primary-500 focus:outline-none transition-colors duration-200;
+  }
+  
+  .table-dark {
+    @apply bg-gray-800 border border-gray-700;
+  }
+  
+  .table-dark th {
+    @apply bg-gray-700 text-gray-300 font-semibold px-6 py-3 text-left border-b border-gray-600;
+  }
+  
+  .table-dark td {
+    @apply px-6 py-4 border-b border-gray-700 text-gray-200;
+  }
+  
+  .table-dark tbody tr:hover {
+    @apply bg-gray-750;
+  }
+  
+  /* Estados de badges/etiquetas */
+  .badge {
+    @apply px-2 py-1 text-xs font-medium rounded-full;
+  }
+  
+  .badge-success {
+    @apply bg-success-900/20 text-success-400 border border-success-800;
+  }
+  
+  .badge-warning {
+    @apply bg-warning-900/20 text-warning-400 border border-warning-800;
+  }
+  
+  .badge-danger {
+    @apply bg-danger-900/20 text-danger-400 border border-danger-800;
+  }
+  
+  .badge-info {
+    @apply bg-primary-900/20 text-primary-400 border border-primary-800;
+  }
+  
+  .badge-gray {
+    @apply bg-gray-800 text-gray-300 border border-gray-600;
+  }
 }
