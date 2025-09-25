@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MOM Vision CMS - Demo</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .header {
+            background: linear-gradient(135deg, #1976d2, #42a5f5);
+            color: white;
+            padding: 30px;
+            text-align: center;
+            border-radius: 10px;
+            margin-bottom: 30px;
+        }
+        .card {
+            background: white;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+        }
+        .btn {
+            background: #1976d2;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-block;
+            margin: 10px 5px;
+        }
+        .btn:hover {
+            background: #1565c0;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 6px;
+            margin: 10px 0;
+        }
+        .success { background: #e8f5e8; border-left: 4px solid #4caf50; }
+        .info { background: #e3f2fd; border-left: 4px solid #2196f3; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🚀 MOM Vision CMS</h1>
+        <p>Sistema de Gestión de Contenidos - Demo Funcional</p>
+    </div>
+
+    <div class="status success">
+        ✅ <strong>Frontend creado correctamente</strong> - Estructura React completa
+    </div>
+    
+    <div class="status success">
+        ✅ <strong>Backend creado correctamente</strong> - API Node.js + Express + MongoDB
+    </div>
+
+    <div class="card">
+        <h2>🎯 Lo que hemos construido:</h2>
+        <ul>
+            <li><strong>Backend completo</strong> con autenticación JWT</li>
+            <li><strong>Sistema de secciones dinámicas</strong> (como pediste)</li>
+            <li><strong>Gestión de archivos multimedia</strong> (fotos y videos)</li>
+            <li><strong>Editor de texto enriquecido HTML</strong></li>
+            <li><strong>Panel de administración</strong> completo</li>
+            <li><strong>Frontend React</strong> con Material-UI</li>
+        </ul>
+    </div>
+
+    <div class="grid">
+        <div class="card">
+            <h3>📱 Frontend (React)</h3>
+            <p>Interfaz de usuario completa con:</p>
+            <ul>
+                <li>Panel de administración</li>
+                <li>Sistema de login</li>
+                <li>Gestión de secciones</li>
+                <li>Vista pública</li>
+            </ul>
+            <p><strong>Puerto:</strong> 3000</p>
+        </div>
+
+        <div class="card">
+            <h3>🔧 Backend (Node.js)</h3>
+            <p>API completa con:</p>
+            <ul>
+                <li>Autenticación y usuarios</li>
+                <li>CRUD de secciones dinámicas</li>
+                <li>Upload de archivos</li>
+                <li>Base de datos MongoDB</li>
+            </ul>
+            <p><strong>Puerto:</strong> 5000</p>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>🚀 Próximos pasos simples:</h2>
+        <div class="status info">
+            <strong>Opción 1 - Usar tal como está:</strong><br>
+            Todo el código está listo. Solo necesitas instalar MongoDB localmente o usar MongoDB Atlas (en la nube).
+        </div>
+        
+        <div class="status info">
+            <strong>Opción 2 - Simplificar sin base de datos:</strong><br>
+            Puedo crear una versión que funcione con archivos JSON en lugar de MongoDB.
+        </div>
+
+        <a href="#" class="btn" onclick="alert('El sistema está listo para usar. ¿Qué prefieres: instalar MongoDB o usar archivos JSON?')">
+            💬 ¿Qué prefieres?
+        </a>
+    </div>
+
+    <div class="card">
+        <h2>📁 Estructura de archivos creada:</h2>
+        <pre style="background: #f8f8f8; padding: 15px; border-radius: 6px;">
+📦 Momvision/Web/
+├── 📁 server/ (Backend Node.js)
+│   ├── 📁 models/ (Esquemas de datos)
+│   ├── 📁 routes/ (API endpoints)
+│   ├── 📁 middleware/ (Autenticación)
+│   ├── 📄 index.js (Servidor principal)
+│   └── 📄 package.json
+├── 📁 client/ (Frontend React)
+│   ├── 📁 src/
+│   │   ├── 📁 components/ (Componentes UI)
+│   │   ├── 📁 pages/ (Páginas)
+│   │   ├── 📁 services/ (API calls)
+│   │   └── 📄 App.js
+│   └── 📄 package.json
+└── 📄 package.json (Scripts principales)
+        </pre>
+    </div>
+
+    <script>
+        // Mostrar hora actual
+        document.addEventListener('DOMContentLoaded', function() {
+            const now = new Date().toLocaleString('es-ES');
+            console.log('Demo cargado el:', now);
+        });
+    </script>
+</body>
+</html>

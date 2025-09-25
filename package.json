@@ -1,0 +1,20 @@
+{
+  "name": "momvision-cms",
+  "version": "1.0.0",
+  "description": "CMS completo para MOM Vision con backend Node.js y frontend React",
+  "scripts": {
+    "start": "npm run start:server",
+    "start:server": "cd server && npm run dev",
+    "start:client": "cd client && npm start",
+    "start:both": "concurrently \"npm run start:server\" \"npm run start:client\"",
+    "install:server": "cd server && npm install",
+    "install:client": "cd client && npm install",
+    "install:all": "npm run install:server && npm run install:client"
+  },
+  "keywords": ["cms", "react", "nodejs", "momvision"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}
