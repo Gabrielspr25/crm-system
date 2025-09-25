@@ -1,19 +1,29 @@
 {
   "name": "momvision-cms",
   "version": "1.0.0",
-  "description": "CMS completo para MOM Vision con backend Node.js y frontend React",
+  "description": "🚀 Sistema de Gestión de Contenidos profesional para MOM Vision",
+  "main": "server/index.js",
   "scripts": {
-    "start": "npm run start:server",
-    "start:server": "cd server && npm run dev",
-    "start:client": "cd client && npm start",
-    "start:both": "concurrently \"npm run start:server\" \"npm run start:client\"",
-    "install:server": "cd server && npm install",
-    "install:client": "cd client && npm install",
-    "install:all": "npm run install:server && npm run install:client"
+    "build": "cd client && npm ci && npm run build",
+    "start": "cd server && npm start",
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "server": "cd server && npm run dev", 
+    "client": "cd client && npm start",
+    "demo": "cd server && node demo-server.js",
+    "postinstall": "cd server && npm install && cd ../client && npm install",
+    "deploy:do": "doctl apps create --spec .do/app.yaml"
   },
-  "keywords": ["cms", "react", "nodejs", "momvision"],
-  "author": "",
-  "license": "ISC",
+  "engines": {
+    "node": "18.x",
+    "npm": "9.x"
+  },
+  "keywords": ["cms", "react", "nodejs", "momvision", "digitalocean"],
+  "author": "MOM Vision Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Gabrielspr25/crm-system.git"
+  },
   "devDependencies": {
     "concurrently": "^9.1.0"
   }
