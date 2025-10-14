@@ -1,182 +1,172 @@
-# MOM Vision CMS 🚀
+# 🚀 CRM Pro System
 
-## 🌟 Sistema de Gestión de Contenidos para MOM Vision
+> **Estado**: ✅ Producción - Configurado para https://crmp.ss-group.cloud
 
-Un CMS completo desarrollado en React + Node.js con funcionalidades avanzadas para gestión de contenido dinámico.
+## 📊 Descripción
 
-### ✨ Características Principales
+Sistema CRM avanzado desarrollado en React + TypeScript + Node.js + PostgreSQL, específicamente diseñado para gestión de clientes, BANs y suscriptores de Claro PR.
 
-- **🎨 Generador de Secciones Dinámicas:** Crea módulos personalizados automáticamente
-- **📷 Gestión Multimedia:** Subida de fotos y videos por sección
-- **📝 Editor de Texto Enriquecido:** HTML avanzado integrado
-- **👥 Sistema de Usuarios:** Admin, Editor, Viewer roles
-- **🔐 Autenticación JWT:** Seguridad robusta
-- **📱 Responsive Design:** Material-UI components
-- **🎯 Panel de Control Visual:** Configuración de colores, banners y estilos
+## 🌐 Demo en Vivo
+**URL**: https://crmp.ss-group.cloud
 
-### 🛠️ Tecnologías
+## 🏗️ Arquitectura
 
-**Frontend:**
-- React 18
-- Material-UI (MUI)
-- React Query
-- React Router DOM
+```
+CLIENTE (Empresa)
+├── BAN (Business Account Number)
+    ├── SUBSCRIBER (787-111-1111)
+    ├── SUBSCRIBER (787-222-2222)
+    └── SUBSCRIBER (787-333-3333)
+```
 
-**Backend:**
-- Node.js + Express
-- MongoDB / PostgreSQL
-- JWT Authentication
-- Multer (File Upload)
-- Sharp (Image Processing)
+## 🔧 Tecnologías
 
-### 🚀 Inicio Rápido
+### Frontend
+- ⚛️ React 19 + TypeScript
+- 🎨 Tailwind CSS
+- 📊 Chart.js para gráficos
+- 🔄 Socket.IO para tiempo real
+- 📱 Responsive design
 
-#### Modo Demo (Sin Base de Datos)
+### Backend
+- 🟢 Node.js + Express
+- 🐘 PostgreSQL
+- 🔐 JWT Authentication
+- 🔒 bcrypt para passwords
+- 📡 Socket.IO server
+
+### DevOps
+- ⚡ Vite para build
+- 📦 npm para dependencias
+- 🌐 Configurado para Hostinger
+- 🔧 PM2 para producción
+
+## 📦 Deploy Rápido
+
+**Archivo listo para subir**: `crmp-deploy-20251014_1349.zip`
+
+### Pasos:
+1. Descomprimir el ZIP en tu servidor
+2. `npm install`
+3. `npm start`
+4. Configurar proxy web a puerto 3001
+
+Ver `DEPLOY-GUIDE.md` para instrucciones completas.
+
+## 🔧 Herramientas Incluidas
+
+### 📊 Sistema de Importación
+- **Ubicación**: `/import-data`
+- **Función**: Importa CSV masivo
+- **Genera**: Estructura Cliente → BAN → Subscriber
+- **Formatos**: CSV con mapeo inteligente
+
+### 📈 Sistema de Exportación  
+- **Formatos**: PDF, Excel, CSV
+- **Reportes**: Vendedores, metas, análisis
+- **Personalizable**: Filtros por fecha y vendedor
+
+## 👥 Usuarios del Sistema
+
+- **admin** - Administrador principal
+- **gabriel** - Gabriel Rodríguez (admin)
+- **maria** - María González (vendedor)  
+- **juan** - Juan Pérez (vendedor)
+
+## 🚀 Desarrollo Local
+
 ```bash
 # Clonar repositorio
-git clone <repo-url>
-cd momvision-cms
+git clone https://github.com/Gabrielspr25/crm-system.git
 
-# Iniciar servidor demo
-cd server
-node demo-server.js
-```
-Accede a: `http://localhost:5000/demo`
-
-**Credenciales de prueba:**
-- Usuario: `admin@momvision.com`
-- Contraseña: `admin123`
-
-#### Modo Completo (Con Base de Datos)
-
-**Backend:**
-```bash
-cd server
+# Instalar dependencias
 npm install
-cp .env.example .env
+
 # Configurar variables de entorno
+cp .env.example .env
+# Editar .env con tus credenciales
+
+# Desarrollar (frontend + backend)
 npm run dev
+
+# Build para producción
+npm run build:hostinger
 ```
 
-**Frontend:**
-```bash
-cd client
-npm install
-npm start
+## 📊 Base de Datos
+
+### Tablas Principales:
+- `clients` - Empresas clientes
+- `bans` - Business Account Numbers
+- `subscribers` - Líneas telefónicas individuales
+- `salespeople` - Vendedores y admins
+- `users_auth` - Sistema de autenticación
+- `metas` - Sistema de metas y objetivos
+- `incomes` / `expenses` - Sistema financiero
+- `products` / `categories` - Catálogo de productos
+
+### Estado Actual:
+✅ **Base de datos limpia** - Sin datos de prueba
+✅ **Estructura completa** - Todas las tablas configuradas  
+✅ **Usuarios reales** - Listos para cambiar contraseñas
+
+## 🔐 Seguridad
+
+- 🔐 JWT Authentication
+- 🔒 Contraseñas hasheadas con bcrypt
+- 🚫 CORS configurado para dominio específico
+- ✅ Variables de entorno para credenciales
+- 🛡️ Validación de inputs
+
+## 📞 Funcionalidades
+
+### 👥 Gestión de Clientes
+- ✅ CRUD completo de empresas
+- ✅ Asignación de vendedores
+- ✅ Seguimiento de pipeline
+- ✅ Sistema de notas
+
+### 📱 Gestión de Suscriptores
+- ✅ Administración de líneas telefónicas
+- ✅ Seguimiento de vencimientos
+- ✅ Alertas automáticas
+- ✅ Gestión de equipos
+
+### 📊 Sistema de Metas
+- ✅ Metas individuales por vendedor
+- ✅ Seguimiento de progreso
+- ✅ Reportes de cumplimiento
+- ✅ Dashboard motivacional
+
+### 💰 Sistema Financiero
+- ✅ Registro de ingresos
+- ✅ Control de gastos
+- ✅ Reportes financieros
+- ✅ Exportación de datos
+
+## 📱 Características Especiales
+
+- 🚨 **Alertas de Vencimiento** - Sistema inteligente de notificaciones
+- 📊 **Dashboard Analytics** - KPIs y métricas en tiempo real
+- 🎯 **Sistema de Gamificación** - Motivación para vendedores
+- 📱 **Diseño Responsive** - Optimizado para móviles
+- 🌙 **Modo Oscuro** - Tema personalizable
+- 🔄 **Tiempo Real** - Updates instantáneos con Socket.IO
+
+## 🌐 Configuración de Producción
+
+```env
+DB_HOST=142.93.176.195
+DB_DATABASE=crm_pro
+DB_USER=crm_user
+NODE_ENV=production
+APP_URL=https://crmp.ss-group.cloud
 ```
 
-### 📂 Estructura del Proyecto
+## 📄 Licencia
 
-```
-momvision-cms/
-├── client/                 # Frontend React
-│   ├── src/
-│   │   ├── components/     # Componentes reutilizables
-│   │   ├── pages/         # Páginas principales
-│   │   ├── contexts/      # Context API (Auth, etc)
-│   │   ├── services/      # API calls
-│   │   └── theme/         # Configuración visual
-├── server/                # Backend Node.js
-│   ├── models/           # Modelos de datos
-│   ├── routes/           # Rutas API
-│   ├── middleware/       # Middlewares
-│   ├── uploads/          # Archivos subidos
-│   └── demo-server.js    # Servidor demo
-└── README.md
-```
+© 2025 Gabriel Rodríguez - Sistema CRM Profesional
 
-### 🔧 Variables de Entorno
+---
 
-```bash
-# Backend (.env)
-PORT=5000
-JWT_SECRET=tu_jwt_secret_aqui
-DB_URI=mongodb://localhost:27017/momvision
-# o
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=momvision
-DB_USER=usuario
-DB_PASS=password
-
-# Frontend (.env)
-REACT_APP_API_URL=http://localhost:5000/api
-```
-
-### 📋 Funcionalidades del Admin
-
-- **Dashboard:** Estadísticas y resumen
-- **Gestor de Secciones:** CRUD completo de contenido
-- **Editor Visual:** Creación de secciones con drag & drop
-- **Gestión de Medios:** Upload y organización de archivos
-- **Configuración Visual:** Personalización de temas y colores
-- **Gestión de Usuarios:** Roles y permisos
-
-### 🌐 API Endpoints
-
-```
-POST   /api/auth/login          # Autenticación
-GET    /api/sections            # Listar secciones
-POST   /api/sections            # Crear sección
-PUT    /api/sections/:id        # Actualizar sección
-DELETE /api/sections/:id        # Eliminar sección
-POST   /api/upload              # Subir archivo
-GET    /api/users               # Gestión de usuarios
-```
-
-### 🎨 Personalización Visual
-
-El sistema incluye un panel completo para personalizar:
-- **Banners principales** con gradientes personalizados
-- **Esquemas de colores** por sección
-- **Fondos de página** con múltiples opciones
-- **Animaciones** y transiciones
-
-### 📱 Deploy Options
-
-**Vercel (Recomendado):**
-```bash
-npm i -g vercel
-vercel --prod
-```
-
-**Railway:**
-```bash
-# Conectar con GitHub y deploy automático
-```
-
-**Servidor Propio:**
-```bash
-# Build frontend
-cd client && npm run build
-
-# Configurar nginx/apache
-# Proxy backend en puerto 5000
-```
-
-### 🆔 Credenciales por Defecto
-
-**Administrador:**
-- Email: `admin@momvision.com`
-- Password: `admin123`
-
-**Editor:**
-- Email: `editor@momvision.com`  
-- Password: `editor123`
-
-### 🛡️ Seguridad
-
-- Autenticación JWT
-- Rate limiting
-- CORS configurado
-- Validación de archivos
-- Sanitización de inputs
-- Helmet.js para headers
-
-### 📄 Licencia
-
-MIT License - Uso libre para MOM Vision
-
-### 🤝 Soporte
-
-Para cambios o actualizaciones posteriores al deployment, contactar al desarrollador.
+**🚀 Sistema funcionando en producción**: https://crmp.ss-group.cloud
