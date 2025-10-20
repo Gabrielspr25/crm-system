@@ -110,7 +110,8 @@ const useCrmData = () => {
       throw new Error('No authentication token found. Please login again.');
     }
     
-    const response = await fetch(`http://localhost:3001/api${endpoint}`, {
+    const apiBaseUrl = import.meta.env.PROD ? '/api' : 'http://localhost:3001/api';
+    const response = await fetch(`${apiBaseUrl}${endpoint}`, {
       headers: {
         'Content-Type': 'application/json',
         ...(token && { Authorization: `Bearer ${token}` }),

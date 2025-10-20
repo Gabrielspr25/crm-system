@@ -21,8 +21,9 @@ export const useWebSocket = ({ onUpdate, enabled = true }: UseWebSocketProps) =>
 
     console.log('🔗 Conectando a WebSocket...');
     
-    // Conectar al servidor WebSocket
-    socket.current = io('http://localhost:3001', {
+    // Conectar al servidor WebSocket - URL dinámica según entorno
+    const socketUrl = import.meta.env.PROD ? '' : 'http://localhost:3001';
+    socket.current = io(socketUrl, {
       autoConnect: true,
       reconnection: true,
       reconnectionAttempts: 5,
