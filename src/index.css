@@ -1,0 +1,38 @@
+/* @import "tailwindcss"; */
+/* Tailwind is loaded via CDN in index.html */
+
+/* Global style for form elements - BORDES MÁS MARCADOS */
+input:not([type="color"]):not([type="checkbox"]), select, textarea {
+  border: 2px solid #64748b !important; /* slate-500 - más visible */
+  transition: border-color 0.2s ease-in-out;
+}
+input:not([type="color"]):not([type="checkbox"]):focus, select:focus, textarea:focus {
+  border-color: #10b981 !important; /* accent color on focus */
+  box-shadow: 0 0 0 1px #10b98150 !important; /* subtle glow */
+}
+input:not([type="color"]):not([type="checkbox"]):hover, select:hover, textarea:hover {
+  border-color: #94a3b8 !important; /* slate-400 on hover */
+}
+
+/* Class for record items like cards and table rows */
+.record-item {
+  border: 1.5px solid #475569 !important; /* slate-600 - más marcado */
+  transition: border-color 0.2s ease-in-out;
+}
+.record-item:hover {
+  border-color: #64748b !important; /* slate-500 on hover */
+}
+
+/* Specific overrides for table borders */
+table {
+  border: 2px solid #475569 !important;
+}
+th, td {
+  border-color: #475569 !important;
+}
+
+/* Modal and card borders */
+.modal, .card, [class*="rounded"][class*="border"] {
+  border-color: #64748b !important;
+  border-width: 2px !important;
+}
