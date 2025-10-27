@@ -19,11 +19,7 @@ export default defineConfig({
     assetsDir: 'assets',
     rollupOptions: {
       output: {
-        manualChunks: {
-          vendor: ['react', 'react-dom'],
-          charts: ['chart.js', 'react-chartjs-2'],
-          utils: ['jspdf', 'xlsx']
-        }
+        manualChunks: undefined
       }
     }
   }

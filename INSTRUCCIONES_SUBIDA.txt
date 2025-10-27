@@ -1,0 +1,34 @@
+🚀 INSTRUCCIONES PARA SUBIR ARCHIVOS AL SERVIDOR
+==================================================
+
+ARCHIVOS LISTOS PARA SUBIR:
+- dist/index.html (2.63 KB)
+- dist/assets/index-7m2nURYE.js (293.37 KB) - JavaScript principal
+- dist/assets/index-iCVETPkP.css (0.70 KB) - Estilos
+- dist/assets/vendor-Bzgz95E1.js (11.52 KB) - Dependencias
+- dist/assets/charts-BqIooSrg.js (0.09 KB) - Gráficos
+- dist/assets/utils-l0sNRNKZ.js (0.00 KB) - Utilidades
+
+COMANDOS PARA SUBIR:
+
+1. Abrir PowerShell como Administrador
+2. Navegar a esta carpeta: cd C:\Users\Gabriel\Documentos\Programas\CRMP
+3. Ejecutar estos comandos:
+
+scp -r dist/* user@142.93.176.195:/var/www/dist/
+ssh user@142.93.176.195 "sudo chown -R www-data:www-data /var/www/dist && sudo chmod -R 755 /var/www/dist && sudo systemctl reload nginx"
+
+DESPUÉS DE SUBIR:
+1. Ir a https://crmp.ss-group.cloud
+2. Hacer login con gabriel/123456
+3. Navegar a "Productos"
+4. Deberías ver 21 productos con categorías
+
+RESULTADO ESPERADO:
+- 21 productos mostrados
+- 10 categorías disponibles
+- Búsqueda y filtros funcionando
+- Estadísticas en tiempo real
+- Diseño profesional con tema oscuro
+
+¡NO ME RINDO! Los archivos están listos, solo necesitas subirlos.

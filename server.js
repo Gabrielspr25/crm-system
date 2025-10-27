@@ -63,11 +63,11 @@ app.use(express.static('dist'));
 
 // Database configuration
 const dbConfig = {
-  host: process.env.DB_HOST || '142.93.176.195',
-  port: process.env.DB_PORT || 5432,
-  database: process.env.DB_DATABASE || 'crm_pro',
-  user: process.env.DB_USER || 'crm_user',
-  password: process.env.DB_PASSWORD || 'CRM_Seguro_2025!',
+  host: "localhost",
+  port: 5432,
+  database: "CRM-pro",
+  user: "postgres",
+  password: "Gaby0824@a",
 };
 
 // Database connection
@@ -176,56 +176,60 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
-// Login endpoint - SISTEMA SIMPLE 
+// ENDPOINT LOGIN - CORREGIDO
 app.post('/api/login', async (req, res) => {
   try {
     const { username, password } = req.body;
-    
+
     console.log('🔐 LOGIN SIMPLE - Intento para:', username);
-    
+
     if (!username || !password) {
       return res.status(400).json({ message: 'Usuario y contraseña son requeridos' });
     }
-    
+
+    // CONSULTA BD: usa password_simple
     const userResult = await db.query(
       'SELECT id, username, password_simple, rol, activo FROM users_auth WHERE username = $1 AND activo = true',
       [username]
     );
-    
-    console.log(`🔍 Buscando usuario: "${username}"`);
-    console.log(`📊 Encontrados ${userResult.rows.length} resultados`);
-    
-    if (userResult.rows.length === 0) {
-      const allUsers = await db.query('SELECT username FROM users_auth WHERE activo = true ORDER BY username');
-      console.log('📋 Usuarios disponibles:', allUsers.rows.map(row => row.username));
-      console.log('❌ Usuario no encontrado:', username);
-      return res.status(401).json({ 
-        message: `Usuario no encontrado. Usuarios disponibles: ${allUsers.rows.map(row => row.username).join(', ')}` 
-      });
+
+    if (!userResult || !userResult.rows || userResult.rows.length === 0) {
+      console.log('🔍 Login fallido: usuario no encontrado o inactivo:', username);
+      return res.status(401).json({ success: false, message: 'Credenciales inválidas' });
     }
-    
+
     const user = userResult.rows[0];
-    
-    // Password verification SIMPLE - como antes
+    console.log('👤 Usuario encontrado:', user.username, 'Rol:', user.rol);
+
+    // VALIDACIÓN PASSWORD: comparación directa texto plano (temporal)
     const isValidPassword = password === user.password_simple;
     console.log('🔑 Password verificado - Válido:', isValidPassword);
-    
+    console.log('🔍 Password enviado:', password);
+    console.log('🔍 Password en BD:', user.password_simple);
+
     if (!isValidPassword) {
-      console.log('❌ Contraseña incorrecta para:', username);
-      return res.status(401).json({ message: 'Contraseña incorrecta' });
+      return res.status(401).json({ success: false, message: 'Credenciales inválidas' });
     }
-    
-    // Create JWT token
+
+    // GENERACIÓN JWT: usa JWT_SECRET (asegúrate que viene de process.env)
+    const secret = process.env.JWT_SECRET || JWT_SECRET;
+    const expiresIn = process.env.JWT_EXPIRES_IN || JWT_EXPIRES_IN || '8h';
+
+    if (!secret) {
+      console.error('⚠️ JWT_SECRET no definido en env');
+      return res.status(500).json({ success: false, message: 'Server misconfiguration' });
+    }
+
     const token = jwt.sign(
       {
         userId: user.id,
         username: user.username,
         role: user.rol || 'vendedor'
       },
-      JWT_SECRET,
-      { expiresIn: JWT_EXPIRES_IN }
+      secret,
+      { expiresIn }
     );
-    
+
     // Return user data
     const userData = {
       id: user.id,
@@ -243,9 +247,9 @@ app.post('/api/login', async (req, res) => {
         sidebarColor: '#1e293b'
       }
     };
-    
+
     console.log('✅ PRODUCCION - Login successful for:', username);
-    
+
     res.json({
       success: true,
       token,
@@ -253,8 +257,8 @@ app.post('/api/login', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('❌ Login error:', error);
-    res.status(500).json({ message: 'Error interno del servidor' });
+    console.error('❌ Error en /api/login:', error);
+    return res.status(500).json({ success: false, message: 'Error interno del servidor' });
   }
 });
 

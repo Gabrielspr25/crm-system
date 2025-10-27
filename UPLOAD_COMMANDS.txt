@@ -1,0 +1,36 @@
+
+# 🚀 COMANDOS PARA SUBIR ARCHIVOS
+
+## Método 1: SCP (Recomendado)
+```bash
+# Subir archivos principales
+scp dist/index.html user@142.93.176.195:/var/www/dist/
+
+# Subir archivos de assets
+scp -r dist/assets/* user@142.93.176.195:/var/www/dist/assets/
+
+# Configurar permisos
+ssh user@142.93.176.195 "sudo chown -R www-data:www-data /var/www/dist && sudo chmod -R 755 /var/www/dist && sudo systemctl reload nginx"
+```
+
+## Método 2: Comando único
+```bash
+# Subir todo de una vez
+scp -r dist/* user@142.93.176.195:/var/www/dist/ && ssh user@142.93.176.195 "sudo chown -R www-data:www-data /var/www/dist && sudo chmod -R 755 /var/www/dist && sudo systemctl reload nginx"
+```
+
+## Método 3: Usando el ZIP
+```bash
+# Subir el ZIP
+scp crmp-deploy-2025-10-26T02-14-09.zip user@142.93.176.195:/tmp/
+
+# En el servidor
+ssh user@142.93.176.195
+cd /var/www
+unzip /tmp/crmp-deploy-2025-10-26T02-14-09.zip -d temp_dist/
+cp -r temp_dist/* dist/
+rm -rf temp_dist
+sudo chown -R www-data:www-data /var/www/dist
+sudo chmod -R 755 /var/www/dist
+sudo systemctl reload nginx
+```

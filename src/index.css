@@ -1,38 +1,443 @@
-/* @import "tailwindcss"; */
-/* Tailwind is loaded via CDN in index.html */
-
-/* Global style for form elements - BORDES MÁS MARCADOS */
-input:not([type="color"]):not([type="checkbox"]), select, textarea {
-  border: 2px solid #64748b !important; /* slate-500 - más visible */
-  transition: border-color 0.2s ease-in-out;
-}
-input:not([type="color"]):not([type="checkbox"]):focus, select:focus, textarea:focus {
-  border-color: #10b981 !important; /* accent color on focus */
-  box-shadow: 0 0 0 1px #10b98150 !important; /* subtle glow */
-}
-input:not([type="color"]):not([type="checkbox"]):hover, select:hover, textarea:hover {
-  border-color: #94a3b8 !important; /* slate-400 on hover */
-}
-
-/* Class for record items like cards and table rows */
-.record-item {
-  border: 1.5px solid #475569 !important; /* slate-600 - más marcado */
-  transition: border-color 0.2s ease-in-out;
-}
-.record-item:hover {
-  border-color: #64748b !important; /* slate-500 on hover */
-}
-
-/* Specific overrides for table borders */
-table {
-  border: 2px solid #475569 !important;
-}
-th, td {
-  border-color: #475569 !important;
+﻿/* Variables CSS para temas dinÃ¡micos */
+:root {
+  /* Colores principales */
+  --color-primary: #10b981;
+  --color-bg: #0f172a;
+  --color-text: #f8fafc;
+  --color-sidebar: #1e293b;
+  
+  /* Colores derivados */
+  --color-secondary: #1e293b;
+  --color-tertiary: #374151;
+  --color-accent: var(--color-primary);
+  --color-text-primary: var(--color-text);
+  --color-text-secondary: #94a3b8;
+  --color-border: #374151;
+  --color-hover: #4b5563;
+  
+  /* Estados */
+  --color-success: #10b981;
+  --color-error: #ef4444;
+  --color-warning: #f59e0b;
+  --color-info: #3b82f6;
+  
+  /* Componentes especÃ­ficos */
+  --modal-bg: var(--color-secondary);
+  --input-bg: var(--color-tertiary);
+  --button-bg: var(--color-primary);
+  --card-bg: var(--color-secondary);
 }
 
-/* Modal and card borders */
-.modal, .card, [class*="rounded"][class*="border"] {
-  border-color: #64748b !important;
-  border-width: 2px !important;
+/* === GENERAL & RESET === */
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  transition: all 0.3s ease;
+}
+
+/* Estilos para modo oscuro */
+body.dark-mode {
+  --color-secondary: #1e293b;
+  --color-tertiary: #374151;
+  --color-text-secondary: #94a3b8;
+  --color-border: #374151;
+  --color-hover: #4b5563;
+}
+
+/* Estilos para modo claro */
+body.light-mode {
+  --color-secondary: #f8fafc;
+  --color-tertiary: #e2e8f0;
+  --color-text-secondary: #64748b;
+  --color-border: #cbd5e1;
+  --color-hover: #e2e8f0;
+}
+
+/* === COMPONENTES GLOBALES === */
+
+/* Modales */
+.modal-overlay {
+  background-color: rgba(0, 0, 0, 0.75);
+}
+
+.modal-content {
+  background-color: var(--modal-bg);
+  border: 1px solid var(--color-border);
+}
+
+/* Inputs y formularios - MÃXIMO CONTRASTE */
+input, select, textarea {
+  background-color: #374151 !important; /* Gris oscuro uniforme */
+  color: #ffffff !important; /* Blanco puro */
+  border: 2px solid #6b7280 !important; /* Borde gris mÃ¡s claro */
+  padding: 12px !important; /* Padding generoso */
+  border-radius: 6px !important;
+  font-size: 14px !important;
+  font-weight: 500 !important;
+  transition: all 0.2s ease;
+}
+
+input:focus, select:focus, textarea:focus {
+  border-color: var(--color-primary) !important;
+  background-color: #4b5563 !important; /* MÃ¡s claro en focus */
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.3) !important;
+  color: #ffffff !important;
+  outline: none;
+}
+
+input::placeholder {
+  color: #d1d5db !important; /* Gris muy claro */
+  font-weight: 400 !important;
+}
+
+/* Mejorar visibilidad de selects */
+select {
+  background-color: var(--color-secondary) !important;
+  color: var(--color-text-primary) !important;
+  border: 2px solid var(--color-border) !important;
+  font-weight: 500 !important;
+  padding: 8px 12px !important;
+  border-radius: 4px !important;
+}
+
+select:hover {
+  border-color: var(--color-primary) !important;
+  background-color: var(--color-tertiary) !important;
+}
+
+select:focus {
+  border-color: var(--color-primary) !important;
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2) !important;
+  background-color: var(--color-tertiary) !important;
+}
+
+/* Opciones del select */
+select option {
+  background-color: var(--color-secondary) !important;
+  color: var(--color-text-primary) !important;
+  padding: 8px !important;
+  font-weight: 500 !important;
+}
+
+select option:hover {
+  background-color: var(--color-primary) !important;
+  color: white !important;
+}
+
+/* Selects en tablas - mayor contraste */
+td select, table select {
+  background-color: var(--color-bg) !important;
+  color: var(--color-text-primary) !important;
+  border: 2px solid var(--color-primary) !important;
+  font-weight: 700 !important;
+  font-size: 15px !important;
+  min-width: 140px !important;
+  padding: 6px 12px !important;
+  border-radius: 6px !important;
+}
+
+td select:focus, table select:focus {
+  background-color: var(--color-secondary) !important;
+  border-color: var(--color-accent) !important;
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.4) !important;
+  color: white !important;
+}
+
+/* Selects en modales */
+.modal-content select {
+  background-color: var(--color-tertiary) !important;
+  color: var(--color-text-primary) !important;
+  border: 2px solid var(--color-primary) !important;
+  font-weight: 600 !important;
+  font-size: 15px !important;
+  padding: 8px 12px !important;
+}
+
+.modal-content select:focus {
+  border-color: var(--color-primary) !important;
+  background-color: var(--color-secondary) !important;
+  color: white !important;
+}
+
+/* MEJORAR VISIBILIDAD GENERAL */
+/* Texto en tablas */
+table, tbody, td, th {
+  color: var(--color-text-primary) !important;
+  font-weight: 500 !important;
+}
+
+th {
+  color: var(--color-text-primary) !important;
+  font-weight: 700 !important;
+  background-color: var(--color-secondary) !important;
+}
+
+/* Labels con mÃ¡ximo contraste */
+label {
+  color: #ffffff !important; /* Blanco puro */
+  font-weight: 600 !important;
+  font-size: 14px !important;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.8) !important;
+  margin-bottom: 8px !important;
+  display: block !important;
+}
+
+/* Mejorar checkboxes */
+input[type="checkbox"] {
+  width: 18px !important;
+  height: 18px !important;
+  accent-color: var(--color-primary) !important;
+  transform: scale(1.2) !important;
+  margin-right: 8px !important;
+}
+
+/* Texto general mÃ¡s visible */
+p, span, div {
+  color: var(--color-text-primary) !important;
+}
+
+/* Botones mÃ¡s visibles */
+button {
+  font-weight: 600 !important;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.3) !important;
+}
+
+/* Enlaces mÃ¡s visibles */
+a {
+  color: var(--color-primary) !important;
+  font-weight: 600 !important;
+}
+
+a:hover {
+  color: var(--color-accent) !important;
+  text-decoration: underline !important;
+}
+
+/* Botones */
+.btn-primary {
+  background-color: var(--color-primary) !important;
+  color: var(--color-bg) !important;
+  border: none;
+}
+
+.btn-primary:hover {
+  opacity: 0.9;
+}
+
+.btn-secondary {
+  background-color: var(--color-tertiary) !important;
+  color: var(--color-text-primary) !important;
+  border: 1px solid var(--color-border);
+}
+
+.btn-secondary:hover {
+  background-color: var(--color-hover) !important;
+}
+
+/* Tarjetas y contenedores */
+.card, .bg-secondary {
+  background-color: var(--card-bg) !important;
+  border: 1px solid var(--color-border);
+}
+
+.bg-tertiary {
+  background-color: var(--color-tertiary) !important;
+}
+
+.bg-primary {
+  background-color: var(--color-bg) !important;
+}
+
+/* Texto */
+.text-text-primary {
+  color: var(--color-text-primary) !important;
+}
+
+.text-text-secondary {
+  color: var(--color-text-secondary) !important;
+}
+
+.text-accent {
+  color: var(--color-accent) !important;
+}
+
+/* Bordes */
+.border-tertiary, .border-gray-700, .border-gray-600 {
+  border-color: var(--color-border) !important;
+}
+
+/* Hover states */
+.hover\:bg-tertiary:hover {
+  background-color: var(--color-hover) !important;
+}
+
+/* Sidebar especÃ­fico */
+.sidebar {
+  background-color: var(--color-sidebar) !important;
+}
+
+/* Utilidades de Tailwind sobrescritas */
+.bg-red-500 {
+  background-color: var(--color-error) !important;
+}
+
+.bg-green-600, .bg-green-500 {
+  background-color: var(--color-success) !important;
+}
+
+.bg-blue-600, .bg-blue-500 {
+  background-color: var(--color-info) !important;
+}
+
+.bg-yellow-500 {
+  background-color: var(--color-warning) !important;
+}
+
+/* === LAYOUT PRINCIPAL === */
+.app-layout {
+  display: flex;
+  min-height: 100vh;
+}
+
+.sidebar {
+  width: 260px;
+  background-color: #1F2937; /* Gris-azul mÃ¡s oscuro para el sidebar */
+  border-right: 1px solid #374151; /* Borde sutil */
+  display: flex;
+  flex-direction: column;
+}
+
+.main-content {
+  flex: 1;
+  padding: 32px;
+  overflow-y: auto;
+}
+
+/* === SIDEBAR === */
+.sidebar-header {
+  padding: 24px;
+  border-bottom: 1px solid #374151;
+}
+
+.sidebar-logo {
+  font-size: 22px;
+  font-weight: bold;
+  color: #34D399; /* Verde esmeralda acento */
+  display: flex;
+  align-items: center;
+}
+
+.sidebar-nav {
+  flex-grow: 1;
+  padding: 16px;
+}
+
+.nav-link {
+  display: flex;
+  align-items: center;
+  padding: 12px 16px;
+  margin: 4px 0;
+  border-radius: 8px;
+  text-decoration: none;
+  color: #D1D5DB; /* Texto de item inactivo */
+  font-weight: 500;
+  transition: background-color 0.2s, color 0.2s;
+}
+
+.nav-link:hover {
+  background-color: #374151; /* Hover sutil */
+  color: #FFFFFF;
+}
+
+.nav-link.active {
+  background-color: #059669; /* Verde sÃ³lido para activo */
+  color: #FFFFFF;
+  font-weight: 600;
+}
+
+.nav-icon {
+  margin-right: 12px;
+}
+
+.sidebar-footer {
+  padding: 16px;
+  border-top: 1px solid #374151;
+  display: flex;
+  align-items: center;
+}
+
+.user-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  margin-right: 12px;
+}
+
+/* === CONTENIDO DE PÃGINA === */
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 32px;
+}
+
+.page-title {
+  font-size: 32px;
+  font-weight: bold;
+  color: #FFFFFF;
+}
+
+.primary-button {
+  background-color: #059669;
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.primary-button:hover {
+  background-color: #047857;
+}
+
+
+/* === CORRECCIÓN GLOBAL DE CONTRASTE === */
+/* Forzar contraste máximo en TODOS los inputs */
+input, select, textarea {
+  background-color: #374151 !important;
+  color: #ffffff !important;
+  border: 2px solid #6b7280 !important;
+  font-size: 16px !important;
+  font-weight: 500 !important;
+  padding: 12px !important;
+}
+
+/* Labels siempre blancos */
+label {
+  color: #ffffff !important;
+  font-weight: 600 !important;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.8) !important;
+}
+
+/* Placeholders visibles */
+input::placeholder, textarea::placeholder {
+  color: #d1d5db !important;
+}
+
+/* Modales con fondo adecuado */
+.modal-overlay, .fixed.inset-0 {
+  background-color: rgba(0, 0, 0, 0.85) !important;
+}
+
+/* Todos los elementos de formulario en modales */
+div[class*="bg-"] input, div[class*="bg-"] select, div[class*="bg-"] textarea {
+  background-color: #374151 !important;
+  color: #ffffff !important;
+  border: 2px solid #6b7280 !important;
 }

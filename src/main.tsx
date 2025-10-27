@@ -1,27 +1,16 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { createBrowserRouter, RouterProvider } from 'react-router-dom';
-import './index.css'; // <-- Importa el CSS aquí
-
 import App from './App';
-import Dashboard from './pages/Dashboard';
-import ClientsPage from './pages/ClientsPage';
-import ProductsPage from './pages/ProductsPage';
+import './index.css';
 
-const router = createBrowserRouter([
-  {
-    path: '/',
-    element: <App />,
-    children: [
-      { index: true, element: <Dashboard /> },
-      { path: 'clients', element: <ClientsPage /> },
-      { path: 'products', element: <ProductsPage /> },
-    ],
-  },
-]);
+const rootElement = document.getElementById('root');
+if (!rootElement) {
+  throw new Error("Could not find root element to mount to");
+}
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
+const root = ReactDOM.createRoot(rootElement);
+root.render(
   <React.StrictMode>
-    <RouterProvider router={router} />
+    <App />
   </React.StrictMode>
 );
