@@ -742,19 +742,32 @@ app.delete('/api/subscribers/:id', verifyToken, async (req, res) => {
 // Create ban
 app.post('/api/bans', verifyToken, async (req, res) => {
   try {
-    const { phone_number, reason } = req.body;
+    const { client_id, number } = req.body;
+    
+    console.log('🔄 Creando BAN via API:', { client_id, number });
+    
+    if (!client_id || !number) {
+      return res.status(400).json({ error: 'client_id y number son requeridos' });
+    }
     
     const result = await db.query(
-      `INSERT INTO bans (phone_number, reason, last_updated) 
+      `INSERT INTO bans (client_id, number, last_updated) 
        VALUES ($1, $2, NOW()) RETURNING *`,
-      [phone_number, reason]
+      [client_id, number]
     );
+    
+    console.log('✅ BAN creado exitosamente:', result.rows[0]);
     
     broadcastUpdate('bans', result.rows[0], 'created');
     res.status(201).json(result.rows[0]);
   } catch (error) {
     console.error('❌ Error creating ban:', error);
-    res.status(500).json({ error: 'Failed to create ban' });
+    console.error('Stack:', error.stack);
+    res.status(500).json({ 
+      error: 'Failed to create ban', 
+      message: error.message,
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 });
 
