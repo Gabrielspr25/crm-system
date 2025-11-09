@@ -1,0 +1,99 @@
+-- Initial database schema
+CREATE TABLE vendors (
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+name TEXT NOT NULL,
+email TEXT,
+is_active BOOLEAN DEFAULT 1,
+created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE clients (
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+name TEXT NOT NULL,
+business_name TEXT,
+contact_person TEXT,
+email TEXT,
+phone TEXT,
+address TEXT,
+includes_ban BOOLEAN DEFAULT 0,
+vendor_id INTEGER,
+is_active BOOLEAN DEFAULT 1,
+created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE bans (
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+ban_number TEXT NOT NULL UNIQUE,
+client_id INTEGER NOT NULL,
+description TEXT,
+is_active BOOLEAN DEFAULT 1,
+created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE subscribers (
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+phone TEXT NOT NULL UNIQUE,
+ban_id INTEGER NOT NULL,
+contract_start_date DATE,
+contract_end_date DATE,
+service_type TEXT,
+monthly_value REAL,
+is_active BOOLEAN DEFAULT 1,
+created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+months INTEGER,
+remaining_payments INTEGER DEFAULT 0
+);
+
+CREATE TABLE follow_up_tasks (
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+subscriber_id INTEGER NOT NULL,
+status TEXT DEFAULT 'prospect',
+priority_order INTEGER DEFAULT 0,
+notes TEXT,
+expected_value REAL,
+created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE goals (
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+vendor_id INTEGER,
+period_type TEXT NOT NULL,
+period_year INTEGER NOT NULL,
+period_month INTEGER,
+period_quarter INTEGER,
+target_amount REAL NOT NULL,
+current_amount REAL DEFAULT 0,
+description TEXT,
+is_active BOOLEAN DEFAULT 1,
+created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE categories (
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+name TEXT NOT NULL,
+description TEXT,
+color_hex TEXT,
+is_active BOOLEAN DEFAULT 1,
+created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE products (
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+name TEXT NOT NULL,
+category_id INTEGER,
+description TEXT,
+base_price REAL,
+commission_percentage REAL,
+is_recurring BOOLEAN DEFAULT 0,
+billing_cycle TEXT,
+is_active BOOLEAN DEFAULT 1,
+created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
