@@ -29,7 +29,11 @@ export const ClientSchema = z.object({
   contact_person: z.string().nullable(),
   email: z.string().nullable(),
   phone: z.string().nullable(),
+  secondary_phone: z.string().nullable(),
+  mobile_phone: z.string().nullable(),
   address: z.string().nullable(),
+  city: z.string().nullable(),
+  zip_code: z.string().nullable(),
   includes_ban: z.number().int(), // 0 or 1
   vendor_id: z.number().nullable(),
   is_active: z.number().int(), // 0 or 1
@@ -43,7 +47,11 @@ export const CreateClientSchema = z.object({
   contact_person: z.string().optional(),
   email: z.string().email().optional(),
   phone: z.string().optional(),
+  secondary_phone: z.string().optional(),
+  mobile_phone: z.string().optional(),
   address: z.string().optional(),
+  city: z.string().optional(),
+  zip_code: z.string().optional(),
   includes_ban: z.boolean().default(false),
   vendor_id: z.number().optional(),
 });
@@ -60,6 +68,7 @@ export const BANSchema = z.object({
   ban_number: z.string(),
   client_id: z.number(),
   description: z.string().nullable(),
+  status: z.enum(['active', 'cancelled']).default('active'),
   is_active: z.number().int(), // 0 or 1
   created_at: z.string(),
   updated_at: z.string(),
@@ -69,6 +78,7 @@ export const CreateBANSchema = z.object({
   ban_number: z.string().length(9).regex(/^\d+$/, "BAN must be 9 digits"),
   client_id: z.number(),
   description: z.string().optional(),
+  status: z.enum(['active', 'cancelled']).optional(),
 });
 
 export const UpdateBANSchema = CreateBANSchema.partial().omit({ client_id: true });

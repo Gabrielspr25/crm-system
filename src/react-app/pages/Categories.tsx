@@ -50,6 +50,8 @@ export default function Categories() {
       setEditingCategory(null);
       resetForm();
       refetchCategories();
+      // Disparar evento para que otros componentes refresquen
+      window.dispatchEvent(new CustomEvent('categories-updated'));
     } catch (error) {
       console.error("Error saving category:", error);
     }
@@ -80,6 +82,8 @@ export default function Categories() {
       }
 
       refetchCategories();
+      // Disparar evento para que otros componentes refresquen
+      window.dispatchEvent(new CustomEvent('categories-updated'));
     } catch (error) {
       console.error("Error deleting category:", error);
       alert("Error al eliminar la categoría");

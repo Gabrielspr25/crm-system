@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+﻿import { useState, useEffect, useCallback, useMemo } from "react";
 import { Plus, Search, Edit, Users, Building, Phone, Mail, MapPin, Hash, Clock, AlertTriangle, Calendar, Trash2, UserPlus } from "lucide-react";
 import { useApi } from "../hooks/useApi";
 import { authFetch } from "@/react-app/utils/auth";
@@ -14,7 +14,11 @@ interface Client {
   contact_person: string | null;
   email: string | null;
   phone: string | null;
+  secondary_phone: string | null;
+  mobile_phone: string | null;
   address: string | null;
+  city: string | null;
+  zip_code: string | null;
   includes_ban: number;
   vendor_id: number | null;
   vendor_name: string | null;
@@ -40,6 +44,7 @@ interface BAN {
   ban_number: string;
   client_id: number;
   description: string | null;
+  status?: string;
   is_active: number;
   created_at: string;
   updated_at: string;
@@ -60,6 +65,8 @@ interface Subscriber {
   updated_at: string;
 }
 
+type ClientStatus = 'overdue' | 'expired' | 'critical' | 'warning' | 'good' | 'no-date';
+
 interface ClientItem {
   clientId: number;
   clientName: string;
@@ -75,7 +82,7 @@ interface ClientItem {
   contractEndDate: string | null;
   subscriberCreatedAt: string | null;
   daysUntilExpiry: number;
-  status: 'expired' | 'critical' | 'warning' | 'good' | 'no-date';
+  status: ClientStatus;
   isBeingFollowed: boolean;
   wasCompleted: boolean;
   followUpProspectId?: number;
@@ -95,7 +102,7 @@ interface ClientRowSummary {
   primaryContractEndDate: string | null;
   primarySubscriberCreatedAt: string | null;
   daysUntilExpiry: number;
-  status: 'expired' | 'critical' | 'warning' | 'good' | 'no-date';
+  status: ClientStatus;
   isBeingFollowed: boolean;
   wasCompleted: boolean;
   followUpProspectId?: number;
@@ -111,7 +118,11 @@ interface ClientDetail {
   contact_person: string | null;
   email: string | null;
   phone: string | null;
+  secondary_phone: string | null;
+  mobile_phone: string | null;
   address: string | null;
+  city: string | null;
+  zip_code: string | null;
   vendor_name: string | null;
   vendor_id: number | null;
   created_at: string;
@@ -126,7 +137,58 @@ interface FollowUpProspect {
   is_completed?: boolean | number | null;
 }
 
+const computeSubscriberTiming = (contractEndDate: string | null) => {
+  if (!contractEndDate) {
+    return { status: 'overdue' as ClientStatus, days: -999 };
+  }
+  const endDate = new Date(contractEndDate);
+  const today = new Date();
+  const days = Math.ceil((endDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
 
+  let status: ClientStatus = 'good';
+  if (days < 0) status = 'expired';
+  else if (days <= 15) status = 'critical';
+  else if (days <= 30) status = 'warning';
+
+  return { status, days };
+};
+
+const formatDaysUntilExpiry = (days: number, status: ClientStatus, createdAt?: string | null) => {
+  if (status === 'overdue') {
+    return 'Vencido +30 dÃ­as';
+  }
+  if (status === 'no-date') {
+    if (createdAt) {
+      return `Cargado ${new Date(createdAt).toLocaleDateString()}`;
+    }
+    return 'Sin fecha definida';
+  } else if (days < 0) {
+    return `Vencido hace ${Math.abs(days)} dÃ­a${Math.abs(days) !== 1 ? 's' : ''}`;
+  } else if (days === 0) {
+    return 'Vence hoy';
+  } else {
+    return `Vence en ${days} dÃ­a${days !== 1 ? 's' : ''}`;
+  }
+};
+
+const getStatusBadge = (status: ClientStatus, days: number, createdAt?: string | null) => {
+  const label = formatDaysUntilExpiry(days, status, createdAt);
+
+  switch (status) {
+    case 'overdue':
+    case 'expired':
+      return { label, className: 'bg-red-900/60 text-red-100 border border-red-500/40' };
+    case 'critical':
+      return { label, className: 'bg-orange-900/60 text-orange-100 border border-orange-500/40' };
+    case 'warning':
+      return { label, className: 'bg-yellow-900/60 text-yellow-100 border border-yellow-500/40' };
+    case 'no-date':
+      return { label, className: 'bg-slate-800/70 text-slate-200 border border-slate-500/40' };
+    case 'good':
+    default:
+      return { label, className: 'bg-green-900/60 text-green-100 border border-green-500/40' };
+  }
+};
 
 export default function Clients() {
   const [searchTerm, setSearchTerm] = useState("");
@@ -157,12 +219,13 @@ const [pendingBanClientId, setPendingBanClientId] = useState<number | null>(null
     setNotification({ type, text });
   };
 
-  const statusPriority: Record<ClientItem['status'], number> = {
-    expired: 0,
-    critical: 1,
-    warning: 2,
-    good: 3,
-    'no-date': 4,
+const statusPriority: Record<ClientStatus, number> = {
+  overdue: 0,
+  expired: 1,
+  critical: 2,
+  warning: 3,
+  good: 4,
+  'no-date': 5,
   };
 
   const isBanRequirementSatisfied = (bans: BAN[]) =>
@@ -225,11 +288,13 @@ const [pendingBanClientId, setPendingBanClientId] = useState<number | null>(null
         
         for (const client of clients) {
           // Check if this client is being followed
-          const followUpProspect = followUpProspects.find((p) => 
-            p.client_id === client.id
-          );
-          const isBeingFollowed = Boolean(followUpProspect && Boolean(followUpProspect.is_active ?? true) && !Boolean(followUpProspect.is_completed));
-          const wasCompleted = Boolean(followUpProspect && Boolean(followUpProspect.is_completed));
+          const clientProspects = followUpProspects.filter((p) => p.client_id === client.id);
+          const activeProspect = clientProspects.find((p) => Boolean(p.is_active ?? true) && !Boolean(p.is_completed));
+          const completedProspectExists = !activeProspect && clientProspects.some((p) => Boolean(p.is_completed));
+
+          const isBeingFollowed = Boolean(activeProspect);
+          const wasCompleted = completedProspectExists;
+          const followUpProspectId = activeProspect?.id;
 
           if (client.has_bans) {
             try {
@@ -245,10 +310,10 @@ const [pendingBanClientId, setPendingBanClientId] = useState<number | null>(null
                       
                       if (subscribers.length > 0) {
                         subscribers.forEach(subscriber => {
-                          let daysUntilExpiry = 999999;
-                          let status: 'expired' | 'critical' | 'warning' | 'good' | 'no-date' = 'no-date';
-                          
-                          if (subscriber.contract_end_date) {
+                        let daysUntilExpiry = 999999;
+                        let status: ClientStatus = 'no-date';
+
+                        if (subscriber.contract_end_date) {
                             const endDate = new Date(subscriber.contract_end_date);
                             const today = new Date();
                             daysUntilExpiry = Math.ceil((endDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
@@ -257,6 +322,9 @@ const [pendingBanClientId, setPendingBanClientId] = useState<number | null>(null
                             else if (daysUntilExpiry <= 15) status = 'critical';
                             else if (daysUntilExpiry <= 30) status = 'warning';
                             else status = 'good';
+                        } else {
+                          status = 'overdue';
+                          daysUntilExpiry = -999;
                           }
                           
                           clientData.push({
@@ -277,7 +345,7 @@ const [pendingBanClientId, setPendingBanClientId] = useState<number | null>(null
                             status,
                             isBeingFollowed,
                             wasCompleted,
-                            followUpProspectId: followUpProspect?.id ?? undefined,
+                            followUpProspectId,
                             includesBan: true
                           });
                         });
@@ -301,7 +369,7 @@ const [pendingBanClientId, setPendingBanClientId] = useState<number | null>(null
                           status: 'no-date',
                           isBeingFollowed,
                           wasCompleted,
-                          followUpProspectId: followUpProspect?.id ?? undefined,
+                          followUpProspectId,
                           includesBan: true
                         });
                       }
@@ -334,7 +402,7 @@ const [pendingBanClientId, setPendingBanClientId] = useState<number | null>(null
               status: 'no-date',
               isBeingFollowed,
               wasCompleted,
-              followUpProspectId: followUpProspect?.id ?? undefined,
+              followUpProspectId,
               includesBan: false
             });
           }
@@ -480,21 +548,6 @@ const [pendingBanClientId, setPendingBanClientId] = useState<number | null>(null
     ? followingClients
     : completedClients;
 
-  const formatDaysUntilExpiry = (days: number, status: string, createdAt?: string | null) => {
-    if (status === 'no-date') {
-      if (createdAt) {
-        return `Cargado ${new Date(createdAt).toLocaleDateString()}`;
-      }
-      return 'Sin fecha definida';
-    } else if (days < 0) {
-      return `Vencido hace ${Math.abs(days)} día${Math.abs(days) !== 1 ? 's' : ''}`;
-    } else if (days === 0) {
-      return 'Vence hoy';
-    } else {
-      return `Vence en ${days} día${days !== 1 ? 's' : ''}`;
-    }
-  };
-
   const handleSendToFollowUp = async (clientId: number) => {
     try {
       const clientResponse = await authFetch(`/api/clients/${clientId}`);
@@ -510,7 +563,7 @@ const [pendingBanClientId, setPendingBanClientId] = useState<number | null>(null
       }
 
       if (clientHasActiveFollowUp(clientId)) {
-        notify('info', 'Este cliente ya está en seguimiento activo.');
+        notify('info', 'Este cliente ya estÃ¡ en seguimiento activo.');
         return;
       }
 
@@ -520,7 +573,7 @@ const [pendingBanClientId, setPendingBanClientId] = useState<number | null>(null
         vendor_id: client.vendor_id,
         contact_phone: client.phone || '',
         contact_email: client.email || '',
-        notes: 'Cliente enviado automáticamente desde gestión de clientes',
+        notes: 'Cliente enviado automÃ¡ticamente desde gestiÃ³n de clientes',
         fijo_ren: 0,
         fijo_new: 0,
         movil_nueva: 0,
@@ -588,6 +641,27 @@ const [pendingBanClientId, setPendingBanClientId] = useState<number | null>(null
         throw new Error(error.error || 'Error updating prospect');
       }
 
+      if (prospect.client_id) {
+        const clientRes = await authFetch(`/api/clients/${prospect.client_id}`);
+        if (clientRes.ok) {
+          const clientData = await clientRes.json();
+          await authFetch(`/api/clients/${prospect.client_id}`, {
+            method: 'PUT',
+            json: {
+              name: clientData.name,
+              business_name: clientData.business_name,
+              contact_person: clientData.contact_person,
+              email: clientData.email,
+              phone: clientData.phone,
+              address: clientData.address,
+              includes_ban: clientData.includes_ban,
+              vendor_id: null,
+              is_active: clientData.is_active,
+            }
+          });
+        }
+      }
+
       notify('success', `Seguimiento terminado para ${selectedFollowUpProspect.clientName}.`);
       
       // Cerrar modal y recargar datos
@@ -642,7 +716,7 @@ const [pendingBanClientId, setPendingBanClientId] = useState<number | null>(null
     }
   };
 
-  // Función para cargar BANs del cliente cuando se abre el modal de edición
+  // FunciÃ³n para cargar BANs del cliente cuando se abre el modal de ediciÃ³n
   const loadClientBANs = async (clientId: number) => {
     try {
       const bansResponse = await authFetch(`/api/bans?client_id=${clientId}`);
@@ -693,7 +767,7 @@ const [pendingBanClientId, setPendingBanClientId] = useState<number | null>(null
       if (data.includes_ban) {
         notify('info', 'Cliente creado. Debes registrar al menos un BAN y un suscriptor.');
         setPendingBanClientId(responseData.id);
-        setEditingClient(responseData);
+        setEditingClient(responseData as Client);
         setSelectedClientId(responseData.id);
         setClientBANs([]);
         setShowClientModal(true);
@@ -875,7 +949,7 @@ const [pendingBanClientId, setPendingBanClientId] = useState<number | null>(null
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-white">Clientes</h1>
-          <p className="text-gray-400 mt-1">Información completa de todos los clientes ordenados por vencimiento de contrato</p>
+          <p className="text-gray-400 mt-1">InformaciÃ³n completa de todos los clientes ordenados por vencimiento de contrato</p>
         </div>
         <button
           onClick={() => {
@@ -929,7 +1003,7 @@ const [pendingBanClientId, setPendingBanClientId] = useState<number | null>(null
         <div className="bg-gray-900 rounded-lg shadow-sm border border-gray-800 p-4">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-gray-400">Próximos 15 días</p>
+              <p className="text-sm font-medium text-gray-400">PrÃ³ximos 15 dÃ­as</p>
               <p className="text-2xl font-bold text-orange-400">{criticalContracts}</p>
             </div>
             <Clock className="w-8 h-8 text-orange-500" />
@@ -938,7 +1012,7 @@ const [pendingBanClientId, setPendingBanClientId] = useState<number | null>(null
         <div className="bg-gray-900 rounded-lg shadow-sm border border-gray-800 p-4">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-gray-400">Próximos 30 días</p>
+              <p className="text-sm font-medium text-gray-400">PrÃ³ximos 30 dÃ­as</p>
               <p className="text-2xl font-bold text-yellow-400">{warningContracts}</p>
             </div>
             <Calendar className="w-8 h-8 text-yellow-500" />
@@ -1062,7 +1136,7 @@ const [pendingBanClientId, setPendingBanClientId] = useState<number | null>(null
                     <td className="px-4 py-4 whitespace-nowrap text-center">
                       {item.wasCompleted ? (
                         <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-purple-900/60 text-purple-200 text-xs font-medium">
-                          ✓ Completado
+                          âœ“ Completado
                         </span>
                       ) : item.isBeingFollowed ? (
                         <div className="flex flex-col items-center gap-2">
@@ -1106,7 +1180,7 @@ const [pendingBanClientId, setPendingBanClientId] = useState<number | null>(null
             <h3 className="mt-2 text-sm font-medium text-gray-300">No hay clientes</h3>
             <p className="mt-1 text-sm text-gray-500">
               {searchTerm
-                ? "No se encontraron clientes con ese criterio de búsqueda"
+                ? "No se encontraron clientes con ese criterio de bÃºsqueda"
                 : activeTab === 'available'
                   ? "No hay clientes disponibles en el pool"
                   : activeTab === 'following'
@@ -1175,7 +1249,7 @@ const [pendingBanClientId, setPendingBanClientId] = useState<number | null>(null
             <div className="p-6 border-b border-gray-700">
               <h3 className="text-lg font-semibold text-white">Dejar de Seguir Cliente</h3>
               <p className="text-gray-400 mt-1">
-                ¿Estás seguro de que quieres dejar de seguir a {selectedFollowUpProspect?.clientName}?
+                Â¿EstÃ¡s seguro de que quieres dejar de seguir a {selectedFollowUpProspect?.clientName}?
               </p>
             </div>
             
@@ -1188,11 +1262,11 @@ const [pendingBanClientId, setPendingBanClientId] = useState<number | null>(null
                   value={stopFollowNotes}
                   onChange={(e) => setStopFollowNotes(e.target.value)}
                   className="w-full h-24 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:ring-2 focus:ring-orange-500 focus:border-transparent resize-none"
-                  placeholder="Ej: Cliente no está interesado en renovar contrato, Cliente cambió de proveedor, etc."
+                  placeholder="Ej: Cliente no estÃ¡ interesado en renovar contrato, Cliente cambiÃ³ de proveedor, etc."
                   required
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                  Esta nota se guardará en el historial del cliente
+                  Esta nota se guardarÃ¡ en el historial del cliente
                 </p>
               </div>
             </div>
@@ -1273,6 +1347,7 @@ function ClientManagementModal({
 }) {
   const [activeTab, setActiveTab] = useState<'info' | 'bans' | 'history' | 'calls'>('bans');
   const [showBANForm, setShowBANForm] = useState(false);
+  const [editingBAN, setEditingBAN] = useState<BAN | null>(null);
   const [formMessage, setFormMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const [isSendingToFollowUp, setIsSendingToFollowUp] = useState(false);
 
@@ -1299,7 +1374,7 @@ function ClientManagementModal({
       }
 
       if (clientHasActiveFollowUp(client.id)) {
-        setFormMessage({ type: 'info', text: 'Este cliente ya está en seguimiento activo.' });
+        setFormMessage({ type: 'info', text: 'Este cliente ya estÃ¡ en seguimiento activo.' });
         return;
       }
 
@@ -1311,7 +1386,7 @@ function ClientManagementModal({
         vendor_id: client.vendor_id,
         contact_phone: client.phone || '',
         contact_email: client.email || '',
-        notes: `Cliente enviado automáticamente desde gestión de clientes`,
+        notes: `Cliente enviado automÃ¡ticamente desde gestiÃ³n de clientes`,
         fijo_ren: 0,
         fijo_new: 0,
         movil_nueva: 0,
@@ -1343,6 +1418,34 @@ function ClientManagementModal({
       setFormMessage({ type: 'error', text: error instanceof Error ? error.message : 'No fue posible enviar a seguimiento.' });
     } finally {
       setIsSendingToFollowUp(false);
+    }
+  };
+
+  const handleUpdateBAN = async (banId: number, data: any) => {
+    try {
+      const response = await authFetch(`/api/bans/${banId}`, {
+        method: "PUT",
+        json: data,
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        setFormMessage({ type: 'error', text: error.error || "Error al actualizar el BAN" });
+        return;
+      }
+
+      setFormMessage({ type: 'success', text: `BAN ${data.ban_number} actualizado correctamente.` });
+      setEditingBAN(null);
+      
+      if (onRefreshClient) {
+        await onRefreshClient();
+      }
+      if (onFollowUpUpdated) {
+        await onFollowUpUpdated();
+      }
+    } catch (error) {
+      console.error("Error updating BAN:", error);
+      setFormMessage({ type: 'error', text: 'Error al actualizar el BAN.' });
     }
   };
 
@@ -1383,7 +1486,7 @@ function ClientManagementModal({
         return;
       }
 
-      if (!confirm(`¿Estás seguro de que quieres eliminar el BAN ${ban.ban_number}?\n\nEsta acción eliminará permanentemente el BAN y todos sus suscriptores asociados.`)) {
+      if (!confirm(`Â¿EstÃ¡s seguro de que quieres eliminar el BAN ${ban.ban_number}?\n\nEsta acciÃ³n eliminarÃ¡ permanentemente el BAN y todos sus suscriptores asociados.`)) {
         return;
       }
 
@@ -1392,7 +1495,7 @@ function ClientManagementModal({
       });
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Error de conexión' }));
+        const errorData = await response.json().catch(() => ({ error: 'Error de conexiÃ³n' }));
         setFormMessage({ type: 'error', text: errorData.error || 'Error al eliminar el BAN.' });
         return;
       }
@@ -1429,7 +1532,7 @@ function ClientManagementModal({
         return;
       }
 
-      if (!confirm(`¿Estás seguro de que quieres eliminar el suscriptor ${subscriber.phone}?\n\nEsta acción no se puede deshacer.`)) {
+      if (!confirm(`Â¿EstÃ¡s seguro de que quieres eliminar el suscriptor ${subscriber.phone}?\n\nEsta acciÃ³n no se puede deshacer.`)) {
         return;
       }
 
@@ -1438,7 +1541,7 @@ function ClientManagementModal({
       });
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Error de conexión' }));
+        const errorData = await response.json().catch(() => ({ error: 'Error de conexiÃ³n' }));
         setFormMessage({ type: 'error', text: errorData.error || 'Error al eliminar el suscriptor.' });
         return;
       }
@@ -1460,7 +1563,7 @@ function ClientManagementModal({
         <div className="flex justify-between items-start p-6 border-b border-gray-700 bg-gradient-to-r from-gray-800 to-gray-700">
           <div>
             <h2 className="text-2xl font-bold text-white">{client.business_name || client.name}</h2>
-            <p className="text-gray-300 mt-1">Gestión completa del cliente</p>
+            <p className="text-gray-300 mt-1">GestiÃ³n completa del cliente</p>
           </div>
           <div className="flex items-center space-x-3">
             <button
@@ -1480,7 +1583,7 @@ function ClientManagementModal({
               onClick={onClose}
               className="text-gray-400 hover:text-white text-2xl p-2 hover:bg-gray-800 rounded-lg transition-colors"
             >
-              ×
+              Ã—
             </button>
           </div>
         </div>
@@ -1510,7 +1613,7 @@ function ClientManagementModal({
                 : 'text-gray-400 hover:text-white hover:bg-gray-750'
             }`}
           >
-            Información del Cliente
+            InformaciÃ³n del Cliente
           </button>
           <button
             onClick={() => setActiveTab('bans')}
@@ -1549,7 +1652,7 @@ function ClientManagementModal({
           {activeTab === 'info' && (
             <div className="space-y-6">
               <div className="flex justify-between items-center mb-4">
-                <h3 className="text-xl font-semibold text-white">Información del Cliente</h3>
+                <h3 className="text-xl font-semibold text-white">InformaciÃ³n del Cliente</h3>
                 <div className="flex items-center space-x-2">
                   <button
                     onClick={() => {
@@ -1563,7 +1666,11 @@ function ClientManagementModal({
                           contact_person: client.contact_person,
                           email: client.email,
                           phone: client.phone,
+                          secondary_phone: client.secondary_phone,
+                          mobile_phone: client.mobile_phone,
                           address: client.address,
+                          city: client.city,
+                          zip_code: client.zip_code,
                           vendor_id: client.vendor_id,
                           includes_ban: client.bans.length > 0 ? 1 : 0,
                           is_active: 1,
@@ -1590,7 +1697,7 @@ function ClientManagementModal({
                         return;
                       }
                       
-                      if (confirm(`¿Estás seguro de que quieres eliminar el cliente "${client.business_name || client.name}"?\n\nEsta acción no se puede deshacer.`)) {
+                      if (confirm(`Â¿EstÃ¡s seguro de que quieres eliminar el cliente "${client.business_name || client.name}"?\n\nEsta acciÃ³n no se puede deshacer.`)) {
                         try {
                           const response = await authFetch(`/api/clients/${client.id}`, {
                             method: "DELETE"
@@ -1652,7 +1759,7 @@ function ClientManagementModal({
                     <div className="flex items-center space-x-3">
                       <Phone className="w-5 h-5 text-gray-400" />
                       <div>
-                        <p className="text-sm text-gray-400">Teléfono</p>
+                        <p className="text-sm text-gray-400">TelÃ©fono</p>
                         <p className="text-white font-medium">{client.phone}</p>
                       </div>
                     </div>
@@ -1662,7 +1769,7 @@ function ClientManagementModal({
                     <div className="flex items-start space-x-3">
                       <MapPin className="w-5 h-5 text-gray-400 mt-0.5" />
                       <div>
-                        <p className="text-sm text-gray-400">Dirección</p>
+                        <p className="text-sm text-gray-400">DirecciÃ³n</p>
                         <p className="text-white font-medium">{client.address}</p>
                       </div>
                     </div>
@@ -1670,8 +1777,18 @@ function ClientManagementModal({
                 </div>
 
                 <div className="bg-gray-800 rounded-lg p-6 space-y-4">
-                  <h4 className="text-lg font-medium text-white mb-4">Información Comercial</h4>
+                  <h4 className="text-lg font-medium text-white mb-4">InformaciÃ³n Comercial</h4>
                   
+                  {client.business_name && (
+                    <div className="flex items-center space-x-3">
+                      <Building className="w-5 h-5 text-gray-400" />
+                      <div>
+                        <p className="text-sm text-gray-400">Empresa</p>
+                        <p className="text-white font-medium">{client.business_name}</p>
+                      </div>
+                    </div>
+                  )}
+
                   {client.vendor_name && (
                     <div className="flex items-center space-x-3">
                       <Building className="w-5 h-5 text-gray-400" />
@@ -1737,20 +1854,32 @@ function ClientManagementModal({
                           <div className="p-1 bg-blue-100 dark:bg-blue-900/50 rounded">
                             <Hash className="w-3 h-3 text-blue-600 dark:text-blue-400" />
                           </div>
-                          <div>
+                          <div className="flex items-center gap-2">
                             <h4 className="text-sm font-semibold text-white">BAN: {ban.ban_number}</h4>
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${(ban.status === "cancelled" || ban.status === "cancelado") ? "bg-red-900/40 text-red-100 border border-red-500/30" : "bg-emerald-900/40 text-emerald-100 border border-emerald-500/30"}`}>
+                              {(ban.status === "cancelled" || ban.status === "cancelado") ? "Cancelado" : "Activo"}
+                            </span>
                             {ban.description && (
                               <p className="text-xs text-gray-400">{ban.description}</p>
                             )}
                           </div>
                         </div>
-                        <button
-                          onClick={() => handleDeleteBAN(ban.id)}
-                          className="p-1 text-red-400 hover:text-red-300 hover:bg-red-900/20 rounded transition-colors"
-                          title="Eliminar BAN"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                        </button>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => setEditingBAN(ban)}
+                            className="p-1 text-blue-400 hover:text-blue-300 hover:bg-blue-900/20 rounded transition-colors"
+                            title="Editar BAN"
+                          >
+                            <Edit className="w-3 h-3" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteBAN(ban.id)}
+                            className="p-1 text-red-400 hover:text-red-300 hover:bg-red-900/20 rounded transition-colors"
+                            title="Eliminar BAN"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
                       </div>
                       
                       {/* Subscribers Section */}
@@ -1781,11 +1910,22 @@ function ClientManagementModal({
                                       <div className="text-green-400 font-semibold">${subscriber.monthly_value}/mes</div>
                                     )}
                                     
-                                    {subscriber.contract_end_date && (
-                                      <div className="text-gray-300">
-                                        Vence: {new Date(subscriber.contract_end_date).toLocaleDateString()}
-                                      </div>
-                                    )}
+                                    {(() => {
+                                      const { status, days } = computeSubscriberTiming(subscriber.contract_end_date);
+                                      const badge = getStatusBadge(status, days, subscriber.created_at);
+                                      return (
+                                        <div className="flex items-center gap-2 text-xs">
+                                          <span className="text-gray-300">
+                                            {subscriber.contract_end_date
+                                              ? new Date(subscriber.contract_end_date).toLocaleDateString()
+                                              : 'Sin fecha'}
+                                          </span>
+                                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${badge.className}`}>
+                                            {badge.label}
+                                          </span>
+                                        </div>
+                                      );
+                                    })()}
                                   </div>
                                   <div className="flex items-center space-x-1">
                                     <button
@@ -1863,7 +2003,7 @@ function ClientManagementModal({
               <Phone className="mx-auto h-12 w-12 text-gray-600" />
               <h3 className="mt-2 text-lg font-medium text-gray-300">Llamadas y Fechas</h3>
               <p className="mt-1 text-sm text-gray-500">
-                Próximamente: Registro de llamadas, fechas importantes y seguimiento
+                PrÃ³ximamente: Registro de llamadas, fechas importantes y seguimiento
               </p>
             </div>
           )}
@@ -1880,6 +2020,15 @@ function ClientManagementModal({
         </div>
       </div>
 
+      {/* BAN Edit Form */}
+      {editingBAN && (
+        <BANModal
+          ban={editingBAN}
+          onSave={async (data) => await handleUpdateBAN(editingBAN.id, data)}
+          onClose={() => setEditingBAN(null)}
+        />
+      )}
+
       {/* BAN Creation Form */}
       {showBANForm && (
         <BANModal
@@ -1892,3 +2041,5 @@ function ClientManagementModal({
     </div>
   );
 }
+
+

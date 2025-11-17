@@ -1,5 +1,7 @@
 # CRM PRO — Módulo IA de Ventas + Importador CSV/Excel (Ollama)
 
+> **Nota:** este README documentaba la versión experimental con Ollama + importador independiente. El proyecto actual usa el importador integrado descrito en el README principal de la raíz. Conserva este archivo sólo como referencia histórica.
+
 ## Requisitos
 - Node 18+
 - PostgreSQL (usa tu `crm_pro`)

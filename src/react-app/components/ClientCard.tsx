@@ -30,6 +30,42 @@ export default function ClientCard({
 
   const vendor = vendors.find(v => v.id === client.vendor_id);
 
+  const getExpirationBadge = (contractEndDate: string | null | undefined) => {
+    if (!contractEndDate) {
+      return {
+        label: 'Vencido +30 días',
+        className: 'bg-red-900/60 text-red-100 border border-red-500/40',
+      };
+    }
+
+    const endDate = new Date(contractEndDate);
+    const today = new Date();
+    const diffDays = Math.ceil((endDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+
+    if (diffDays < 0) {
+      return {
+        label: `Vencido hace ${Math.abs(diffDays)} día${Math.abs(diffDays) !== 1 ? 's' : ''}`,
+        className: 'bg-red-900/60 text-red-100 border border-red-500/40',
+      };
+    }
+    if (diffDays <= 15) {
+      return {
+        label: `Vence en ${diffDays} día${diffDays !== 1 ? 's' : ''}`,
+        className: 'bg-orange-900/60 text-orange-100 border border-orange-500/40',
+      };
+    }
+    if (diffDays <= 30) {
+      return {
+        label: `Vence en ${diffDays} día${diffDays !== 1 ? 's' : ''}`,
+        className: 'bg-yellow-900/60 text-yellow-100 border border-yellow-500/40',
+      };
+    }
+    return {
+      label: `Vence en ${diffDays} día${diffDays !== 1 ? 's' : ''}`,
+      className: 'bg-green-900/60 text-green-100 border border-green-500/40',
+    };
+  };
+
   const handleDeleteSubscriber = (subscriberId: number, banId: number) => {
     const ban = client.bans?.find(b => b.id === banId);
     if (ban && ban.subscribers && ban.subscribers.length <= 1) {
@@ -239,7 +275,7 @@ export default function ClientCard({
                                     </div>
                                   </div>
                                   
-                                  <div className="mt-2 grid grid-cols-1 md:grid-cols-3 gap-2">
+                                  <div className="mt-2 grid grid-cols-1 md:grid-cols-3 gap-2 items-center">
                                     {subscriber.service_type && (
                                       <div className="text-xs text-slate-600 dark:text-slate-400">
                                         <span className="font-medium">Servicio:</span> {subscriber.service_type}
@@ -251,12 +287,22 @@ export default function ClientCard({
                                         Inicio: {new Date(subscriber.contract_start_date).toLocaleDateString()}
                                       </div>
                                     )}
-                                    {subscriber.contract_end_date && (
-                                      <div className="flex items-center text-xs text-slate-600 dark:text-slate-400">
-                                        <Calendar className="w-3 h-3 mr-1" />
-                                        Vence: {new Date(subscriber.contract_end_date).toLocaleDateString()}
-                                      </div>
-                                    )}
+                                    <div className="flex items-center text-xs text-slate-600 dark:text-slate-400">
+                                      <Calendar className="w-3 h-3 mr-1" />
+                                      {subscriber.contract_end_date
+                                        ? new Date(subscriber.contract_end_date).toLocaleDateString()
+                                        : 'Sin fecha'}
+                                    </div>
+                                    <div>
+                                      {(() => {
+                                        const { label, className } = getExpirationBadge(subscriber.contract_end_date);
+                                        return (
+                                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${className}`}>
+                                            {label}
+                                          </span>
+                                        );
+                                      })()}
+                                    </div>
                                   </div>
                                 </div>
                               ))}

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Plus, Search, Edit, Trash2, Package, DollarSign } from "lucide-react";
 import { useApi } from "../hooks/useApi";
 import { authFetch } from "@/react-app/utils/auth";
@@ -40,7 +40,7 @@ export default function Products() {
   });
 
   const { data: products, loading: productsLoading, refetch: refetchProducts } = useApi<Product[]>("/api/products");
-  const { data: categories } = useApi<Category[]>("/api/categories");
+  const { data: categories, refetch: refetchCategories } = useApi<Category[]>("/api/categories");
 
   const filteredProducts = (products || []).filter(product =>
     product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -75,6 +75,8 @@ export default function Products() {
       setEditingProduct(null);
       resetForm();
       refetchProducts();
+      // Disparar evento para que otros componentes refresquen
+      window.dispatchEvent(new CustomEvent('products-updated'));
     } catch (error) {
       console.error("Error saving product:", error);
     }
@@ -102,6 +104,8 @@ export default function Products() {
         method: "DELETE",
       });
       refetchProducts();
+      // Disparar evento para que otros componentes refresquen
+      window.dispatchEvent(new CustomEvent('products-updated'));
     } catch (error) {
       console.error("Error deleting product:", error);
     }
@@ -118,6 +122,20 @@ export default function Products() {
       billing_cycle: "monthly",
     });
   };
+
+  // Escuchar eventos de actualización de categorías
+  useEffect(() => {
+    const handleCategoriesUpdate = () => {
+      console.log("🔄 Refrescando categorías desde evento...");
+      refetchCategories();
+    };
+
+    window.addEventListener('categories-updated', handleCategoriesUpdate);
+
+    return () => {
+      window.removeEventListener('categories-updated', handleCategoriesUpdate);
+    };
+  }, [refetchCategories]);
 
   if (productsLoading) {
     return (

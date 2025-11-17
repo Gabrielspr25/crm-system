@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from "react";
 import { Search, Plus, Phone, Edit3, Settings, Trash2 } from "lucide-react";
 import { useApi } from "../hooks/useApi";
-import { authFetch } from "@/react-app/utils/auth";
+import { authFetch, getCurrentUser } from "@/react-app/utils/auth";
 
 interface Priority {
   id: number;
@@ -79,7 +79,7 @@ export default function FollowUp() {
   const [showStepManager, setShowStepManager] = useState(false);
   const [callLogs, setCallLogs] = useState<CallLog[]>([]);
 
-  const { data: prospects, loading, refetch } = useApi<FollowUpProspect[]>("/api/follow-up-prospects");
+  const { data: prospects, loading, refetch: refetchProspects } = useApi<FollowUpProspect[]>("/api/follow-up-prospects");
   const { data: priorities, refetch: refetchPriorities } = useApi<Priority[]>("/api/priorities");
   const { data: vendors } = useApi<Vendor[]>("/api/vendors");
   const { data: steps, refetch: refetchSteps } = useApi<FollowUpStep[]>("/api/follow-up-steps");
@@ -102,6 +102,20 @@ export default function FollowUp() {
     prospect.company_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     (prospect.vendor_name && prospect.vendor_name.toLowerCase().includes(searchTerm.toLowerCase()))
   );
+
+  const authUser = getCurrentUser();
+  const isVendorUser = authUser?.role === "vendedor";
+  const parsedVendorId = authUser?.salespersonId != null ? Number(authUser.salespersonId) : NaN;
+  const vendorIdNumber = isVendorUser && !Number.isNaN(parsedVendorId) ? parsedVendorId : undefined;
+  const vendorIdString = isVendorUser && authUser?.salespersonId != null ? String(authUser.salespersonId) : null;
+
+  const visibleVendors = useMemo(() => {
+    const list = vendors || [];
+    if (isVendorUser && vendorIdString) {
+      return list.filter((vendor) => String(vendor.id) === vendorIdString);
+    }
+    return list;
+  }, [vendors, isVendorUser, vendorIdString]);
 
   const handleEdit = (prospect: FollowUpProspect) => {
     setSelectedProspect(prospect);
@@ -127,13 +141,19 @@ export default function FollowUp() {
     try {
       const url = selectedProspect?.id ? `/api/follow-up-prospects/${selectedProspect.id}` : '/api/follow-up-prospects';
       const method = selectedProspect?.id ? 'PUT' : 'POST';
-      
+
+      const payload = {
+        ...data,
+        vendor_id: isVendorUser && vendorIdNumber !== undefined ? vendorIdNumber : data.vendor_id,
+        completed_date: data.is_completed ? new Date().toISOString() : null,
+      };
+
       await authFetch(url, {
         method,
-        json: data
+        json: payload
       });
       
-      refetch();
+      refetchProspects();
       setShowModal(false);
       setSelectedProspect(null);
     } catch (error) {
@@ -156,7 +176,7 @@ export default function FollowUp() {
         }
       });
       
-      refetch();
+      refetchProspects();
       setShowCallModal(false);
       setSelectedProspect(null);
     } catch (error) {
@@ -345,7 +365,7 @@ export default function FollowUp() {
         <ProspectModal
           prospect={selectedProspect}
           priorities={priorities || []}
-          vendors={vendors || []}
+          vendors={visibleVendors}
           steps={steps || []}
           clients={clients || []}
           onSave={handleSaveProspect}
@@ -353,6 +373,8 @@ export default function FollowUp() {
             setShowModal(false);
             setSelectedProspect(null);
           }}
+          enforcedVendorId={isVendorUser ? vendorIdNumber : undefined}
+          disableVendorSelect={isVendorUser}
         />
       )}
 
@@ -374,7 +396,7 @@ export default function FollowUp() {
           priorities={priorities || []}
           onClose={() => setShowPriorityManager(false)}
           onSaved={async () => {
-            await refetch();
+            await refetchProspects();
             await refetchPriorities();
           }}
         />
@@ -385,7 +407,7 @@ export default function FollowUp() {
           steps={steps || []}
           onClose={() => setShowStepManager(false)}
           onSaved={async () => {
-            await refetch();
+            await refetchProspects();
             await refetchSteps();
           }}
         />
@@ -402,7 +424,9 @@ function ProspectModal({
   steps,
   clients,
   onSave,
-  onClose
+  onClose,
+  enforcedVendorId,
+  disableVendorSelect = false
 }: {
   prospect: FollowUpProspect | null;
   priorities: Priority[];
@@ -411,13 +435,15 @@ function ProspectModal({
   clients: Client[];
   onSave: (data: Partial<FollowUpProspect>) => void;
   onClose: () => void;
+  enforcedVendorId?: number;
+  disableVendorSelect?: boolean;
 }) {
   const [formData, setFormData] = useState({
     company_name: prospect?.company_name || '',
-    client_id: prospect?.client_id || '',
-    priority_id: prospect?.priority_id || '',
-    vendor_id: prospect?.vendor_id || '',
-    step_id: prospect?.step_id || '',
+    client_id: prospect?.client_id ? String(prospect.client_id) : '',
+    priority_id: prospect?.priority_id ? String(prospect.priority_id) : '',
+    vendor_id: prospect?.vendor_id ? String(prospect.vendor_id) : enforcedVendorId != null ? String(enforcedVendorId) : '',
+    step_id: prospect?.step_id ? String(prospect.step_id) : '',
     fijo_ren: prospect?.fijo_ren || 0,
     fijo_new: prospect?.fijo_new || 0,
     movil_nueva: prospect?.movil_nueva || 0,
@@ -431,15 +457,42 @@ function ProspectModal({
     is_completed: prospect?.is_completed || false
   });
 
+  useEffect(() => {
+    setFormData({
+      company_name: prospect?.company_name || '',
+      client_id: prospect?.client_id ? String(prospect.client_id) : '',
+      priority_id: prospect?.priority_id ? String(prospect.priority_id) : '',
+      vendor_id: prospect?.vendor_id ? String(prospect.vendor_id) : enforcedVendorId != null ? String(enforcedVendorId) : '',
+      step_id: prospect?.step_id ? String(prospect.step_id) : '',
+      fijo_ren: prospect?.fijo_ren || 0,
+      fijo_new: prospect?.fijo_new || 0,
+      movil_nueva: prospect?.movil_nueva || 0,
+      movil_renovacion: prospect?.movil_renovacion || 0,
+      claro_tv: prospect?.claro_tv || 0,
+      cloud: prospect?.cloud || 0,
+      mpls: prospect?.mpls || 0,
+      contact_phone: prospect?.contact_phone || '',
+      contact_email: prospect?.contact_email || '',
+      notes: prospect?.notes || '',
+      is_completed: prospect?.is_completed || false
+    });
+  }, [prospect, enforcedVendorId]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     
+    const resolvedVendorId = disableVendorSelect && enforcedVendorId != null
+      ? enforcedVendorId
+      : formData.vendor_id
+      ? parseInt(formData.vendor_id.toString(), 10)
+      : null;
+
     const data = {
       ...formData,
-      client_id: formData.client_id ? parseInt(formData.client_id.toString()) : null,
-      priority_id: formData.priority_id ? parseInt(formData.priority_id.toString()) : null,
-      vendor_id: formData.vendor_id ? parseInt(formData.vendor_id.toString()) : null,
-      step_id: formData.step_id ? parseInt(formData.step_id.toString()) : null,
+      client_id: formData.client_id ? parseInt(formData.client_id.toString(), 10) : null,
+      priority_id: formData.priority_id ? parseInt(formData.priority_id.toString(), 10) : null,
+      vendor_id: resolvedVendorId,
+      step_id: formData.step_id ? parseInt(formData.step_id.toString(), 10) : null,
     };
     
     onSave(data);
@@ -512,6 +565,8 @@ function ProspectModal({
                   value={formData.vendor_id}
                   onChange={(e) => setFormData({...formData, vendor_id: e.target.value})}
                   className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-white"
+                  disabled={disableVendorSelect || vendors.length <= 1}
+                  required
                 >
                   <option value="">Seleccionar vendedor</option>
                   {vendors.map(vendor => (
@@ -520,6 +575,9 @@ function ProspectModal({
                     </option>
                   ))}
                 </select>
+                {(disableVendorSelect || vendors.length === 1) && (
+                  <p className="mt-2 text-xs text-gray-400">Asignado automáticamente a tu usuario.</p>
+                )}
               </div>
 
               <div>

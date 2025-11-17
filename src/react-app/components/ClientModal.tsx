@@ -1,6 +1,7 @@
-import { useState, useEffect } from "react";
-import { X, Plus, Hash } from "lucide-react";
+import { useState, useEffect, useMemo } from "react";
+import { X, Plus, Hash, Calendar } from "lucide-react";
 import { Client, Vendor, CreateClient } from "@/shared/types";
+import { getCurrentUser } from "@/react-app/utils/auth";
 
 interface BAN {
   id: number;
@@ -54,14 +55,69 @@ export default function ClientModal({
     contact_person: '',
     email: '',
     phone: '',
+    secondary_phone: '',
+    mobile_phone: '',
     address: '',
+    city: '',
+    zip_code: '',
     includes_ban: false,
     vendor_id: undefined,
   });
   const [formMessage, setFormMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
+  const authUser = getCurrentUser();
+  const isVendorUser = authUser?.role === "vendedor";
+  const parsedVendorId = authUser?.salespersonId != null ? Number(authUser.salespersonId) : NaN;
+  const vendorIdNumber = isVendorUser && !Number.isNaN(parsedVendorId) ? parsedVendorId : undefined;
+  const vendorIdString = isVendorUser && authUser?.salespersonId != null ? String(authUser.salespersonId) : undefined;
+
+  const availableVendors = useMemo(() => {
+    if (isVendorUser && vendorIdString) {
+      return vendors.filter((vendor) => String(vendor.id) === vendorIdString);
+    }
+    return vendors;
+  }, [vendors, isVendorUser, vendorIdString]);
+
+  const effectiveVendorId = isVendorUser && vendorIdNumber !== undefined ? vendorIdNumber : formData.vendor_id;
+
   const banRequirementActive = Boolean(banRequirementPending);
+
+  const getExpirationBadge = (contractEndDate: string | null | undefined) => {
+    if (!contractEndDate) {
+      return {
+        label: 'Vencido +30 días',
+        className: 'bg-red-900/60 text-red-100 border border-red-500/40',
+      };
+    }
+
+    const endDate = new Date(contractEndDate);
+    const today = new Date();
+    const diffDays = Math.ceil((endDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+
+    if (diffDays < 0) {
+      return {
+        label: `Vencido hace ${Math.abs(diffDays)} día${Math.abs(diffDays) !== 1 ? 's' : ''}`,
+        className: 'bg-red-900/60 text-red-100 border border-red-500/40',
+      };
+    }
+    if (diffDays <= 15) {
+      return {
+        label: `Vence en ${diffDays} día${diffDays !== 1 ? 's' : ''}`,
+        className: 'bg-orange-900/60 text-orange-100 border border-orange-500/40',
+      };
+    }
+    if (diffDays <= 30) {
+      return {
+        label: `Vence en ${diffDays} día${diffDays !== 1 ? 's' : ''}`,
+        className: 'bg-yellow-900/60 text-yellow-100 border border-yellow-500/40',
+      };
+    }
+    return {
+      label: `Vence en ${diffDays} día${diffDays !== 1 ? 's' : ''}`,
+      className: 'bg-green-900/60 text-green-100 border border-green-500/40',
+    };
+  };
 
   useEffect(() => {
     if (client) {
@@ -71,7 +127,11 @@ export default function ClientModal({
         contact_person: client.contact_person ?? '',
         email: client.email ?? '',
         phone: client.phone ?? '',
+        secondary_phone: (client as any).secondary_phone ?? '',
+        mobile_phone: (client as any).mobile_phone ?? '',
         address: client.address ?? '',
+        city: (client as any).city ?? '',
+        zip_code: (client as any).zip_code ?? '',
         includes_ban: Boolean(client.includes_ban),
         vendor_id: client.vendor_id ?? undefined,
       });
@@ -83,18 +143,29 @@ export default function ClientModal({
         contact_person: '',
         email: '',
         phone: '',
+        secondary_phone: '',
+        mobile_phone: '',
         address: '',
+        city: '',
+        zip_code: '',
         includes_ban: false,
         vendor_id: undefined,
       });
     }
+
+    if (isVendorUser && vendorIdNumber !== undefined) {
+      setFormData((prev) => ({ ...prev, vendor_id: vendorIdNumber }));
+    }
+
     setFormMessage(null);
     setIsSaving(false);
-  }, [client]);
+  }, [client, isVendorUser, vendorIdNumber]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setFormMessage(null);
+
+    const vendorIdToUse = isVendorUser ? vendorIdNumber : formData.vendor_id;
 
     if (!formData.name?.trim()) {
       setFormMessage({ type: 'error', text: 'El nombre del cliente es obligatorio.' });
@@ -120,7 +191,7 @@ export default function ClientModal({
       setFormMessage({ type: 'error', text: 'La dirección es obligatoria.' });
       return;
     }
-    if (!formData.vendor_id) {
+    if (vendorIdToUse == null) {
       setFormMessage({ type: 'error', text: 'Debe asignar un vendedor.' });
       return;
     }
@@ -135,9 +206,13 @@ export default function ClientModal({
       contact_person: formData.contact_person.trim(),
       email: formData.email.trim(),
       phone: formData.phone.trim(),
+      secondary_phone: formData.secondary_phone?.trim() || undefined,
+      mobile_phone: formData.mobile_phone?.trim() || undefined,
       address: formData.address.trim(),
+      city: formData.city?.trim() || undefined,
+      zip_code: formData.zip_code?.trim() || undefined,
       includes_ban: formData.includes_ban,
-      vendor_id: formData.vendor_id,
+      vendor_id: vendorIdToUse,
     };
 
     const maybePromise = onSave(cleanData);
@@ -161,7 +236,7 @@ export default function ClientModal({
 
   return (
     <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-start justify-center z-50 p-4 pt-16">
-      <div className="bg-gray-200 dark:bg-gray-800 rounded-xl shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto border border-gray-200 dark:border-gray-700">
+      <div className="bg-gray-200 dark:bg-gray-800 rounded-xl shadow-xl max-w-7xl w-full max-h-[90vh] overflow-y-auto border border-gray-200 dark:border-gray-700">
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-gray-800 dark:to-gray-700 rounded-t-xl">
           <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
@@ -283,6 +358,34 @@ export default function ClientModal({
                   />
                 </div>
 
+                {/* Secondary Phone */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    TelAcfono Adicional
+                  </label>
+                  <input
+                    type="tel"
+                    value={formData.secondary_phone || ''}
+                    onChange={(e) => setFormData(prev => ({ ...prev, secondary_phone: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-800 dark:bg-gray-800 text-gray-100 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-400"
+                    placeholder="TelAcfono adicional"
+                  />
+                </div>
+
+                {/* Mobile Phone */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Celular
+                  </label>
+                  <input
+                    type="tel"
+                    value={formData.mobile_phone || ''}
+                    onChange={(e) => setFormData(prev => ({ ...prev, mobile_phone: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-800 dark:bg-gray-800 text-gray-100 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-400"
+                    placeholder="NFA-mero de celular"
+                  />
+                </div>
+
                 {/* Address */}
                 <div className="md:col-span-2">
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
@@ -304,21 +407,33 @@ export default function ClientModal({
                     Vendedor Asignado *
                   </label>
                   <select
-                    value={formData.vendor_id || ''}
-                    onChange={(e) => setFormData(prev => ({ 
-                      ...prev, 
-                      vendor_id: e.target.value ? parseInt(e.target.value) : undefined 
-                    }))}
+                    value={effectiveVendorId ?? ''}
+                    onChange={(e) => setFormData(prev => {
+                      if (isVendorUser) {
+                        return prev;
+                      }
+                      const nextId = e.target.value ? parseInt(e.target.value, 10) : undefined;
+                      return {
+                        ...prev,
+                        vendor_id: Number.isNaN(nextId) ? undefined : nextId,
+                      };
+                    })}
                     className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-800 dark:bg-gray-800 text-gray-100 dark:text-gray-100"
                     required
+                    disabled={isVendorUser}
                   >
                     <option value="">Seleccione un vendedor</option>
-                    {vendors.map((vendor) => (
+                    {availableVendors.map((vendor) => (
                       <option key={vendor.id} value={vendor.id}>
                         {vendor.name}
                       </option>
                     ))}
                   </select>
+                  {isVendorUser && (
+                    <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                      Asignado automáticamente a tu usuario.
+                    </p>
+                  )}
                 </div>
 
                 {/* Includes BAN */}
@@ -434,21 +549,37 @@ export default function ClientModal({
                         {ban.subscribers && ban.subscribers.length > 0 ? (
                           ban.subscribers.map((subscriber) => (
                             <div key={subscriber.id} className="flex items-center justify-between bg-gray-300 dark:bg-gray-700 rounded p-2">
-                              <div>
-                                <div className="font-mono text-xs text-gray-900 dark:text-gray-100">
-                                  {subscriber.phone}
-                                </div>
-                                {subscriber.service_type && (
-                                  <div className="text-xs text-gray-500 dark:text-gray-400">
-                                    {subscriber.service_type}
-                                  </div>
-                                )}
-                                {subscriber.monthly_value && (
-                                  <div className="text-xs text-green-600 dark:text-green-400">
-                                    ${subscriber.monthly_value}/mes
-                                  </div>
-                                )}
+                          <div>
+                            <div className="font-mono text-xs text-gray-900 dark:text-gray-100">
+                              {subscriber.phone}
+                            </div>
+                            {subscriber.service_type && (
+                              <div className="text-xs text-gray-500 dark:text-gray-400">
+                                {subscriber.service_type}
                               </div>
+                            )}
+                            {subscriber.monthly_value && (
+                              <div className="text-xs text-green-600 dark:text-green-400">
+                                ${subscriber.monthly_value}/mes
+                              </div>
+                            )}
+                            <div className="mt-1 flex items-center gap-2">
+                              <div className="text-xs text-gray-600 dark:text-gray-400 flex items-center">
+                                <Calendar className="w-3 h-3 mr-1" />
+                                {subscriber.contract_end_date
+                                  ? new Date(subscriber.contract_end_date).toLocaleDateString()
+                                  : 'Sin fecha'}
+                              </div>
+                              {(() => {
+                                const { label, className } = getExpirationBadge(subscriber.contract_end_date);
+                                return (
+                                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${className}`}>
+                                    {label}
+                                  </span>
+                                );
+                              })()}
+                            </div>
+                          </div>
                             </div>
                           ))
                         ) : (

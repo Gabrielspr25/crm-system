@@ -1,29 +1,48 @@
-import { useState } from "react";
+﻿import { useState, useEffect } from "react";
 import { X } from "lucide-react";
 
 interface BANModalProps {
-  onSave: (data: { ban_number: string; description?: string }) => void;
+  onSave: (data: { ban_number: string; description?: string; status?: string }) => void;
   onClose: () => void;
+  ban?: { id: number; ban_number: string; description?: string | null; status?: string };
 }
 
-export default function BANModal({ onSave, onClose }: BANModalProps) {
+export default function BANModal({ onSave, onClose, ban }: BANModalProps) {
   const [formData, setFormData] = useState({
-    ban_number: '',
-    description: '',
+    ban_number: ban?.ban_number || '',
+    description: ban?.description || '',
+    status: (ban?.status || 'active') as 'active' | 'cancelled',
   });
 
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Actualizar formData cuando cambie el prop ban
+  useEffect(() => {
+    if (ban) {
+      setFormData({
+        ban_number: ban.ban_number || '',
+        description: ban.description || '',
+        status: (ban.status || 'active') as 'active' | 'cancelled',
+      });
+    } else {
+      setFormData({
+        ban_number: '',
+        description: '',
+        status: 'active',
+      });
+    }
+  }, [ban]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!formData.ban_number.trim()) {
-      alert('El número BAN es obligatorio');
+      alert('El nÃºmero BAN es obligatorio');
       return;
     }
 
     if (formData.ban_number.length !== 9 || !/^\d+$/.test(formData.ban_number)) {
-      alert('El número BAN debe tener exactamente 9 dígitos');
+      alert('El nÃºmero BAN debe tener exactamente 9 dÃ­gitos');
       return;
     }
 
@@ -32,9 +51,10 @@ export default function BANModal({ onSave, onClose }: BANModalProps) {
       await onSave({
         ban_number: formData.ban_number,
         description: formData.description.trim() || undefined,
+        status: formData.status,
       });
-      // Si llegamos aquí, el BAN se creó exitosamente - resetear y cerrar
-      setFormData({ ban_number: '', description: '' });
+      // Si llegamos aquÃ­, el BAN se creÃ³ exitosamente - resetear y cerrar
+      setFormData({ ban_number: '', description: '', status: 'active' });
       setIsSubmitting(false);
       onClose();
     } catch (error) {
@@ -45,7 +65,7 @@ export default function BANModal({ onSave, onClose }: BANModalProps) {
   };
 
   const handleClose = () => {
-    setFormData({ ban_number: '', description: '' });
+    setFormData({ ban_number: '', description: '', status: 'active' });
     setIsSubmitting(false);
     onClose();
   };
@@ -56,7 +76,7 @@ export default function BANModal({ onSave, onClose }: BANModalProps) {
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-gray-800 dark:to-gray-700 rounded-t-xl">
           <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
-            Nuevo BAN
+            {ban ? 'Editar BAN' : 'Nuevo BAN'}
           </h2>
           <button
             onClick={handleClose}
@@ -72,7 +92,7 @@ export default function BANModal({ onSave, onClose }: BANModalProps) {
           {/* BAN Number */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Número BAN *
+              NÃºmero BAN *
             </label>
             <input
               type="text"
@@ -85,24 +105,40 @@ export default function BANModal({ onSave, onClose }: BANModalProps) {
               placeholder="123456789"
               maxLength={9}
               required
+              readOnly={!!ban}
             />
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-              Debe ser un número de 9 dígitos únicos
+              Debe ser un nÃºmero de 9 dÃ­gitos Ãºnicos
             </p>
           </div>
 
           {/* Description */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Descripción del BAN
+              DescripciÃ³n del BAN
             </label>
             <textarea
               value={formData.description}
               onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
               rows={3}
               className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-800 dark:bg-gray-800 text-gray-100 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-400"
-              placeholder="Descripción opcional del BAN"
+              placeholder="DescripciÃ³n opcional del BAN"
             />
+          </div>
+
+          {/* Status */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              Estado
+            </label>
+            <select
+              value={formData.status}
+              onChange={(e) => setFormData(prev => ({ ...prev, status: e.target.value as 'active' | 'cancelled' }))}
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-800 dark:bg-gray-800 text-gray-100 dark:text-gray-100"
+            >
+              <option value="active">Activo</option>
+              <option value="cancelled">Cancelado</option>
+            </select>
           </div>
 
           {/* Footer */}
@@ -120,7 +156,7 @@ export default function BANModal({ onSave, onClose }: BANModalProps) {
               disabled={isSubmitting}
               className="px-6 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg hover:from-blue-700 hover:to-indigo-700 transition-all duration-200 shadow-lg shadow-blue-500/25 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {isSubmitting ? 'Creando...' : 'Crear BAN'}
+              {isSubmitting ? (ban ? 'Guardando...' : 'Creando...') : (ban ? 'Guardar Cambios' : 'Crear BAN')}
             </button>
           </div>
         </form>
@@ -128,3 +164,4 @@ export default function BANModal({ onSave, onClose }: BANModalProps) {
     </div>
   );
 }
+

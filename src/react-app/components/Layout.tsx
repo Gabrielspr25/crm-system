@@ -1,25 +1,36 @@
-import { Link, useLocation } from "react-router";
-import { 
-  Users, 
-  PhoneCall, 
-  BarChart3, 
-  Building2, 
-  Target, 
-  Folder, 
+import { Link, useLocation, useNavigate } from "react-router";
+import { useMemo, useEffect } from "react";
+import type { LucideIcon } from "lucide-react";
+import {
+  Users,
+  PhoneCall,
+  BarChart3,
+  Building2,
+  Folder,
   Package,
+  UserCircle2,
   Sun,
   Moon
 } from "lucide-react";
 import { useTheme } from "@/react-app/hooks/useTheme";
+import { getCurrentRole, getCurrentUser, clearAuthToken } from "@/react-app/utils/auth";
 
-const navigation = [
-  { name: "Clientes", href: "/", icon: Users },
-  { name: "Seguimiento", href: "/seguimiento", icon: PhoneCall },
-  { name: "Reportes", href: "/reportes", icon: BarChart3 },
-  { name: "Vendedores", href: "/vendedores", icon: Building2 },
-  { name: "Metas", href: "/metas", icon: Target },
-  { name: "Categorías", href: "/categorias", icon: Folder },
-  { name: "Productos", href: "/productos", icon: Package },
+type NavItem = {
+  name: string;
+  href: string;
+  icon: LucideIcon;
+  roles?: string[];
+};
+
+// VERSION: 2025-01-15-SIN-METAS-SIN-IMPORTADOR-V4
+const navigation: NavItem[] = [
+  { name: "Clientes", href: "/", icon: Users, roles: ["admin", "supervisor", "vendedor"] },
+  { name: "Seguimiento", href: "/seguimiento", icon: PhoneCall, roles: ["admin", "supervisor", "vendedor"] },
+  { name: "Reportes", href: "/reportes", icon: BarChart3, roles: ["admin", "supervisor"] },
+  { name: "Vendedores", href: "/vendedores", icon: Building2, roles: ["admin", "supervisor"] },
+  { name: "Categorías", href: "/categorias", icon: Folder, roles: ["admin"] },
+  { name: "Productos", href: "/productos", icon: Package, roles: ["admin", "supervisor"] },
+  { name: "Perfil", href: "/perfil", icon: UserCircle2, roles: ["admin", "supervisor", "vendedor"] }
 ];
 
 interface LayoutProps {
@@ -28,7 +39,27 @@ interface LayoutProps {
 
 export default function Layout({ children }: LayoutProps) {
   const location = useLocation();
+  const navigate = useNavigate();
   const { isDark, toggleTheme } = useTheme();
+  const role = getCurrentRole() ?? "admin";
+  const user = useMemo(() => getCurrentUser(), []);
+  const userLabel = user?.salespersonName || user?.username || "Usuario";
+
+  // Verificación de versión - SIN MAPEO
+  useEffect(() => {
+    console.log('✅ LAYOUT VERSION: 2025-01-15-SIN-MAPEO');
+    console.log('✅ Navigation items:', navigation.map(n => n.name).join(', '));
+  }, []);
+
+  const filteredNavigation = useMemo(
+    () => navigation.filter((item) => !item.roles || item.roles.includes(role)),
+    [role]
+  );
+
+  const handleLogout = () => {
+    clearAuthToken();
+    navigate("/login", { replace: true });
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 dark:from-slate-900 dark:to-slate-800 transition-colors duration-300">
@@ -37,14 +68,36 @@ export default function Layout({ children }: LayoutProps) {
         <div className="flex h-full flex-col">
           {/* Logo */}
           <div className="flex h-16 items-center justify-center border-b border-slate-700 dark:border-slate-700">
-            <h1 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-              VentasPro
-            </h1>
+            <div className="text-center">
+              <h1 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+                VentasPro
+              </h1>
+              <p className="text-xs text-slate-400 mt-1">
+                {userLabel} · {role.toUpperCase()}
+              </p>
+            </div>
           </div>
-          
+
+          {/* User Info */}
+          <div className="p-4 border-b border-slate-700 dark:border-slate-700">
+            <div className="flex items-center">
+              <div className="w-10 h-10 rounded-full bg-blue-600/40 border border-blue-400/40 text-blue-100 flex items-center justify-center font-semibold mr-3 uppercase">
+                {userLabel.slice(0, 2)}
+              </div>
+              <div>
+                <p className="text-sm font-medium text-slate-100 dark:text-slate-100">
+                  {userLabel}
+                </p>
+                <p className="text-xs text-slate-400 dark:text-slate-400">
+                  {role.toUpperCase()}
+                </p>
+              </div>
+            </div>
+          </div>
+
           {/* Navigation */}
           <nav className="flex-1 space-y-1 p-4">
-            {navigation.map((item) => {
+            {filteredNavigation.map((item) => {
               const isActive = location.pathname === item.href;
               return (
                 <Link
@@ -72,7 +125,7 @@ export default function Layout({ children }: LayoutProps) {
           </nav>
 
           {/* Theme Toggle */}
-          <div className="p-4 border-t border-slate-700 dark:border-slate-700">
+          <div className="p-4 border-t border-slate-700 dark:border-slate-700 space-y-3">
             <button
               onClick={toggleTheme}
               className="w-full flex items-center justify-center px-3 py-2 text-sm font-medium text-slate-300 dark:text-slate-300 hover:bg-slate-700 dark:hover:bg-slate-700 hover:text-slate-100 dark:hover:text-slate-100 rounded-lg transition-all duration-200"
@@ -90,7 +143,14 @@ export default function Layout({ children }: LayoutProps) {
                 </>
               )}
             </button>
+            <button
+              onClick={handleLogout}
+              className="w-full flex items-center justify-center px-3 py-2 text-sm font-medium text-red-300 hover:text-white bg-red-900/30 hover:bg-red-700/70 rounded-lg transition-all duration-200"
+            >
+              Cerrar sesión
+            </button>
           </div>
+
         </div>
       </div>
 
