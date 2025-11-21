@@ -47,7 +47,7 @@ export default function ConfirmModal({
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-gray-200 dark:bg-slate-800 rounded-2xl shadow-2xl max-w-md w-full border border-slate-200 dark:border-slate-700 transform transition-all duration-200 scale-100">
+      <div className="bg-slate-800 dark:bg-slate-800 rounded-2xl shadow-2xl max-w-md w-full border border-slate-600 dark:border-slate-700 transform transition-all duration-200 scale-100">
         {/* Header with Icon */}
         <div className="flex items-start p-6 pb-4">
           <div className={`flex-shrink-0 w-12 h-12 rounded-full ${colors.iconBg} flex items-center justify-center mr-4`}>

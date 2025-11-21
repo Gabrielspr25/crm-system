@@ -1,5 +1,6 @@
-﻿import { useState, useEffect, useCallback, useMemo } from "react";
-import { Plus, Search, Edit, Users, Building, Phone, Mail, MapPin, Hash, Clock, AlertTriangle, Calendar, Trash2, UserPlus } from "lucide-react";
+﻿// VERSION: 2025-01-15-T5 (Banner eliminado, conteo BANs corregido)
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { Plus, Search, Edit, Users, Building, Phone, Mail, MapPin, Hash, Calendar, Trash2, UserPlus } from "lucide-react";
 import { useApi } from "../hooks/useApi";
 import { authFetch } from "@/react-app/utils/auth";
 import ClientModal from "../components/ClientModal";
@@ -28,6 +29,12 @@ interface Client {
   is_active: number;
   created_at: string;
   updated_at: string;
+  last_activity?: string | null;
+  all_service_types?: string | null;
+  primary_service_type?: string | null;
+  has_cancelled_bans?: number;
+  subscriber_count?: number;
+  subscribers_in_opportunity?: number;
 }
 
 interface Vendor {
@@ -60,6 +67,7 @@ interface Subscriber {
   service_type: string | null;
   monthly_value: number | null;
   months: number | null;
+  remaining_payments: number | null;
   is_active: number;
   created_at: string;
   updated_at: string;
@@ -105,10 +113,14 @@ interface ClientRowSummary {
   status: ClientStatus;
   isBeingFollowed: boolean;
   wasCompleted: boolean;
+  lastActivity?: string | null;
+  banType?: string | null;
   followUpProspectId?: number;
   banNumbers: string[];
   subscriberPhones: string[];
   includesBan: boolean;
+  hasCancelledBans?: boolean;
+  isIncomplete?: boolean;
 }
 
 interface ClientDetail {
@@ -155,7 +167,7 @@ const computeSubscriberTiming = (contractEndDate: string | null) => {
 
 const formatDaysUntilExpiry = (days: number, status: ClientStatus, createdAt?: string | null) => {
   if (status === 'overdue') {
-    return 'Vencido +30 dÃ­as';
+    return 'Vencido +30 días';
   }
   if (status === 'no-date') {
     if (createdAt) {
@@ -163,11 +175,11 @@ const formatDaysUntilExpiry = (days: number, status: ClientStatus, createdAt?: s
     }
     return 'Sin fecha definida';
   } else if (days < 0) {
-    return `Vencido hace ${Math.abs(days)} dÃ­a${Math.abs(days) !== 1 ? 's' : ''}`;
+    return `Vencido hace ${Math.abs(days)} día${Math.abs(days) !== 1 ? 's' : ''}`;
   } else if (days === 0) {
     return 'Vence hoy';
   } else {
-    return `Vence en ${days} dÃ­a${days !== 1 ? 's' : ''}`;
+    return `Vence en ${days} día${days !== 1 ? 's' : ''}`;
   }
 };
 
@@ -190,12 +202,14 @@ const getStatusBadge = (status: ClientStatus, days: number, createdAt?: string |
   }
 };
 
+// V3.0 FORCE RECOMPILE - 2025-01-15
 export default function Clients() {
   const [searchTerm, setSearchTerm] = useState("");
   const [showClientModal, setShowClientModal] = useState(false);
   const [showBANModal, setShowBANModal] = useState(false);
   const [showSubscriberModal, setShowSubscriberModal] = useState(false);
   const [showClientDetailModal, setShowClientDetailModal] = useState(false);
+  const [loadingClientDetail, setLoadingClientDetail] = useState(false);
   const [editingClient, setEditingClient] = useState<Client | null>(null);
   const [selectedClientId, setSelectedClientId] = useState<number | null>(null);
   const [selectedBanId, setSelectedBanId] = useState<number | null>(null);
@@ -207,9 +221,11 @@ export default function Clients() {
   const [stopFollowNotes, setStopFollowNotes] = useState('');
   
   const [clientItems, setClientItems] = useState<ClientItem[]>([]);
-  const [activeTab, setActiveTab] = useState<'available' | 'following' | 'completed'>('available');
+  const [activeTab, setActiveTab] = useState<'available' | 'following' | 'completed' | 'cancelled' | 'incomplete'>('available');
 const [notification, setNotification] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
 const [pendingBanClientId, setPendingBanClientId] = useState<number | null>(null);
+const [currentPage, setCurrentPage] = useState(1);
+const [itemsPerPage, setItemsPerPage] = useState(50);
 
   const { data: clients, loading: clientsLoading, refetch: refetchClients } = useApi<Client[]>("/api/clients");
   const { data: vendors } = useApi<Vendor[]>("/api/vendors");
@@ -267,16 +283,25 @@ const statusPriority: Record<ClientStatus, number> = {
 
     window.addEventListener('editClient', handleEditClient);
     window.addEventListener('refreshClients', handleRefreshClients);
+    window.addEventListener('clients-updated', handleRefreshClients);
     return () => {
       window.removeEventListener('editClient', handleEditClient);
       window.removeEventListener('refreshClients', handleRefreshClients);
+      window.removeEventListener('clients-updated', handleRefreshClients);
     };
   }, [refetchClients]);
 
   // Load all client data with their BANs and subscribers
   useEffect(() => {
+    // Evitar ejecutar si aún está cargando
+    if (clientsLoading) {
+      return;
+    }
+    
     const loadClientData = async () => {
+      console.log('🔄 loadClientData iniciado. Clientes recibidos:', clients?.length || 0);
       if (!clients || clients.length === 0) {
+        console.log('⚠️ No hay clientes, limpiando clientItems');
         setClientItems([]);
         return;
       }
@@ -284,7 +309,9 @@ const statusPriority: Record<ClientStatus, number> = {
       try {
         const followUpProspects = (prospects || []) as FollowUpProspect[];
         
+        // PRIMERO: Crear clientItems básicos SIN cargar BANs/suscriptores (más rápido)
         const clientData: ClientItem[] = [];
+        console.log(`📊 Creando ${clients.length} clientItems básicos (sin BANs/suscriptores)...`);
         
         for (const client of clients) {
           // Check if this client is being followed
@@ -296,129 +323,75 @@ const statusPriority: Record<ClientStatus, number> = {
           const wasCompleted = completedProspectExists;
           const followUpProspectId = activeProspect?.id;
 
-          if (client.has_bans) {
-            try {
-              const bansResponse = await authFetch(`/api/bans?client_id=${client.id}`);
-              if (bansResponse.ok) {
-                const bans: BAN[] = await bansResponse.json();
-                
-                for (const ban of bans) {
-                  try {
-                    const subscribersResponse = await authFetch(`/api/subscribers?ban_id=${ban.id}`);
-                    if (subscribersResponse.ok) {
-                      const subscribers: Subscriber[] = await subscribersResponse.json();
-                      
-                      if (subscribers.length > 0) {
-                        subscribers.forEach(subscriber => {
-                        let daysUntilExpiry = 999999;
-                        let status: ClientStatus = 'no-date';
-
-                        if (subscriber.contract_end_date) {
-                            const endDate = new Date(subscriber.contract_end_date);
-                            const today = new Date();
-                            daysUntilExpiry = Math.ceil((endDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-                            
-                            if (daysUntilExpiry < 0) status = 'expired';
-                            else if (daysUntilExpiry <= 15) status = 'critical';
-                            else if (daysUntilExpiry <= 30) status = 'warning';
-                            else status = 'good';
-                        } else {
-                          status = 'overdue';
-                          daysUntilExpiry = -999;
-                          }
-                          
-                          clientData.push({
-                            clientId: client.id,
-                            clientName: client.name,
-                            businessName: client.business_name,
-                            vendorId: client.vendor_id,
-                            vendorName: client.vendor_name,
-                            banId: ban.id,
-                            banNumber: ban.ban_number,
-                            subscriberId: subscriber.id,
-                            subscriberPhone: subscriber.phone,
-                            serviceType: subscriber.service_type,
-                            monthlyValue: subscriber.monthly_value,
-                            contractEndDate: subscriber.contract_end_date,
-                            subscriberCreatedAt: subscriber.created_at,
-                            daysUntilExpiry,
-                            status,
-                            isBeingFollowed,
-                            wasCompleted,
-                            followUpProspectId,
-                            includesBan: true
-                          });
-                        });
-                      } else {
-                        // BAN without subscribers
-                        clientData.push({
-                          clientId: client.id,
-                          clientName: client.name,
-                          businessName: client.business_name,
-                          vendorId: client.vendor_id,
-                          vendorName: client.vendor_name,
-                          banId: ban.id,
-                          banNumber: ban.ban_number,
-                          subscriberId: 0,
-                          subscriberPhone: '-',
-                          serviceType: null,
-                          monthlyValue: null,
-                          contractEndDate: null,
-                          subscriberCreatedAt: null,
-                          daysUntilExpiry: 999999,
-                          status: 'no-date',
-                          isBeingFollowed,
-                          wasCompleted,
-                          followUpProspectId,
-                          includesBan: true
-                        });
-                      }
-                    }
-                  } catch (error) {
-                    console.error(`Error loading subscribers for BAN ${ban.id}:`, error);
-                  }
-                }
-              }
-            } catch (error) {
-              console.error(`Error loading BANs for client ${client.id}:`, error);
+          // Usar datos del backend directamente (ban_numbers ya viene en la consulta)
+          const banNumbers = client.ban_numbers || null;
+          // Extraer TODOS los BANs (separados por coma)
+          const allBanNumbers = banNumbers ? banNumbers.split(',').map(b => b.trim()).filter(b => b) : [];
+          const primaryBanNumber = allBanNumbers.length > 0 ? allBanNumbers[0] : '-';
+          const subscriberCount = (client as any).subscriber_count || 0;
+          const primarySubscriberPhone = (client as any).primary_subscriber_phone || null;
+          const primaryContractEndDate = (client as any).primary_contract_end_date || null;
+          const primarySubscriberCreatedAt = (client as any).primary_subscriber_created_at || null;
+          
+          // Calcular días hasta vencimiento
+          let daysUntilExpiry = 999999;
+          let status: ClientItem['status'] = 'no-date';
+          if (primaryContractEndDate) {
+            const endDate = new Date(primaryContractEndDate);
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const diffTime = endDate.getTime() - today.getTime();
+            daysUntilExpiry = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            
+            if (daysUntilExpiry < 0) {
+              status = 'expired';
+            } else if (daysUntilExpiry <= 15) {
+              status = 'critical';
+            } else if (daysUntilExpiry <= 30) {
+              status = 'warning';
+            } else {
+              status = 'good';
             }
-          } else {
-            // Client without BANs
-            clientData.push({
-              clientId: client.id,
-              clientName: client.name,
-              businessName: client.business_name,
-              vendorId: client.vendor_id,
-              vendorName: client.vendor_name,
-              banId: 0,
-              banNumber: '-',
-              subscriberId: 0,
-              subscriberPhone: '-',
-              serviceType: null,
-              monthlyValue: null,
-              contractEndDate: null,
-              subscriberCreatedAt: null,
-              daysUntilExpiry: 999999,
-              status: 'no-date',
-              isBeingFollowed,
-              wasCompleted,
-              followUpProspectId,
-              includesBan: false
-            });
           }
+          
+          clientData.push({
+            clientId: client.id,
+            clientName: client.name,
+            businessName: client.business_name,
+            vendorId: client.vendor_id,
+            vendorName: client.vendor_name,
+            banId: client.has_bans ? 1 : 0,
+            banNumber: primaryBanNumber,
+            subscriberId: subscriberCount > 0 ? 1 : 0,
+            subscriberPhone: primarySubscriberPhone || '-',
+            serviceType: null,
+            monthlyValue: null,
+            contractEndDate: primaryContractEndDate,
+            subscriberCreatedAt: primarySubscriberCreatedAt,
+            daysUntilExpiry,
+            status,
+            isBeingFollowed,
+            wasCompleted,
+            followUpProspectId,
+            includesBan: client.has_bans || false
+          });
         }
         
-        // Sort by days until expiry (ascending - most urgent first)
-        clientData.sort((a, b) => a.daysUntilExpiry - b.daysUntilExpiry);
+        // Sort by client name
+        clientData.sort((a, b) => a.clientName.localeCompare(b.clientName));
+        console.log(`✅ Procesamiento básico completado. Total clientItems: ${clientData.length}`);
         setClientItems(clientData);
+        
+        // SEGUNDO: Cargar detalles de BANs/suscriptores en segundo plano (opcional, no bloquea la UI)
+        // Esto se puede hacer de forma lazy cuando el usuario expande un cliente
       } catch (error) {
-        console.error('Error loading client data:', error);
+        console.error('❌ Error loading client data:', error);
         setClientItems([]);
       }
     };
 
     loadClientData();
-  }, [clients, prospects]);
+  }, [clients, prospects, clientsLoading]);
 
   const clientSummaries = useMemo<ClientRowSummary[]>(() => {
     const map = new Map<number, {
@@ -511,42 +484,228 @@ const statusPriority: Record<ClientStatus, number> = {
       }
     });
 
-    return Array.from(map.values()).map(({ base, banIds, banNumbers, subscriberPhones, primary }) => {
-      const totalBans = banIds.size;
+    // Crear un mapa de clientId a lastActivity, banType, hasCancelledBans e isIncomplete desde clients
+    const clientMetadata = new Map<number, { lastActivity: string | null; banType: string | null; hasCancelledBans: boolean; isIncomplete: boolean }>();
+    if (clients) {
+      console.log(`🔄 Procesando ${clients.length} clientes para detectar incompletos...`);
+      clients.forEach(client => {
+        const lastActivity = client.last_activity || client.updated_at || null;
+        const allServiceTypes = client.all_service_types || null;
+        let banType = null;
+        if (allServiceTypes) {
+          const types = allServiceTypes.toLowerCase();
+          const hasMovil = types.includes('móvil') || types.includes('movil') || types.includes('mobile');
+          const hasFijo = types.includes('fijo') || types.includes('fixed');
+          if (hasMovil && hasFijo) {
+            banType = 'Convergente';
+          } else if (hasMovil) {
+            banType = 'Móvil';
+          } else if (hasFijo) {
+            banType = 'Fijo';
+          }
+        }
+        const hasCancelledBans = Boolean(client.has_cancelled_bans);
+        
+        // Detectar clientes incompletos:
+        // Un cliente está COMPLETO solo si tiene:
+        // 1. business_name (cualquiera, incluso auto-generado)
+        // 2. Al menos un BAN (has_bans = true)
+        // 3. Al menos un suscriptor (subscriber_count > 0)
+        //
+        // CAMPOS OPCIONALES (NO requeridos para estar completo):
+        // - email, phone, address, contact_person, city, zip_code
+        // - secondary_phone, mobile_phone
+        
+        // NUEVA LÓGICA: Por defecto TODO cliente va a "Incompletos"
+        // Para pasar a "Disponibles" necesita: BAN + Suscriptor + (Nombre O Empresa)
+        const hasName = Boolean(
+          client.name !== null && 
+          client.name !== undefined && 
+          typeof client.name === 'string' && 
+          client.name.trim() !== ''
+        );
+        const hasBusinessName = Boolean(
+          client.business_name !== null && 
+          client.business_name !== undefined && 
+          typeof client.business_name === 'string' && 
+          client.business_name.trim() !== ''
+        );
+        const hasNameOrBusiness = hasName || hasBusinessName;
+        
+        // Verificar BAN - puede venir como has_bans (boolean) o ban_count (número)
+        const hasBAN = Boolean(client.has_bans || (client.ban_count && client.ban_count > 0));
+        
+        // Verificar Suscriptor - puede venir como subscriber_count (número)
+        const hasSubscriber = Boolean((client.subscriber_count || 0) > 0);
+        
+        // Un cliente está COMPLETO solo si tiene: BAN + Suscriptor + (Nombre O Empresa)
+        // Si NO cumple → es INCOMPLETO (va a pestaña Incompletos)
+        const isComplete = hasBAN && hasSubscriber && hasNameOrBusiness;
+        const isIncomplete = !isComplete;
+        
+        clientMetadata.set(client.id, { lastActivity, banType, hasCancelledBans, isIncomplete });
+      });
+      
+      // Estadísticas de validación
+      let stats = {
+        total: clients.length,
+        completos: 0,
+        incompletos: 0,
+        sinBAN: 0,
+        sinSuscriptor: 0,
+        sinNombreNiEmpresa: 0,
+        conNombreBAN: 0,
+        conEmpresaBAN: 0,
+        muestrasIncompletos: [] as any[]
+      };
+      
+      clients.forEach(client => {
+        const hasName = Boolean(client.name && typeof client.name === 'string' && client.name.trim() !== '');
+        const hasBusinessName = Boolean(client.business_name && typeof client.business_name === 'string' && client.business_name.trim() !== '');
+        
+        // Contar clientes con nombre/empresa auto-generados (empiezan con "BAN")
+        if (hasName && client.name && (client.name.startsWith('Cliente BAN ') || client.name.startsWith('BAN '))) {
+          stats.conNombreBAN++;
+        }
+        if (hasBusinessName && client.business_name && (client.business_name.startsWith('Empresa BAN ') || client.business_name.startsWith('BAN '))) {
+          stats.conEmpresaBAN++;
+        }
+        
+        const hasNameOrBusiness = hasName || hasBusinessName;
+        const hasBAN = Boolean(client.has_bans || (client.ban_count && client.ban_count > 0));
+        const hasSubscriber = Boolean((client.subscriber_count || 0) > 0);
+        const isComplete = hasBAN && hasSubscriber && hasNameOrBusiness;
+        
+        if (isComplete) {
+          stats.completos++;
+        } else {
+          stats.incompletos++;
+          if (!hasBAN) stats.sinBAN++;
+          if (!hasSubscriber) stats.sinSuscriptor++;
+          if (!hasNameOrBusiness) stats.sinNombreNiEmpresa++;
+          
+          // Guardar muestra de incompletos (primeros 10)
+          if (stats.muestrasIncompletos.length < 10) {
+            stats.muestrasIncompletos.push({
+              id: client.id,
+              name: client.name || 'NULL',
+              business_name: client.business_name || 'NULL',
+              has_bans: client.has_bans,
+              ban_count: client.ban_count,
+              subscriber_count: client.subscriber_count,
+              faltaBAN: !hasBAN,
+              faltaSuscriptor: !hasSubscriber,
+              faltaNombre: !hasNameOrBusiness
+            });
+          }
+        }
+      });
+      
+      console.log('📊 ===== ESTADÍSTICAS DE VALIDACIÓN =====');
+      console.log('Total clientes:', stats.total);
+      console.log('✅ Completos (tienen BAN + Suscriptor + Nombre/Empresa):', stats.completos);
+      console.log('⚠️ Incompletos:', stats.incompletos);
+      console.log('  - Sin BAN:', stats.sinBAN);
+      console.log('  - Sin Suscriptor:', stats.sinSuscriptor);
+      console.log('  - Sin Nombre ni Empresa:', stats.sinNombreNiEmpresa);
+      console.log('');
+      console.log('🏷️ CLIENTES CON NOMBRE/EMPRESA AUTO-GENERADOS (BAN):');
+      console.log('  - Con nombre "Cliente BAN ..." o "BAN ...":', stats.conNombreBAN);
+      console.log('  - Con empresa "Empresa BAN ..." o "BAN ...":', stats.conEmpresaBAN);
+      console.log('  - Total con nombre/empresa BAN:', stats.conNombreBAN + stats.conEmpresaBAN);
+      console.log('');
+      console.log('📋 Muestra de incompletos (primeros 10):', stats.muestrasIncompletos);
+      console.log('==========================================');
+    }
+
+    return Array.from(map.values()).map(({ base, subscriberPhones, primary }) => {
+      // Usar datos del backend directamente (conteo real y preciso)
+      // IMPORTANTE: Cada BAN pertenece a UN SOLO cliente (no se repiten)
+      const clientFromBackend = clients?.find(c => c.id === base.clientId);
+      const totalBans = clientFromBackend?.ban_count || 0;
+      const totalSubscribers = clientFromBackend?.subscriber_count || base.totalSubscribers || 0;
+      
+      // Extraer TODOS los BANs desde el backend (ban_numbers tiene todos los BANs separados por coma)
+      const allBanNumbers = clientFromBackend?.ban_numbers 
+        ? clientFromBackend.ban_numbers.split(',').map(b => b.trim()).filter(b => b)
+        : [];
+      
+      const metadata = clientMetadata.get(base.clientId) || { lastActivity: null, banType: null, hasCancelledBans: false, isIncomplete: false };
       return {
         ...base,
         totalBans,
-        primaryBanNumber: primary?.banNumber || (base.includesBan && totalBans > 0 ? Array.from(banNumbers)[0] : (base.includesBan ? '-' : 'N/A')),
+        totalSubscribers,
+        primaryBanNumber: primary?.banNumber || (allBanNumbers.length > 0 ? allBanNumbers[0] : (base.includesBan ? '-' : 'N/A')),
         primarySubscriberPhone: primary?.subscriberPhone || (base.includesBan && subscriberPhones.size > 0 ? Array.from(subscriberPhones)[0] : (base.includesBan ? '-' : 'N/A')),
         primaryContractEndDate: primary?.contractEndDate || null,
         primarySubscriberCreatedAt: primary?.subscriberCreatedAt || null,
         daysUntilExpiry: primary?.daysUntilExpiry ?? 999999,
         status: primary?.status ?? 'no-date',
-        banNumbers: Array.from(banNumbers),
+        banNumbers: allBanNumbers,
         subscriberPhones: Array.from(subscriberPhones),
+        lastActivity: metadata.lastActivity,
+        banType: metadata.banType,
+        hasCancelledBans: metadata.hasCancelledBans,
+        isIncomplete: metadata.isIncomplete,
       };
     });
-  }, [clientItems]);
+  }, [clientItems, clients]);
 
   const filteredClients = clientSummaries.filter(item => {
-    if (!searchTerm) return true;
-    const term = searchTerm.toLowerCase();
-    return (
-      item.clientName.toLowerCase().includes(term) ||
-      (item.businessName && item.businessName.toLowerCase().includes(term)) ||
-      item.banNumbers.some(ban => ban.toLowerCase().includes(term)) ||
-      item.subscriberPhones.some(phone => phone.includes(term))
-    );
+    // Filtrar por búsqueda
+    if (searchTerm) {
+      const term = searchTerm.toLowerCase();
+      const matchesSearch = (
+        item.clientName.toLowerCase().includes(term) ||
+        (item.businessName && item.businessName.toLowerCase().includes(term)) ||
+        item.banNumbers.some(ban => ban.toLowerCase().includes(term)) ||
+        item.subscriberPhones.some(phone => phone.includes(term))
+      );
+      if (!matchesSearch) return false;
+    }
+    
+    return true;
   });
 
-  const availableClients = filteredClients.filter(item => !item.isBeingFollowed && !item.wasCompleted);
-  const followingClients = filteredClients.filter(item => item.isBeingFollowed && !item.wasCompleted);
-  const completedClients = filteredClients.filter(item => item.wasCompleted);
-  const displayedClients = activeTab === 'available'
+  const incompleteClients = filteredClients.filter(item => item.isIncomplete && !item.hasCancelledBans);
+  const availableClients = filteredClients.filter(item => !item.isBeingFollowed && !item.wasCompleted && !item.hasCancelledBans && !item.isIncomplete);
+  const followingClients = filteredClients.filter(item => item.isBeingFollowed && !item.wasCompleted && !item.hasCancelledBans && !item.isIncomplete);
+  const completedClients = filteredClients.filter(item => item.wasCompleted && !item.hasCancelledBans && !item.isIncomplete);
+  const cancelledClients = filteredClients.filter(item => item.hasCancelledBans);
+  
+  // Debug: mostrar conteo y verificar lógica
+  const totalIncompletos = filteredClients.filter(item => item.isIncomplete).length;
+  const totalDisponibles = filteredClients.filter(item => !item.isBeingFollowed && !item.wasCompleted && !item.hasCancelledBans && !item.isIncomplete).length;
+  const totalCompletos = filteredClients.filter(item => item.wasCompleted && !item.hasCancelledBans && !item.isIncomplete).length;
+  
+  console.log('🔍 ===== ESTADÍSTICAS CLIENTES =====');
+  console.log('📊 Total filteredClients:', filteredClients.length);
+  console.log('📊 Clientes INCOMPLETOS:', totalIncompletos);
+  console.log('📊 Clientes DISPONIBLES (según nueva lógica):', totalDisponibles);
+  console.log('📊 Clientes COMPLETOS:', totalCompletos);
+  console.log('📊 Clientes en Disponibles (pestaña):', availableClients.length);
+  console.log('🔍 ===== FIN ESTADÍSTICAS =====');
+  
+  const clientsForTab = activeTab === 'incomplete'
+    ? incompleteClients
+    : activeTab === 'available'
     ? availableClients
     : activeTab === 'following'
     ? followingClients
-    : completedClients;
+    : activeTab === 'completed'
+    ? completedClients
+    : cancelledClients;
+  
+  // Paginación
+  const totalPages = Math.ceil(clientsForTab.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const displayedClients = clientsForTab.slice(startIndex, endIndex);
+  
+  // Reset página cuando cambien filtros o pestañas
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeTab, searchTerm]);
 
   const handleSendToFollowUp = async (clientId: number) => {
     try {
@@ -557,23 +716,20 @@ const statusPriority: Record<ClientStatus, number> = {
 
       const client = await clientResponse.json();
 
-      if (!client.vendor_id) {
-        notify('error', 'Asigna un vendedor antes de enviar este cliente a seguimiento.');
-        return;
-      }
-
       if (clientHasActiveFollowUp(clientId)) {
-        notify('info', 'Este cliente ya estÃ¡ en seguimiento activo.');
+        notify('info', 'Este cliente ya está en seguimiento activo.');
         return;
       }
 
+      // Los vendedores pueden enviar clientes a seguimiento incluso sin vendor_id
+      // El backend asignará automáticamente el vendor_id del vendedor
       const prospectData = {
         company_name: client.business_name || client.name,
         client_id: clientId,
-        vendor_id: client.vendor_id,
+        vendor_id: client.vendor_id || null, // Permitir null, el backend lo asignará si es vendedor
         contact_phone: client.phone || '',
         contact_email: client.email || '',
-        notes: 'Cliente enviado automÃ¡ticamente desde gestiÃ³n de clientes',
+        notes: 'Cliente enviado automáticamente desde gestión de clientes',
         fijo_ren: 0,
         fijo_new: 0,
         movil_nueva: 0,
@@ -678,19 +834,28 @@ const statusPriority: Record<ClientStatus, number> = {
 
   const handleViewClientDetail = async (clientId: number) => {
     try {
+      setLoadingClientDetail(true);
+      setShowClientDetailModal(true); // Mostrar modal inmediatamente para mejor UX
+      
       const clientResponse = await authFetch(`/api/clients/${clientId}`);
-      if (!clientResponse.ok) throw new Error('Error loading client');
+      if (!clientResponse.ok) {
+        const errorData = await clientResponse.json().catch(() => ({ error: 'Error desconocido' }));
+        throw new Error(errorData.error || 'Error al cargar el cliente');
+      }
       
       const client = await clientResponse.json();
       
-      // Load client's BANs with subscribers
-      const bansResponse = await authFetch(`/api/bans?client_id=${clientId}`);
+      // Load client's BANs with subscribers (en paralelo para mejor rendimiento)
+      const [bansResponse] = await Promise.all([
+        authFetch(`/api/bans?client_id=${clientId}`)
+      ]);
+      
       let bans: BAN[] = [];
       
       if (bansResponse.ok) {
         const clientBans: BAN[] = await bansResponse.json();
         
-        // Load subscribers for each BAN
+        // Load subscribers for each BAN (en paralelo)
         bans = await Promise.all(
           clientBans.map(async (ban) => {
             try {
@@ -709,14 +874,16 @@ const statusPriority: Record<ClientStatus, number> = {
       }
       
       setClientDetail({ ...client, bans });
-      setShowClientDetailModal(true);
+      setLoadingClientDetail(false);
     } catch (error) {
       console.error('Error loading client detail:', error);
-      notify('error', 'Error al cargar los detalles del cliente.');
+      setLoadingClientDetail(false);
+      setShowClientDetailModal(false); // Cerrar modal si hay error
+      notify('error', error instanceof Error ? error.message : 'Error al cargar los detalles del cliente.');
     }
   };
 
-  // FunciÃ³n para cargar BANs del cliente cuando se abre el modal de ediciÃ³n
+  // Función para cargar BANs del cliente cuando se abre el modal de edición
   const loadClientBANs = async (clientId: number) => {
     try {
       const bansResponse = await authFetch(`/api/bans?client_id=${clientId}`);
@@ -800,17 +967,57 @@ const statusPriority: Record<ClientStatus, number> = {
         const error = await response.json();
         throw new Error(error.error || "Error al actualizar el cliente");
       }
+      
+      // Verificar si el cliente estaba incompleto y ahora está completo
+      const wasIncomplete = editingClient.business_name?.startsWith('Empresa BAN ') || 
+                           editingClient.business_name?.startsWith('Cliente BAN ') ||
+                           !editingClient.business_name ||
+                           !editingClient.email ||
+                           (!editingClient.phone && !editingClient.mobile_phone && !editingClient.contact_person);
+      
+      const hasRealBusinessName = Boolean(data.business_name && 
+                                          !data.business_name.startsWith('Empresa BAN ') && 
+                                          !data.business_name.startsWith('Cliente BAN '));
+      const hasEmail = Boolean(data.email);
+      const hasContact = Boolean(data.phone || data.mobile_phone || data.contact_person);
+      const isNowComplete = hasRealBusinessName && hasEmail && hasContact;
+      
       setPendingBanClientId(null);
       setShowClientModal(false);
       setEditingClient(null);
       setSelectedClientId(null);
       setClientBANs([]);
-      refetchClients();
-      notify('success', `Cliente ${data.name} actualizado correctamente.`);
+      await refetchClients();
+      
+      // Si estaba incompleto y ahora está completo, mover a la pestaña Disponibles
+      if (wasIncomplete && isNowComplete) {
+        setActiveTab('available');
+        notify('success', `Cliente ${data.business_name || data.name} completado y movido a Disponibles.`);
+      } else {
+        notify('success', `Cliente ${data.business_name || data.name} actualizado correctamente.`);
+      }
     } catch (error) {
       console.error("Error updating client:", error);
       notify('error', error instanceof Error ? error.message : 'Error al actualizar el cliente.');
       throw (error instanceof Error ? error : new Error("Error al actualizar el cliente"));
+    }
+  };
+
+  const handleCompleteClient = async (clientId: number) => {
+    try {
+      const clientResponse = await authFetch(`/api/clients/${clientId}`);
+      if (!clientResponse.ok) {
+        throw new Error('No fue posible cargar el cliente.');
+      }
+      
+      const client = await clientResponse.json();
+      setEditingClient(client as Client);
+      setSelectedClientId(clientId);
+      await loadClientBANs(clientId);
+      setShowClientModal(true);
+    } catch (error) {
+      console.error('Error loading client for completion:', error);
+      notify('error', error instanceof Error ? error.message : 'Error al cargar el cliente.');
     }
   };
 
@@ -829,13 +1036,68 @@ const statusPriority: Record<ClientStatus, number> = {
 
       const responseData = await response.json();
 
-      if (!response.ok) {
-        notify('error', responseData.error || 'No fue posible crear el BAN.');
-        throw new Error(responseData.error || "Error al crear el BAN");
+      // El backend retorna 201 cuando se crea un BAN nuevo
+      if (response.ok && response.status === 201) {
+        console.log('✅ BAN creado exitosamente:', responseData);
+        notify('success', `BAN ${data.ban_number} creado correctamente.`);
+        setShowBANModal(false);
+        
+        // Recargar BANs del cliente si estamos editando
+        if (selectedClientId) {
+          const bansResponse = await authFetch(`/api/bans?client_id=${selectedClientId}`);
+          if (bansResponse.ok) {
+            const fetchedBans: BAN[] = await bansResponse.json();
+            
+            // Cargar suscriptores para cada BAN
+            const bansWithSubscribers = await Promise.all(
+              fetchedBans.map(async (ban) => {
+                try {
+                  const subscribersResponse = await authFetch(`/api/subscribers?ban_id=${ban.id}`);
+                  if (subscribersResponse.ok) {
+                    const subscribers = await subscribersResponse.json();
+                    return { ...ban, subscribers };
+                  }
+                  return { ...ban, subscribers: [] };
+                } catch (error) {
+                  console.error(`Error loading subscribers for BAN ${ban.id}:`, error);
+                  return { ...ban, subscribers: [] };
+                }
+              })
+            );
+            
+            setClientBANs(bansWithSubscribers);
+            if (selectedClientId !== null && selectedClientId !== undefined) {
+              evaluateBanRequirement(selectedClientId as number, bansWithSubscribers);
+            }
+          }
+        }
+        return;
       }
 
-      notify('success', `BAN ${data.ban_number} creado correctamente.`);
-      setShowBANModal(false);
+      // Manejar errores
+      console.error('❌ Error del servidor:', response.status, responseData);
+      let errorMessage = responseData.error || 'No fue posible crear el BAN.';
+      
+      if (response.status === 409) {
+        // El backend ahora incluye información sobre qué cliente tiene el BAN
+        const backendMessage = responseData.error || '';
+        if (backendMessage.includes('ya existe y está asignado a este cliente')) {
+          errorMessage = backendMessage;
+        } else if (backendMessage.includes('ya existe y está asignado al cliente')) {
+          errorMessage = backendMessage;
+        } else {
+          errorMessage = `El BAN ${data.ban_number} ya existe en el sistema. Por favor, verifica el número o edita el BAN existente.`;
+        }
+      } else if (response.status === 400) {
+        errorMessage = responseData.error || "Datos inválidos. Verifica que el número BAN tenga 9 dígitos.";
+      } else if (response.status === 404) {
+        errorMessage = "Cliente no encontrado. Por favor, recarga la página e intenta nuevamente.";
+      } else if (response.status === 401) {
+        errorMessage = "Sesión expirada. Por favor, inicia sesión nuevamente.";
+      }
+      
+      notify('error', errorMessage);
+      throw new Error(errorMessage);
       
       // Recargar BANs del cliente si estamos editando
       if (selectedClientId) {
@@ -861,7 +1123,9 @@ const statusPriority: Record<ClientStatus, number> = {
           );
           
           setClientBANs(bansWithSubscribers);
-          evaluateBanRequirement(selectedClientId, bansWithSubscribers);
+          if (selectedClientId !== null && selectedClientId !== undefined) {
+            evaluateBanRequirement(selectedClientId as number, bansWithSubscribers);
+          }
         }
       }
       if (pendingBanClientId === selectedClientId && response.ok) {
@@ -929,6 +1193,7 @@ const statusPriority: Record<ClientStatus, number> = {
 
   
 
+  
   if (clientsLoading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -937,11 +1202,34 @@ const statusPriority: Record<ClientStatus, number> = {
     );
   }
 
-  // Calculate statistics
+  // Calculate statistics - Usar datos del backend directamente para precisión
   const totalClients = clientItems.length;
-  const expiredContracts = clientItems.filter(item => item.status === 'expired').length;
-  const criticalContracts = clientItems.filter(item => item.status === 'critical').length;
-  const warningContracts = clientItems.filter(item => item.status === 'warning').length;
+  
+  // Total BANs: Sumar ban_count del backend (conteo real por cliente)
+  const totalBans = clients ? clients.reduce((sum, client) => {
+    return sum + (client.ban_count || 0);
+  }, 0) : clientSummaries.reduce((sum, item) => sum + item.totalBans, 0);
+  
+  // Total Suscriptores: Sumar subscriber_count del backend (conteo real por cliente)
+  const totalSubscribers = clients ? clients.reduce((sum, client) => {
+    return sum + (client.subscriber_count || 0);
+  }, 0) : clientSummaries.reduce((sum, item) => sum + item.totalSubscribers, 0);
+  
+  // Suscriptores en Oportunidad: Ya viene del backend
+  const subscribersInOpportunity = clients ? clients.reduce((sum, client) => {
+    return sum + (client.subscribers_in_opportunity || 0);
+  }, 0) : 0;
+  
+  // DEBUG: Verificar conteo de BANs
+  // IMPORTANTE: 1 BAN con 5 suscriptores = 1 BAN (no 5)
+  // El backend ya cuenta BANs correctamente con COUNT(*) en la tabla bans
+  console.log('📊 Estadísticas calculadas:', { 
+    totalClients, 
+    totalBans, 
+    totalSubscribers, 
+    subscribersInOpportunity,
+    nota: '1 BAN con N suscriptores = 1 BAN (ban_count cuenta BANs, no suscriptores)'
+  });
 
   return (
     <div className="space-y-6">
@@ -949,7 +1237,7 @@ const statusPriority: Record<ClientStatus, number> = {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-white">Clientes</h1>
-          <p className="text-gray-400 mt-1">InformaciÃ³n completa de todos los clientes ordenados por vencimiento de contrato</p>
+          <p className="text-gray-400 mt-1">Información completa de todos los clientes ordenados por vencimiento de contrato</p>
         </div>
         <button
           onClick={() => {
@@ -966,7 +1254,7 @@ const statusPriority: Record<ClientStatus, number> = {
         </button>
       </div>
 
-      {/* Search */}
+      {/* Search and Filters */}
       <div className="flex flex-col sm:flex-row gap-4">
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500 w-5 h-5" />
@@ -980,40 +1268,40 @@ const statusPriority: Record<ClientStatus, number> = {
         </div>
       </div>
 
-      {/* Statistics */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="bg-gray-900 rounded-lg shadow-sm border border-gray-800 p-4">
+      {/* Statistics - V2.0 */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+        <div className="bg-gray-900 rounded-lg shadow-sm border-2 border-blue-500/50 p-4">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-gray-400">Total Registros</p>
+              <p className="text-sm font-medium text-gray-400">Cantidad de Clientes</p>
               <p className="text-2xl font-bold text-white">{totalClients}</p>
             </div>
             <Users className="w-8 h-8 text-blue-500" />
           </div>
         </div>
-        <div className="bg-gray-900 rounded-lg shadow-sm border border-gray-800 p-4">
+        <div className="bg-gray-900 rounded-lg shadow-sm border-2 border-green-500/50 p-4">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-gray-400">Contratos Vencidos</p>
-              <p className="text-2xl font-bold text-red-400">{expiredContracts}</p>
+              <p className="text-sm font-medium text-gray-400">Cantidad de BAN</p>
+              <p className="text-2xl font-bold text-green-400">{totalBans}</p>
             </div>
-            <AlertTriangle className="w-8 h-8 text-red-500" />
+            <Hash className="w-8 h-8 text-green-500" />
           </div>
         </div>
-        <div className="bg-gray-900 rounded-lg shadow-sm border border-gray-800 p-4">
+        <div className="bg-gray-900 rounded-lg shadow-sm border-2 border-blue-500/50 p-4">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-gray-400">PrÃ³ximos 15 dÃ­as</p>
-              <p className="text-2xl font-bold text-orange-400">{criticalContracts}</p>
+              <p className="text-sm font-medium text-gray-400">Cant de Suscriptores</p>
+              <p className="text-2xl font-bold text-blue-400">{totalSubscribers}</p>
             </div>
-            <Clock className="w-8 h-8 text-orange-500" />
+            <Phone className="w-8 h-8 text-blue-500" />
           </div>
         </div>
-        <div className="bg-gray-900 rounded-lg shadow-sm border border-gray-800 p-4">
+        <div className="bg-gray-900 rounded-lg shadow-sm border-2 border-yellow-500/50 p-4">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-gray-400">PrÃ³ximos 30 dÃ­as</p>
-              <p className="text-2xl font-bold text-yellow-400">{warningContracts}</p>
+              <p className="text-sm font-medium text-gray-400">Suscriptores en Oportunidad</p>
+              <p className="text-2xl font-bold text-yellow-400">{subscribersInOpportunity}</p>
             </div>
             <Calendar className="w-8 h-8 text-yellow-500" />
           </div>
@@ -1034,8 +1322,22 @@ const statusPriority: Record<ClientStatus, number> = {
         </div>
       )}
 
-      {/* Tabs */}
-      <div className="flex items-center gap-2 mb-4">
+      {/* Tabs - V2.0 con Incompletos */}
+      <div className="flex items-center gap-2 mb-4 flex-wrap border-b border-gray-700 pb-2">
+        <button
+          key="incomplete-tab"
+          className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${
+            activeTab === 'incomplete'
+              ? 'bg-orange-600 text-white shadow-lg border-2 border-orange-400'
+              : 'bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700'
+          }`}
+          onClick={() => {
+            console.log('🔘 Click en pestaña Incompletos - V2.0');
+            setActiveTab('incomplete');
+          }}
+        >
+          ⚠️ Incompletos ({incompleteClients.length})
+        </button>
         <button
           className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
             activeTab === 'available'
@@ -1066,7 +1368,60 @@ const statusPriority: Record<ClientStatus, number> = {
         >
           Completados ({completedClients.length})
         </button>
+        <button
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+            activeTab === 'cancelled'
+              ? 'bg-red-600 text-white shadow-lg'
+              : 'bg-gray-800 text-gray-400 hover:text-white'
+          }`}
+          onClick={() => setActiveTab('cancelled')}
+        >
+          Cancelados ({cancelledClients.length})
+        </button>
       </div>
+
+      {/* Paginación Superior */}
+      {clientsForTab.length > 0 && (
+        <div className="flex items-center justify-between mb-4 bg-gray-900 rounded-lg p-4 border border-gray-800">
+          <div className="flex items-center gap-4">
+            <span className="text-sm text-gray-400">
+              Mostrando {startIndex + 1} - {Math.min(endIndex, clientsForTab.length)} de {clientsForTab.length}
+            </span>
+            <select
+              value={itemsPerPage}
+              onChange={(e) => {
+                setItemsPerPage(Number(e.target.value));
+                setCurrentPage(1);
+              }}
+              className="bg-gray-800 border border-gray-700 rounded px-3 py-1 text-sm text-white"
+            >
+              <option value={25}>25 por página</option>
+              <option value={50}>50 por página</option>
+              <option value={100}>100 por página</option>
+              <option value={200}>200 por página</option>
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+              disabled={currentPage === 1}
+              className="px-3 py-1 bg-gray-800 hover:bg-gray-700 disabled:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded text-sm"
+            >
+              Anterior
+            </button>
+            <span className="text-sm text-gray-400">
+              Página {currentPage} de {totalPages}
+            </span>
+            <button
+              onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+              disabled={currentPage === totalPages}
+              className="px-3 py-1 bg-gray-800 hover:bg-gray-700 disabled:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded text-sm"
+            >
+              Siguiente
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Clients Table */}
       <div className="bg-gray-900 rounded-xl shadow-lg border border-gray-800 overflow-hidden">
@@ -1075,6 +1430,10 @@ const statusPriority: Record<ClientStatus, number> = {
             <thead className="bg-gray-800 border-b border-gray-700">
               <tr>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Empresa</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Última Actividad</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Tipo BAN</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Base</th>
+                <th className="px-4 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">Estado</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Vendedor Asignado</th>
                 <th className="px-4 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">Num BAN</th>
                 <th className="px-4 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">Suscriptor</th>
@@ -1084,9 +1443,10 @@ const statusPriority: Record<ClientStatus, number> = {
             </thead>
             <tbody className="bg-gray-900 divide-y divide-gray-800">
               {displayedClients.map((item, index) => {
-                const banDisplay = item.includesBan
-                  ? `${item.primaryBanNumber}${item.totalBans > 1 ? ` (+${item.totalBans - 1})` : ''}`
-                  : 'N/A';
+                // Mostrar BANs en líneas separadas si hay más de uno
+                const banDisplay = item.includesBan && item.banNumbers && item.banNumbers.length > 0
+                  ? item.banNumbers
+                  : null;
                 const subscriberDisplay = item.includesBan
                   ? `${item.primarySubscriberPhone}${item.totalSubscribers > 1 ? ` (+${item.totalSubscribers - 1})` : ''}`
                   : 'N/A';
@@ -1095,6 +1455,14 @@ const statusPriority: Record<ClientStatus, number> = {
                   : item.primarySubscriberCreatedAt
                     ? new Date(item.primarySubscriberCreatedAt).toLocaleDateString()
                     : '-';
+
+                const lastActivityDisplay = item.lastActivity
+                  ? new Date(item.lastActivity).toLocaleDateString('es-ES', {
+                      day: '2-digit',
+                      month: 'short',
+                      year: 'numeric'
+                    })
+                  : '-';
 
                 return (
                   <tr key={`${item.clientId}-${index}`} className="hover:bg-gray-800 transition-colors">
@@ -1110,11 +1478,45 @@ const statusPriority: Record<ClientStatus, number> = {
                     </td>
                     <td className="px-4 py-4 whitespace-nowrap text-left">
                       <span className="text-sm text-gray-300">
-                        {item.vendorName || 'Sin asignar'}
+                        {lastActivityDisplay}
+                      </span>
+                    </td>
+                    <td className="px-4 py-4 whitespace-nowrap text-left">
+                      <span className="text-sm text-gray-300">
+                        {item.banType || '-'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-4 whitespace-nowrap text-left">
+                      <span className="text-xs px-2 py-1 rounded bg-blue-900/40 text-blue-200 border border-blue-500/30">
+                        {(item as any).base || 'BD propia'}
                       </span>
                     </td>
                     <td className="px-4 py-4 whitespace-nowrap text-center">
-                      <span className="text-sm text-gray-300">{banDisplay}</span>
+                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                        item.hasCancelledBans
+                          ? 'bg-red-900/40 text-red-100 border border-red-500/30'
+                          : 'bg-emerald-900/40 text-emerald-100 border border-emerald-500/30'
+                      }`}>
+                        {item.hasCancelledBans ? 'Cancelado' : 'Activo'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-4 whitespace-nowrap text-left">
+                      <span className="text-sm text-gray-300">
+                        {item.vendorName || 'Sin asignar'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-4 text-center">
+                      {banDisplay ? (
+                        <div className="flex flex-col items-center gap-1">
+                          {banDisplay.map((ban, idx) => (
+                            <span key={idx} className="text-sm text-gray-300 font-mono">
+                              {ban}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-sm text-gray-300">N/A</span>
+                      )}
                     </td>
                     <td className="px-4 py-4 whitespace-nowrap text-center">
                       <span className="text-sm text-gray-300">{subscriberDisplay}</span>
@@ -1134,9 +1536,18 @@ const statusPriority: Record<ClientStatus, number> = {
                       </div>
                     </td>
                     <td className="px-4 py-4 whitespace-nowrap text-center">
-                      {item.wasCompleted ? (
+                      {activeTab === 'incomplete' ? (
+                        <button
+                          onClick={() => handleCompleteClient(item.clientId)}
+                          className="px-3 py-1 rounded text-xs transition-colors flex items-center gap-1 mx-auto bg-green-600 hover:bg-green-700 text-white"
+                          title="Completar información del cliente"
+                        >
+                          <Edit className="w-3 h-3" />
+                          Completar
+                        </button>
+                      ) : item.wasCompleted ? (
                         <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-purple-900/60 text-purple-200 text-xs font-medium">
-                          âœ“ Completado
+                          âœ" Completado
                         </span>
                       ) : item.isBeingFollowed ? (
                         <div className="flex flex-col items-center gap-2">
@@ -1152,19 +1563,25 @@ const statusPriority: Record<ClientStatus, number> = {
                           </button>
                         </div>
                       ) : (
-                        <button
-                          onClick={() => handleSendToFollowUp(item.clientId)}
-                          className={`px-3 py-1 rounded text-xs transition-colors flex items-center gap-1 mx-auto ${
-                            item.vendorId
-                              ? 'bg-blue-600 hover:bg-blue-700 text-white'
-                              : 'bg-gray-700 text-gray-400 cursor-not-allowed'
-                          }`}
-                          title={item.vendorId ? "Enviar a seguimiento" : "Asigna un vendedor antes de enviar"}
-                          disabled={!item.vendorId}
-                        >
-                          <UserPlus className="w-3 h-3" />
-                          {item.vendorId ? "A Seguimiento" : "Sin Vendedor"}
-                        </button>
+                        (() => {
+                          const currentUser = JSON.parse(localStorage.getItem('crm_user') || '{}');
+                          const isVendor = currentUser?.role?.toLowerCase() === 'vendedor';
+                          if (isVendor) {
+                            return (
+                              <span className="text-xs text-gray-500">No disponible</span>
+                            );
+                          }
+                          return (
+                            <button
+                              onClick={() => handleSendToFollowUp(item.clientId)}
+                              className="px-3 py-1 rounded text-xs transition-colors flex items-center gap-1 mx-auto bg-blue-600 hover:bg-blue-700 text-white"
+                              title="Enviar a seguimiento"
+                            >
+                              <UserPlus className="w-3 h-3" />
+                              A Seguimiento
+                            </button>
+                          );
+                        })()
                       )}
                     </td>
                   </tr>
@@ -1180,12 +1597,16 @@ const statusPriority: Record<ClientStatus, number> = {
             <h3 className="mt-2 text-sm font-medium text-gray-300">No hay clientes</h3>
             <p className="mt-1 text-sm text-gray-500">
               {searchTerm
-                ? "No se encontraron clientes con ese criterio de bÃºsqueda"
-                : activeTab === 'available'
-                  ? "No hay clientes disponibles en el pool"
-                  : activeTab === 'following'
-                    ? "No hay clientes actualmente en seguimiento"
-                    : "No hay clientes completados"}
+                ? "No se encontraron clientes con ese criterio de búsqueda"
+                : activeTab === 'incomplete'
+                  ? "No hay clientes incompletos"
+                  : activeTab === 'available'
+                    ? "No hay clientes disponibles en el pool"
+                    : activeTab === 'following'
+                      ? "No hay clientes actualmente en seguimiento"
+                      : activeTab === 'completed'
+                        ? "No hay clientes completados"
+                        : "No hay clientes cancelados"}
             </p>
           </div>
         )}
@@ -1249,7 +1670,7 @@ const statusPriority: Record<ClientStatus, number> = {
             <div className="p-6 border-b border-gray-700">
               <h3 className="text-lg font-semibold text-white">Dejar de Seguir Cliente</h3>
               <p className="text-gray-400 mt-1">
-                Â¿EstÃ¡s seguro de que quieres dejar de seguir a {selectedFollowUpProspect?.clientName}?
+                ¿Estás seguro de que quieres dejar de seguir a {selectedFollowUpProspect?.clientName}?
               </p>
             </div>
             
@@ -1262,11 +1683,11 @@ const statusPriority: Record<ClientStatus, number> = {
                   value={stopFollowNotes}
                   onChange={(e) => setStopFollowNotes(e.target.value)}
                   className="w-full h-24 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:ring-2 focus:ring-orange-500 focus:border-transparent resize-none"
-                  placeholder="Ej: Cliente no estÃ¡ interesado en renovar contrato, Cliente cambiÃ³ de proveedor, etc."
+                  placeholder="Ej: Cliente no está interesado en renovar contrato, Cliente cambió de proveedor, etc."
                   required
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                  Esta nota se guardarÃ¡ en el historial del cliente
+                  Esta nota se guardará en el historial del cliente
                 </p>
               </div>
             </div>
@@ -1295,13 +1716,43 @@ const statusPriority: Record<ClientStatus, number> = {
       )}
 
       {/* Client Management Modal */}
-      {showClientDetailModal && clientDetail && (
-        <ClientManagementModal
-          client={clientDetail}
-          onClose={() => {
-            setShowClientDetailModal(false);
-            setClientDetail(null);
-          }}
+      {showClientDetailModal && (
+        loadingClientDetail ? (
+          <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50">
+            <div className="bg-gray-800 rounded-xl p-8 border border-gray-700">
+              <div className="flex items-center gap-4">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+                <span className="text-white text-lg">Cargando detalles del cliente...</span>
+              </div>
+            </div>
+          </div>
+        ) : clientDetail ? (
+          <ClientManagementModal
+            client={clientDetail}
+            onClose={() => {
+              setShowClientDetailModal(false);
+              setClientDetail(null);
+              setLoadingClientDetail(false);
+            }}
+            onRefreshClient={async () => {
+              // Refrescar lista completa de clientes primero
+              await refetchClients();
+              // Luego refrescar el detalle del cliente en el modal
+              if (clientDetail) {
+                await handleViewClientDetail(clientDetail.id);
+                // Verificar si el cliente ahora tiene BANs cancelados y cambiar de pestaña
+                const updatedClientResponse = await authFetch(`/api/clients/${clientDetail.id}`);
+                if (updatedClientResponse.ok) {
+                  const updatedClient = await updatedClientResponse.json();
+                  if (updatedClient.has_cancelled_bans) {
+                    setActiveTab('cancelled');
+                  }
+                }
+              }
+            }}
+            onFollowUpUpdated={async () => {
+              await refetchProspects();
+            }}
           onEditSubscriber={(subscriber, banId) => {
             setEditingSubscriber(subscriber);
             setSelectedBanId(banId);
@@ -1312,16 +1763,9 @@ const statusPriority: Record<ClientStatus, number> = {
             setEditingSubscriber(null);
             setShowSubscriberModal(true);
           }}
-          onRefreshClient={async () => {
-            if (clientDetail) {
-              await handleViewClientDetail(clientDetail.id);
-            }
-          }}
-          onFollowUpUpdated={async () => {
-            await Promise.all([refetchProspects(), refetchClients()]);
-          }}
           clientHasActiveFollowUp={clientHasActiveFollowUp}
         />
+        ) : null
       )}
     </div>
   );
@@ -1368,25 +1812,22 @@ function ClientManagementModal({
 
   const handleSendToFollowUpFromDetail = async () => {
     try {
-      if (!client.vendor_id) {
-        setFormMessage({ type: 'error', text: 'Asigna un vendedor antes de enviar este cliente a seguimiento.' });
-        return;
-      }
-
       if (clientHasActiveFollowUp(client.id)) {
-        setFormMessage({ type: 'info', text: 'Este cliente ya estÃ¡ en seguimiento activo.' });
+        setFormMessage({ type: 'info', text: 'Este cliente ya está en seguimiento activo.' });
         return;
       }
 
       setIsSendingToFollowUp(true);
 
+      // Los vendedores pueden enviar clientes a seguimiento incluso sin vendor_id
+      // El backend asignará automáticamente el vendor_id del vendedor
       const prospectData = {
         company_name: client.business_name || client.name,
         client_id: client.id,
-        vendor_id: client.vendor_id,
+        vendor_id: client.vendor_id || null, // Permitir null, el backend lo asignará si es vendedor
         contact_phone: client.phone || '',
         contact_email: client.email || '',
-        notes: `Cliente enviado automÃ¡ticamente desde gestiÃ³n de clientes`,
+        notes: `Cliente enviado automáticamente desde gestión de clientes`,
         fijo_ren: 0,
         fijo_new: 0,
         movil_nueva: 0,
@@ -1423,25 +1864,47 @@ function ClientManagementModal({
 
   const handleUpdateBAN = async (banId: number, data: any) => {
     try {
+      // Asegurar que se incluye el client_id del BAN que se está editando
+      const updateData = {
+        ...data,
+        client_id: editingBAN?.client_id || client.id
+      };
+      
+      console.log('🔄 Actualizando BAN:', banId, 'con datos:', updateData);
       const response = await authFetch(`/api/bans/${banId}`, {
         method: "PUT",
-        json: data,
+        json: updateData,
       });
 
       if (!response.ok) {
         const error = await response.json();
+        console.error('❌ Error en respuesta:', error);
         setFormMessage({ type: 'error', text: error.error || "Error al actualizar el BAN" });
         return;
       }
 
+      const updatedBan = await response.json();
+      console.log('✅ BAN actualizado:', updatedBan);
+      
+      // Determinar si el BAN fue cancelado
+      const wasCancelled = (data.status === 'cancelled' || data.status === 'cancelado');
+      
       setFormMessage({ type: 'success', text: `BAN ${data.ban_number} actualizado correctamente.` });
       setEditingBAN(null);
       
+      // Refrescar datos del cliente en el modal
       if (onRefreshClient) {
         await onRefreshClient();
       }
       if (onFollowUpUpdated) {
         await onFollowUpUpdated();
+      }
+      
+      // Si el BAN fue cancelado, cerrar el modal después de un momento para que el usuario vea el cambio
+      if (wasCancelled) {
+        setTimeout(() => {
+          onClose();
+        }, 1500); // Esperar 1.5 segundos para que el usuario vea el mensaje de éxito
       }
     } catch (error) {
       console.error("Error updating BAN:", error);
@@ -1449,32 +1912,106 @@ function ClientManagementModal({
     }
   };
 
-  const handleCreateBAN = async (data: any) => {
+  const handleCreateBAN = async (data: any): Promise<boolean> => {
     try {
+      console.log('🔄 Creando BAN para cliente:', client.id, 'Datos:', data);
+      
+      if (!client || !client.id) {
+        setFormMessage({ type: 'error', text: 'Error: No se pudo identificar el cliente.' });
+        console.error('❌ Cliente no disponible:', client);
+        return false;
+      }
+
       const response = await authFetch("/api/bans", {
         method: "POST",
         json: { ...data, client_id: client.id },
       });
 
-      const responseData = await response.json();
-
-      if (!response.ok) {
-        setFormMessage({ type: 'error', text: responseData.error || "Error desconocido al crear el BAN" });
-        return;
+      // Intentar parsear la respuesta como JSON, pero manejar errores
+      let responseData: any = {};
+      try {
+        const text = await response.text();
+        if (text) {
+          responseData = JSON.parse(text);
+        }
+      } catch (parseError) {
+        console.error('Error parseando respuesta:', parseError);
+        responseData = { error: 'Error al procesar la respuesta del servidor' };
       }
 
-      setFormMessage({ type: 'success', text: `BAN ${data.ban_number} creado correctamente.` });
-      setShowBANForm(false);
+      // El backend retorna 201 cuando se crea un BAN nuevo
+      if (response.ok && response.status === 201) {
+        console.log('✅ BAN creado exitosamente:', responseData);
+        setFormMessage({ type: 'success', text: `BAN ${data.ban_number} creado correctamente.` });
+        
+        // Retornar true INMEDIATAMENTE para que el modal se cierre
+        // El modal se cerrará automáticamente cuando reciba true
+        
+        // Refrescar los datos en segundo plano (sin bloquear el cierre del modal)
+        setTimeout(async () => {
+          // Cerrar el modal después de un pequeño delay
+          setShowBANForm(false);
+          
+          // Refrescar los datos del cliente (esto recargará los BANs)
+          if (onRefreshClient) {
+            try {
+              await onRefreshClient();
+            } catch (error) {
+              console.error('Error refreshing client:', error);
+            }
+          }
+          
+          // Refrescar seguimiento si es necesario
+          if (onFollowUpUpdated) {
+            try {
+              const followUpResult = onFollowUpUpdated();
+              if (followUpResult instanceof Promise) {
+                await followUpResult;
+              }
+            } catch (error) {
+              console.error('Error refreshing follow-up:', error);
+            }
+          }
+        }, 50);
+        
+        return true;
+      }
+
+      // Manejar errores
+      console.error('❌ Error del servidor:', response.status, responseData);
+      let errorMessage = responseData?.error || responseData?.message || "Error desconocido al crear el BAN";
       
-      if (onRefreshClient) {
-        await onRefreshClient();
+      if (response.status === 409) {
+        // El backend ahora incluye información sobre qué cliente tiene el BAN
+        const backendMessage = responseData?.error || responseData?.message || '';
+        if (backendMessage.includes('ya existe y está asignado a este cliente')) {
+          errorMessage = backendMessage;
+        } else if (backendMessage.includes('ya existe y está asignado al cliente')) {
+          errorMessage = backendMessage;
+        } else if (backendMessage.includes('ya existe')) {
+          errorMessage = backendMessage;
+        } else {
+          errorMessage = `El BAN ${data.ban_number} ya existe en el sistema. Por favor, verifica el número o edita el BAN existente.`;
+        }
+      } else if (response.status === 400) {
+        errorMessage = responseData?.error || responseData?.message || "Datos inválidos. Verifica que el número BAN tenga 9 dígitos.";
+      } else if (response.status === 404) {
+        errorMessage = "Cliente no encontrado. Por favor, recarga la página e intenta nuevamente.";
+      } else if (response.status === 401) {
+        errorMessage = "Sesión expirada. Por favor, inicia sesión nuevamente.";
+      } else {
+        errorMessage = responseData?.error || responseData?.message || `Error del servidor (${response.status}). Intenta nuevamente.`;
       }
-      if (onFollowUpUpdated) {
-        await onFollowUpUpdated();
-      }
+      
+      console.error('❌ Mensaje de error final:', errorMessage);
+      setFormMessage({ type: 'error', text: errorMessage });
+      
+      // Retornar el mensaje de error para que el BANModal lo muestre
+      return { error: true, message: errorMessage } as any;
     } catch (error) {
-      console.error("Error creating BAN:", error);
-      setFormMessage({ type: 'error', text: 'Error al crear el BAN.' });
+      console.error("❌ Error creating BAN:", error);
+      setFormMessage({ type: 'error', text: error instanceof Error ? error.message : 'Error al crear el BAN.' });
+      return false;
     }
   };
 
@@ -1486,7 +2023,7 @@ function ClientManagementModal({
         return;
       }
 
-      if (!confirm(`Â¿EstÃ¡s seguro de que quieres eliminar el BAN ${ban.ban_number}?\n\nEsta acciÃ³n eliminarÃ¡ permanentemente el BAN y todos sus suscriptores asociados.`)) {
+      if (!confirm(`¿Estás seguro de que quieres eliminar el BAN ${ban.ban_number}?\n\nEsta acción eliminará permanentemente el BAN y todos sus suscriptores asociados.`)) {
         return;
       }
 
@@ -1495,7 +2032,7 @@ function ClientManagementModal({
       });
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Error de conexiÃ³n' }));
+        const errorData = await response.json().catch(() => ({ error: 'Error de conexión' }));
         setFormMessage({ type: 'error', text: errorData.error || 'Error al eliminar el BAN.' });
         return;
       }
@@ -1532,7 +2069,7 @@ function ClientManagementModal({
         return;
       }
 
-      if (!confirm(`Â¿EstÃ¡s seguro de que quieres eliminar el suscriptor ${subscriber.phone}?\n\nEsta acciÃ³n no se puede deshacer.`)) {
+      if (!confirm(`¿Estás seguro de que quieres eliminar el suscriptor ${subscriber.phone}?\n\nEsta acción no se puede deshacer.`)) {
         return;
       }
 
@@ -1541,7 +2078,7 @@ function ClientManagementModal({
       });
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Error de conexiÃ³n' }));
+        const errorData = await response.json().catch(() => ({ error: 'Error de conexión' }));
         setFormMessage({ type: 'error', text: errorData.error || 'Error al eliminar el suscriptor.' });
         return;
       }
@@ -1563,27 +2100,40 @@ function ClientManagementModal({
         <div className="flex justify-between items-start p-6 border-b border-gray-700 bg-gradient-to-r from-gray-800 to-gray-700">
           <div>
             <h2 className="text-2xl font-bold text-white">{client.business_name || client.name}</h2>
-            <p className="text-gray-300 mt-1">GestiÃ³n completa del cliente</p>
+            <p className="text-gray-300 mt-1">Gestión completa del cliente</p>
           </div>
           <div className="flex items-center space-x-3">
-            <button
-              onClick={handleSendToFollowUpFromDetail}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${
-                client.vendor_id && !isSendingToFollowUp
-                  ? 'bg-green-600 hover:bg-green-700 text-white'
-                  : 'bg-gray-700 text-gray-400 cursor-not-allowed'
-              }`}
-              title={client.vendor_id ? "Enviar a seguimiento" : "Asignar vendedor primero"}
-              disabled={!client.vendor_id || isSendingToFollowUp}
-            >
-              <UserPlus className="w-4 h-4" />
-              {isSendingToFollowUp ? 'Enviando...' : client.vendor_id ? 'Enviar a Seguimiento' : 'Sin Vendedor'}
-            </button>
+            {(() => {
+              const currentUser = JSON.parse(localStorage.getItem('crm_user') || '{}');
+              const isVendor = currentUser?.role?.toLowerCase() === 'vendedor';
+              const hasActiveFollowUp = clientHasActiveFollowUp(client.id);
+              
+              // No mostrar el botón si es vendedor o si el cliente ya está en seguimiento
+              if (isVendor || hasActiveFollowUp) {
+                return null;
+              }
+              
+              return (
+                <button
+                  onClick={handleSendToFollowUpFromDetail}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${
+                    !isSendingToFollowUp
+                      ? 'bg-green-600 hover:bg-green-700 text-white'
+                      : 'bg-gray-700 text-gray-400 cursor-not-allowed'
+                  }`}
+                  title="Enviar a seguimiento"
+                  disabled={isSendingToFollowUp}
+                >
+                  <UserPlus className="w-4 h-4" />
+                  {isSendingToFollowUp ? 'Enviando...' : 'Enviar a Seguimiento'}
+                </button>
+              );
+            })()}
             <button
               onClick={onClose}
               className="text-gray-400 hover:text-white text-2xl p-2 hover:bg-gray-800 rounded-lg transition-colors"
             >
-              Ã—
+              ×
             </button>
           </div>
         </div>
@@ -1613,7 +2163,7 @@ function ClientManagementModal({
                 : 'text-gray-400 hover:text-white hover:bg-gray-750'
             }`}
           >
-            InformaciÃ³n del Cliente
+            Información del Cliente
           </button>
           <button
             onClick={() => setActiveTab('bans')}
@@ -1652,7 +2202,7 @@ function ClientManagementModal({
           {activeTab === 'info' && (
             <div className="space-y-6">
               <div className="flex justify-between items-center mb-4">
-                <h3 className="text-xl font-semibold text-white">InformaciÃ³n del Cliente</h3>
+                <h3 className="text-xl font-semibold text-white">Información del Cliente</h3>
                 <div className="flex items-center space-x-2">
                   <button
                     onClick={() => {
@@ -1697,7 +2247,7 @@ function ClientManagementModal({
                         return;
                       }
                       
-                      if (confirm(`Â¿EstÃ¡s seguro de que quieres eliminar el cliente "${client.business_name || client.name}"?\n\nEsta acciÃ³n no se puede deshacer.`)) {
+                      if (confirm(`¿Estás seguro de que quieres eliminar el cliente "${client.business_name || client.name}"?\n\nEsta acción no se puede deshacer.`)) {
                         try {
                           const response = await authFetch(`/api/clients/${client.id}`, {
                             method: "DELETE"
@@ -1759,7 +2309,7 @@ function ClientManagementModal({
                     <div className="flex items-center space-x-3">
                       <Phone className="w-5 h-5 text-gray-400" />
                       <div>
-                        <p className="text-sm text-gray-400">TelÃ©fono</p>
+                        <p className="text-sm text-gray-400">Teléfono</p>
                         <p className="text-white font-medium">{client.phone}</p>
                       </div>
                     </div>
@@ -1769,15 +2319,35 @@ function ClientManagementModal({
                     <div className="flex items-start space-x-3">
                       <MapPin className="w-5 h-5 text-gray-400 mt-0.5" />
                       <div>
-                        <p className="text-sm text-gray-400">DirecciÃ³n</p>
+                        <p className="text-sm text-gray-400">Dirección</p>
                         <p className="text-white font-medium">{client.address}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {(client as any).city && (
+                    <div className="flex items-center space-x-3">
+                      <MapPin className="w-5 h-5 text-gray-400" />
+                      <div>
+                        <p className="text-sm text-gray-400">Ciudad</p>
+                        <p className="text-white font-medium">{(client as any).city}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {(client as any).zip_code && (
+                    <div className="flex items-center space-x-3">
+                      <MapPin className="w-5 h-5 text-gray-400" />
+                      <div>
+                        <p className="text-sm text-gray-400">Código Postal</p>
+                        <p className="text-white font-medium">{(client as any).zip_code}</p>
                       </div>
                     </div>
                   )}
                 </div>
 
                 <div className="bg-gray-800 rounded-lg p-6 space-y-4">
-                  <h4 className="text-lg font-medium text-white mb-4">InformaciÃ³n Comercial</h4>
+                  <h4 className="text-lg font-medium text-white mb-4">Información Comercial</h4>
                   
                   {client.business_name && (
                     <div className="flex items-center space-x-3">
@@ -1803,7 +2373,7 @@ function ClientManagementModal({
                     <Hash className="w-5 h-5 text-gray-400" />
                     <div>
                       <p className="text-sm text-gray-400">Total de BANs</p>
-                      <p className="text-white font-medium">{client.bans.length}</p>
+                      <p className="text-white font-medium text-lg font-bold">{client.bans.length} {client.bans.length === 1 ? 'BAN' : 'BANs'}</p>
                     </div>
                   </div>
 
@@ -2003,7 +2573,7 @@ function ClientManagementModal({
               <Phone className="mx-auto h-12 w-12 text-gray-600" />
               <h3 className="mt-2 text-lg font-medium text-gray-300">Llamadas y Fechas</h3>
               <p className="mt-1 text-sm text-gray-500">
-                PrÃ³ximamente: Registro de llamadas, fechas importantes y seguimiento
+                Próximamente: Registro de llamadas, fechas importantes y seguimiento
               </p>
             </div>
           )}

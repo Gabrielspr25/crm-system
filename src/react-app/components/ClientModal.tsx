@@ -39,11 +39,11 @@ interface ClientModalProps {
   banRequirementPending?: boolean;
 }
 
-export default function ClientModal({ 
-  client, 
-  vendors, 
-  onSave, 
-  onClose, 
+export default function ClientModal({
+  client,
+  vendors,
+  onSave,
+  onClose,
   clientBANs = [],
   onCreateBAN,
   onAddSubscriber,
@@ -60,6 +60,7 @@ export default function ClientModal({
     address: '',
     city: '',
     zip_code: '',
+    base: 0,
     includes_ban: false,
     vendor_id: undefined,
   });
@@ -70,16 +71,14 @@ export default function ClientModal({
   const isVendorUser = authUser?.role === "vendedor";
   const parsedVendorId = authUser?.salespersonId != null ? Number(authUser.salespersonId) : NaN;
   const vendorIdNumber = isVendorUser && !Number.isNaN(parsedVendorId) ? parsedVendorId : undefined;
-  const vendorIdString = isVendorUser && authUser?.salespersonId != null ? String(authUser.salespersonId) : undefined;
 
   const availableVendors = useMemo(() => {
-    if (isVendorUser && vendorIdString) {
-      return vendors.filter((vendor) => String(vendor.id) === vendorIdString);
-    }
+    // Todos los usuarios ven todos los vendedores (pueden cambiar la asignación)
     return vendors;
-  }, [vendors, isVendorUser, vendorIdString]);
+  }, [vendors]);
 
-  const effectiveVendorId = isVendorUser && vendorIdNumber !== undefined ? vendorIdNumber : formData.vendor_id;
+  // Auto-asignar al vendedor si es nuevo cliente y es vendedor, pero permitir cambios
+  const effectiveVendorId = formData.vendor_id ?? (isVendorUser && !client ? vendorIdNumber : undefined);
 
   const banRequirementActive = Boolean(banRequirementPending);
 
@@ -132,6 +131,7 @@ export default function ClientModal({
         address: client.address ?? '',
         city: (client as any).city ?? '',
         zip_code: (client as any).zip_code ?? '',
+        base: (client as any).base ?? 0,
         includes_ban: Boolean(client.includes_ban),
         vendor_id: client.vendor_id ?? undefined,
       });
@@ -148,12 +148,14 @@ export default function ClientModal({
         address: '',
         city: '',
         zip_code: '',
+        base: 0,
         includes_ban: false,
         vendor_id: undefined,
       });
     }
 
-    if (isVendorUser && vendorIdNumber !== undefined) {
+    // Si es vendedor creando nuevo cliente, auto-asignar su vendor_id por defecto
+    if (!client && isVendorUser && vendorIdNumber !== undefined) {
       setFormData((prev) => ({ ...prev, vendor_id: vendorIdNumber }));
     }
 
@@ -165,33 +167,21 @@ export default function ClientModal({
     e.preventDefault();
     setFormMessage(null);
 
-    const vendorIdToUse = isVendorUser ? vendorIdNumber : formData.vendor_id;
+    // Usar el vendor_id del formulario, o auto-asignar si es vendedor creando nuevo cliente
+    let vendorIdToUse: number | undefined = formData.vendor_id;
 
-    if (!formData.name?.trim()) {
-      setFormMessage({ type: 'error', text: 'El nombre del cliente es obligatorio.' });
-      return;
+    // Si no hay vendor_id seleccionado y es vendedor creando nuevo cliente, auto-asignar
+    if (!vendorIdToUse && !client && isVendorUser && vendorIdNumber !== undefined) {
+      vendorIdToUse = vendorIdNumber;
     }
+
+    // Solo Empresa (business_name) es obligatorio
     if (!formData.business_name?.trim()) {
-      setFormMessage({ type: 'error', text: 'La razón social es obligatoria.' });
+      setFormMessage({ type: 'error', text: 'La empresa es obligatoria.' });
       return;
     }
-    if (!formData.contact_person?.trim()) {
-      setFormMessage({ type: 'error', text: 'La persona de contacto es obligatoria.' });
-      return;
-    }
-    if (!formData.email?.trim()) {
-      setFormMessage({ type: 'error', text: 'El email es obligatorio.' });
-      return;
-    }
-    if (!formData.phone?.trim()) {
-      setFormMessage({ type: 'error', text: 'El teléfono es obligatorio.' });
-      return;
-    }
-    if (!formData.address?.trim()) {
-      setFormMessage({ type: 'error', text: 'La dirección es obligatoria.' });
-      return;
-    }
-    if (vendorIdToUse == null) {
+    // Solo validar vendor_id si es un cliente nuevo (no tiene vendor_id existente)
+    if (!client && vendorIdToUse == null) {
       setFormMessage({ type: 'error', text: 'Debe asignar un vendedor.' });
       return;
     }
@@ -200,19 +190,21 @@ export default function ClientModal({
       return;
     }
 
+    // business_name ya está validado arriba, así que siempre será string
     const cleanData: CreateClient = {
-      name: formData.name.trim(),
+      name: formData.name?.trim() || undefined,
       business_name: formData.business_name.trim(),
-      contact_person: formData.contact_person.trim(),
-      email: formData.email.trim(),
-      phone: formData.phone.trim(),
+      contact_person: formData.contact_person?.trim() || undefined,
+      email: formData.email?.trim() || undefined,
+      phone: formData.phone?.trim() || undefined,
       secondary_phone: formData.secondary_phone?.trim() || undefined,
       mobile_phone: formData.mobile_phone?.trim() || undefined,
-      address: formData.address.trim(),
+      address: formData.address?.trim() || undefined,
       city: formData.city?.trim() || undefined,
       zip_code: formData.zip_code?.trim() || undefined,
+      base: formData.base || 0,
       includes_ban: formData.includes_ban,
-      vendor_id: vendorIdToUse,
+      vendor_id: vendorIdToUse ?? undefined, // Convertir null a undefined para TypeScript
     };
 
     const maybePromise = onSave(cleanData);
@@ -235,10 +227,10 @@ export default function ClientModal({
   const isEditing = !!client;
 
   return (
-    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-start justify-center z-50 p-4 pt-16">
-      <div className="bg-gray-200 dark:bg-gray-800 rounded-xl shadow-xl max-w-7xl w-full max-h-[90vh] overflow-y-auto border border-gray-200 dark:border-gray-700">
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-gray-800 dark:bg-gray-800 rounded-xl shadow-xl max-w-7xl w-full h-[95vh] flex flex-col border border-gray-600 dark:border-gray-700">
         {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-gray-800 dark:to-gray-700 rounded-t-xl">
+        <div className="flex items-center justify-between p-6 border-b border-gray-600 dark:border-gray-700 bg-gradient-to-r from-gray-800 to-gray-700 dark:from-gray-800 dark:to-gray-700 rounded-t-xl">
           <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
             {client ? 'Editar Cliente' : 'Nuevo Cliente'}
           </h2>
@@ -249,27 +241,25 @@ export default function ClientModal({
               }
             }}
             disabled={banRequirementActive || isSaving}
-            className={`p-2 rounded-lg transition-colors ${
-              banRequirementActive || isSaving
+            className={`p-2 rounded-lg transition-colors ${banRequirementActive || isSaving
                 ? 'cursor-not-allowed text-gray-400 dark:text-gray-600'
                 : 'hover:bg-gray-200/50 dark:hover:bg-gray-700'
-            }`}
+              }`}
           >
             <X className={`w-5 h-5 ${banRequirementActive || isSaving ? 'text-gray-500 dark:text-gray-600' : 'text-gray-600 dark:text-gray-400'}`} />
           </button>
         </div>
 
-        <div className="flex">
+        <div className="flex flex-1 overflow-hidden">
           {/* Form Section */}
-          <div className="flex-1 p-6">
-            <form onSubmit={handleSubmit} className="space-y-6">
+          <div className="flex-1 p-6 overflow-y-auto">
+            <form onSubmit={handleSubmit} className="space-y-6" noValidate>
               {formMessage && (
                 <div
-                  className={`rounded-lg border px-4 py-3 text-sm ${
-                    formMessage.type === 'error'
+                  className={`rounded-lg border px-4 py-3 text-sm ${formMessage.type === 'error'
                       ? 'border-red-500/60 bg-red-900/40 text-red-100'
                       : 'border-green-500/60 bg-green-900/40 text-green-100'
-                  }`}
+                    }`}
                 >
                   {formMessage.text}
                 </div>
@@ -285,29 +275,28 @@ export default function ClientModal({
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {/* Name - Required */}
                 <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                    Nombre del Cliente *
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Nombre del Cliente
                   </label>
                   <input
                     type="text"
                     value={formData.name}
                     onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-800 dark:bg-gray-800 text-gray-100 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-400"
+                    className="w-full px-3 py-2 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-700 text-white placeholder-gray-400"
                     placeholder="Ingrese el nombre del cliente"
-                    required
                   />
                 </div>
 
                 {/* Business Name */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                    Razón Social *
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Empresa *
                   </label>
                   <input
                     type="text"
                     value={formData.business_name}
                     onChange={(e) => setFormData(prev => ({ ...prev, business_name: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-800 dark:bg-gray-800 text-gray-100 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-400"
+                    className="w-full px-3 py-2 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-700 text-white placeholder-gray-400"
                     placeholder="Razón social de la empresa"
                     required
                   />
@@ -315,112 +304,148 @@ export default function ClientModal({
 
                 {/* Contact Person */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                    Persona de Contacto *
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Persona de Contacto
                   </label>
                   <input
                     type="text"
                     value={formData.contact_person}
                     onChange={(e) => setFormData(prev => ({ ...prev, contact_person: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-800 dark:bg-gray-800 text-gray-100 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-400"
+                    className="w-full px-3 py-2 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-700 text-white placeholder-gray-400"
                     placeholder="Nombre del contacto principal"
-                    required
                   />
                 </div>
 
                 {/* Email */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                    Email *
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Email
                   </label>
                   <input
-                    type="email"
+                    type="text"
                     value={formData.email}
                     onChange={(e) => setFormData(prev => ({ ...prev, email: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-800 dark:bg-gray-800 text-gray-100 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-400"
+                    className="w-full px-3 py-2 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-700 text-white placeholder-gray-400"
                     placeholder="correo@ejemplo.com"
-                    required
+                    autoComplete="off"
                   />
                 </div>
 
                 {/* Phone */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                    Teléfono *
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Teléfono
                   </label>
                   <input
                     type="tel"
                     value={formData.phone}
                     onChange={(e) => setFormData(prev => ({ ...prev, phone: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-800 dark:bg-gray-800 text-gray-100 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-400"
+                    className="w-full px-3 py-2 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-700 text-white placeholder-gray-400"
                     placeholder="+1 234 567 8900"
-                    required
                   />
                 </div>
 
                 {/* Secondary Phone */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
                     TelAcfono Adicional
                   </label>
                   <input
                     type="tel"
                     value={formData.secondary_phone || ''}
                     onChange={(e) => setFormData(prev => ({ ...prev, secondary_phone: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-800 dark:bg-gray-800 text-gray-100 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-400"
+                    className="w-full px-3 py-2 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-700 text-white placeholder-gray-400"
                     placeholder="TelAcfono adicional"
                   />
                 </div>
 
                 {/* Mobile Phone */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
                     Celular
                   </label>
                   <input
                     type="tel"
                     value={formData.mobile_phone || ''}
                     onChange={(e) => setFormData(prev => ({ ...prev, mobile_phone: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-800 dark:bg-gray-800 text-gray-100 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-400"
+                    className="w-full px-3 py-2 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-700 text-white placeholder-gray-400"
                     placeholder="NFA-mero de celular"
                   />
                 </div>
 
                 {/* Address */}
                 <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                    Dirección *
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Dirección
                   </label>
                   <textarea
                     value={formData.address}
                     onChange={(e) => setFormData(prev => ({ ...prev, address: e.target.value }))}
                     rows={3}
-                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400"
+                    className="w-full px-3 py-2 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-700 text-white placeholder-gray-400"
                     placeholder="Dirección completa del cliente"
-                    required
+                  />
+                </div>
+
+                {/* City */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Ciudad
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.city || ''}
+                    onChange={(e) => setFormData(prev => ({ ...prev, city: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-700 text-white placeholder-gray-400"
+                    placeholder="Ciudad del cliente"
+                  />
+                </div>
+
+                {/* Zip Code */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Código Postal
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.zip_code || ''}
+                    onChange={(e) => setFormData(prev => ({ ...prev, zip_code: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-700 text-white placeholder-gray-400"
+                    placeholder="Código postal"
+                  />
+                </div>
+
+                {/* Base */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Base
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={formData.base || ''}
+                    onChange={(e) => setFormData(prev => ({ ...prev, base: parseFloat(e.target.value) || 0 }))}
+                    className="w-full px-3 py-2 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-700 text-white placeholder-gray-400"
+                    placeholder="0.00"
                   />
                 </div>
 
                 {/* Vendor */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
                     Vendedor Asignado *
                   </label>
                   <select
                     value={effectiveVendorId ?? ''}
-                    onChange={(e) => setFormData(prev => {
-                      if (isVendorUser) {
-                        return prev;
-                      }
+                    onChange={(e) => {
                       const nextId = e.target.value ? parseInt(e.target.value, 10) : undefined;
-                      return {
+                      setFormData(prev => ({
                         ...prev,
                         vendor_id: Number.isNaN(nextId) ? undefined : nextId,
-                      };
-                    })}
-                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-800 dark:bg-gray-800 text-gray-100 dark:text-gray-100"
+                      }));
+                    }}
+                    className="w-full px-3 py-2 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-800 dark:bg-gray-800 text-gray-100 dark:text-gray-100"
                     required
-                    disabled={isVendorUser}
                   >
                     <option value="">Seleccione un vendedor</option>
                     {availableVendors.map((vendor) => (
@@ -429,16 +454,16 @@ export default function ClientModal({
                       </option>
                     ))}
                   </select>
-                  {isVendorUser && (
-                    <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                      Asignado automáticamente a tu usuario.
+                  {isVendorUser && !client && effectiveVendorId === vendorIdNumber && (
+                    <p className="mt-2 text-xs text-green-400 dark:text-green-400">
+                      ✅ Auto-asignado a tu usuario. Puedes cambiarlo si es necesario.
                     </p>
                   )}
                 </div>
 
                 {/* Includes BAN */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
                     Configuración de BAN
                   </label>
                   <div className="flex items-center space-x-3">
@@ -447,9 +472,9 @@ export default function ClientModal({
                       id="includes_ban"
                       checked={formData.includes_ban}
                       onChange={(e) => setFormData(prev => ({ ...prev, includes_ban: e.target.checked }))}
-                      className="w-4 h-4 text-blue-600 border-gray-300 dark:border-gray-600 rounded focus:ring-blue-500 bg-gray-800 dark:bg-gray-800"
+                      className="w-4 h-4 text-blue-600 border-gray-600 rounded focus:ring-blue-500 bg-gray-800 dark:bg-gray-800"
                     />
-                    <label htmlFor="includes_ban" className="text-sm text-gray-700 dark:text-gray-300">
+                    <label htmlFor="includes_ban" className="text-sm text-gray-300">
                       Este cliente incluye BANs
                     </label>
                   </div>
@@ -462,22 +487,20 @@ export default function ClientModal({
                   type="button"
                   onClick={onClose}
                   disabled={banRequirementActive || isSaving}
-                  className={`px-4 py-2 rounded-lg transition-colors ${
-                    banRequirementActive || isSaving
+                  className={`px-4 py-2 rounded-lg transition-colors ${banRequirementActive || isSaving
                       ? 'text-gray-500 dark:text-gray-500 bg-gray-200/50 dark:bg-gray-700/50 cursor-not-allowed'
-                      : 'text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700'
-                  }`}
+                      : 'text-gray-300 hover:text-gray-800 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700'
+                    }`}
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
                   disabled={isSaving}
-                  className={`px-6 py-2 rounded-lg transition-all duration-200 shadow-lg shadow-blue-500/25 ${
-                    isSaving
+                  className={`px-6 py-2 rounded-lg transition-all duration-200 shadow-lg shadow-blue-500/25 ${isSaving
                       ? 'bg-blue-900/60 text-blue-200 cursor-wait'
                       : 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-700 hover:to-indigo-700'
-                  }`}
+                    }`}
                 >
                   {isSaving ? 'Guardando...' : client ? 'Actualizar Cliente' : 'Crear Cliente'}
                 </button>
@@ -487,8 +510,8 @@ export default function ClientModal({
 
           {/* BANs Management Section - Only show when editing */}
           {isEditing && (
-            <div className="w-96 border-l border-gray-200 dark:border-gray-700 p-6 bg-gray-50 dark:bg-gray-900">
-              <div className="flex items-center justify-between mb-4">
+            <div className="w-96 border-l border-gray-200 dark:border-gray-700 p-6 bg-gray-800 dark:bg-gray-900 flex flex-col overflow-hidden">
+              <div className="flex items-center justify-between mb-4 flex-shrink-0">
                 <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">
                   BANs del Cliente
                 </h3>
@@ -504,7 +527,7 @@ export default function ClientModal({
                 )}
               </div>
 
-              <div className="space-y-3 max-h-96 overflow-y-auto">
+              <div className="space-y-3 flex-1 overflow-y-auto pr-2">
                 {clientBANs.length === 0 ? (
                   <div className="text-center py-8">
                     <Hash className="w-12 h-12 mx-auto text-gray-400 dark:text-gray-500 mb-3" />
@@ -523,7 +546,7 @@ export default function ClientModal({
                   </div>
                 ) : (
                   clientBANs.map((ban) => (
-                    <div key={ban.id} className="bg-gray-200 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 p-4">
+                    <div key={ban.id} className="bg-gray-700 dark:bg-gray-800 rounded-lg border border-gray-600 dark:border-gray-600 p-4">
                       <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center">
                           <Hash className="w-4 h-4 text-gray-500 dark:text-gray-400 mr-2" />
@@ -537,9 +560,9 @@ export default function ClientModal({
                           </span>
                         </div>
                       </div>
-                      
+
                       {ban.description && (
-                        <p className="text-xs text-gray-600 dark:text-gray-300 mb-3">
+                        <p className="text-xs text-gray-300 mb-3">
                           {ban.description}
                         </p>
                       )}
@@ -548,38 +571,38 @@ export default function ClientModal({
                       <div className="space-y-2">
                         {ban.subscribers && ban.subscribers.length > 0 ? (
                           ban.subscribers.map((subscriber) => (
-                            <div key={subscriber.id} className="flex items-center justify-between bg-gray-300 dark:bg-gray-700 rounded p-2">
-                          <div>
-                            <div className="font-mono text-xs text-gray-900 dark:text-gray-100">
-                              {subscriber.phone}
-                            </div>
-                            {subscriber.service_type && (
-                              <div className="text-xs text-gray-500 dark:text-gray-400">
-                                {subscriber.service_type}
+                            <div key={subscriber.id} className="flex items-center justify-between bg-gray-600 dark:bg-gray-700 rounded p-2">
+                              <div>
+                                <div className="font-mono text-xs text-gray-900 dark:text-gray-100">
+                                  {subscriber.phone}
+                                </div>
+                                {subscriber.service_type && (
+                                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                                    {subscriber.service_type}
+                                  </div>
+                                )}
+                                {subscriber.monthly_value && (
+                                  <div className="text-xs text-green-600 dark:text-green-400">
+                                    ${subscriber.monthly_value}/mes
+                                  </div>
+                                )}
+                                <div className="mt-1 flex items-center gap-2">
+                                  <div className="text-xs text-gray-600 dark:text-gray-400 flex items-center">
+                                    <Calendar className="w-3 h-3 mr-1" />
+                                    {subscriber.contract_end_date
+                                      ? new Date(subscriber.contract_end_date).toLocaleDateString()
+                                      : 'Sin fecha'}
+                                  </div>
+                                  {(() => {
+                                    const { label, className } = getExpirationBadge(subscriber.contract_end_date);
+                                    return (
+                                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${className}`}>
+                                        {label}
+                                      </span>
+                                    );
+                                  })()}
+                                </div>
                               </div>
-                            )}
-                            {subscriber.monthly_value && (
-                              <div className="text-xs text-green-600 dark:text-green-400">
-                                ${subscriber.monthly_value}/mes
-                              </div>
-                            )}
-                            <div className="mt-1 flex items-center gap-2">
-                              <div className="text-xs text-gray-600 dark:text-gray-400 flex items-center">
-                                <Calendar className="w-3 h-3 mr-1" />
-                                {subscriber.contract_end_date
-                                  ? new Date(subscriber.contract_end_date).toLocaleDateString()
-                                  : 'Sin fecha'}
-                              </div>
-                              {(() => {
-                                const { label, className } = getExpirationBadge(subscriber.contract_end_date);
-                                return (
-                                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${className}`}>
-                                    {label}
-                                  </span>
-                                );
-                              })()}
-                            </div>
-                          </div>
                             </div>
                           ))
                         ) : (
@@ -587,14 +610,14 @@ export default function ClientModal({
                             <p className="text-xs text-gray-500 dark:text-gray-400">Sin suscriptores</p>
                           </div>
                         )}
-                        
+
                         {onAddSubscriber && (
                           <button
                             type="button"
                             onClick={() => onAddSubscriber(ban.id)}
-                            className="w-full flex items-center justify-center px-2 py-1.5 border border-dashed border-gray-300 dark:border-gray-600 rounded text-xs text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:border-gray-400 dark:hover:border-gray-500 transition-colors"
+                            className="w-full flex items-center justify-center px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-medium transition-colors"
                           >
-                            <Plus className="w-3 h-3 mr-1" />
+                            <Plus className="w-4 h-4 mr-1" />
                             Agregar Suscriptor
                           </button>
                         )}

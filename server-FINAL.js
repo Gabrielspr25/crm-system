@@ -6,7 +6,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { Pool } from 'pg';
 import jwt from 'jsonwebtoken';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 
 // ======================================================
 // Configuración base
@@ -15,7 +15,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = Number(process.env.PORT || 3000);
+const PORT = Number(process.env.PORT || 3001);
 
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
@@ -308,6 +308,69 @@ app.get('/api/health', async (_req, res) => {
     res.json({ status: 'OK', time: new Date().toISOString() });
   } catch (error) {
     serverError(res, error);
+  }
+});
+
+// ======================================================
+// Endpoint para limpiar nombres BAN (sin autenticación - solo desarrollo)
+// ======================================================
+app.post('/api/admin/clean-names-ban-dev', async (req, res) => {
+  try {
+    console.log('\n🔍 Limpiando nombres/empresas BAN...');
+
+    // 1. Contar cuántos hay
+    const antes = await query(`
+      SELECT 
+        COUNT(*) as total_con_nombre_ban,
+        COUNT(CASE WHEN name ILIKE 'Cliente BAN%' OR name ILIKE 'BAN%' THEN 1 END) as con_nombre_ban,
+        COUNT(CASE WHEN business_name ILIKE 'Empresa BAN%' OR business_name ILIKE 'BAN%' THEN 1 END) as con_empresa_ban
+      FROM clients
+      WHERE (name ILIKE 'Cliente BAN%' OR name ILIKE 'BAN%' OR 
+             business_name ILIKE 'Empresa BAN%' OR business_name ILIKE 'BAN%')
+    `);
+
+    const conteos = antes[0];
+    console.log('📊 Clientes encontrados:', conteos);
+
+    if (parseInt(conteos.total_con_nombre_ban) === 0) {
+      return res.json({
+        success: true,
+        message: 'No hay clientes con nombre/empresa BAN para limpiar',
+        antes: conteos,
+        actualizados: 0
+      });
+    }
+
+    // 2. Actualizar: poner business_name en NULL
+    const resultado = await query(`
+      UPDATE clients
+      SET business_name = NULL,
+          updated_at = NOW()
+      WHERE business_name ILIKE 'Empresa BAN%'
+      RETURNING id
+    `);
+
+    const actualizados = resultado.length || 0;
+    console.log(`✅ ${actualizados} clientes actualizados`);
+
+    // 3. Verificar
+    const despues = await query(`
+      SELECT COUNT(*) as total_actualizados
+      FROM clients
+      WHERE business_name IS NULL 
+        AND (name ILIKE 'Cliente BAN%' OR name ILIKE 'BAN%')
+    `);
+
+    res.json({
+      success: true,
+      antes: conteos,
+      actualizados: actualizados,
+      despues: despues[0],
+      message: `${actualizados} clientes actualizados. business_name = NULL. Ahora aparecerán en "Incompletos".`
+    });
+  } catch (error) {
+    console.error('❌ Error limpiando nombres BAN:', error);
+    serverError(res, error, 'Error limpiando nombres BAN');
   }
 });
 
@@ -1104,7 +1167,7 @@ app.post('/api/product-goals/bulk', async (req, res) => {
 
     await client.query('COMMIT');
   } catch (error) {
-    await client.query('ROLLBACK').catch(() => {});
+    await client.query('ROLLBACK').catch(() => { });
     client.release();
     return serverError(res, error, 'Error guardando metas masivas');
   }
@@ -1379,49 +1442,94 @@ app.delete('/api/goals/:id', async (req, res) => {
 // ======================================================
 app.get('/api/clients', async (req, res) => {
   try {
+    console.log('📋 GET /api/clients - Usuario:', req.user?.username, 'Role:', req.user?.role);
     const params = [];
     let whereClause = 'WHERE COALESCE(c.is_active,1) = 1';
 
-    if (req.user?.role === 'vendedor' && req.user.salespersonId != null) {
-      const salespersonIdParam = Number(req.user.salespersonId);
-      if (Number.isInteger(salespersonIdParam)) {
-      params.push(salespersonIdParam);
-      whereClause += ` AND (c.vendor_id = $${params.length} OR c.vendor_id IS NULL)`;
-      }
-    }
+    // Todos los usuarios (admin, supervisor, vendedor) ven todos los clientes
+    // Sin filtro por vendor_id
 
-    const rows = await query(
-      `SELECT 
+    // Consulta optimizada para mejor rendimiento con información de suscriptores
+    const sql = `SELECT DISTINCT ON (c.id)
           c.*,
           v.name AS vendor_name,
           COALESCE(b.ban_count, 0) AS ban_count,
-          b.ban_numbers,
-          CASE WHEN COALESCE(b.ban_count, 0) > 0 THEN 1 ELSE 0 END AS has_bans
+          CASE 
+            WHEN b.ban_numbers IS NOT NULL AND LENGTH(b.ban_numbers) > 200 
+            THEN LEFT(b.ban_numbers, 200) || '...'
+            ELSE b.ban_numbers
+          END AS ban_numbers,
+          CASE WHEN COALESCE(b.ban_count, 0) > 0 THEN 1 ELSE 0 END AS has_bans,
+          COALESCE(s.subscriber_count, 0) AS subscriber_count,
+          s.primary_subscriber_phone,
+          s.primary_contract_end_date,
+          s.primary_subscriber_created_at,
+          s.primary_service_type,
+          s.all_service_types,
+          COALESCE(la.last_activity, c.updated_at) AS last_activity,
+          CASE WHEN b.cancelled_status IS NOT NULL THEN 1 ELSE 0 END AS has_cancelled_bans
         FROM clients c
         LEFT JOIN vendors v ON c.vendor_id = v.id
         LEFT JOIN (
-          SELECT client_id,
-                 COUNT(*) AS ban_count,
-                 STRING_AGG(ban_number, ', ') AS ban_numbers
+          SELECT 
+            client_id,
+            COUNT(*) AS ban_count,
+            STRING_AGG(ban_number, ', ' ORDER BY ban_number) AS ban_numbers,
+            STRING_AGG(DISTINCT CASE WHEN status = 'cancelled' OR status = 'cancelado' THEN 'cancelled' END, ', ') AS cancelled_status
           FROM bans
           WHERE COALESCE(is_active,1) = 1
           GROUP BY client_id
         ) b ON b.client_id = c.id
+        LEFT JOIN (
+          SELECT 
+            b.client_id,
+            COUNT(DISTINCT s.id) AS subscriber_count,
+            COUNT(DISTINCT CASE WHEN COALESCE(s.remaining_payments, 0) = 0 THEN s.id END) AS subscribers_in_opportunity,
+            MAX(CASE WHEN s.phone IS NOT NULL THEN s.phone END) AS primary_subscriber_phone,
+            MAX(CASE WHEN s.contract_end_date IS NOT NULL THEN s.contract_end_date END) AS primary_contract_end_date,
+            MAX(CASE WHEN s.created_at IS NOT NULL THEN s.created_at END) AS primary_subscriber_created_at,
+            MAX(CASE WHEN s.service_type IS NOT NULL THEN s.service_type END) AS primary_service_type,
+            STRING_AGG(DISTINCT s.service_type, ', ') AS all_service_types
+          FROM bans b
+          INNER JOIN subscribers s ON s.ban_id = b.id
+          WHERE COALESCE(b.is_active,1) = 1 AND COALESCE(s.is_active,1) = 1
+          GROUP BY b.client_id
+        ) s ON s.client_id = c.id
+        LEFT JOIN (
+          SELECT 
+            b.client_id,
+            MAX(GREATEST(
+              COALESCE(b.updated_at, '1970-01-01'::timestamp),
+              COALESCE(s.updated_at, '1970-01-01'::timestamp),
+              COALESCE(c.updated_at, '1970-01-01'::timestamp)
+            )) AS last_activity
+          FROM bans b
+          LEFT JOIN subscribers s ON s.ban_id = b.id
+          LEFT JOIN clients c ON c.id = b.client_id
+          WHERE COALESCE(b.is_active,1) = 1
+          GROUP BY b.client_id
+        ) la ON la.client_id = c.id
         ${whereClause}
-        ORDER BY c.name ASC`,
-      params
-    );
+        ORDER BY c.id, c.name ASC`;
+
+    console.log('📋 Ejecutando consulta SQL para clientes...');
+    const startTime = Date.now();
+    const rows = await query(sql, params);
+    const duration = Date.now() - startTime;
+    console.log(`✅ Clientes encontrados: ${rows.length} (en ${duration}ms)`);
 
     const mapped = rows.map((row) =>
       enrich(
         row,
-        ['includes_ban', 'vendor_id', 'ban_count', 'is_active'],
+        ['includes_ban', 'vendor_id', 'ban_count', 'is_active', 'subscriber_count', 'subscribers_in_opportunity', 'has_cancelled_bans', 'base'],
         ['has_bans'],
-        ['created_at', 'updated_at']
+        ['created_at', 'updated_at', 'primary_contract_end_date', 'primary_subscriber_created_at', 'last_activity']
       )
     );
+    console.log(`✅ Clientes mapeados: ${mapped.length}`);
     res.json(mapped);
   } catch (error) {
+    console.error('❌ Error en GET /api/clients:', error);
     serverError(res, error, 'Error obteniendo clientes');
   }
 });
@@ -1454,15 +1562,9 @@ app.get('/api/clients/:id', async (req, res) => {
       ['created_at', 'updated_at']
     );
 
-    if (req.user?.role === 'vendedor') {
-      const clientVendorId = client.vendor_id ?? null;
-      if (clientVendorId && !sameId(clientVendorId, req.user.salespersonId)) {
-        return res.status(403).json({ error: 'No autorizado para ver este cliente' });
-      }
-    }
-
+    // Todos los usuarios pueden ver todos los clientes (sin restricción de vendor_id)
     res.json(client);
-    } catch (error) {
+  } catch (error) {
     serverError(res, error, 'Error obteniendo cliente');
   }
 });
@@ -1480,26 +1582,62 @@ app.post('/api/clients', async (req, res) => {
     city = null,
     zip_code = null,
     includes_ban = 0,
-    vendor_id = null
+    vendor_id = null,
+    base = 0
   } = req.body || {};
 
-  if (!name || typeof name !== 'string') {
-    return badRequest(res, 'El nombre es obligatorio');
+  // Solo business_name es obligatorio
+  if (!business_name || typeof business_name !== 'string' || !business_name.trim()) {
+    return badRequest(res, 'La empresa (business_name) es obligatoria');
   }
 
   try {
-    const assignedVendorId = (req.user?.role === 'vendedor')
-      ? toDbId(req.user.salespersonId)
-      : toDbId(vendor_id);
+    let assignedVendorId = toDbId(vendor_id);
+
+    // Si es vendedor, buscar su vendor_id numérico desde salespeople y auto-asignarlo
+    if (req.user?.role === 'vendedor' && req.user.salespersonId) {
+      // Buscar el salesperson para obtener su nombre
+      const salespersonResult = await query(
+        `SELECT name FROM salespeople WHERE id = $1`,
+        [req.user.salespersonId]
+      );
+      if (salespersonResult.length > 0) {
+        const salespersonName = salespersonResult[0].name;
+        // Normalizar nombres para búsqueda (mayúsculas, sin espacios extra)
+        const normalizedName = salespersonName.trim().toUpperCase();
+        const firstName = normalizedName.split(' ')[0]; // Primer nombre
+
+        // Buscar vendor por nombre (coincidencia exacta, parcial, o por primer nombre)
+        const vendorResult = await query(
+          `SELECT id FROM vendors 
+           WHERE UPPER(TRIM(name)) = $1 
+              OR UPPER(TRIM(name)) LIKE $2 
+              OR UPPER(TRIM(name)) = $3
+           LIMIT 1`,
+          [normalizedName, `%${normalizedName}%`, firstName]
+        );
+        if (vendorResult.length > 0) {
+          assignedVendorId = Number(vendorResult[0].id);
+          console.log(`✅ Vendor auto-asignado para ${salespersonName}: ${assignedVendorId}`);
+        } else {
+          // Si no hay vendor asociado, usar el primer vendor activo o null
+          const defaultVendor = await query(`SELECT id FROM vendors WHERE is_active = 1 LIMIT 1`);
+          assignedVendorId = defaultVendor.length > 0 ? Number(defaultVendor[0].id) : null;
+          console.log(`⚠️ No se encontró vendor para ${salespersonName}, usando default: ${assignedVendorId}`);
+        }
+      }
+    }
+
+    console.log('📝 Creando cliente - Usuario:', req.user?.username, 'Role:', req.user?.role, 'vendor_id asignado:', assignedVendorId);
 
     const rows = await query(
       `INSERT INTO clients
-        (name, business_name, contact_person, email, phone, secondary_phone, mobile_phone, address, city, zip_code, includes_ban, vendor_id, is_active, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,1,NOW(),NOW())
+        (name, business_name, contact_person, email, phone, secondary_phone, mobile_phone, address, city, zip_code, includes_ban, vendor_id, base, is_active, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,1,NOW(),NOW())
        RETURNING *`,
       [
-        name.trim(),
-        business_name,
+        name?.trim() || null,
+        business_name.trim(),
         contact_person,
         email,
         phone,
@@ -1509,13 +1647,14 @@ app.post('/api/clients', async (req, res) => {
         city,
         zip_code,
         includes_ban ? 1 : 0,
-        assignedVendorId
+        assignedVendorId,
+        base || 0
       ]
     );
 
     const client = enrich(
       rows[0],
-      ['includes_ban', 'vendor_id', 'is_active'],
+      ['includes_ban', 'vendor_id', 'is_active', 'base'],
       [],
       ['created_at', 'updated_at']
     );
@@ -1545,11 +1684,13 @@ app.put('/api/clients/:id', async (req, res) => {
     zip_code = null,
     includes_ban = 0,
     vendor_id = null,
-    is_active = 1
+    is_active = 1,
+    base = 0
   } = req.body || {};
 
-  if (!name || typeof name !== 'string') {
-    return badRequest(res, 'El nombre es obligatorio');
+  // Solo business_name es obligatorio
+  if (!business_name || typeof business_name !== 'string' || !business_name.trim()) {
+    return badRequest(res, 'La empresa (business_name) es obligatoria');
   }
 
   try {
@@ -1558,13 +1699,46 @@ app.put('/api/clients/:id', async (req, res) => {
       return notFound(res, 'Cliente');
     }
 
+    // Preservar vendor_id existente si no se proporciona uno nuevo
     let finalVendorId = toDbId(vendor_id);
+    const currentVendorId = existing[0].vendor_id;
+
+    // Si no se envió vendor_id, preservar el existente
+    if (finalVendorId === null && currentVendorId !== null) {
+      finalVendorId = currentVendorId;
+    }
+
     if (req.user?.role === 'vendedor') {
-      const currentVendorId = existing[0].vendor_id;
-      if (currentVendorId && !sameId(currentVendorId, req.user.salespersonId)) {
-        return res.status(403).json({ error: 'No autorizado para modificar este cliente' });
+      // Los vendedores pueden editar cualquier cliente
+      // Si el cliente no tiene vendor_id, asignarlo al vendedor que lo edita
+      if (currentVendorId === null && finalVendorId === null) {
+        // Buscar el vendor_id del vendedor
+        const salespersonResult = await query(
+          `SELECT name FROM salespeople WHERE id = $1`,
+          [req.user.salespersonId]
+        );
+        if (salespersonResult.length > 0) {
+          const salespersonName = salespersonResult[0].name;
+          const normalizedName = salespersonName.trim().toUpperCase();
+          const firstName = normalizedName.split(' ')[0];
+          const vendorResult = await query(
+            `SELECT id FROM vendors 
+             WHERE UPPER(TRIM(name)) = $1 
+                OR UPPER(TRIM(name)) LIKE $2 
+                OR UPPER(TRIM(name)) = $3
+             LIMIT 1`,
+            [normalizedName, `%${normalizedName}%`, firstName]
+          );
+          if (vendorResult.length > 0) {
+            finalVendorId = Number(vendorResult[0].id);
+          }
+        }
       }
-      finalVendorId = toDbId(req.user.salespersonId);
+      // Si se está cambiando el vendor_id, permitirlo (los vendedores pueden cambiar asignaciones)
+      // Si no se cambia, preservar el existente
+      if (finalVendorId === null && currentVendorId !== null) {
+        finalVendorId = currentVendorId;
+      }
     }
 
     const rows = await query(
@@ -1581,13 +1755,14 @@ app.put('/api/clients/:id', async (req, res) => {
               zip_code = $10,
               includes_ban = $11,
               vendor_id = $12,
-              is_active = $13,
+              base = $13,
+              is_active = $14,
               updated_at = NOW()
-        WHERE id = $14
+        WHERE id = $15
         RETURNING *`,
       [
-        name.trim(),
-        business_name,
+        name?.trim() || null,
+        business_name.trim(),
         contact_person,
         email,
         phone,
@@ -1598,6 +1773,7 @@ app.put('/api/clients/:id', async (req, res) => {
         zip_code,
         includes_ban ? 1 : 0,
         finalVendorId,
+        base || 0,
         is_active ? 1 : 0,
         clientId
       ]
@@ -1609,7 +1785,7 @@ app.put('/api/clients/:id', async (req, res) => {
 
     const client = enrich(
       rows[0],
-      ['includes_ban', 'vendor_id', 'is_active'],
+      ['includes_ban', 'vendor_id', 'is_active', 'base'],
       [],
       ['created_at', 'updated_at']
     );
@@ -1686,11 +1862,8 @@ app.get('/api/bans', async (req, res) => {
       params
     );
 
-    const authorizedRows = req.user?.role === 'vendedor'
-      ? rows.filter((row) => !row.vendor_id || sameId(row.vendor_id, req.user.salespersonId))
-      : rows;
-
-    const mapped = authorizedRows.map((row) =>
+    // Todos los usuarios pueden ver todos los BANs (sin restricción de vendor_id)
+    const mapped = rows.map((row) =>
       enrich(row, ['client_id', 'is_active'], [], ['created_at', 'updated_at'])
     );
     res.json(mapped);
@@ -1716,20 +1889,44 @@ app.post('/api/bans', async (req, res) => {
       return notFound(res, 'Cliente');
     }
 
-    if (req.user?.role === 'vendedor') {
-      const clientVendorId = clientRows[0].vendor_id;
-      if (clientVendorId && !sameId(clientVendorId, req.user.salespersonId)) {
-        return res.status(403).json({ error: 'No autorizado para crear BAN en este cliente' });
-      }
-    }
+    // Los vendedores pueden crear BANs para cualquier cliente
+    // Sin restricciones de vendor_id
 
+    // Verificar duplicados de BAN
     const existing = await query(
-      `SELECT id FROM bans WHERE ban_number = $1`,
+      `SELECT b.id, b.client_id, c.business_name, c.name 
+       FROM bans b
+       LEFT JOIN clients c ON b.client_id = c.id
+       WHERE b.ban_number = $1`,
       [ban_number.trim()]
     );
 
+    console.log(`🔍 Verificando BAN ${ban_number.trim()} - Resultados encontrados:`, existing.length, existing);
+
     if (existing.length > 0) {
-      return conflict(res, 'El BAN ya existe');
+      const banInfo = existing[0];
+      const existingClientId = banInfo.client_id;
+      const clientName = banInfo.business_name || banInfo.name || 'Cliente desconocido';
+
+      console.log(`⚠️ BAN duplicado encontrado:`, {
+        ban_number: ban_number.trim(),
+        existing_ban_id: banInfo.id,
+        existing_client_id: existingClientId,
+        current_client_id: client_id,
+        client_name: clientName
+      });
+
+      // Verificar si el cliente_id del BAN existente coincide con el cliente_id actual
+      // Comparar como números para evitar problemas de tipo
+      const existingClientIdNum = Number(existingClientId);
+      const currentClientIdNum = Number(client_id);
+
+      if (existingClientIdNum === currentClientIdNum) {
+        return conflict(res, `El BAN ${ban_number.trim()} ya existe y está asignado a este cliente: ${clientName} (ID: ${existingClientId}). Un cliente puede tener múltiples BANs, pero cada número de BAN debe ser único.`);
+      } else {
+        // El BAN existe pero está asignado a otro cliente - no permitir crear uno nuevo con el mismo número
+        return conflict(res, `El BAN ${ban_number.trim()} ya existe y está asignado al cliente: ${clientName} (ID: ${existingClientId}). Cada número de BAN debe ser único en el sistema.`);
+      }
     }
 
     const rows = await query(
@@ -1742,7 +1939,7 @@ app.post('/api/bans', async (req, res) => {
 
     const ban = enrich(rows[0], ['client_id', 'is_active'], [], ['created_at', 'updated_at']);
     res.status(201).json(ban);
-    } catch (error) {
+  } catch (error) {
     serverError(res, error, 'Error creando BAN');
   }
 });
@@ -1761,6 +1958,8 @@ app.put('/api/bans/:id', async (req, res) => {
     is_active = 1
   } = req.body || {};
 
+  console.log('📝 PUT /api/bans/:id - Datos recibidos:', { banId, ban_number, client_id, description, status, is_active });
+
   if (!ban_number || typeof ban_number !== 'string') {
     return badRequest(res, 'El BAN es obligatorio');
   }
@@ -1768,9 +1967,9 @@ app.put('/api/bans/:id', async (req, res) => {
   try {
     const ownerRows = await query(
       `SELECT b.client_id, c.vendor_id
-         FROM bans b
-         LEFT JOIN clients c ON b.client_id = c.id
-        WHERE b.id = $1`,
+           FROM bans b
+           LEFT JOIN clients c ON b.client_id = c.id
+          WHERE b.id = $1`,
       [banId]
     );
 
@@ -1778,24 +1977,18 @@ app.put('/api/bans/:id', async (req, res) => {
       return notFound(res, 'BAN');
     }
 
-    if (req.user?.role === 'vendedor') {
-      const currentVendorId = ownerRows[0].vendor_id;
-      if (currentVendorId && !sameId(currentVendorId, req.user.salespersonId)) {
-        return res.status(403).json({ error: 'No autorizado para modificar este BAN' });
-      }
-    }
+    // Si no se proporciona client_id, usar el existente del BAN
+    const finalClientId = client_id || ownerRows[0].client_id;
+
+    // Los vendedores pueden editar BANs de cualquier cliente
+    // Sin restricciones de vendor_id
 
     if (client_id && client_id !== ownerRows[0].client_id) {
       const targetClient = await query(`SELECT vendor_id FROM clients WHERE id = $1`, [client_id]);
       if (targetClient.length === 0) {
         return notFound(res, 'Cliente');
       }
-      if (req.user?.role === 'vendedor') {
-        const clientVendorId = targetClient[0].vendor_id;
-        if (clientVendorId && !sameId(clientVendorId, req.user.salespersonId)) {
-          return res.status(403).json({ error: 'No autorizado para mover el BAN a ese cliente' });
-        }
-      }
+      // Los vendedores pueden mover BANs a cualquier cliente
     }
 
     const existing = await query(
@@ -1807,18 +2000,24 @@ app.put('/api/bans/:id', async (req, res) => {
       return conflict(res, 'El BAN ya existe');
     }
 
+    // Normalizar el status: aceptar 'cancelled', 'cancelado', o cualquier otro valor como 'active'
+    const normalizedStatus = (status === 'cancelled' || status === 'cancelado') ? 'cancelled' : 'active';
+    console.log('🔄 Normalizando status:', status, '->', normalizedStatus);
+
     const rows = await query(
       `UPDATE bans
-          SET ban_number = $1,
-              client_id = $2,
-              description = $3,
-              status = $4,
-              is_active = $5,
-              updated_at = NOW()
-        WHERE id = $6
-        RETURNING *`,
-      [ban_number.trim(), client_id, description, status === 'cancelled' ? 'cancelled' : 'active', is_active ? 1 : 0, banId]
+            SET ban_number = $1,
+                client_id = $2,
+                description = $3,
+                status = $4,
+                is_active = $5,
+                updated_at = NOW()
+          WHERE id = $6
+          RETURNING *`,
+      [ban_number.trim(), finalClientId, description, normalizedStatus, is_active ? 1 : 0, banId]
     );
+
+    console.log('✅ BAN actualizado en BD:', rows[0]);
 
     if (rows.length === 0) {
       return notFound(res, 'BAN');
@@ -1850,12 +2049,8 @@ app.delete('/api/bans/:id', async (req, res) => {
       return notFound(res, 'BAN');
     }
 
-    if (req.user?.role === 'vendedor') {
-      const currentVendorId = ownerRows[0].vendor_id;
-      if (currentVendorId && !sameId(currentVendorId, req.user.salespersonId)) {
-        return res.status(403).json({ error: 'No autorizado para eliminar este BAN' });
-      }
-    }
+    // Los vendedores pueden eliminar BANs de cualquier cliente
+    // Sin restricciones de vendor_id
 
     await pool.query('BEGIN');
     await query(`DELETE FROM subscribers WHERE ban_id = $1`, [banId]);
@@ -1870,6 +2065,445 @@ app.delete('/api/bans/:id', async (req, res) => {
   } catch (error) {
     await pool.query('ROLLBACK');
     serverError(res, error, 'Error eliminando BAN');
+  }
+});
+
+// ======================================================
+// Importador Visual
+// ======================================================
+app.post('/api/importador/save', async (req, res) => {
+  const { mapping, data } = req.body || {};
+
+  console.log('📥 Importador save - Datos recibidos:', {
+    hasMapping: !!mapping,
+    hasData: !!data,
+    dataLength: Array.isArray(data) ? data.length : 0,
+    firstRow: Array.isArray(data) && data.length > 0 ? data[0] : null,
+    user: req.user ? { userId: req.user.userId, salespersonId: req.user.salespersonId, role: req.user.role } : null
+  });
+
+  if (!mapping || !data || !Array.isArray(data)) {
+    return badRequest(res, 'Datos de mapeo y datos son requeridos');
+  }
+
+  if (data.length === 0) {
+    return badRequest(res, 'No hay datos para procesar');
+  }
+
+  // Obtener vendor_id del usuario o buscar el primero disponible
+  let vendorId = req.user?.salespersonId;
+
+  // Convertir a número si es string numérico
+  if (vendorId && typeof vendorId === 'string') {
+    const numId = Number(vendorId);
+    vendorId = !isNaN(numId) ? numId : null;
+  }
+
+  // Si vendorId no es un número válido, dejar como NULL (sin vendedor asignado)
+  // Los clientes importados pueden no tener vendedor asignado
+  if (!vendorId || typeof vendorId !== 'number') {
+    vendorId = null;
+    console.log('ℹ️ No hay vendor_id válido - Los clientes se crearán sin vendedor asignado');
+  }
+
+  console.log('✅ Usando vendor_id:', vendorId || 'NULL (sin asignar)', typeof vendorId);
+
+  const client = await pool.connect();
+  let created = 0;
+  let updated = 0;
+  let errors = [];
+
+  // Procesar en lotes para evitar agotar locks de PostgreSQL
+  const BATCH_SIZE = 100; // Procesar 100 filas por lote
+  const TOTAL_BATCHES = Math.ceil(data.length / BATCH_SIZE);
+
+  try {
+    for (let batchIndex = 0; batchIndex < TOTAL_BATCHES; batchIndex++) {
+      const batchStart = batchIndex * BATCH_SIZE;
+      const batchEnd = Math.min(batchStart + BATCH_SIZE, data.length);
+      const batch = data.slice(batchStart, batchEnd);
+
+      console.log(`📦 Procesando lote ${batchIndex + 1}/${TOTAL_BATCHES} (filas ${batchStart + 1}-${batchEnd})`);
+
+      await client.query('BEGIN');
+
+      for (let i = 0; i < batch.length; i++) {
+        const rowIndex = batchStart + i;
+        const row = batch[i];
+
+        try {
+
+          const clientData = row.Clientes || {};
+          const banData = row.BANs || {};
+          const subscriberData = row.Suscriptores || {};
+
+          // REGLA 1: BAN siempre requerido
+          // Si no hay BAN, buscar por empresa; si no hay empresa, omitir fila
+          let normalizedBan = null;
+          if (banData.ban_number) {
+            normalizedBan = String(banData.ban_number).trim().replace(/[^0-9]/g, '').slice(0, 9);
+            if (!normalizedBan || normalizedBan.length === 0) {
+              normalizedBan = null; // BAN inválido, tratar como si no hubiera BAN
+            }
+          }
+
+          // Si NO hay BAN válido, se requiere empresa (business_name)
+          if (!normalizedBan) {
+            if (!clientData.business_name) {
+              errors.push(`Fila ${rowIndex + 1} omitida: falta BAN, se requiere empresa (business_name)`);
+              continue;
+            }
+            // Si no hay BAN pero hay empresa, continuar (se buscará cliente por business_name)
+          }
+
+          // Validar teléfono del suscriptor SOLO si hay BAN
+          let subscriberPhone = null;
+          if (normalizedBan) {
+            if (!subscriberData.phone) {
+              errors.push(`Fila ${rowIndex + 1} omitida: falta teléfono del suscriptor (requerido cuando hay BAN)`);
+              continue;
+            }
+            // Normalizar teléfono (solo números)
+            subscriberPhone = String(subscriberData.phone).trim().replace(/[^0-9]/g, '');
+            if (!subscriberPhone || subscriberPhone.length === 0) {
+              errors.push(`Fila ${rowIndex + 1} omitida: teléfono inválido o vacío después de normalizar`);
+              continue;
+            }
+          } else {
+            // Si NO hay BAN, teléfono es opcional
+            if (subscriberData.phone) {
+              subscriberPhone = String(subscriberData.phone).trim().replace(/[^0-9]/g, '');
+              // Si está vacío después de normalizar, dejarlo como null
+              if (subscriberPhone.length === 0) {
+                subscriberPhone = null;
+              }
+            }
+          }
+
+          // Buscar o crear cliente
+          let clientId = null;
+
+          if (normalizedBan) {
+            // Si hay BAN: buscar por 1) Email, 2) BAN asociado, 3) business_name
+            // 1. Buscar por email si existe
+            if (clientData.email) {
+              const emailResult = await client.query(
+                `SELECT id FROM clients WHERE email = $1`,
+                [clientData.email]
+              );
+              if (emailResult.rows.length > 0) {
+                clientId = emailResult.rows[0].id;
+              }
+            }
+
+            // 2. Si no se encontró por email, buscar cliente asociado al BAN
+            if (!clientId) {
+              const banClientResult = await client.query(
+                `SELECT client_id FROM bans WHERE ban_number = $1 LIMIT 1`,
+                [normalizedBan]
+              );
+              if (banClientResult.rows.length > 0) {
+                clientId = banClientResult.rows[0].client_id;
+              }
+            }
+
+            // 3. Si no se encontró por email ni BAN, buscar por business_name y FUSIONAR duplicados
+            if (!clientId && clientData.business_name) {
+              const businessResult = await client.query(
+                `SELECT id FROM clients WHERE business_name = $1 ORDER BY id ASC`,
+                [clientData.business_name]
+              );
+              if (businessResult.rows.length > 0) {
+                clientId = businessResult.rows[0].id; // Usar el cliente más antiguo
+
+                // FUSIONAR duplicados si existen
+                if (businessResult.rows.length > 1) {
+                  const duplicateIds = businessResult.rows.slice(1).map(r => r.id);
+
+                  for (const dupId of duplicateIds) {
+                    // Mover BANs y eliminar duplicado
+                    await client.query(
+                      `UPDATE bans SET client_id = $1, updated_at = NOW() WHERE client_id = $2`,
+                      [clientId, dupId]
+                    );
+                    await client.query(`DELETE FROM clients WHERE id = $1`, [dupId]);
+                  }
+
+                  errors.push(`✅ FUSIÓN CLIENTE - Fila ${rowIndex + 1}: Se fusionaron ${duplicateIds.length} cliente(s) duplicado(s) con "${clientData.business_name}" en el cliente ID ${clientId}.`);
+                }
+              }
+            }
+          } else {
+            // Si NO hay BAN: buscar solo por business_name (empresa) - ya validado arriba que existe
+            const businessResult = await client.query(
+              `SELECT id FROM clients WHERE business_name = $1 ORDER BY id ASC`,
+              [clientData.business_name]
+            );
+            if (businessResult.rows.length > 0) {
+              clientId = businessResult.rows[0].id; // Usar el cliente más antiguo (ID menor)
+
+              // Si hay DUPLICADOS (más de 1 cliente con el mismo nombre), FUSIONARLOS
+              if (businessResult.rows.length > 1) {
+                const duplicateIds = businessResult.rows.slice(1).map(r => r.id); // IDs de los duplicados
+
+                for (const dupId of duplicateIds) {
+                  // 1. Mover todos los BANs del duplicado al cliente principal
+                  await client.query(
+                    `UPDATE bans SET client_id = $1, updated_at = NOW() WHERE client_id = $2`,
+                    [clientId, dupId]
+                  );
+
+                  // 2. Eliminar el cliente duplicado
+                  await client.query(
+                    `DELETE FROM clients WHERE id = $1`,
+                    [dupId]
+                  );
+                }
+
+                errors.push(`✅ FUSIÓN CLIENTE - Fila ${rowIndex + 1}: Se fusionaron ${duplicateIds.length} cliente(s) duplicado(s) con "${clientData.business_name}" en el cliente ID ${clientId}. Todos los BANs ahora están bajo un solo cliente.`);
+              }
+            }
+          }
+
+          if (clientId) {
+            // Verificar si hay duplicados de cliente por business_name o email
+            const duplicateCheck = await client.query(
+              `SELECT id, name, business_name, email FROM clients 
+               WHERE (business_name = $1 OR email = $2) 
+               AND id != $3 
+               LIMIT 1`,
+              [
+                clientData.business_name || null,
+                clientData.email || null,
+                clientId
+              ]
+            );
+
+            if (duplicateCheck.rows.length > 0) {
+              const dup = duplicateCheck.rows[0];
+              const dupName = dup.business_name || dup.name || 'Cliente desconocido';
+              errors.push(`⚠️ POSIBLE DUPLICADO CLIENTE - Fila ${rowIndex + 1}: Cliente con empresa "${clientData.business_name || 'N/A'}" o email "${clientData.email || 'N/A'}" ya existe como "${dupName}" (ID: ${dup.id}). Se actualizó el cliente existente (ID: ${clientId}).`);
+            }
+
+            // Actualizar cliente existente
+            // Solo actualizar vendor_id si el cliente no tiene uno asignado (NULL)
+            await client.query(
+              `UPDATE clients 
+               SET name = COALESCE($1, name), 
+                   business_name = COALESCE($2, business_name), 
+                   contact_person = COALESCE($3, contact_person),
+                   email = COALESCE($4, email),
+                   phone = COALESCE($5, phone), 
+                   secondary_phone = COALESCE($6, secondary_phone),
+                   mobile_phone = COALESCE($7, mobile_phone), 
+                   address = COALESCE($8, address),
+                   city = COALESCE($9, city), 
+                   zip_code = COALESCE($10, zip_code),
+                   vendor_id = COALESCE(vendor_id, $11),
+                   is_active = 1,
+                   updated_at = NOW()
+               WHERE id = $12`,
+              [
+                clientData.name || null,
+                clientData.business_name || null,
+                clientData.contact_person || null,
+                clientData.email || null,
+                clientData.phone || null,
+                clientData.secondary_phone || null,
+                clientData.mobile_phone || null,
+                banData.address || clientData.address || null,
+                banData.city || clientData.city || null,
+                banData.zip_code || clientData.zip_code || null,
+                vendorId,
+                clientId
+              ]
+            );
+            updated++;
+          } else {
+            // Crear nuevo cliente
+            // Si hay BAN: puede ser sin datos (valores por defecto)
+            // Si NO hay BAN: debe tener business_name (ya validado arriba)
+            const newClient = await client.query(
+              `INSERT INTO clients (name, business_name, contact_person, email, phone, secondary_phone, mobile_phone, address, city, zip_code, vendor_id, is_active, created_at, updated_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 1, NOW(), NOW())
+               RETURNING id`,
+              [
+                clientData.name || (normalizedBan ? `Cliente BAN ${normalizedBan}` : null),
+                clientData.business_name || (normalizedBan ? `Empresa BAN ${normalizedBan}` : null),
+                clientData.contact_person || null,
+                clientData.email || null,
+                clientData.phone || null,
+                clientData.secondary_phone || null,
+                clientData.mobile_phone || null,
+                banData.address || clientData.address || null,
+                banData.city || clientData.city || null,
+                banData.zip_code || clientData.zip_code || null,
+                vendorId
+              ]
+            );
+            clientId = newClient.rows[0].id;
+            created++;
+          }
+
+          // Buscar o crear BAN (solo si hay BAN)
+          let banId = null;
+          if (normalizedBan) {
+            let banResult = await client.query(
+              `SELECT b.id, b.client_id, c.name as client_name, c.business_name 
+               FROM bans b 
+               LEFT JOIN clients c ON b.client_id = c.id 
+               WHERE b.ban_number = $1`,
+              [normalizedBan]
+            );
+
+            if (banResult.rows.length > 0) {
+              banId = banResult.rows[0].id;
+              const existingBan = banResult.rows[0];
+              const existingClientId = existingBan.client_id;
+              const existingClientName = existingBan.business_name || existingBan.client_name || 'Cliente desconocido';
+
+              // Detectar si hay un duplicado de BAN en diferente cliente
+              if (existingClientId !== clientId && clientId) {
+                const currentClientResult = await client.query(
+                  `SELECT name, business_name FROM clients WHERE id = $1`,
+                  [clientId]
+                );
+                const currentClientName = currentClientResult.rows.length > 0
+                  ? (currentClientResult.rows[0].business_name || currentClientResult.rows[0].name || 'Cliente desconocido')
+                  : 'Cliente desconocido';
+
+                errors.push(`⚠️ DUPLICADO BAN ${normalizedBan} - Fila ${rowIndex + 1}: El BAN ya existe y está asignado al cliente "${existingClientName}" (ID: ${existingClientId}), pero se intentó asignar al cliente "${currentClientName}" (ID: ${clientId}). El BAN se mantiene asociado al cliente original.`);
+              } else if (existingClientId === clientId) {
+                // BAN duplicado en el mismo cliente - solo informar
+                errors.push(`ℹ️ BAN ${normalizedBan} ya existe para este cliente (Fila ${rowIndex + 1}). Se actualizaron los datos si fue necesario.`);
+              }
+
+              // Actualizar campos nuevos del BAN si hay datos
+              if (banData.description || banData.status) {
+                await client.query(
+                  `UPDATE bans 
+                   SET description = COALESCE($1, description),
+                       status = COALESCE($2, status),
+                       client_id = COALESCE($3, client_id),
+                       updated_at = NOW() 
+                   WHERE id = $4`,
+                  [
+                    banData.description || null,
+                    banData.status || null,
+                    clientId || banResult.rows[0].client_id,
+                    banId
+                  ]
+                );
+              }
+              // Si el BAN tiene un client_id diferente y tenemos uno nuevo, NO actualizarlo para evitar mover BANs
+              // Solo informar en los errores (ya hecho arriba)
+            } else {
+              // Crear nuevo BAN solo si tenemos clientId
+              if (clientId) {
+                const newBan = await client.query(
+                  `INSERT INTO bans (ban_number, client_id, description, status, is_active, created_at, updated_at)
+                   VALUES ($1, $2, $3, $4, 1, NOW(), NOW())
+                   RETURNING id`,
+                  [
+                    normalizedBan,
+                    clientId,
+                    banData.description || null,
+                    banData.status || 'active',
+                  ]
+                );
+                banId = newBan.rows[0].id;
+              }
+            }
+          }
+
+          // Buscar o crear suscriptor (solo si hay BAN y teléfono)
+          let subscriberResult = null;
+          if (banId && subscriberPhone) {
+            subscriberResult = await client.query(
+              `SELECT id FROM subscribers WHERE ban_id = $1 AND phone = $2`,
+              [banId, subscriberPhone]
+            );
+          }
+
+          if (subscriberResult && subscriberResult.rows.length > 0) {
+            // Actualizar suscriptor existente
+            await client.query(
+              `UPDATE subscribers 
+             SET service_type = COALESCE($1, service_type),
+                 monthly_value = COALESCE($2, monthly_value),
+                 months = COALESCE($3, months),
+                 remaining_payments = COALESCE($4, remaining_payments),
+                 contract_start_date = COALESCE($5, contract_start_date),
+                 contract_end_date = COALESCE($6, contract_end_date),
+                 updated_at = NOW()
+             WHERE id = $7`,
+              [
+                subscriberData.service_type || null,
+                subscriberData.monthly_value ? (isNaN(Number(subscriberData.monthly_value)) ? null : Number(subscriberData.monthly_value)) : null,
+                subscriberData.months ? (isNaN(Number(subscriberData.months)) ? null : Number(subscriberData.months)) : null,
+                subscriberData.remaining_payments ? (isNaN(Number(subscriberData.remaining_payments)) ? null : Number(subscriberData.remaining_payments)) : null,
+                subscriberData.contract_start_date || null,
+                subscriberData.contract_end_date || null,
+                subscriberResult.rows[0].id,
+              ]
+            );
+          } else if (banId && subscriberPhone) {
+            // Crear nuevo suscriptor (solo si hay BAN y teléfono)
+            await client.query(
+              `INSERT INTO subscribers (phone, ban_id, service_type, monthly_value, months, remaining_payments, contract_start_date, contract_end_date, is_active, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 1, NOW(), NOW())`,
+              [
+                subscriberPhone,
+                banId,
+                subscriberData.service_type || null,
+                subscriberData.monthly_value ? (isNaN(Number(subscriberData.monthly_value)) ? null : Number(subscriberData.monthly_value)) : null,
+                subscriberData.months ? (isNaN(Number(subscriberData.months)) ? null : Number(subscriberData.months)) : null,
+                subscriberData.remaining_payments ? (isNaN(Number(subscriberData.remaining_payments)) ? null : Number(subscriberData.remaining_payments)) : null,
+                subscriberData.contract_start_date || null,
+                subscriberData.contract_end_date || null,
+              ]
+            );
+          }
+        } catch (rowError) {
+          console.error(`❌ Error procesando fila ${rowIndex + 1}:`, rowError);
+          errors.push(`Fila ${rowIndex + 1}: ${rowError.message || 'Error desconocido'}`);
+          continue;
+        }
+      }
+
+      // Commit del lote
+      await client.query('COMMIT');
+      console.log(`✅ Lote ${batchIndex + 1}/${TOTAL_BATCHES} completado`);
+    }
+
+    console.log('✅ Importador save - Resultado:', {
+      total: data.length,
+      created,
+      updated,
+      errors: errors.length,
+      errorSamples: errors.slice(0, 5)
+    });
+
+    res.json({
+      success: true,
+      created,
+      updated,
+      total: data.length,
+      errors: errors.slice(0, 20), // Limitar a 20 errores
+      message: errors.length > 0
+        ? `Procesadas ${data.length} filas. Creados: ${created}, Actualizados: ${updated}. ${errors.length} errores encontrados.`
+        : `Procesadas ${data.length} filas. Creados: ${created}, Actualizados: ${updated}.`
+    });
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (rollbackError) {
+      console.error('Error haciendo rollback:', rollbackError);
+    }
+    console.error('❌ Error en importador save:', error);
+    serverError(res, error, 'Error guardando datos del importador');
+  } finally {
+    client.release();
   }
 });
 
@@ -1901,11 +2535,8 @@ app.get('/api/subscribers', async (req, res) => {
       params
     );
 
-    const authorizedRows = req.user?.role === 'vendedor'
-      ? rows.filter((row) => !row.vendor_id || sameId(row.vendor_id, req.user.salespersonId))
-      : rows;
-
-    const mapped = authorizedRows.map((row) =>
+    // Todos los usuarios pueden ver todos los suscriptores (sin restricción de vendor_id)
+    const mapped = rows.map((row) =>
       enrich(
         row,
         ['ban_id', 'client_id', 'vendor_id', 'monthly_value', 'months', 'remaining_payments'],
@@ -2154,7 +2785,8 @@ function mapProspectRow(row) {
       'cloud',
       'mpls',
       'call_count',
-      'total_amount'
+      'total_amount',
+      'base'
     ],
     ['is_active', 'is_completed'],
     ['last_call_date', 'next_call_date', 'completed_date', 'created_at', 'updated_at']
@@ -2202,7 +2834,8 @@ app.post('/api/follow-up-prospects', async (req, res) => {
     notes = null,
     contact_phone = null,
     contact_email = null,
-    is_active = true
+    is_active = true,
+    base = 0
   } = req.body || {};
 
   if (!company_name || typeof company_name !== 'string') {
@@ -2211,8 +2844,52 @@ app.post('/api/follow-up-prospects', async (req, res) => {
 
   try {
     let finalVendorId = toDbId(vendor_id);
-    if (req.user?.role === 'vendedor') {
-      finalVendorId = toDbId(req.user.salespersonId);
+
+    console.log(`🔍 Creando prospecto - Usuario: ${req.user?.username}, Rol: ${req.user?.role}, vendor_id recibido: ${vendor_id}, finalVendorId inicial: ${finalVendorId}`);
+
+    // Si es vendedor, buscar su vendor_id numérico desde salespeople
+    if (req.user?.role === 'vendedor' && req.user.salespersonId) {
+      // Buscar el salesperson para obtener su nombre
+      const salespersonResult = await query(
+        `SELECT name FROM salespeople WHERE id = $1`,
+        [req.user.salespersonId]
+      );
+      if (salespersonResult.length > 0) {
+        const salespersonName = salespersonResult[0].name;
+        // Normalizar nombres para búsqueda (mayúsculas, sin espacios extra)
+        const normalizedName = salespersonName.trim().toUpperCase();
+        const firstName = normalizedName.split(' ')[0]; // Primer nombre
+
+        // Buscar vendor por nombre (coincidencia exacta, parcial, o por primer nombre)
+        const vendorResult = await query(
+          `SELECT id FROM vendors 
+           WHERE UPPER(TRIM(name)) = $1 
+              OR UPPER(TRIM(name)) LIKE $2 
+              OR UPPER(TRIM(name)) = $3
+           LIMIT 1`,
+          [normalizedName, `%${normalizedName}%`, firstName]
+        );
+        if (vendorResult.length > 0) {
+          finalVendorId = Number(vendorResult[0].id);
+          console.log(`✅ Vendor auto-asignado para seguimiento: ${salespersonName} -> ${finalVendorId}`);
+        } else {
+          // Si no hay vendor asociado, usar el vendor_id del cliente si existe
+          if (client_id) {
+            const clientRows = await query(`SELECT vendor_id FROM clients WHERE id = $1`, [client_id]);
+            if (clientRows.length > 0 && clientRows[0].vendor_id) {
+              finalVendorId = Number(clientRows[0].vendor_id);
+              console.log(`⚠️ No se encontró vendor para ${salespersonName}, usando vendor_id del cliente: ${finalVendorId}`);
+            } else {
+              // Último recurso: usar el primer vendor activo
+              const defaultVendor = await query(`SELECT id FROM vendors WHERE is_active = 1 LIMIT 1`);
+              if (defaultVendor.length > 0) {
+                finalVendorId = Number(defaultVendor[0].id);
+                console.log(`⚠️ Usando vendor por defecto: ${finalVendorId}`);
+              }
+            }
+          }
+        }
+      }
     }
 
     if (client_id) {
@@ -2220,18 +2897,41 @@ app.post('/api/follow-up-prospects', async (req, res) => {
       if (clientRows.length === 0) {
         return notFound(res, 'Cliente');
       }
-      if (req.user?.role === 'vendedor') {
-        const clientVendorId = clientRows[0].vendor_id;
-        if (clientVendorId && !sameId(clientVendorId, req.user.salespersonId)) {
-          return res.status(403).json({ error: 'No autorizado para crear seguimiento para ese cliente' });
-        }
+      // Si no se asignó vendor_id (para admin/supervisor) y el cliente tiene uno, usarlo
+      // Para vendedores, ya se asignó arriba, pero si no se encontró, usar el del cliente
+      if (!finalVendorId && clientRows[0].vendor_id) {
+        finalVendorId = Number(clientRows[0].vendor_id);
+        console.log(`✅ Usando vendor_id del cliente: ${finalVendorId}`);
       }
     }
 
+    // Validar que finalVendorId sea un número válido
+    if (finalVendorId !== null && typeof finalVendorId !== 'number') {
+      finalVendorId = Number(finalVendorId);
+      if (Number.isNaN(finalVendorId)) {
+        finalVendorId = null;
+      }
+    }
+
+    // Asegurar que siempre haya un vendor_id válido antes de insertar
+    if (!finalVendorId) {
+      console.log('⚠️ No se pudo determinar vendor_id, buscando vendor por defecto...');
+      // Buscar el primer vendor activo como último recurso
+      const defaultVendor = await query(`SELECT id FROM vendors WHERE is_active = 1 LIMIT 1`);
+      if (defaultVendor.length > 0) {
+        finalVendorId = Number(defaultVendor[0].id);
+        console.log(`✅ Usando vendor por defecto: ${finalVendorId}`);
+      } else {
+        return badRequest(res, 'No se pudo asignar un vendedor. Verifica que existan vendedores activos en el sistema.');
+      }
+    }
+
+    console.log(`📝 Creando prospecto de seguimiento - company_name: ${company_name}, client_id: ${client_id}, vendor_id: ${finalVendorId}, usuario: ${req.user?.username}, rol: ${req.user?.role}`);
+
     const rows = await query(
       `INSERT INTO follow_up_prospects
-        (company_name, client_id, priority_id, vendor_id, step_id, fijo_ren, fijo_new, movil_nueva, movil_renovacion, claro_tv, cloud, mpls, last_call_date, next_call_date, call_count, is_completed, completed_date, total_amount, notes, contact_phone, contact_email, is_active, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,NOW(),NOW())
+        (company_name, client_id, priority_id, vendor_id, step_id, fijo_ren, fijo_new, movil_nueva, movil_renovacion, claro_tv, cloud, mpls, last_call_date, next_call_date, call_count, is_completed, completed_date, total_amount, notes, contact_phone, contact_email, base, is_active, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,NOW(),NOW())
        RETURNING *`,
       [
         company_name.trim(),
@@ -2255,6 +2955,7 @@ app.post('/api/follow-up-prospects', async (req, res) => {
         notes,
         contact_phone,
         contact_email,
+        base || 0,
         is_active ? 1 : 0
       ]
     );
@@ -2293,7 +2994,8 @@ app.put('/api/follow-up-prospects/:id', async (req, res) => {
     notes = null,
     contact_phone = null,
     contact_email = null,
-    is_active = true
+    is_active = true,
+    base = 0
   } = req.body || {};
 
   if (!company_name || typeof company_name !== 'string') {
@@ -2351,9 +3053,10 @@ app.put('/api/follow-up-prospects/:id', async (req, res) => {
               notes = $19,
               contact_phone = $20,
               contact_email = $21,
-              is_active = $22,
+              base = $22,
+              is_active = $23,
               updated_at = NOW()
-        WHERE id = $23
+        WHERE id = $24
         RETURNING *`,
       [
         company_name.trim(),
@@ -2377,6 +3080,7 @@ app.put('/api/follow-up-prospects/:id', async (req, res) => {
         notes,
         contact_phone,
         contact_email,
+        base || 0,
         is_active,
         prospectId
       ]
@@ -2456,7 +3160,7 @@ app.get('/api/call-logs/:followUpId', async (req, res) => {
 });
 
 app.post('/api/call-logs', async (req, res) => {
-    const { 
+  const {
     follow_up_id,
     vendor_id = null,
     call_date,
@@ -2672,6 +3376,67 @@ app.delete('/api/follow-up-steps/:id', async (req, res) => {
   }
 });
 
+// Este endpoint fue movido arriba antes de authenticateRequest (línea 317) - Endpoint duplicado eliminado
+
+// ======================================================
+// Endpoint para limpiar BD (solo desarrollo)
+// ======================================================
+app.delete('/api/admin/clean-database', authenticateRequest, async (req, res) => {
+  try {
+    // Verificar que sea admin o desarrollo
+    if (req.user.role !== 'admin' && process.env.NODE_ENV === 'production') {
+      return res.status(403).json({ error: 'Solo administradores pueden limpiar la BD en producción' });
+    }
+
+    console.log('\n⚠️ LIMPIEZA DE BD solicitada por:', req.user.username);
+
+    // Contar antes
+    const antes = await Promise.all([
+      query('SELECT COUNT(*) as total FROM subscribers'),
+      query('SELECT COUNT(*) as total FROM bans'),
+      query('SELECT COUNT(*) as total FROM clients')
+    ]);
+
+    const conteosAntes = {
+      subscribers: parseInt(antes[0][0].total),
+      bans: parseInt(antes[1][0].total),
+      clients: parseInt(antes[2][0].total)
+    };
+
+    console.log('📊 Antes:', conteosAntes);
+
+    // Borrar en orden
+    await query('DELETE FROM subscribers');
+    await query('DELETE FROM bans');
+    await query('DELETE FROM clients');
+
+    // Contar después
+    const despues = await Promise.all([
+      query('SELECT COUNT(*) as total FROM subscribers'),
+      query('SELECT COUNT(*) as total FROM bans'),
+      query('SELECT COUNT(*) as total FROM clients')
+    ]);
+
+    const conteosDespues = {
+      subscribers: parseInt(despues[0][0].total),
+      bans: parseInt(despues[1][0].total),
+      clients: parseInt(despues[2][0].total)
+    };
+
+    console.log('✅ Después:', conteosDespues);
+    console.log('✅ BD limpiada completamente');
+
+    res.json({
+      success: true,
+      antes: conteosAntes,
+      despues: conteosDespues
+    });
+  } catch (error) {
+    console.error('❌ Error limpiando BD:', error);
+    serverError(res, error, 'Error limpiando base de datos');
+  }
+});
+
 // ======================================================
 // Rutas no encontradas
 // ======================================================
@@ -2682,6 +3447,11 @@ app.use((req, res) => {
 // ======================================================
 // Arranque del servidor
 // ======================================================
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`✅ CRM Pro API escuchando en el puerto ${PORT}`);
 });
+
+// Configurar timeouts del servidor para importaciones grandes
+server.timeout = 300000; // 5 minutos
+server.keepAliveTimeout = 300000;
+server.headersTimeout = 300000;

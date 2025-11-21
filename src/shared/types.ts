@@ -36,16 +36,17 @@ export const ClientSchema = z.object({
   zip_code: z.string().nullable(),
   includes_ban: z.number().int(), // 0 or 1
   vendor_id: z.number().nullable(),
+  base: z.number().default(0),
   is_active: z.number().int(), // 0 or 1
   created_at: z.string(),
   updated_at: z.string(),
 });
 
 export const CreateClientSchema = z.object({
-  name: z.string().min(1),
-  business_name: z.string().optional(),
+  name: z.string().optional(),
+  business_name: z.string().min(1), // Solo Empresa es obligatorio
   contact_person: z.string().optional(),
-  email: z.string().email().optional(),
+  email: z.string().optional(), // Email es opcional, sin validación estricta
   phone: z.string().optional(),
   secondary_phone: z.string().optional(),
   mobile_phone: z.string().optional(),
@@ -53,6 +54,7 @@ export const CreateClientSchema = z.object({
   city: z.string().optional(),
   zip_code: z.string().optional(),
   includes_ban: z.boolean().default(false),
+  base: z.number().optional(),
   vendor_id: z.number().optional(),
 });
 

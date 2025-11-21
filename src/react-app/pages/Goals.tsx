@@ -270,13 +270,13 @@ export default function Goals() {
     }
 
     try {
-      const payload = {
+    const payload = {
         product_id: Number(formData.product_id),
-        period_year: formData.period_year,
-        period_month: formData.period_month,
+      period_year: formData.period_year,
+      period_month: formData.period_month,
         total_target_amount: Number(formData.target_amount),
-        description: formData.description || null,
-      };
+      description: formData.description || null,
+    };
 
       if (editingBusinessGoal) {
         await authFetch(`/api/product-goals/${editingBusinessGoal.id}`, {
@@ -308,16 +308,16 @@ export default function Goals() {
     }
 
     try {
-      const payload = {
+    const payload = {
         vendor_id: Number(formData.vendor_id),
         product_id: Number(formData.product_id),
-        period_type: formData.period_type,
-        period_year: formData.period_year,
-        period_month: formData.period_type === "monthly" ? formData.period_month : null,
-        period_quarter: formData.period_type === "quarterly" ? formData.period_quarter : null,
+      period_type: formData.period_type,
+      period_year: formData.period_year,
+      period_month: formData.period_type === "monthly" ? formData.period_month : null,
+      period_quarter: formData.period_type === "quarterly" ? formData.period_quarter : null,
         target_amount: Number(formData.target_amount),
-        description: formData.description || null,
-      };
+      description: formData.description || null,
+    };
 
       if (editingVendorGoal) {
         await authFetch(`/api/goals/${editingVendorGoal.id}`, {
@@ -446,23 +446,23 @@ export default function Goals() {
         .map(([productId, value]) => {
           const amount = Number((value || "").replace(/[$,\s]/g, ""));
           if (!Number.isFinite(amount) || amount <= 0) return null;
-          return {
+        return {
             product_id: Number(productId),
-            total_target_amount: amount,
-          };
-        })
+          total_target_amount: amount,
+        };
+      })
         .filter((g): g is { product_id: number; total_target_amount: number } => g !== null);
 
       if (businessGoals.length > 0) {
         await authFetch("/api/product-goals/bulk", {
-          method: "POST",
-          json: {
-            period_type: "monthly",
-            period_year: bulkPeriodYear,
-            period_month: bulkPeriodMonth,
+        method: "POST",
+        json: {
+          period_type: "monthly",
+          period_year: bulkPeriodYear,
+          period_month: bulkPeriodMonth,
             goals: businessGoals,
-          },
-        });
+        },
+      });
       }
 
       // Vendor goals
@@ -535,12 +535,12 @@ export default function Goals() {
           </p>
         </div>
         {!isVendorUser && (
-          <button
-            onClick={openBulkModal}
+            <button
+              onClick={openBulkModal}
             className="inline-flex items-center px-6 py-3 bg-gradient-to-r from-blue-500 via-purple-600 to-indigo-600 text-white font-semibold rounded-lg shadow-xl hover:shadow-2xl transition-all duration-200 border-2 border-blue-400/50 hover:scale-105 text-lg"
-          >
+            >
             <Package className="w-6 h-6 mr-2" /> 🎯 CONFIGURAR METAS 🎯
-          </button>
+            </button>
         )}
       </div>
 
@@ -658,13 +658,13 @@ export default function Goals() {
                 <tr>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-white uppercase tracking-wider border-r border-blue-500/20">Producto</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-white uppercase tracking-wider border-r border-blue-500/20">Período</th>
-                  {!isVendorUser && (
-                    <>
+                      {!isVendorUser && (
+                        <>
                       <th className="px-4 py-3 text-left text-xs font-semibold text-white uppercase tracking-wider border-r border-blue-500/20">Meta Negocio</th>
                       <th className="px-4 py-3 text-left text-xs font-semibold text-white uppercase tracking-wider border-r border-blue-500/20">Ventas Actuales</th>
                       <th className="px-4 py-3 text-left text-xs font-semibold text-white uppercase tracking-wider border-r border-blue-500/20">Progreso</th>
-                    </>
-                  )}
+                        </>
+                      )}
                   <th className="px-4 py-3 text-left text-xs font-semibold text-white uppercase tracking-wider border-r border-blue-500/20">
                     {isVendorUser ? "Mi Meta" : "Suma Vendedores"}
                   </th>
@@ -672,7 +672,7 @@ export default function Goals() {
                     {isVendorUser ? "Ventas Logradas" : "Ventas Vendedores"}
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-white uppercase tracking-wider border-r border-blue-500/20">Progreso</th>
-                  {!isVendorUser && (
+                      {!isVendorUser && (
                     <th className="px-4 py-3 text-left text-xs font-semibold text-white uppercase tracking-wider border-r border-blue-500/20">Meta Sin Asignar</th>
                   )}
                   <th className="px-4 py-3 text-center text-xs font-semibold text-white uppercase tracking-wider">Acciones</th>
@@ -700,7 +700,7 @@ export default function Goals() {
                         <div className="flex items-center gap-2">
                           <Package className="w-4 h-4 text-blue-400" />
                           <span className="text-sm font-medium text-white">{meta.productName}</span>
-                        </div>
+                          </div>
                       </td>
                       <td className="px-4 py-4 whitespace-nowrap">
                         <span className="text-sm text-slate-300">{meta.periodLabel}</span>
@@ -716,13 +716,13 @@ export default function Goals() {
                           <td className="px-4 py-4 whitespace-nowrap">
                             <div className="flex items-center gap-2">
                               <div className="w-16 h-2 bg-slate-700 rounded-full overflow-hidden">
-                                <div
+                            <div
                                   className="h-full bg-blue-400/80 rounded-full"
-                                  style={{ width: `${Math.min(businessProgress, 100)}%` }}
-                                />
-                              </div>
+                              style={{ width: `${Math.min(businessProgress, 100)}%` }}
+                            />
+                          </div>
                               <span className="text-xs text-slate-400">{Math.round(businessProgress)}%</span>
-                            </div>
+                          </div>
                           </td>
                         </>
                       )}
@@ -735,11 +735,11 @@ export default function Goals() {
                       <td className="px-4 py-4 whitespace-nowrap">
                         <div className="flex items-center gap-2">
                           <div className="w-16 h-2 bg-slate-700 rounded-full overflow-hidden">
-                            <div
+                          <div
                               className="h-full bg-green-400/80 rounded-full"
                               style={{ width: `${Math.min(vendorProgress, 100)}%` }}
-                            />
-                          </div>
+                          />
+                        </div>
                           <span className="text-xs text-slate-400">{Math.round(vendorProgress)}%</span>
                         </div>
                       </td>
@@ -749,14 +749,14 @@ export default function Goals() {
                             ${meta.gapTarget.toLocaleString()}
                           </span>
                         </td>
-                      )}
+                        )}
                       <td className="px-4 py-4 whitespace-nowrap text-center">
                         <div className="flex items-center justify-center gap-2">
-                          {!isVendorUser && (
+                      {!isVendorUser && (
                             <>
-                              <button
+                        <button
                                 className="p-2 rounded-lg bg-blue-500/20 border border-blue-500/50 text-blue-300 hover:bg-blue-500/30 transition"
-                                onClick={() => {
+                          onClick={() => {
                                   setEditingBusinessGoal(meta.businessGoal ?? null);
                                   setEditingVendorGoal(null);
                                   setFormMode("business");
@@ -770,25 +770,25 @@ export default function Goals() {
                                       period_quarter: 1,
                                       target_amount: meta.businessGoal.total_target_amount.toString(),
                                       description: meta.businessGoal.description || "",
-                                    });
+                            });
                                   } else {
                                     setFormData({
-                                      vendor_id: "",
+                              vendor_id: "",
                                       product_id: meta.productId.toString(),
                                       period_type: "monthly",
                                       period_year: meta.periodYear,
                                       period_month: meta.periodMonth ?? new Date().getMonth() + 1,
                                       period_quarter: 1,
-                                      target_amount: "",
-                                      description: "",
-                                    });
+                              target_amount: "",
+                              description: "",
+                            });
                                   }
                                   setShowModal(true);
-                                }}
+                          }}
                                 title="Configurar meta de negocio"
-                              >
+                        >
                                 <Building className="w-4 h-4" />
-                              </button>
+                        </button>
                               {meta.businessGoal && (
                                 <button
                                   className="p-2 rounded-lg bg-red-500/20 border border-red-500/50 text-red-300 hover:bg-red-500/30 transition"
@@ -798,28 +798,28 @@ export default function Goals() {
                                   <Trash2 className="w-4 h-4" />
                                 </button>
                               )}
-                              <button
+                          <button
                                 className="p-2 rounded-lg bg-green-500/20 border border-green-500/50 text-green-300 hover:bg-green-500/30 transition"
-                                onClick={() => {
+                            onClick={() => {
                                   setEditingBusinessGoal(null);
                                   setEditingVendorGoal(null);
                                   setFormMode("vendor");
                                   setFormData({
-                                    vendor_id: "",
+                                vendor_id: "",
                                     product_id: meta.productId.toString(),
                                     period_type: "monthly",
                                     period_year: meta.periodYear,
                                     period_month: meta.periodMonth ?? new Date().getMonth() + 1,
                                     period_quarter: 1,
-                                    target_amount: "",
-                                    description: "",
-                                  });
+                                target_amount: "",
+                                description: "",
+                              });
                                   setShowModal(true);
-                                }}
+                            }}
                                 title="Agregar meta de vendedor"
-                              >
+                          >
                                 <Plus className="w-4 h-4" />
-                              </button>
+                          </button>
                             </>
                           )}
                         </div>
@@ -859,11 +859,11 @@ export default function Goals() {
                   </summary>
                   <div className="px-4 py-3 space-y-2">
                     {vendorGoalsForList.map((goal) => {
-                      const vendorProgress = goal.target_amount > 0 ? (goal.current_amount / goal.target_amount) * 100 : 0;
-                      return (
+                          const vendorProgress = goal.target_amount > 0 ? (goal.current_amount / goal.target_amount) * 100 : 0;
+                          return (
                         <div key={goal.id} className="bg-slate-900/50 border border-blue-500/20 rounded-lg p-3 flex items-center justify-between">
                           <div className="flex-1">
-                            <p className="text-sm font-semibold text-white">{goal.vendor_name || "Vendedor"}</p>
+                                  <p className="text-sm font-semibold text-white">{goal.vendor_name || "Vendedor"}</p>
                             <div className="flex items-center gap-4 mt-1">
                               <span className="text-xs text-slate-300">
                                 Meta: <span className="text-white font-medium">${goal.target_amount.toLocaleString()}</span>
@@ -879,10 +879,10 @@ export default function Goals() {
                                 style={{ width: `${Math.min(vendorProgress, 100)}%` }}
                               />
                             </div>
-                          </div>
-                          {!isVendorUser && (
+                                </div>
+                                {!isVendorUser && (
                             <div className="flex gap-2 ml-4">
-                              <button
+                                    <button
                                 className="p-1.5 rounded bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200"
                                 onClick={() => {
                                   setEditingVendorGoal(goal);
@@ -900,23 +900,23 @@ export default function Goals() {
                                   });
                                   setShowModal(true);
                                 }}
-                                title="Editar meta del vendedor"
-                              >
-                                <Edit className="w-3 h-3" />
-                              </button>
-                              <button
+                                      title="Editar meta del vendedor"
+                                    >
+                                      <Edit className="w-3 h-3" />
+                                    </button>
+                                    <button
                                 className="p-1.5 rounded bg-slate-800 hover:bg-red-600/50 border border-red-500/40 text-slate-200"
-                                onClick={() => handleDeleteVendor(goal)}
-                                title="Eliminar meta del vendedor"
-                              >
-                                <Trash2 className="w-3 h-3" />
-                              </button>
+                                      onClick={() => handleDeleteVendor(goal)}
+                                      title="Eliminar meta del vendedor"
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                                )}
                             </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
+                          );
+                        })}
+                      </div>
                 </details>
               </div>
             );
@@ -930,11 +930,11 @@ export default function Goals() {
           <div className="bg-slate-900 border border-blue-500/50 rounded-2xl shadow-2xl w-full max-w-2xl p-6 space-y-5">
             <div className="flex items-center justify-between border-b border-blue-500/30 pb-4">
               <div>
-                <h2 className="text-xl font-bold text-white">
-                  {formMode === "business"
+              <h2 className="text-xl font-bold text-white">
+                {formMode === "business"
                     ? editingBusinessGoal ? "Editar Meta del Negocio" : "Nueva Meta del Negocio"
                     : editingVendorGoal ? "Editar Meta de Vendedor" : "Nueva Meta de Vendedor"}
-                </h2>
+              </h2>
                 <p className="text-sm text-slate-400 mt-1">
                   {formMode === "business"
                     ? "Configura la meta general del negocio para este producto y período"
@@ -954,22 +954,22 @@ export default function Goals() {
 
             <form onSubmit={formMode === "business" ? handleSubmitBusiness : handleSubmitVendor} className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-slate-300 mb-1">Producto *</label>
-                  <select
-                    required
-                    value={formData.product_id}
-                    onChange={(e) => setFormData((prev) => ({ ...prev, product_id: e.target.value }))}
+                  <div>
+                    <label className="block text-sm font-medium text-slate-300 mb-1">Producto *</label>
+                    <select
+                      required
+                      value={formData.product_id}
+                      onChange={(e) => setFormData((prev) => ({ ...prev, product_id: e.target.value }))}
                     className="w-full px-3 py-2 bg-slate-800 border border-blue-500/50 text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  >
-                    <option value="">Seleccionar producto</option>
-                    {(products || []).map((product) => (
-                      <option key={product.id} value={product.id}>
-                        {product.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                    >
+                      <option value="">Seleccionar producto</option>
+                      {(products || []).map((product) => (
+                        <option key={product.id} value={product.id}>
+                          {product.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
 
                 {formMode === "vendor" && (
                   <div>
@@ -989,35 +989,35 @@ export default function Goals() {
                     </select>
                   </div>
                 )}
-              </div>
+                  </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-slate-300 mb-1">Año *</label>
-                  <input
-                    type="number"
-                    required
-                    value={formData.period_year}
-                    onChange={(e) => setFormData((prev) => ({ ...prev, period_year: parseInt(e.target.value, 10) }))}
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-slate-300 mb-1">Año *</label>
+                      <input
+                        type="number"
+                        required
+                        value={formData.period_year}
+                        onChange={(e) => setFormData((prev) => ({ ...prev, period_year: parseInt(e.target.value, 10) }))}
                     className="w-full px-3 py-2 bg-slate-800 border border-blue-500/50 text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-300 mb-1">Mes *</label>
-                  <select
-                    required
-                    value={formData.period_month}
-                    onChange={(e) => setFormData((prev) => ({ ...prev, period_month: parseInt(e.target.value, 10) }))}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-300 mb-1">Mes *</label>
+                      <select
+                        required
+                        value={formData.period_month}
+                        onChange={(e) => setFormData((prev) => ({ ...prev, period_month: parseInt(e.target.value, 10) }))}
                     className="w-full px-3 py-2 bg-slate-800 border border-blue-500/50 text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  >
-                    {monthNames.map((name, index) => (
+                      >
+                        {monthNames.map((name, index) => (
                       <option key={name} value={index + 1}>
                         {name}
                       </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
 
               <div>
                 <label className="block text-sm font-medium text-slate-300 mb-1">
@@ -1152,7 +1152,7 @@ export default function Goals() {
                         g.period_year === bulkPeriodYear &&
                         g.period_month === bulkPeriodMonth
                     );
-                    const value = bulkEntries[product.id] ?? "";
+                  const value = bulkEntries[product.id] ?? "";
                     const businessTarget = value ? Number(value.replace(/[$,\s]/g, "")) : (existingGoal?.total_target_amount ?? 0);
                     const businessCurrent = existingGoal?.current_amount ?? 0;
                     const businessProgress = businessTarget > 0 ? (businessCurrent / businessTarget) * 100 : 0;
@@ -1168,31 +1168,31 @@ export default function Goals() {
                     const vendorTotal = productVendorGoals.reduce((sum, g) => sum + (g.target_amount || 0), 0);
                     const coverage = businessTarget > 0 ? (vendorTotal / businessTarget) * 100 : 0;
 
-                    return (
+                  return (
                       <div key={product.id} className="bg-slate-800/70 border border-blue-500/30 rounded-lg overflow-hidden">
                         <div className="p-4 grid grid-cols-12 gap-4 items-center hover:bg-slate-800/90 transition-colors">
                           <div className="col-span-12 md:col-span-3">
                             <div className="flex items-center gap-2">
                               <Package className="w-4 h-4 text-blue-400" />
-                              <div>
-                                <p className="text-sm font-semibold text-white">{product.name}</p>
-                                <p className="text-xs text-slate-400">{product.category_name || "Sin categoría"}</p>
-                              </div>
+                      <div>
+                        <p className="text-sm font-semibold text-white">{product.name}</p>
+                        <p className="text-xs text-slate-400">{product.category_name || "Sin categoría"}</p>
+                      </div>
                             </div>
                           </div>
 
                           <div className="col-span-6 md:col-span-2">
                             <label className="block text-xs font-medium text-slate-400 mb-1">Meta Negocio ($)</label>
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              value={value}
-                              onChange={(e) => handleBulkValueChange(product.id, e.target.value)}
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={value}
+                          onChange={(e) => handleBulkValueChange(product.id, e.target.value)}
                               className="w-full px-2 py-1.5 bg-slate-900 border border-blue-500/50 text-white rounded text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                               placeholder="0"
-                            />
-                          </div>
+                        />
+                      </div>
 
                           <div className="col-span-6 md:col-span-2">
                             <div className="space-y-1">
@@ -1288,8 +1288,8 @@ export default function Goals() {
                                   return (
                                     <div className="text-center py-4 text-sm text-slate-400">
                                       <p>No hay vendedores asignados. Selecciona uno del dropdown arriba.</p>
-                                    </div>
-                                  );
+                    </div>
+                  );
                                 }
 
                                 return vendorsToShow.map((vendor) => {

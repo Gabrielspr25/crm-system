@@ -45,6 +45,7 @@ interface FollowUpProspect {
   notes: string | null;
   contact_phone: string | null;
   contact_email: string | null;
+  base: number;
   is_active?: boolean | number | null;
   priority_name?: string;
   priority_color?: string;
@@ -98,7 +99,7 @@ export default function FollowUp() {
     );
   }, [prospects]);
 
-  const filteredProspects = uniqueProspects.filter(prospect => 
+  const filteredProspects = uniqueProspects.filter(prospect =>
     prospect.company_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     (prospect.vendor_name && prospect.vendor_name.toLowerCase().includes(searchTerm.toLowerCase()))
   );
@@ -124,7 +125,7 @@ export default function FollowUp() {
 
   const handleCall = async (prospect: FollowUpProspect) => {
     setSelectedProspect(prospect);
-    
+
     // Fetch call logs for this prospect
     try {
       const response = await authFetch(`/api/call-logs/${prospect.id}`);
@@ -133,7 +134,7 @@ export default function FollowUp() {
     } catch (error) {
       console.error("Error fetching call logs:", error);
     }
-    
+
     setShowCallModal(true);
   };
 
@@ -152,7 +153,7 @@ export default function FollowUp() {
         method,
         json: payload
       });
-      
+
       refetchProspects();
       setShowModal(false);
       setSelectedProspect(null);
@@ -175,12 +176,33 @@ export default function FollowUp() {
           ...callData
         }
       });
-      
+
       refetchProspects();
       setShowCallModal(false);
       setSelectedProspect(null);
     } catch (error) {
       console.error("Error saving call log:", error);
+    }
+  };
+
+  const handleReturnToBD = async (prospect: FollowUpProspect) => {
+    if (!confirm(`¿Devolver "${prospect.company_name}" a la base de datos?`)) {
+      return;
+    }
+
+    try {
+      await authFetch(`/api/follow-up-prospects/${prospect.id}`, {
+        method: 'PUT',
+        json: {
+          is_active: false,
+          is_completed: false
+        }
+      });
+
+      refetchProspects();
+    } catch (error) {
+      console.error("Error returning prospect to BD:", error);
+      alert('Error al devolver el prospecto a la base de datos.');
     }
   };
 
@@ -266,6 +288,7 @@ export default function FollowUp() {
                 <th className="px-4 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">ClaroTV</th>
                 <th className="px-4 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">Cloud</th>
                 <th className="px-4 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">MPLS</th>
+                <th className="px-4 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">Base</th>
                 <th className="px-4 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">Fecha Update</th>
                 <th className="px-4 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">Acciones</th>
               </tr>
@@ -284,7 +307,7 @@ export default function FollowUp() {
                   </td>
                   <td className="px-4 py-4 whitespace-nowrap">
                     {prospect.priority_name && (
-                      <span 
+                      <span
                         className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium text-white"
                         style={{ backgroundColor: prospect.priority_color }}
                       >
@@ -320,6 +343,9 @@ export default function FollowUp() {
                     <span className="text-sm text-gray-300">{prospect.mpls || 0}</span>
                   </td>
                   <td className="px-4 py-4 whitespace-nowrap text-center">
+                    <span className="text-sm text-gray-300">{prospect.base || 0}</span>
+                  </td>
+                  <td className="px-4 py-4 whitespace-nowrap text-center">
                     <div className="text-sm text-gray-300">{formatDate(prospect.last_call_date)}</div>
                     {prospect.next_call_date && (
                       <div className="text-xs text-blue-400">Próx: {formatDate(prospect.next_call_date)}</div>
@@ -340,6 +366,13 @@ export default function FollowUp() {
                         title="Editar"
                       >
                         <Edit3 className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => handleReturnToBD(prospect)}
+                        className="text-orange-400 hover:text-orange-300 transition-colors"
+                        title="Devolver a BD"
+                      >
+                        <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
                   </td>
@@ -454,6 +487,7 @@ function ProspectModal({
     contact_phone: prospect?.contact_phone || '',
     contact_email: prospect?.contact_email || '',
     notes: prospect?.notes || '',
+    base: prospect?.base || 0,
     is_completed: prospect?.is_completed || false
   });
 
@@ -474,18 +508,19 @@ function ProspectModal({
       contact_phone: prospect?.contact_phone || '',
       contact_email: prospect?.contact_email || '',
       notes: prospect?.notes || '',
+      base: prospect?.base || 0,
       is_completed: prospect?.is_completed || false
     });
   }, [prospect, enforcedVendorId]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     const resolvedVendorId = disableVendorSelect && enforcedVendorId != null
       ? enforcedVendorId
       : formData.vendor_id
-      ? parseInt(formData.vendor_id.toString(), 10)
-      : null;
+        ? parseInt(formData.vendor_id.toString(), 10)
+        : null;
 
     const data = {
       ...formData,
@@ -494,7 +529,7 @@ function ProspectModal({
       vendor_id: resolvedVendorId,
       step_id: formData.step_id ? parseInt(formData.step_id.toString(), 10) : null,
     };
-    
+
     onSave(data);
   };
 
@@ -505,7 +540,7 @@ function ProspectModal({
           <h2 className="text-xl font-bold text-white mb-6">
             {prospect ? 'Editar Prospecto' : 'Nuevo Prospecto'}
           </h2>
-          
+
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
@@ -516,7 +551,7 @@ function ProspectModal({
                   type="text"
                   required
                   value={formData.company_name}
-                  onChange={(e) => setFormData({...formData, company_name: e.target.value})}
+                  onChange={(e) => setFormData({ ...formData, company_name: e.target.value })}
                   className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-white"
                 />
               </div>
@@ -527,7 +562,7 @@ function ProspectModal({
                 </label>
                 <select
                   value={formData.client_id}
-                  onChange={(e) => setFormData({...formData, client_id: e.target.value})}
+                  onChange={(e) => setFormData({ ...formData, client_id: e.target.value })}
                   className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-white"
                 >
                   <option value="">Nuevo prospecto (no cliente existente)</option>
@@ -545,7 +580,7 @@ function ProspectModal({
                 </label>
                 <select
                   value={formData.priority_id}
-                  onChange={(e) => setFormData({...formData, priority_id: e.target.value})}
+                  onChange={(e) => setFormData({ ...formData, priority_id: e.target.value })}
                   className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-white"
                 >
                   <option value="">Seleccionar prioridad</option>
@@ -563,7 +598,7 @@ function ProspectModal({
                 </label>
                 <select
                   value={formData.vendor_id}
-                  onChange={(e) => setFormData({...formData, vendor_id: e.target.value})}
+                  onChange={(e) => setFormData({ ...formData, vendor_id: e.target.value })}
                   className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-white"
                   disabled={disableVendorSelect || vendors.length <= 1}
                   required
@@ -586,7 +621,7 @@ function ProspectModal({
                 </label>
                 <select
                   value={formData.step_id}
-                  onChange={(e) => setFormData({...formData, step_id: e.target.value})}
+                  onChange={(e) => setFormData({ ...formData, step_id: e.target.value })}
                   className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-white"
                 >
                   <option value="">Seleccionar paso</option>
@@ -605,7 +640,7 @@ function ProspectModal({
                 <input
                   type="text"
                   value={formData.contact_phone}
-                  onChange={(e) => setFormData({...formData, contact_phone: e.target.value})}
+                  onChange={(e) => setFormData({ ...formData, contact_phone: e.target.value })}
                   className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-white"
                 />
               </div>
@@ -617,7 +652,7 @@ function ProspectModal({
                 <input
                   type="email"
                   value={formData.contact_email}
-                  onChange={(e) => setFormData({...formData, contact_email: e.target.value})}
+                  onChange={(e) => setFormData({ ...formData, contact_email: e.target.value })}
                   className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-white"
                 />
               </div>
@@ -634,7 +669,8 @@ function ProspectModal({
                   { key: 'movil_renovacion', label: 'Móvil Reno' },
                   { key: 'claro_tv', label: 'ClaroTV' },
                   { key: 'cloud', label: 'Cloud' },
-                  { key: 'mpls', label: 'MPLS' }
+                  { key: 'mpls', label: 'MPLS' },
+                  { key: 'base', label: 'Base' }
                 ].map(product => (
                   <div key={product.key}>
                     <label className="block text-sm font-medium text-gray-300 mb-2">
@@ -646,7 +682,7 @@ function ProspectModal({
                       step="0.01"
                       value={formData[product.key as keyof typeof formData] as number}
                       onChange={(e) => setFormData({
-                        ...formData, 
+                        ...formData,
                         [product.key]: parseFloat(e.target.value) || 0
                       })}
                       className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-white"
@@ -663,7 +699,7 @@ function ProspectModal({
               <textarea
                 rows={3}
                 value={formData.notes}
-                onChange={(e) => setFormData({...formData, notes: e.target.value})}
+                onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
                 className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-white"
               />
             </div>
@@ -673,7 +709,7 @@ function ProspectModal({
                 <input
                   type="checkbox"
                   checked={formData.is_completed}
-                  onChange={(e) => setFormData({...formData, is_completed: e.target.checked})}
+                  onChange={(e) => setFormData({ ...formData, is_completed: e.target.checked })}
                   className="rounded border-gray-700 text-blue-600 focus:ring-blue-500 focus:ring-offset-0 bg-gray-800"
                 />
                 <span className="ml-2 text-sm text-gray-300">Marcar como completado</span>
@@ -759,7 +795,7 @@ function CallModal({
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">Próxima llamada</label>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Próxima llamada (solo fecha)</label>
                 <input
                   type="date"
                   value={formData.next_call_date}
@@ -863,14 +899,14 @@ function PriorityManagerModal({ priorities, onClose, onSaved }: PriorityManagerM
       prev.map((item) =>
         item.id === id
           ? {
-              ...item,
-              [field]:
-                field === 'order_index'
-                  ? Number(value)
-                  : field === 'is_active'
+            ...item,
+            [field]:
+              field === 'order_index'
+                ? Number(value)
+                : field === 'is_active'
                   ? value
                   : value
-            }
+          }
           : item
       )
     );
@@ -974,11 +1010,10 @@ function PriorityManagerModal({ priorities, onClose, onSaved }: PriorityManagerM
 
         {message && (
           <div
-            className={`mx-6 mt-4 mb-2 rounded-lg px-4 py-3 text-sm border ${
-              message.type === 'success'
+            className={`mx-6 mt-4 mb-2 rounded-lg px-4 py-3 text-sm border ${message.type === 'success'
                 ? 'border-green-500/40 bg-green-900/30 text-green-100'
                 : 'border-red-500/40 bg-red-900/30 text-red-100'
-            }`}
+              }`}
           >
             {message.text}
           </div>
@@ -1023,25 +1058,25 @@ function PriorityManagerModal({ priorities, onClose, onSaved }: PriorityManagerM
               <p className="text-sm text-gray-400">No hay prioridades configuradas.</p>
             ) : (
               items.map(item => (
-                <div key={item.id} className="bg-gray-800 border border-gray-700 rounded-lg p-4 space-y-3">
+                <div key={item.id} className="border border-gray-700 rounded-lg p-3 space-y-2">
                   <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
                     <input
                       type="text"
                       value={item.name}
                       onChange={(e) => handleFieldChange(item.id, 'name', e.target.value)}
-                      className="px-3 py-2 bg-gray-850 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-3 py-1.5 border border-gray-600 rounded-lg text-white bg-transparent focus:ring-2 focus:ring-blue-500"
                     />
                     <input
                       type="color"
                       value={item.color_hex || '#3B82F6'}
                       onChange={(e) => handleFieldChange(item.id, 'color_hex', e.target.value)}
-                      className="w-full h-10 bg-gray-850 border border-gray-700 rounded-lg"
+                      className="w-full h-8 border border-gray-600 rounded-lg bg-transparent"
                     />
                     <input
                       type="number"
                       value={item.order_index ?? 0}
                       onChange={(e) => handleFieldChange(item.id, 'order_index', Number(e.target.value))}
-                      className="px-3 py-2 bg-gray-850 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-3 py-1.5 border border-gray-600 rounded-lg text-white bg-transparent focus:ring-2 focus:ring-blue-500"
                     />
                     <label className="flex items-center gap-2 text-sm text-gray-300">
                       <input
@@ -1210,39 +1245,38 @@ function StepManagerModal({ steps, onClose, onSaved }: StepManagerModalProps) {
 
         {message && (
           <div
-            className={`mx-6 mt-4 mb-2 rounded-lg px-4 py-3 text-sm border ${
-              message.type === 'success'
+            className={`mx-6 mt-4 mb-2 rounded-lg px-4 py-3 text-sm border ${message.type === 'success'
                 ? 'border-green-500/40 bg-green-900/30 text-green-100'
                 : 'border-red-500/40 bg-red-900/30 text-red-100'
-            }`}
+              }`}
           >
             {message.text}
           </div>
         )}
 
         <div className="p-6 space-y-6">
-          <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
-            <h3 className="text-sm font-semibold text-white mb-4">Nuevo paso</h3>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="border border-gray-700 rounded-lg p-3">
+            <h3 className="text-sm font-semibold text-white mb-3">Nuevo paso</h3>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
               <input
                 type="text"
                 value={newItem.name}
                 onChange={(e) => setNewItem(prev => ({ ...prev, name: e.target.value }))}
                 placeholder="Nombre"
-                className="px-3 py-2 bg-gray-850 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-1.5 border border-gray-600 rounded-lg text-white bg-transparent focus:ring-2 focus:ring-blue-500"
               />
               <input
                 type="text"
                 value={newItem.description}
                 onChange={(e) => setNewItem(prev => ({ ...prev, description: e.target.value }))}
                 placeholder="Descripción"
-                className="px-3 py-2 bg-gray-850 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-1.5 border border-gray-600 rounded-lg text-white bg-transparent focus:ring-2 focus:ring-blue-500"
               />
               <input
                 type="number"
                 value={newItem.order_index}
                 onChange={(e) => setNewItem(prev => ({ ...prev, order_index: Number(e.target.value) }))}
-                className="px-3 py-2 bg-gray-850 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-1.5 border border-gray-600 rounded-lg text-white bg-transparent focus:ring-2 focus:ring-blue-500"
                 placeholder="Orden"
               />
               <button
@@ -1260,25 +1294,25 @@ function StepManagerModal({ steps, onClose, onSaved }: StepManagerModalProps) {
               <p className="text-sm text-gray-400">No hay pasos configurados.</p>
             ) : (
               items.map(item => (
-                <div key={item.id} className="bg-gray-800 border border-gray-700 rounded-lg p-4 space-y-3">
+                <div key={item.id} className="border border-gray-700 rounded-lg p-3 space-y-2">
                   <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
                     <input
                       type="text"
                       value={item.name}
                       onChange={(e) => handleFieldChange(item.id, 'name', e.target.value)}
-                      className="px-3 py-2 bg-gray-850 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-3 py-1.5 border border-gray-600 rounded-lg text-white bg-transparent focus:ring-2 focus:ring-blue-500"
                     />
                     <input
                       type="text"
                       value={item.description || ''}
                       onChange={(e) => handleFieldChange(item.id, 'description', e.target.value)}
-                      className="px-3 py-2 bg-gray-850 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-3 py-1.5 border border-gray-600 rounded-lg text-white bg-transparent focus:ring-2 focus:ring-blue-500"
                     />
                     <input
                       type="number"
                       value={item.order_index ?? 0}
                       onChange={(e) => handleFieldChange(item.id, 'order_index', Number(e.target.value))}
-                      className="px-3 py-2 bg-gray-850 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-3 py-1.5 border border-gray-600 rounded-lg text-white bg-transparent focus:ring-2 focus:ring-blue-500"
                     />
                     <label className="flex items-center gap-2 text-sm text-gray-300">
                       <input

@@ -10,10 +10,13 @@ import {
   Package,
   UserCircle2,
   Sun,
-  Moon
+  Moon,
+  Upload,
+  Target
 } from "lucide-react";
 import { useTheme } from "@/react-app/hooks/useTheme";
 import { getCurrentRole, getCurrentUser, clearAuthToken } from "@/react-app/utils/auth";
+import { useApi } from "@/react-app/hooks/useApi";
 
 type NavItem = {
   name: string;
@@ -22,7 +25,7 @@ type NavItem = {
   roles?: string[];
 };
 
-// VERSION: 2025-01-15-SIN-METAS-SIN-IMPORTADOR-V4
+// VERSION: 2025-01-15-CON-IMPORTADOR-VISUAL
 const navigation: NavItem[] = [
   { name: "Clientes", href: "/", icon: Users, roles: ["admin", "supervisor", "vendedor"] },
   { name: "Seguimiento", href: "/seguimiento", icon: PhoneCall, roles: ["admin", "supervisor", "vendedor"] },
@@ -30,11 +33,56 @@ const navigation: NavItem[] = [
   { name: "Vendedores", href: "/vendedores", icon: Building2, roles: ["admin", "supervisor"] },
   { name: "Categorías", href: "/categorias", icon: Folder, roles: ["admin"] },
   { name: "Productos", href: "/productos", icon: Package, roles: ["admin", "supervisor"] },
+  { name: "Metas", href: "/metas", icon: Target, roles: ["admin", "supervisor", "vendedor"] },
+  { name: "Importador", href: "/importador", icon: Upload, roles: ["admin", "supervisor"] },
   { name: "Perfil", href: "/perfil", icon: UserCircle2, roles: ["admin", "supervisor", "vendedor"] }
 ];
 
 interface LayoutProps {
   children: React.ReactNode;
+}
+
+interface Goal {
+  id: number;
+  vendor_id: number | null;
+  vendor_name: string | null;
+  product_id: number | null;
+  product_name: string | null;
+  period_type: string;
+  period_year: number;
+  period_month: number | null;
+  period_quarter: number | null;
+  target_amount: number;
+  current_amount: number;
+  description: string | null;
+  is_active: number;
+  created_at: string;
+  updated_at: string;
+}
+
+// Función para calcular días laborables (lunes a viernes) restantes en el mes
+function getWorkingDaysRemaining(): number {
+  const today = new Date();
+  const currentYear = today.getFullYear();
+  const currentMonth = today.getMonth();
+  
+  // Último día del mes
+  const lastDay = new Date(currentYear, currentMonth + 1, 0);
+  
+  let workingDays = 0;
+  const currentDate = new Date(today);
+  
+  // Iterar desde hoy hasta el último día del mes
+  while (currentDate <= lastDay) {
+    const dayOfWeek = currentDate.getDay();
+    // 1 = lunes, 5 = viernes
+    if (dayOfWeek >= 1 && dayOfWeek <= 5) {
+      workingDays++;
+    }
+    currentDate.setDate(currentDate.getDate() + 1);
+  }
+  
+  return workingDays;
 }
 
 export default function Layout({ children }: LayoutProps) {
@@ -44,10 +92,64 @@ export default function Layout({ children }: LayoutProps) {
   const role = getCurrentRole() ?? "admin";
   const user = useMemo(() => getCurrentUser(), []);
   const userLabel = user?.salespersonName || user?.username || "Usuario";
+  const isVendor = role.toLowerCase() === "vendedor";
+  
+  // Obtener metas del vendedor para el mes actual
+  const currentYear = new Date().getFullYear();
+  const currentMonth = new Date().getMonth() + 1;
+  const goalsUrl = isVendor ? `/api/goals?period_year=${currentYear}&period_month=${currentMonth}` : '/api/goals?period_year=0&period_month=0';
+  const { data: vendorGoals } = useApi<Goal[]>(goalsUrl, { immediate: isVendor });
+  
+  // Calcular resumen de metas por producto
+  const goalsByProduct = useMemo(() => {
+    if (!isVendor || !vendorGoals || vendorGoals.length === 0) {
+      return [];
+    }
+    
+    const workingDaysRemaining = getWorkingDaysRemaining();
+    
+    // Agrupar metas por producto
+    const productMap = new Map<number, { productName: string; target: number; current: number }>();
+    
+    vendorGoals.forEach((goal) => {
+      const productId = goal.product_id || 0;
+      const productName = goal.product_name || 'Sin producto';
+      
+      if (!productMap.has(productId)) {
+        productMap.set(productId, {
+          productName,
+          target: 0,
+          current: 0
+        });
+      }
+      
+      const product = productMap.get(productId)!;
+      product.target += goal.target_amount;
+      product.current += goal.current_amount;
+    });
+    
+    // Convertir a array y calcular métricas por producto
+    return Array.from(productMap.entries()).map(([productId, product]) => {
+      const remaining = product.target - product.current;
+      const dailyGoal = workingDaysRemaining > 0 ? remaining / workingDaysRemaining : 0;
+      const progress = product.target > 0 ? (product.current / product.target) * 100 : 0;
+      
+      return {
+        productId,
+        productName: product.productName,
+        target: product.target,
+        current: product.current,
+        remaining,
+        dailyGoal,
+        progress,
+        workingDaysRemaining
+      };
+    });
+  }, [isVendor, vendorGoals]);
 
-  // Verificación de versión - SIN MAPEO
+  // Verificación de versión - CON IMPORTADOR VISUAL
   useEffect(() => {
-    console.log('✅ LAYOUT VERSION: 2025-01-15-SIN-MAPEO');
+    console.log('✅ LAYOUT VERSION: 2025-01-15-CON-IMPORTADOR-VISUAL');
     console.log('✅ Navigation items:', navigation.map(n => n.name).join(', '));
   }, []);
 
@@ -94,6 +196,74 @@ export default function Layout({ children }: LayoutProps) {
               </div>
             </div>
           </div>
+
+          {/* Metas del Vendedor - Solo para vendedores */}
+          {isVendor && goalsByProduct.length > 0 && (
+            <div className="p-4 border-b border-slate-700 dark:border-slate-700 space-y-3 max-h-[400px] overflow-y-auto">
+              <div className="flex items-center gap-2 mb-2">
+                <Target className="w-5 h-5 text-emerald-400" />
+                <h3 className="text-sm font-semibold text-white">Mis Metas</h3>
+              </div>
+              
+              {goalsByProduct.map((productGoal) => (
+                <div key={productGoal.productId} className="bg-gradient-to-br from-emerald-900/40 to-blue-900/40 border border-emerald-500/30 rounded-lg p-3 shadow-lg">
+                  {/* Nombre del Producto */}
+                  <div className="mb-2">
+                    <p className="text-xs font-semibold text-emerald-300 truncate" title={productGoal.productName}>
+                      {productGoal.productName}
+                    </p>
+                  </div>
+                  
+                  {/* Meta del Mes */}
+                  <div className="mb-2">
+                    <div className="flex justify-between items-center mb-1">
+                      <span className="text-[10px] text-slate-300">Meta</span>
+                      <span className="text-xs font-bold text-white">
+                        ${productGoal.target.toLocaleString('es-ES', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                      </span>
+                    </div>
+                    <div className="w-full h-1.5 bg-slate-700/50 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-emerald-500 to-blue-500 rounded-full transition-all duration-300"
+                        style={{ width: `${Math.min(productGoal.progress, 100)}%` }}
+                      />
+                    </div>
+                    <div className="flex justify-between mt-0.5">
+                      <span className="text-[10px] text-slate-400">
+                        ${productGoal.current.toLocaleString('es-ES', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                      </span>
+                      <span className="text-[10px] font-semibold text-emerald-400">
+                        {productGoal.progress.toFixed(1)}%
+                      </span>
+                    </div>
+                  </div>
+                  
+                  {/* Meta Faltante y Diaria */}
+                  <div className="pt-1.5 border-t border-slate-600/50 space-y-1">
+                    <div className="flex justify-between items-center">
+                      <span className="text-[10px] text-slate-300">Faltante</span>
+                      <span className="text-xs font-bold text-orange-400">
+                        ${productGoal.remaining.toLocaleString('es-ES', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-[10px] text-slate-300">Diaria</span>
+                      <span className="text-xs font-bold text-blue-400">
+                        ${productGoal.dailyGoal.toLocaleString('es-ES', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+              
+              {/* Días restantes (común para todos) */}
+              {goalsByProduct.length > 0 && (
+                <p className="text-[10px] text-slate-400 text-center pt-1">
+                  {goalsByProduct[0].workingDaysRemaining} días laborables restantes
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Navigation */}
           <nav className="flex-1 space-y-1 p-4">
@@ -156,8 +326,8 @@ export default function Layout({ children }: LayoutProps) {
 
       {/* Main content */}
       <div className="pl-64">
-        <main className="min-h-screen p-8">
-          <div className="mx-auto max-w-7xl">
+        <main className="min-h-screen p-6">
+          <div className="mx-auto max-w-[98%]">
             {children}
           </div>
         </main>
