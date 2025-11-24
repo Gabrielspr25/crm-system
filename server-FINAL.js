@@ -2147,36 +2147,28 @@ app.post('/api/importador/save', async (req, res) => {
             }
           }
 
-          // Si NO hay BAN válido, se requiere empresa (business_name)
+          // Si NO hay BAN válido, se requiere empresa (business_name) O nombre (name)
           if (!normalizedBan) {
-            if (!clientData.business_name) {
-              errors.push(`Fila ${rowIndex + 1} omitida: falta BAN, se requiere empresa (business_name)`);
+            if (!clientData.business_name && !clientData.name) {
+              errors.push(`Fila ${rowIndex + 1} omitida: falta BAN, se requiere al menos Nombre o Empresa`);
               continue;
             }
-            // Si no hay BAN pero hay empresa, continuar (se buscará cliente por business_name)
+            // Si no hay BAN pero hay datos de cliente, continuar
           }
 
-          // Validar teléfono del suscriptor SOLO si hay BAN
+          // REGLA MODIFICADA (24/11/2025):
+          // Si hay BAN, PERMITIR crear cliente aunque no tenga nombre ni empresa.
+          // Se usará el BAN como identificador temporal y se marcará como INCOMPLETO (si existe lógica para ello)
+          // o simplemente se creará con un nombre genérico basado en el BAN para que aparezca en el sistema.
+          
+          // Validar teléfono del suscriptor
+          // MODIFICADO: Ya no es obligatorio tener teléfono si hay BAN.
+          // Si falta el teléfono, se crea el Cliente y el BAN, pero sin suscriptor (quedará como INCOMPLETO).
           let subscriberPhone = null;
-          if (normalizedBan) {
-            if (!subscriberData.phone) {
-              errors.push(`Fila ${rowIndex + 1} omitida: falta teléfono del suscriptor (requerido cuando hay BAN)`);
-              continue;
-            }
-            // Normalizar teléfono (solo números)
+          if (subscriberData.phone) {
             subscriberPhone = String(subscriberData.phone).trim().replace(/[^0-9]/g, '');
             if (!subscriberPhone || subscriberPhone.length === 0) {
-              errors.push(`Fila ${rowIndex + 1} omitida: teléfono inválido o vacío después de normalizar`);
-              continue;
-            }
-          } else {
-            // Si NO hay BAN, teléfono es opcional
-            if (subscriberData.phone) {
-              subscriberPhone = String(subscriberData.phone).trim().replace(/[^0-9]/g, '');
-              // Si está vacío después de normalizar, dejarlo como null
-              if (subscriberPhone.length === 0) {
-                subscriberPhone = null;
-              }
+              subscriberPhone = null;
             }
           }
 
@@ -2184,7 +2176,7 @@ app.post('/api/importador/save', async (req, res) => {
           let clientId = null;
 
           if (normalizedBan) {
-            // Si hay BAN: buscar por 1) Email, 2) BAN asociado, 3) business_name
+            // Si hay BAN: buscar por 1) Email, 2) BAN asociado, 3) Teléfono Suscriptor, 4) business_name
             // 1. Buscar por email si existe
             if (clientData.email) {
               const emailResult = await client.query(
@@ -2207,7 +2199,24 @@ app.post('/api/importador/save', async (req, res) => {
               }
             }
 
-            // 3. Si no se encontró por email ni BAN, buscar por business_name y FUSIONAR duplicados
+            // 3. NUEVO: Buscar por teléfono de suscriptor existente
+            // Si el suscriptor ya existe, pertenece a un BAN, que pertenece a un Cliente.
+            if (!clientId && subscriberPhone) {
+               const subResult = await client.query(
+                 `SELECT b.client_id 
+                  FROM subscribers s
+                  JOIN bans b ON s.ban_id = b.id
+                  WHERE s.phone = $1 AND s.is_active = 1
+                  LIMIT 1`,
+                 [subscriberPhone]
+               );
+               if (subResult.rows.length > 0) {
+                 clientId = subResult.rows[0].client_id;
+                 // console.log(`ℹ️ Cliente encontrado por teléfono ${subscriberPhone}: ID ${clientId}`);
+               }
+            }
+
+            // 4. Si no se encontró por email ni BAN ni teléfono, buscar por business_name y FUSIONAR duplicados
             if (!clientId && clientData.business_name) {
               const businessResult = await client.query(
                 `SELECT id FROM clients WHERE business_name = $1 ORDER BY id ASC`,
@@ -2234,33 +2243,48 @@ app.post('/api/importador/save', async (req, res) => {
               }
             }
           } else {
-            // Si NO hay BAN: buscar solo por business_name (empresa) - ya validado arriba que existe
-            const businessResult = await client.query(
-              `SELECT id FROM clients WHERE business_name = $1 ORDER BY id ASC`,
-              [clientData.business_name]
-            );
-            if (businessResult.rows.length > 0) {
-              clientId = businessResult.rows[0].id; // Usar el cliente más antiguo (ID menor)
+            // Si NO hay BAN: buscar por business_name O name
+            // Prioridad: business_name, luego name
+            let searchField = null;
+            let searchValue = null;
 
-              // Si hay DUPLICADOS (más de 1 cliente con el mismo nombre), FUSIONARLOS
-              if (businessResult.rows.length > 1) {
-                const duplicateIds = businessResult.rows.slice(1).map(r => r.id); // IDs de los duplicados
+            if (clientData.business_name) {
+              searchField = 'business_name';
+              searchValue = clientData.business_name;
+            } else if (clientData.name) {
+              searchField = 'name';
+              searchValue = clientData.name;
+            }
 
-                for (const dupId of duplicateIds) {
-                  // 1. Mover todos los BANs del duplicado al cliente principal
-                  await client.query(
-                    `UPDATE bans SET client_id = $1, updated_at = NOW() WHERE client_id = $2`,
-                    [clientId, dupId]
-                  );
+            if (searchField) {
+              const clientResult = await client.query(
+                `SELECT id FROM clients WHERE ${searchField} = $1 ORDER BY id ASC`,
+                [searchValue]
+              );
+              
+              if (clientResult.rows.length > 0) {
+                clientId = clientResult.rows[0].id; // Usar el cliente más antiguo (ID menor)
 
-                  // 2. Eliminar el cliente duplicado
-                  await client.query(
-                    `DELETE FROM clients WHERE id = $1`,
-                    [dupId]
-                  );
+                // Si hay DUPLICADOS (más de 1 cliente con el mismo nombre), FUSIONARLOS
+                if (clientResult.rows.length > 1) {
+                  const duplicateIds = clientResult.rows.slice(1).map(r => r.id); // IDs de los duplicados
+
+                  for (const dupId of duplicateIds) {
+                    // 1. Mover todos los BANs del duplicado al cliente principal
+                    await client.query(
+                      `UPDATE bans SET client_id = $1, updated_at = NOW() WHERE client_id = $2`,
+                      [clientId, dupId]
+                    );
+
+                    // 2. Eliminar el cliente duplicado
+                    await client.query(
+                      `DELETE FROM clients WHERE id = $1`,
+                      [dupId]
+                    );
+                  }
+
+                  errors.push(`✅ FUSIÓN CLIENTE - Fila ${rowIndex + 1}: Se fusionaron ${duplicateIds.length} cliente(s) duplicado(s) con "${searchValue}" en el cliente ID ${clientId}. Todos los BANs ahora están bajo un solo cliente.`);
                 }
-
-                errors.push(`✅ FUSIÓN CLIENTE - Fila ${rowIndex + 1}: Se fusionaron ${duplicateIds.length} cliente(s) duplicado(s) con "${clientData.business_name}" en el cliente ID ${clientId}. Todos los BANs ahora están bajo un solo cliente.`);
               }
             }
           }
@@ -2300,9 +2324,10 @@ app.post('/api/importador/save', async (req, res) => {
                    city = COALESCE($9, city), 
                    zip_code = COALESCE($10, zip_code),
                    vendor_id = COALESCE(vendor_id, $11),
+                   base = COALESCE($12, base),
                    is_active = 1,
                    updated_at = NOW()
-               WHERE id = $12`,
+               WHERE id = $13`,
               [
                 clientData.name || null,
                 clientData.business_name || null,
@@ -2315,6 +2340,7 @@ app.post('/api/importador/save', async (req, res) => {
                 banData.city || clientData.city || null,
                 banData.zip_code || clientData.zip_code || null,
                 vendorId,
+                clientData.base || null,
                 clientId
               ]
             );
@@ -2323,13 +2349,28 @@ app.post('/api/importador/save', async (req, res) => {
             // Crear nuevo cliente
             // Si hay BAN: puede ser sin datos (valores por defecto)
             // Si NO hay BAN: debe tener business_name (ya validado arriba)
+            
+            // Determinar nombre final asegurando que no sea vacío ni solo espacios
+            let finalName = clientData.name;
+            if (!finalName || !String(finalName).trim()) {
+                finalName = clientData.business_name;
+            }
+            if (!finalName || !String(finalName).trim()) {
+                finalName = normalizedBan;
+            }
+            
+            // Si aún así no hay nombre (caso raro si pasó la validación inicial), usar un placeholder
+            if (!finalName || !String(finalName).trim()) {
+                finalName = `Cliente Sin Nombre ${Date.now()}`;
+            }
+
             const newClient = await client.query(
-              `INSERT INTO clients (name, business_name, contact_person, email, phone, secondary_phone, mobile_phone, address, city, zip_code, vendor_id, is_active, created_at, updated_at)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 1, NOW(), NOW())
+              `INSERT INTO clients (name, business_name, contact_person, email, phone, secondary_phone, mobile_phone, address, city, zip_code, vendor_id, base, is_active, created_at, updated_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 1, NOW(), NOW())
                RETURNING id`,
               [
-                clientData.name || (normalizedBan ? `Cliente BAN ${normalizedBan}` : null),
-                clientData.business_name || (normalizedBan ? `Empresa BAN ${normalizedBan}` : null),
+                finalName,
+                clientData.business_name || null,
                 clientData.contact_person || null,
                 clientData.email || null,
                 clientData.phone || null,
@@ -2338,7 +2379,8 @@ app.post('/api/importador/save', async (req, res) => {
                 banData.address || clientData.address || null,
                 banData.city || clientData.city || null,
                 banData.zip_code || clientData.zip_code || null,
-                vendorId
+                vendorId,
+                clientData.base || null
               ]
             );
             clientId = newClient.rows[0].id;
@@ -2418,33 +2460,58 @@ app.post('/api/importador/save', async (req, res) => {
 
           // Buscar o crear suscriptor (solo si hay BAN y teléfono)
           let subscriberResult = null;
+          
+          // Lógica para calcular fecha de fin de contrato automática basada en pagos restantes
+          // Se usa si no se proporciona una fecha explícita
+          let calculatedEndDate = null;
+          if (subscriberData.remaining_payments) {
+            const remaining = Number(subscriberData.remaining_payments);
+            if (!isNaN(remaining) && remaining > 0) {
+              const today = new Date();
+              const endDate = new Date(today);
+              endDate.setMonth(endDate.getMonth() + remaining);
+              calculatedEndDate = endDate.toISOString().split('T')[0];
+            }
+          }
+
           if (banId && subscriberPhone) {
+            // Buscar si el teléfono ya existe en CUALQUIER BAN (activo)
+            // Esto es necesario porque ahora tenemos una restricción UNIQUE en phone activo
             subscriberResult = await client.query(
-              `SELECT id FROM subscribers WHERE ban_id = $1 AND phone = $2`,
-              [banId, subscriberPhone]
+              `SELECT id, ban_id FROM subscribers WHERE phone = $1 AND is_active = 1`,
+              [subscriberPhone]
             );
           }
 
           if (subscriberResult && subscriberResult.rows.length > 0) {
-            // Actualizar suscriptor existente
+            const existingSub = subscriberResult.rows[0];
+            
+            // Si existe pero en otro BAN, moverlo al nuevo BAN (según regla: "suscriptor puede ser asignado a otro cliente")
+            if (existingSub.ban_id !== banId) {
+              console.log(`ℹ️ Moviendo suscriptor ${subscriberPhone} del BAN ${existingSub.ban_id} al BAN ${banId}`);
+            }
+
+            // Actualizar suscriptor existente (y moverlo si es necesario)
             await client.query(
               `UPDATE subscribers 
-             SET service_type = COALESCE($1, service_type),
-                 monthly_value = COALESCE($2, monthly_value),
-                 months = COALESCE($3, months),
-                 remaining_payments = COALESCE($4, remaining_payments),
-                 contract_start_date = COALESCE($5, contract_start_date),
-                 contract_end_date = COALESCE($6, contract_end_date),
+             SET ban_id = $1,
+                 service_type = COALESCE($2, service_type),
+                 monthly_value = COALESCE($3, monthly_value),
+                 months = COALESCE($4, months),
+                 remaining_payments = COALESCE($5, remaining_payments),
+                 contract_start_date = COALESCE($6, contract_start_date),
+                 contract_end_date = COALESCE($7, contract_end_date),
                  updated_at = NOW()
-             WHERE id = $7`,
+             WHERE id = $8`,
               [
+                banId, // Asegurar que esté en el BAN correcto
                 subscriberData.service_type || null,
                 subscriberData.monthly_value ? (isNaN(Number(subscriberData.monthly_value)) ? null : Number(subscriberData.monthly_value)) : null,
                 subscriberData.months ? (isNaN(Number(subscriberData.months)) ? null : Number(subscriberData.months)) : null,
                 subscriberData.remaining_payments ? (isNaN(Number(subscriberData.remaining_payments)) ? null : Number(subscriberData.remaining_payments)) : null,
                 subscriberData.contract_start_date || null,
-                subscriberData.contract_end_date || null,
-                subscriberResult.rows[0].id,
+                subscriberData.contract_end_date || calculatedEndDate || null,
+                existingSub.id,
               ]
             );
           } else if (banId && subscriberPhone) {
@@ -2460,7 +2527,7 @@ app.post('/api/importador/save', async (req, res) => {
                 subscriberData.months ? (isNaN(Number(subscriberData.months)) ? null : Number(subscriberData.months)) : null,
                 subscriberData.remaining_payments ? (isNaN(Number(subscriberData.remaining_payments)) ? null : Number(subscriberData.remaining_payments)) : null,
                 subscriberData.contract_start_date || null,
-                subscriberData.contract_end_date || null,
+                subscriberData.contract_end_date || calculatedEndDate || null,
               ]
             );
           }
@@ -3451,7 +3518,7 @@ const server = app.listen(PORT, () => {
   console.log(`✅ CRM Pro API escuchando en el puerto ${PORT}`);
 });
 
-// Configurar timeouts del servidor para importaciones grandes
-server.timeout = 300000; // 5 minutos
-server.keepAliveTimeout = 300000;
-server.headersTimeout = 300000;
+// Configurar timeouts del servidor para importaciones grandes (1 hora)
+server.timeout = 3600000; 
+server.keepAliveTimeout = 3600000;
+server.headersTimeout = 3600000;

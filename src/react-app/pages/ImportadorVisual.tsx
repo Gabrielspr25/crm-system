@@ -69,15 +69,12 @@ export default function ImportadorVisual() {
       columns: [
         "name",
         "business_name",
+        "base",
         "contact_person",
         "email",
         "phone",
         "secondary_phone",
-        "mobile_phone",
-        "address",
-        "city",
-        "zip_code",
-        "base"
+        "mobile_phone"
       ]
     },
     {
@@ -342,88 +339,89 @@ export default function ImportadorVisual() {
             return mapped;
           });
 
-          // Enviar al backend
-          const response = await authFetch("/api/importador/save", {
-            method: "POST",
-            json: {
-              mapping: assigned,
-              data: mappedData,
-            },
-          });
+          // Procesar en lotes pequeños para evitar Timeouts (504)
+          const BATCH_SIZE = 200;
+          const totalBatches = Math.ceil(mappedData.length / BATCH_SIZE);
+          
+          let totalCreated = 0;
+          let totalUpdated = 0;
+          let totalErrors: string[] = [];
+          let totalWarnings: string[] = [];
+          
+          // Variable para mostrar progreso en UI (podrías agregar un estado para esto)
+          console.log(`Iniciando importación de ${mappedData.length} filas en ${totalBatches} lotes...`);
 
-          if (!response.ok) {
-            let errorMessage = "Error al guardar los datos";
-            const contentType = response.headers.get("content-type");
-            if (contentType && contentType.includes("application/json")) {
-              try {
-                const error = await response.json();
-                errorMessage = error.error || errorMessage;
-              } catch (e) {
-                errorMessage = "Error al parsear respuesta del servidor";
-              }
-            } else {
-              // Si no es JSON, leer como texto
-              try {
-                const text = await response.text();
-                errorMessage = text.substring(0, 500) || errorMessage;
-              } catch (e) {
-                errorMessage = `Error ${response.status}: ${response.statusText}`;
-              }
-            }
-            throw new Error(errorMessage);
-          }
+          for (let i = 0; i < totalBatches; i++) {
+            const start = i * BATCH_SIZE;
+            const end = Math.min(start + BATCH_SIZE, mappedData.length);
+            const batch = mappedData.slice(start, end);
+            
+            // Actualizar mensaje de estado si tuvieras uno
+            // setStatusMessage(`Procesando lote ${i + 1} de ${totalBatches}...`);
 
-          let result;
-          const contentType = response.headers.get("content-type");
-          if (contentType && contentType.includes("application/json")) {
             try {
-              result = await response.json();
-            } catch (e) {
-              throw new Error("Error al parsear respuesta JSON del servidor");
+              const response = await authFetch("/api/importador/save", {
+                method: "POST",
+                json: {
+                  mapping: assigned,
+                  data: batch,
+                },
+              });
+
+              if (!response.ok) {
+                // Si falla un lote, registrar error pero intentar continuar o abortar según gravedad
+                console.error(`Error en lote ${i + 1}: ${response.statusText}`);
+                totalErrors.push(`Error crítico en lote ${i + 1}: ${response.statusText}`);
+                continue; 
+              }
+
+              const result = await response.json();
+              
+              // Acumular resultados
+              totalCreated += (result.created || 0);
+              totalUpdated += (result.updated || 0);
+              
+              if (result.errors && Array.isArray(result.errors)) {
+                result.errors.forEach((msg: string) => {
+                  if (msg.includes("ya existe") || msg.includes("ℹ️")) {
+                    totalWarnings.push(msg);
+                  } else {
+                    totalErrors.push(msg);
+                  }
+                });
+              }
+
+            } catch (batchError: any) {
+              console.error(`Excepción en lote ${i + 1}:`, batchError);
+              totalErrors.push(`Error de red en lote ${i + 1}: ${batchError.message}`);
             }
-          } else {
-            const text = await response.text();
-            throw new Error(`Respuesta inválida del servidor (esperado JSON): ${text.substring(0, 200)}`);
           }
 
-          // Calcular filas omitidas y categorizar errores
-          const totalProcessed = (result.created || 0) + (result.updated || 0);
-          const omitted = (result.total || 0) - totalProcessed;
-
-          // Separar advertencias de errores críticos
-          const allMessages = result.errors || [];
-          const warnings: string[] = [];
-          const criticalErrors: string[] = [];
-
-          allMessages.forEach((msg: string) => {
-            if (msg.includes("ya existe") || msg.includes("ℹ️")) {
-              warnings.push(msg);
-            } else {
-              criticalErrors.push(msg);
-            }
-          });
+          // Construir resultado final agregado
+          const totalProcessed = totalCreated + totalUpdated;
+          const omitted = mappedData.length - totalProcessed;
 
           // Mostrar resultado en modal personalizado
           setSaveResult({
-            success: result.success || true,
-            message: result.message || 'Datos guardados correctamente.',
-            created: result.created || 0,
-            updated: result.updated || 0,
-            total: result.total || 0,
+            success: totalErrors.length === 0,
+            message: `Proceso completado. Procesadas ${mappedData.length} filas.`,
+            created: totalCreated,
+            updated: totalUpdated,
+            total: mappedData.length,
             omitted: omitted,
-            errors: criticalErrors,
-            warnings: warnings
+            errors: totalErrors,
+            warnings: totalWarnings
           });
 
           // Disparar evento para refrescar clientes en otras páginas
-          if (result.created > 0 || result.updated > 0) {
+          if (totalCreated > 0 || totalUpdated > 0) {
             window.dispatchEvent(new CustomEvent('refreshClients'));
             window.dispatchEvent(new CustomEvent('clients-updated'));
           }
 
-          // Limpiar estado solo si no hay errores críticos
-          if (result.errors && result.errors.length > 0 && result.created === 0 && result.updated === 0) {
-            // No limpiar si no se guardó nada
+          // Limpiar estado solo si no hay errores críticos masivos
+          if (totalErrors.length > 0 && totalCreated === 0 && totalUpdated === 0) {
+            // No limpiar si falló todo
           } else {
             setFile(null);
             setColumns([]);
@@ -450,7 +448,7 @@ export default function ImportadorVisual() {
   return (
     <div className="p-8 bg-neutral-950 min-h-screen text-gray-100 overflow-auto">
       <h1 className="text-3xl font-bold text-center mb-6 text-amber-400 drop-shadow-md">
-        Importador de Datos v2 (Base Added)
+        Importador de Datos v3 (Columnas Ajustadas)
       </h1>
 
       <div className="grid grid-cols-3 gap-4 mb-10">

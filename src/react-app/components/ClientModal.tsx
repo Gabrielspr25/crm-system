@@ -60,7 +60,7 @@ export default function ClientModal({
     address: '',
     city: '',
     zip_code: '',
-    base: 0,
+    base: '',
     includes_ban: false,
     vendor_id: undefined,
   });
@@ -131,7 +131,7 @@ export default function ClientModal({
         address: client.address ?? '',
         city: (client as any).city ?? '',
         zip_code: (client as any).zip_code ?? '',
-        base: (client as any).base ?? 0,
+        base: (client as any).base ?? 'BD propia',
         includes_ban: Boolean(client.includes_ban),
         vendor_id: client.vendor_id ?? undefined,
       });
@@ -148,7 +148,7 @@ export default function ClientModal({
         address: '',
         city: '',
         zip_code: '',
-        base: 0,
+        base: 'BD propia',
         includes_ban: false,
         vendor_id: undefined,
       });
@@ -202,8 +202,8 @@ export default function ClientModal({
       address: formData.address?.trim() || undefined,
       city: formData.city?.trim() || undefined,
       zip_code: formData.zip_code?.trim() || undefined,
-      base: formData.base || 0,
       includes_ban: formData.includes_ban,
+      base: formData.base?.trim() || undefined,
       vendor_id: vendorIdToUse ?? undefined, // Convertir null a undefined para TypeScript
     };
 
@@ -418,15 +418,14 @@ export default function ClientModal({
                 {/* Base */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Base
+                    Base de Datos
                   </label>
                   <input
-                    type="number"
-                    step="0.01"
+                    type="text"
                     value={formData.base || ''}
-                    onChange={(e) => setFormData(prev => ({ ...prev, base: parseFloat(e.target.value) || 0 }))}
+                    onChange={(e) => setFormData(prev => ({ ...prev, base: e.target.value }))}
                     className="w-full px-3 py-2 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-700 text-white placeholder-gray-400"
-                    placeholder="0.00"
+                    placeholder="BD propia"
                   />
                 </div>
 

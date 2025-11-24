@@ -41,7 +41,19 @@ Write-Host "✓ Backend subido" -ForegroundColor Green
 
 # 4. Subir frontend
 Write-Host "`n[4/6] Subiendo frontend..." -ForegroundColor Yellow
-& $pscpPath -batch -pw $ServerPass -r "dist\client\*" "${ServerUser}@${ServerHost}:${WebPath}/" | Out-Host
+
+# Limpiar cualquier subida previa en tmp
+Write-Host "  - Limpiando temporales..."
+& $plinkPath -batch -ssh -pw $ServerPass "$ServerUser@$ServerHost" "rm -rf /tmp/client" | Out-Host
+
+# Subir la carpeta client a /tmp/client
+Write-Host "  - Subiendo archivos a /tmp/client..."
+& $pscpPath -batch -pw $ServerPass -r "dist\client" "${ServerUser}@${ServerHost}:/tmp/" | Out-Host
+
+# Limpiar destino y mover archivos
+Write-Host "  - Limpiando destino y moviendo archivos a $WebPath..."
+& $plinkPath -batch -ssh -pw $ServerPass "$ServerUser@$ServerHost" "bash -c 'rm -rf $WebPath/* && cp -r /tmp/client/* $WebPath/ && rm -rf /tmp/client'" | Out-Host
+
 Write-Host "✓ Frontend subido" -ForegroundColor Green
 
 # 5. Instalar y reiniciar

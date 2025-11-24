@@ -35,6 +35,7 @@ interface Client {
   has_cancelled_bans?: number;
   subscriber_count?: number;
   subscribers_in_opportunity?: number;
+  base: string | null;
 }
 
 interface Vendor {
@@ -139,6 +140,7 @@ interface ClientDetail {
   vendor_id: number | null;
   created_at: string;
   bans: BAN[];
+  base: string | null;
 }
 
 interface FollowUpProspect {
@@ -2368,6 +2370,14 @@ function ClientManagementModal({
                       </div>
                     </div>
                   )}
+
+                  <div className="flex items-center space-x-3">
+                    <Building className="w-5 h-5 text-gray-400" />
+                    <div>
+                      <p className="text-sm text-gray-400">Base de Datos</p>
+                      <p className="text-white font-medium">{(client as any).base || 'BD propia'}</p>
+                    </div>
+                  </div>
 
                   <div className="flex items-center space-x-3">
                     <Hash className="w-5 h-5 text-gray-400" />

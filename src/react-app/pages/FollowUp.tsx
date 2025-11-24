@@ -45,7 +45,7 @@ interface FollowUpProspect {
   notes: string | null;
   contact_phone: string | null;
   contact_email: string | null;
-  base: number;
+  base: string | null;
   is_active?: boolean | number | null;
   priority_name?: string;
   priority_color?: string;
@@ -343,7 +343,9 @@ export default function FollowUp() {
                     <span className="text-sm text-gray-300">{prospect.mpls || 0}</span>
                   </td>
                   <td className="px-4 py-4 whitespace-nowrap text-center">
-                    <span className="text-sm text-gray-300">{prospect.base || 0}</span>
+                    <span className="text-xs px-2 py-1 rounded bg-blue-900/40 text-blue-200 border border-blue-500/30">
+                      {prospect.base || 'BD propia'}
+                    </span>
                   </td>
                   <td className="px-4 py-4 whitespace-nowrap text-center">
                     <div className="text-sm text-gray-300">{formatDate(prospect.last_call_date)}</div>
@@ -487,7 +489,7 @@ function ProspectModal({
     contact_phone: prospect?.contact_phone || '',
     contact_email: prospect?.contact_email || '',
     notes: prospect?.notes || '',
-    base: prospect?.base || 0,
+    base: prospect?.base || '',
     is_completed: prospect?.is_completed || false
   });
 
@@ -508,7 +510,7 @@ function ProspectModal({
       contact_phone: prospect?.contact_phone || '',
       contact_email: prospect?.contact_email || '',
       notes: prospect?.notes || '',
-      base: prospect?.base || 0,
+      base: prospect?.base || '',
       is_completed: prospect?.is_completed || false
     });
   }, [prospect, enforcedVendorId]);
@@ -656,6 +658,19 @@ function ProspectModal({
                   className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-white"
                 />
               </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  Base de Datos
+                </label>
+                <input
+                  type="text"
+                  value={formData.base}
+                  onChange={(e) => setFormData({ ...formData, base: e.target.value })}
+                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-white"
+                  placeholder="BD propia"
+                />
+              </div>
             </div>
 
             {/* Products Grid */}
@@ -669,8 +684,7 @@ function ProspectModal({
                   { key: 'movil_renovacion', label: 'Móvil Reno' },
                   { key: 'claro_tv', label: 'ClaroTV' },
                   { key: 'cloud', label: 'Cloud' },
-                  { key: 'mpls', label: 'MPLS' },
-                  { key: 'base', label: 'Base' }
+                  { key: 'mpls', label: 'MPLS' }
                 ].map(product => (
                   <div key={product.key}>
                     <label className="block text-sm font-medium text-gray-300 mb-2">

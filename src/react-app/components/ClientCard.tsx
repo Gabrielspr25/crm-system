@@ -378,6 +378,16 @@ export default function ClientCard({
                       </div>
                     </div>
                   </div>
+
+                  <div className="flex items-center">
+                    <Building className="w-4 h-4 text-slate-500 dark:text-slate-400 mr-3" />
+                    <div>
+                      <div className="text-sm text-slate-600 dark:text-slate-400">Base de Datos</div>
+                      <div className="font-medium text-slate-900 dark:text-slate-100">
+                        {(client as any).base || 'BD propia'}
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
