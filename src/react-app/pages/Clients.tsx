@@ -1,12 +1,13 @@
 ﻿// VERSION: 2025-01-15-T5 (Banner eliminado, conteo BANs corregido)
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { Plus, Search, Edit, Users, Building, Phone, Mail, MapPin, Hash, Calendar, Trash2, UserPlus } from "lucide-react";
+import { Plus, Search, Edit, Users, Building, Phone, Mail, MapPin, Hash, Calendar, Trash2, UserPlus, Download, FileSpreadsheet, FileText } from "lucide-react";
 import { useApi } from "../hooks/useApi";
 import { authFetch } from "@/react-app/utils/auth";
 import ClientModal from "../components/ClientModal";
 import BANModal from "../components/BANModal";
 import SubscriberModal from "../components/SubscriberModal";
 import SalesHistoryTab from "../components/SalesHistoryTab";
+import * as XLSX from 'xlsx';
 
 interface Client {
   id: number;
@@ -1233,6 +1234,55 @@ const statusPriority: Record<ClientStatus, number> = {
     nota: '1 BAN con N suscriptores = 1 BAN (ban_count cuenta BANs, no suscriptores)'
   });
 
+  const [showExportMenu, setShowExportMenu] = useState(false);
+
+  const handleExport = (type: 'excel' | 'csv') => {
+    const dataToExport = clientsForTab.map(client => ({
+      'ID': client.clientId,
+      'Nombre': client.clientName || '',
+      'Empresa': client.businessName || '',
+      'Tipo': client.banType || '',
+      'Base': (client as any).base || 'BD propia',
+      'Estado': client.hasCancelledBans ? 'Cancelado' : 'Activo',
+      'Vendedor': client.vendorName || 'Sin asignar',
+      'BANs': client.banNumbers ? client.banNumbers.join(', ') : '',
+      'Teléfono Principal': client.primarySubscriberPhone || '',
+      'Total Suscriptores': client.totalSubscribers || 0,
+      'Fecha Vencimiento': client.primaryContractEndDate ? new Date(client.primaryContractEndDate).toLocaleDateString() : '',
+      'Última Actividad': client.lastActivity ? new Date(client.lastActivity).toLocaleDateString() : ''
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(dataToExport);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Clientes");
+
+    // Ajustar ancho de columnas
+    const wscols = [
+      {wch: 10}, // ID
+      {wch: 30}, // Nombre
+      {wch: 30}, // Empresa
+      {wch: 15}, // Tipo
+      {wch: 15}, // Base
+      {wch: 10}, // Estado
+      {wch: 20}, // Vendedor
+      {wch: 20}, // BANs
+      {wch: 15}, // Telefono
+      {wch: 10}, // Total Subs
+      {wch: 15}, // Vencimiento
+      {wch: 15}  // Ultima Actividad
+    ];
+    ws['!cols'] = wscols;
+
+    const fileName = `Clientes_${activeTab}_${new Date().toISOString().split('T')[0]}.${type === 'excel' ? 'xlsx' : 'csv'}`;
+    
+    if (type === 'excel') {
+      XLSX.writeFile(wb, fileName);
+    } else {
+      XLSX.writeFile(wb, fileName, { bookType: 'csv' });
+    }
+    setShowExportMenu(false);
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -1241,19 +1291,48 @@ const statusPriority: Record<ClientStatus, number> = {
           <h1 className="text-3xl font-bold text-white">Clientes</h1>
           <p className="text-gray-400 mt-1">Información completa de todos los clientes ordenados por vencimiento de contrato</p>
         </div>
-        <button
-          onClick={() => {
-            setPendingBanClientId(null);
-            setEditingClient(null);
-            setSelectedClientId(null);
-            setClientBANs([]);
-            setShowClientModal(true);
-          }}
-          className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
-        >
-          <Plus className="w-5 h-5" />
-          Nuevo Cliente
-        </button>
+        <div className="flex gap-3">
+          <div className="relative">
+            <button
+              onClick={() => setShowExportMenu(!showExportMenu)}
+              className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
+            >
+              <Download className="w-5 h-5" />
+              Exportar
+            </button>
+            {showExportMenu && (
+              <div className="absolute right-0 mt-2 w-48 bg-gray-800 rounded-lg shadow-xl border border-gray-700 z-50">
+                <button
+                  onClick={() => handleExport('excel')}
+                  className="w-full px-4 py-3 text-left text-gray-300 hover:bg-gray-700 hover:text-white flex items-center gap-2 first:rounded-t-lg"
+                >
+                  <FileSpreadsheet className="w-4 h-4 text-green-500" />
+                  Excel (.xlsx)
+                </button>
+                <button
+                  onClick={() => handleExport('csv')}
+                  className="w-full px-4 py-3 text-left text-gray-300 hover:bg-gray-700 hover:text-white flex items-center gap-2 last:rounded-b-lg"
+                >
+                  <FileText className="w-4 h-4 text-blue-500" />
+                  CSV
+                </button>
+              </div>
+            )}
+          </div>
+          <button
+            onClick={() => {
+              setPendingBanClientId(null);
+              setEditingClient(null);
+              setSelectedClientId(null);
+              setClientBANs([]);
+              setShowClientModal(true);
+            }}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
+          >
+            <Plus className="w-5 h-5" />
+            Nuevo Cliente
+          </button>
+        </div>
       </div>
 
       {/* Search and Filters */}
