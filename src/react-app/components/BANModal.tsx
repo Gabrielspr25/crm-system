@@ -132,7 +132,6 @@ export default function BANModal({ onSave, onClose, ban }: BANModalProps) {
               placeholder="123456789"
               maxLength={9}
               required
-              readOnly={!!ban}
             />
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
               Debe ser un número de 9 dígitos únicos
@@ -142,15 +141,26 @@ export default function BANModal({ onSave, onClose, ban }: BANModalProps) {
           {/* Description */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Descripción del BAN
+              Tipo de Servicio / Descripción
             </label>
-            <textarea
+            <select
               value={formData.description}
               onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
-              rows={3}
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-800 dark:bg-gray-800 text-gray-100 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-400"
-              placeholder="Descripción opcional del BAN"
-            />
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-800 dark:bg-gray-800 text-gray-100 dark:text-gray-100"
+            >
+              <option value="">Seleccionar tipo...</option>
+              <option value="Móvil">Móvil</option>
+              <option value="Fijo">Fijo</option>
+              <option value="Convergente">Convergente</option>
+              <option value="Internet">Internet</option>
+              <option value="TV">TV</option>
+              <option value="Cloud">Cloud</option>
+              <option value="MPLS">MPLS</option>
+              <option value="Otro">Otro</option>
+            </select>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+              Selecciona el tipo de servicio del BAN
+            </p>
           </div>
 
           {/* Status */}

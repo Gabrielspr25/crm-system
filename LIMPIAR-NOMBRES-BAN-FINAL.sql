@@ -25,3 +25,4 @@ FROM clients
 WHERE business_name IS NULL 
   AND (name ILIKE 'Cliente BAN%' OR name ILIKE '%BAN%');
 
+

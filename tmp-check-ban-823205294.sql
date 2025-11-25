@@ -25,3 +25,4 @@ WHERE b.ban_number LIKE '%823205294%'
 ORDER BY b.ban_number;
 
 
+

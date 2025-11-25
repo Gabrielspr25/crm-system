@@ -239,11 +239,12 @@ export default function SubscriberModal({ banId, subscriber, onSave, onClose }: 
               Duración del Contrato (meses) *
             </label>
             <input
-              type="number"
+              type="text"
+              inputMode="numeric"
               value={formData.months}
               onChange={(e) => {
-                const value = e.target.value ? Math.max(1, parseInt(e.target.value) || 12) : 12;
-                setFormData(prev => ({ ...prev, months: value }));
+                const value = e.target.value.replace(/\D/g, '');
+                setFormData(prev => ({ ...prev, months: value ? parseInt(value) : '' as any }));
                 if (errors.months) {
                   setErrors(prev => ({ ...prev, months: '' }));
                 }
@@ -252,8 +253,6 @@ export default function SubscriberModal({ banId, subscriber, onSave, onClose }: 
                 errors.months ? 'border-red-500 dark:border-red-400' : 'border-gray-300 dark:border-gray-600'
               }`}
               placeholder="12"
-              min="1"
-              step="1"
             />
             {errors.months && (
               <p className="text-sm text-red-600 dark:text-red-400 mt-2">{errors.months}</p>
@@ -266,11 +265,12 @@ export default function SubscriberModal({ banId, subscriber, onSave, onClose }: 
               Plazos Faltantes
             </label>
             <input
-              type="number"
+              type="text"
+              inputMode="numeric"
               value={formData.remaining_payments}
               onChange={(e) => {
-                const value = e.target.value ? Math.max(0, parseInt(e.target.value) || 0) : 0;
-                setFormData(prev => ({ ...prev, remaining_payments: value }));
+                const value = e.target.value.replace(/\D/g, '');
+                setFormData(prev => ({ ...prev, remaining_payments: value ? parseInt(value) : 0 }));
                 if (errors.remaining_payments) {
                   setErrors(prev => ({ ...prev, remaining_payments: '' }));
                 }
@@ -279,8 +279,6 @@ export default function SubscriberModal({ banId, subscriber, onSave, onClose }: 
                 errors.remaining_payments ? 'border-red-500 dark:border-red-400' : 'border-gray-300 dark:border-gray-600'
               }`}
               placeholder="0"
-              min="0"
-              step="1"
             />
             {errors.remaining_payments && (
               <p className="text-sm text-red-600 dark:text-red-400 mt-2">{errors.remaining_payments}</p>

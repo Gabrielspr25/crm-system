@@ -1,6 +1,6 @@
 ﻿// VERSION: 2025-01-15-T7-FINAL-FIX (statusPriority indentado - Error #300 RESUELTO DEFINITIVAMENTE)
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { Plus, Search, Edit, Users, Building, Phone, Mail, MapPin, Hash, Calendar, Trash2, UserPlus, Download, FileSpreadsheet, FileText } from "lucide-react";
+import { Plus, Search, Edit, Users, Building, Phone, Mail, MapPin, Hash, Calendar, Trash2, UserPlus, Download, FileSpreadsheet, FileText, Check, X } from "lucide-react";
 import { useApi } from "../hooks/useApi";
 import { authFetch } from "@/react-app/utils/auth";
 import ClientModal from "../components/ClientModal";
@@ -495,9 +495,17 @@ export default function Clients() {
       console.log(`🔄 Procesando ${clients.length} clientes para detectar incompletos...`);
       clients.forEach(client => {
         const lastActivity = client.last_activity || client.updated_at || null;
+        
+        // Usar ban_descriptions primero (desde la tabla bans), si no está disponible usar all_service_types (desde subscribers)
+        const banDescriptions = (client as any).ban_descriptions || null;
         const allServiceTypes = client.all_service_types || null;
+        
         let banType = null;
-        if (allServiceTypes) {
+        if (banDescriptions) {
+          // Si hay descripciones de BAN, usarlas directamente
+          banType = banDescriptions;
+        } else if (allServiceTypes) {
+          // Si no hay descripciones, inferir del tipo de servicio de suscriptores
           const types = allServiceTypes.toLowerCase();
           const hasMovil = types.includes('móvil') || types.includes('movil') || types.includes('mobile');
           const hasFijo = types.includes('fijo') || types.includes('fixed');
@@ -756,6 +764,9 @@ export default function Clients() {
 
       notify('success', `Cliente ${client.business_name || client.name} enviado a seguimiento.`);
       await Promise.all([refetchProspects(), refetchClients()]);
+      
+      // Cambiar a la pestaña de "Seguimiento" automáticamente
+      setActiveTab('following');
     } catch (error) {
       console.error('Error sending client to follow-up:', error);
       notify('error', error instanceof Error ? error.message : 'No fue posible enviar el cliente a seguimiento.');
@@ -1836,6 +1847,8 @@ export default function Clients() {
             }}
             onFollowUpUpdated={async () => {
               await refetchProspects();
+              // Cambiar a la pestaña de "Seguimiento" automáticamente
+              setActiveTab('following');
             }}
           onEditSubscriber={(subscriber, banId) => {
             setEditingSubscriber(subscriber);
@@ -1878,6 +1891,19 @@ function ClientManagementModal({
   const [editingBAN, setEditingBAN] = useState<BAN | null>(null);
   const [formMessage, setFormMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const [isSendingToFollowUp, setIsSendingToFollowUp] = useState(false);
+  const [isEditingClient, setIsEditingClient] = useState(false);
+  const [editClientData, setEditClientData] = useState({
+    name: client.name || '',
+    business_name: client.business_name || '',
+    contact_person: client.contact_person || '',
+    email: client.email || '',
+    phone: client.phone || '',
+    secondary_phone: (client as any).secondary_phone || '',
+    mobile_phone: (client as any).mobile_phone || '',
+    address: client.address || '',
+    city: (client as any).city || '',
+    zip_code: (client as any).zip_code || '',
+  });
 
   useEffect(() => {
     if (!formMessage) return;
@@ -1938,11 +1964,45 @@ function ClientManagementModal({
       if (onRefreshClient) {
         await onRefreshClient();
       }
+      
+      // Cerrar el modal y mostrar mensaje después de un momento
+      setTimeout(() => {
+        onClose();
+      }, 1500);
     } catch (error) {
       console.error('Error sending client to follow-up:', error);
       setFormMessage({ type: 'error', text: error instanceof Error ? error.message : 'No fue posible enviar a seguimiento.' });
     } finally {
       setIsSendingToFollowUp(false);
+    }
+  };
+
+  const handleSaveClientEdit = async () => {
+    try {
+      const response = await authFetch(`/api/clients/${client.id}`, {
+        method: 'PUT',
+        json: editClientData
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        setFormMessage({ type: 'error', text: error.error || 'Error al actualizar el cliente' });
+        return;
+      }
+
+      setFormMessage({ type: 'success', text: 'Cliente actualizado correctamente.' });
+      setIsEditingClient(false);
+      
+      // Refrescar datos del cliente
+      if (onRefreshClient) {
+        await onRefreshClient();
+      }
+      if (onFollowUpUpdated) {
+        await onFollowUpUpdated();
+      }
+    } catch (error) {
+      console.error('Error updating client:', error);
+      setFormMessage({ type: 'error', text: 'Error al actualizar el cliente.' });
     }
   };
 
@@ -2288,84 +2348,208 @@ function ClientManagementModal({
               <div className="flex justify-between items-center mb-4">
                 <h3 className="text-xl font-semibold text-white">Información del Cliente</h3>
                 <div className="flex items-center space-x-2">
-                  <button
-                    onClick={() => {
-                      // Close this modal and open edit modal
-                      onClose();
-                      setTimeout(() => {
-                        const fullClient = {
-                          id: client.id,
-                          name: client.name,
-                          business_name: client.business_name,
-                          contact_person: client.contact_person,
-                          email: client.email,
-                          phone: client.phone,
-                          secondary_phone: client.secondary_phone,
-                          mobile_phone: client.mobile_phone,
-                          address: client.address,
-                          city: client.city,
-                          zip_code: client.zip_code,
-                          vendor_id: client.vendor_id,
-                          includes_ban: client.bans.length > 0 ? 1 : 0,
-                          is_active: 1,
-                          created_at: client.created_at,
-                          updated_at: client.created_at,
-                          vendor_name: client.vendor_name,
-                          ban_count: client.bans.length,
-                          ban_numbers: null,
-                          has_bans: client.bans.length > 0
-                        };
-                        // Use the existing edit functionality
-                        window.dispatchEvent(new CustomEvent('editClient', { detail: fullClient }));
-                      }, 100);
-                    }}
-                    className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors"
-                  >
-                    <Edit className="w-4 h-4" />
-                    Editar Cliente
-                  </button>
-                  <button
-                    onClick={async () => {
-                      if (client.bans.length > 0) {
-                        setFormMessage({ type: 'info', text: 'No se puede eliminar un cliente con BANs activos. Elimina los BANs primero.' });
-                        return;
-                      }
-                      
-                      if (confirm(`¿Estás seguro de que quieres eliminar el cliente "${client.business_name || client.name}"?\n\nEsta acción no se puede deshacer.`)) {
-                        try {
-                          const response = await authFetch(`/api/clients/${client.id}`, {
-                            method: "DELETE"
-                          });
-
-                          if (!response.ok) {
-                            const error = await response.json();
-                            setFormMessage({ type: 'error', text: error.error || "Error al eliminar el cliente" });
+                  {!isEditingClient ? (
+                    <>
+                      <button
+                        onClick={() => setIsEditingClient(true)}
+                        className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors"
+                      >
+                        <Edit className="w-4 h-4" />
+                        Editar Cliente
+                      </button>
+                      <button
+                        onClick={async () => {
+                          if (client.bans.length > 0) {
+                            setFormMessage({ type: 'info', text: 'No se puede eliminar un cliente con BANs activos. Elimina los BANs primero.' });
                             return;
                           }
+                          
+                          if (confirm(`¿Estás seguro de que quieres eliminar el cliente "${client.business_name || client.name}"?\n\nEsta acción no se puede deshacer.`)) {
+                            try {
+                              const response = await authFetch(`/api/clients/${client.id}`, {
+                                method: "DELETE"
+                              });
 
-                          setFormMessage({ type: 'success', text: 'Cliente eliminado exitosamente.' });
-                          if (onFollowUpUpdated) {
-                            await onFollowUpUpdated();
+                              if (!response.ok) {
+                                const error = await response.json();
+                                setFormMessage({ type: 'error', text: error.error || "Error al eliminar el cliente" });
+                                return;
+                              }
+
+                              setFormMessage({ type: 'success', text: 'Cliente eliminado exitosamente.' });
+                              if (onFollowUpUpdated) {
+                                await onFollowUpUpdated();
+                              }
+                              if (onRefreshClient) {
+                                await onRefreshClient();
+                              }
+                              onClose();
+                            } catch (error) {
+                              console.error("Error deleting client:", error);
+                              setFormMessage({ type: 'error', text: 'Error al eliminar el cliente.' });
+                            }
                           }
-                          if (onRefreshClient) {
-                            await onRefreshClient();
-                          }
-                          onClose();
-                        } catch (error) {
-                          console.error("Error deleting client:", error);
-                          setFormMessage({ type: 'error', text: 'Error al eliminar el cliente.' });
-                        }
-                      }
-                    }}
-                    className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                    Eliminar Cliente
-                  </button>
+                        }}
+                        className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                        Eliminar Cliente
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        onClick={handleSaveClientEdit}
+                        className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors"
+                      >
+                        <Check className="w-4 h-4" />
+                        Guardar Cambios
+                      </button>
+                      <button
+                        onClick={() => {
+                          setIsEditingClient(false);
+                          setEditClientData({
+                            name: client.name || '',
+                            business_name: client.business_name || '',
+                            contact_person: client.contact_person || '',
+                            email: client.email || '',
+                            phone: client.phone || '',
+                            secondary_phone: (client as any).secondary_phone || '',
+                            mobile_phone: (client as any).mobile_phone || '',
+                            address: client.address || '',
+                            city: (client as any).city || '',
+                            zip_code: (client as any).zip_code || '',
+                          });
+                        }}
+                        className="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors"
+                      >
+                        <X className="w-4 h-4" />
+                        Cancelar
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
               
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {isEditingClient ? (
+                // Formulario de edición inline
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="bg-gray-800 rounded-lg p-6 space-y-4">
+                    <h4 className="text-lg font-medium text-white mb-4">Información Básica</h4>
+                    
+                    <div>
+                      <label className="block text-sm font-medium text-gray-400 mb-2">Nombre del Cliente</label>
+                      <input
+                        type="text"
+                        value={editClientData.name}
+                        onChange={(e) => setEditClientData({...editClientData, name: e.target.value})}
+                        className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-400 mb-2">Nombre de Empresa</label>
+                      <input
+                        type="text"
+                        value={editClientData.business_name}
+                        onChange={(e) => setEditClientData({...editClientData, business_name: e.target.value})}
+                        className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-400 mb-2">Persona de Contacto</label>
+                      <input
+                        type="text"
+                        value={editClientData.contact_person}
+                        onChange={(e) => setEditClientData({...editClientData, contact_person: e.target.value})}
+                        className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-400 mb-2">Email</label>
+                      <input
+                        type="email"
+                        value={editClientData.email}
+                        onChange={(e) => setEditClientData({...editClientData, email: e.target.value})}
+                        className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="bg-gray-800 rounded-lg p-6 space-y-4">
+                    <h4 className="text-lg font-medium text-white mb-4">Teléfonos</h4>
+                    
+                    <div>
+                      <label className="block text-sm font-medium text-gray-400 mb-2">Teléfono Principal</label>
+                      <input
+                        type="text"
+                        value={editClientData.phone}
+                        onChange={(e) => setEditClientData({...editClientData, phone: e.target.value})}
+                        className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-400 mb-2">Teléfono Secundario</label>
+                      <input
+                        type="text"
+                        value={editClientData.secondary_phone}
+                        onChange={(e) => setEditClientData({...editClientData, secondary_phone: e.target.value})}
+                        className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-400 mb-2">Teléfono Móvil</label>
+                      <input
+                        type="text"
+                        value={editClientData.mobile_phone}
+                        onChange={(e) => setEditClientData({...editClientData, mobile_phone: e.target.value})}
+                        className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="bg-gray-800 rounded-lg p-6 space-y-4">
+                    <h4 className="text-lg font-medium text-white mb-4">Ubicación</h4>
+                    
+                    <div>
+                      <label className="block text-sm font-medium text-gray-400 mb-2">Dirección</label>
+                      <input
+                        type="text"
+                        value={editClientData.address}
+                        onChange={(e) => setEditClientData({...editClientData, address: e.target.value})}
+                        className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-400 mb-2">Ciudad</label>
+                      <input
+                        type="text"
+                        value={editClientData.city}
+                        onChange={(e) => setEditClientData({...editClientData, city: e.target.value})}
+                        className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-400 mb-2">Código Postal</label>
+                      <input
+                        type="text"
+                        value={editClientData.zip_code}
+                        onChange={(e) => setEditClientData({...editClientData, zip_code: e.target.value})}
+                        className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                // Vista de solo lectura (código existente)
+                <>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="bg-gray-800 rounded-lg p-6 space-y-4">
                   <h4 className="text-lg font-medium text-white mb-4">Datos de Contacto</h4>
                   
@@ -2398,36 +2582,38 @@ function ClientManagementModal({
                       </div>
                     </div>
                   )}
+                </div>
 
-                  {client.phone && (
-                    <div className="flex items-center space-x-3">
-                      <Phone className="w-5 h-5 text-gray-400" />
-                      <div>
-                        <p className="text-sm text-gray-400">Teléfono Principal</p>
-                        <p className="text-white font-medium">{client.phone}</p>
-                      </div>
-                    </div>
-                  )}
+                <div className="bg-gray-800 rounded-lg p-6 space-y-4">
+                  <h4 className="text-lg font-medium text-white mb-4">Teléfonos</h4>
 
-                  {(client as any).secondary_phone && (
-                    <div className="flex items-center space-x-3">
-                      <Phone className="w-5 h-5 text-gray-400" />
-                      <div>
-                        <p className="text-sm text-gray-400">Teléfono Secundario</p>
-                        <p className="text-white font-medium">{(client as any).secondary_phone}</p>
-                      </div>
+                  <div className="flex items-center space-x-3">
+                    <Phone className="w-5 h-5 text-gray-400" />
+                    <div>
+                      <p className="text-sm text-gray-400">Teléfono Principal</p>
+                      <p className="text-white font-medium">{client.phone || 'No registrado'}</p>
                     </div>
-                  )}
+                  </div>
 
-                  {(client as any).mobile_phone && (
-                    <div className="flex items-center space-x-3">
-                      <Phone className="w-5 h-5 text-gray-400" />
-                      <div>
-                        <p className="text-sm text-gray-400">Teléfono Móvil</p>
-                        <p className="text-white font-medium">{(client as any).mobile_phone}</p>
-                      </div>
+                  <div className="flex items-center space-x-3">
+                    <Phone className="w-5 h-5 text-gray-400" />
+                    <div>
+                      <p className="text-sm text-gray-400">Teléfono Secundario</p>
+                      <p className="text-white font-medium">{(client as any).secondary_phone || 'No registrado'}</p>
                     </div>
-                  )}
+                  </div>
+
+                  <div className="flex items-center space-x-3">
+                    <Phone className="w-5 h-5 text-gray-400" />
+                    <div>
+                      <p className="text-sm text-gray-400">Teléfono Móvil</p>
+                      <p className="text-white font-medium">{(client as any).mobile_phone || 'No registrado'}</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-gray-800 rounded-lg p-6 space-y-4">
+                  <h4 className="text-lg font-medium text-white mb-4">Ubicación</h4>
 
                   {client.address && (
                     <div className="flex items-start space-x-3">
@@ -2459,7 +2645,9 @@ function ClientManagementModal({
                     </div>
                   )}
                 </div>
+              </div>
 
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
                 <div className="bg-gray-800 rounded-lg p-6 space-y-4">
                   <h4 className="text-lg font-medium text-white mb-4">Información Comercial</h4>
                   
@@ -2492,6 +2680,20 @@ function ClientManagementModal({
                   </div>
 
                   <div className="flex items-center space-x-3">
+                    <Calendar className="w-5 h-5 text-gray-400" />
+                    <div>
+                      <p className="text-sm text-gray-400">Cliente desde</p>
+                      <p className="text-white font-medium">
+                        {new Date(client.created_at).toLocaleDateString()}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-gray-800 rounded-lg p-6 space-y-4">
+                  <h4 className="text-lg font-medium text-white mb-4">Estadísticas</h4>
+
+                  <div className="flex items-center space-x-3">
                     <Hash className="w-5 h-5 text-gray-400" />
                     <div>
                       <p className="text-sm text-gray-400">Total de BANs</p>
@@ -2508,18 +2710,10 @@ function ClientManagementModal({
                       </p>
                     </div>
                   </div>
-
-                  <div className="flex items-center space-x-3">
-                    <Calendar className="w-5 h-5 text-gray-400" />
-                    <div>
-                      <p className="text-sm text-gray-400">Cliente desde</p>
-                      <p className="text-white font-medium">
-                        {new Date(client.created_at).toLocaleDateString()}
-                      </p>
-                    </div>
-                  </div>
                 </div>
               </div>
+              </>
+              )}
             </div>
           )}
 
@@ -2556,20 +2750,22 @@ function ClientManagementModal({
                             )}
                           </div>
                         </div>
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-2">
                           <button
                             onClick={() => setEditingBAN(ban)}
-                            className="p-1 text-blue-400 hover:text-blue-300 hover:bg-blue-900/20 rounded transition-colors"
+                            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5"
                             title="Editar BAN"
                           >
-                            <Edit className="w-3 h-3" />
+                            <Edit className="w-4 h-4" />
+                            Editar
                           </button>
                           <button
                             onClick={() => handleDeleteBAN(ban.id)}
-                            className="p-1 text-red-400 hover:text-red-300 hover:bg-red-900/20 rounded transition-colors"
+                            className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5"
                             title="Eliminar BAN"
                           >
-                            <Trash2 className="w-3 h-3" />
+                            <Trash2 className="w-4 h-4" />
+                            Eliminar
                           </button>
                         </div>
                       </div>

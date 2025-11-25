@@ -23,3 +23,4 @@ FROM clients
 WHERE business_name IS NULL 
   AND (name LIKE 'Cliente BAN %' OR name LIKE 'BAN %');
 
+

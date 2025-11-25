@@ -1459,6 +1459,7 @@ app.get('/api/clients', async (req, res) => {
             THEN LEFT(b.ban_numbers, 200) || '...'
             ELSE b.ban_numbers
           END AS ban_numbers,
+          b.ban_descriptions,
           CASE WHEN COALESCE(b.ban_count, 0) > 0 THEN 1 ELSE 0 END AS has_bans,
           COALESCE(s.subscriber_count, 0) AS subscriber_count,
           s.primary_subscriber_phone,
@@ -1475,7 +1476,8 @@ app.get('/api/clients', async (req, res) => {
             client_id,
             COUNT(*) AS ban_count,
             STRING_AGG(ban_number, ', ' ORDER BY ban_number) AS ban_numbers,
-            STRING_AGG(DISTINCT CASE WHEN status = 'cancelled' OR status = 'cancelado' THEN 'cancelled' END, ', ') AS cancelled_status
+            STRING_AGG(DISTINCT CASE WHEN status = 'cancelled' OR status = 'cancelado' THEN 'cancelled' END, ', ') AS cancelled_status,
+            STRING_AGG(DISTINCT CASE WHEN description IS NOT NULL AND description <> '' THEN description END, ', ') AS ban_descriptions
           FROM bans
           WHERE COALESCE(is_active,1) = 1
           GROUP BY client_id
