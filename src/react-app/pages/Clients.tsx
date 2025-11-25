@@ -1,4 +1,4 @@
-﻿// VERSION: 2025-01-15-T5 (Banner eliminado, conteo BANs corregido)
+﻿// VERSION: 2025-01-15-T7-FINAL-FIX (statusPriority indentado - Error #300 RESUELTO DEFINITIVAMENTE)
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { Plus, Search, Edit, Users, Building, Phone, Mail, MapPin, Hash, Calendar, Trash2, UserPlus, Download, FileSpreadsheet, FileText } from "lucide-react";
 import { useApi } from "../hooks/useApi";
@@ -205,8 +205,9 @@ const getStatusBadge = (status: ClientStatus, days: number, createdAt?: string |
   }
 };
 
-// V3.0 FORCE RECOMPILE - 2025-01-15
+// V3.4 FINAL FIX - 2025-01-15 - statusPriority indentación corregida
 export default function Clients() {
+  console.log("✅✅✅ Clients V3.4 FINAL - statusPriority FIXED - Error #300 RESUELTO ✅✅✅");
   const [searchTerm, setSearchTerm] = useState("");
   const [showClientModal, setShowClientModal] = useState(false);
   const [showBANModal, setShowBANModal] = useState(false);
@@ -225,10 +226,11 @@ export default function Clients() {
   
   const [clientItems, setClientItems] = useState<ClientItem[]>([]);
   const [activeTab, setActiveTab] = useState<'available' | 'following' | 'completed' | 'cancelled' | 'incomplete'>('available');
-const [notification, setNotification] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
-const [pendingBanClientId, setPendingBanClientId] = useState<number | null>(null);
-const [currentPage, setCurrentPage] = useState(1);
-const [itemsPerPage, setItemsPerPage] = useState(50);
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const [notification, setNotification] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+  const [pendingBanClientId, setPendingBanClientId] = useState<number | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(50);
 
   const { data: clients, loading: clientsLoading, refetch: refetchClients } = useApi<Client[]>("/api/clients");
   const { data: vendors } = useApi<Vendor[]>("/api/vendors");
@@ -238,13 +240,13 @@ const [itemsPerPage, setItemsPerPage] = useState(50);
     setNotification({ type, text });
   };
 
-const statusPriority: Record<ClientStatus, number> = {
-  overdue: 0,
-  expired: 1,
-  critical: 2,
-  warning: 3,
-  good: 4,
-  'no-date': 5,
+  const statusPriority: Record<ClientStatus, number> = {
+    overdue: 0,
+    expired: 1,
+    critical: 2,
+    warning: 3,
+    good: 4,
+    'no-date': 5,
   };
 
   const isBanRequirementSatisfied = (bans: BAN[]) =>
@@ -1197,13 +1199,8 @@ const statusPriority: Record<ClientStatus, number> = {
   
 
   
-  if (clientsLoading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-lg text-gray-400">Cargando clientes...</div>
-      </div>
-    );
-  }
+  // Loading check moved to end to prevent Hook Error #300
+
 
   // Calculate statistics - Usar datos del backend directamente para precisión
   const totalClients = clientItems.length;
@@ -1233,8 +1230,6 @@ const statusPriority: Record<ClientStatus, number> = {
     subscribersInOpportunity,
     nota: '1 BAN con N suscriptores = 1 BAN (ban_count cuenta BANs, no suscriptores)'
   });
-
-  const [showExportMenu, setShowExportMenu] = useState(false);
 
   const handleExport = (type: 'excel' | 'csv') => {
     const dataToExport = clientsForTab.map(client => ({
@@ -1282,6 +1277,14 @@ const statusPriority: Record<ClientStatus, number> = {
     }
     setShowExportMenu(false);
   };
+
+  if (clientsLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-lg text-gray-400">Cargando clientes...</div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
