@@ -2369,6 +2369,16 @@ function ClientManagementModal({
                 <div className="bg-gray-800 rounded-lg p-6 space-y-4">
                   <h4 className="text-lg font-medium text-white mb-4">Datos de Contacto</h4>
                   
+                  {client.name && (
+                    <div className="flex items-center space-x-3">
+                      <Users className="w-5 h-5 text-gray-400" />
+                      <div>
+                        <p className="text-sm text-gray-400">Nombre del Cliente</p>
+                        <p className="text-white font-medium">{client.name}</p>
+                      </div>
+                    </div>
+                  )}
+
                   {client.contact_person && (
                     <div className="flex items-center space-x-3">
                       <Users className="w-5 h-5 text-gray-400" />
@@ -2393,8 +2403,28 @@ function ClientManagementModal({
                     <div className="flex items-center space-x-3">
                       <Phone className="w-5 h-5 text-gray-400" />
                       <div>
-                        <p className="text-sm text-gray-400">Teléfono</p>
+                        <p className="text-sm text-gray-400">Teléfono Principal</p>
                         <p className="text-white font-medium">{client.phone}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {(client as any).secondary_phone && (
+                    <div className="flex items-center space-x-3">
+                      <Phone className="w-5 h-5 text-gray-400" />
+                      <div>
+                        <p className="text-sm text-gray-400">Teléfono Secundario</p>
+                        <p className="text-white font-medium">{(client as any).secondary_phone}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {(client as any).mobile_phone && (
+                    <div className="flex items-center space-x-3">
+                      <Phone className="w-5 h-5 text-gray-400" />
+                      <div>
+                        <p className="text-sm text-gray-400">Teléfono Móvil</p>
+                        <p className="text-white font-medium">{(client as any).mobile_phone}</p>
                       </div>
                     </div>
                   )}
