@@ -1,6 +1,7 @@
 ﻿// VERSION: 2025-01-15-T7-FINAL-FIX (statusPriority indentado - Error #300 RESUELTO DEFINITIVAMENTE)
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { Plus, Search, Edit, Users, Building, Phone, Mail, MapPin, Hash, Calendar, Trash2, UserPlus, Download, FileSpreadsheet, FileText, Check, X } from "lucide-react";
+import { useNavigate } from "react-router";
+import { Plus, Search, Edit, Users, Building, Phone, Mail, MapPin, Hash, Calendar, Trash2, UserPlus, Download, FileSpreadsheet, FileText, Check, X, Package } from "lucide-react";
 import { useApi } from "../hooks/useApi";
 import { authFetch } from "@/react-app/utils/auth";
 import ClientModal from "../components/ClientModal";
@@ -208,12 +209,14 @@ const getStatusBadge = (status: ClientStatus, days: number, createdAt?: string |
 // V3.4 FINAL FIX - 2025-01-15 - statusPriority indentación corregida
 export default function Clients() {
   console.log("✅✅✅ Clients V3.4 FINAL - statusPriority FIXED - Error #300 RESUELTO ✅✅✅");
+  const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState("");
   const [showClientModal, setShowClientModal] = useState(false);
   const [showBANModal, setShowBANModal] = useState(false);
   const [showSubscriberModal, setShowSubscriberModal] = useState(false);
   const [showClientDetailModal, setShowClientDetailModal] = useState(false);
   const [loadingClientDetail, setLoadingClientDetail] = useState(false);
+  const [clientDetailInitialTab, setClientDetailInitialTab] = useState<'info' | 'bans' | 'history' | 'calls'>('bans');
   const [editingClient, setEditingClient] = useState<Client | null>(null);
   const [selectedClientId, setSelectedClientId] = useState<number | null>(null);
   const [selectedBanId, setSelectedBanId] = useState<number | null>(null);
@@ -848,9 +851,10 @@ export default function Clients() {
     }
   };
 
-  const handleViewClientDetail = async (clientId: number) => {
+  const handleViewClientDetail = async (clientId: number, initialTab: 'info' | 'bans' | 'history' | 'calls' = 'bans') => {
     try {
       setLoadingClientDetail(true);
+      setClientDetailInitialTab(initialTab); // Establecer la pestaña inicial
       setShowClientDetailModal(true); // Mostrar modal inmediatamente para mejor UX
       
       const clientResponse = await authFetch(`/api/clients/${clientId}`);
@@ -1419,20 +1423,31 @@ export default function Clients() {
 
       {/* Tabs - V2.0 con Incompletos */}
       <div className="flex items-center gap-2 mb-4 flex-wrap border-b border-gray-700 pb-2">
-        <button
-          key="incomplete-tab"
-          className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${
-            activeTab === 'incomplete'
-              ? 'bg-orange-600 text-white shadow-lg border-2 border-orange-400'
-              : 'bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700'
-          }`}
-          onClick={() => {
-            console.log('🔘 Click en pestaña Incompletos - V2.0');
-            setActiveTab('incomplete');
-          }}
-        >
-          ⚠️ Incompletos ({incompleteClients.length})
-        </button>
+        {(() => {
+          const currentUser = JSON.parse(localStorage.getItem('crm_user') || '{}');
+          const isVendor = currentUser?.role?.toLowerCase() === 'vendedor';
+          
+          // Mostrar pestaña Incompletos solo para administradores
+          if (!isVendor) {
+            return (
+              <button
+                key="incomplete-tab"
+                className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${
+                  activeTab === 'incomplete'
+                    ? 'bg-orange-600 text-white shadow-lg border-2 border-orange-400'
+                    : 'bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700'
+                }`}
+                onClick={() => {
+                  console.log('🔘 Click en pestaña Incompletos - V2.0');
+                  setActiveTab('incomplete');
+                }}
+              >
+                ⚠️ Incompletos ({incompleteClients.length})
+              </button>
+            );
+          }
+          return null;
+        })()}
         <button
           className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
             activeTab === 'available'
@@ -1649,13 +1664,31 @@ export default function Clients() {
                           <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-green-900/60 text-green-200 text-xs font-medium">
                             <UserPlus className="w-3 h-3" /> Siguiendo
                           </span>
-                          <button
-                            onClick={() => handleStopFollowing(item.followUpProspectId!, item.businessName || item.clientName)}
-                            className="bg-orange-600 hover:bg-orange-700 text-white px-3 py-1 rounded text-xs transition-colors"
-                            title="Devolver al pool de clientes"
-                          >
-                            Devolver
-                          </button>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => navigate(`/seguimiento?client_id=${item.clientId}`)}
+                              className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-xs transition-colors flex items-center gap-1"
+                              title="Ir a gestión de seguimiento"
+                            >
+                              <Package className="w-3 h-3" />
+                              Productos
+                            </button>
+                            <button
+                              onClick={() => handleViewClientDetail(item.clientId, 'info')}
+                              className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-1 rounded text-xs transition-colors flex items-center gap-1"
+                              title="Editar datos del cliente"
+                            >
+                              <Edit className="w-3 h-3" />
+                              Datos
+                            </button>
+                            <button
+                              onClick={() => handleStopFollowing(item.followUpProspectId!, item.businessName || item.clientName)}
+                              className="bg-orange-600 hover:bg-orange-700 text-white px-3 py-1 rounded text-xs transition-colors"
+                              title="Devolver al pool de clientes"
+                            >
+                              Devolver
+                            </button>
+                          </div>
                         </div>
                       ) : (
                         (() => {
@@ -1861,6 +1894,7 @@ export default function Clients() {
             setShowSubscriberModal(true);
           }}
           clientHasActiveFollowUp={clientHasActiveFollowUp}
+          initialTab={clientDetailInitialTab}
         />
         ) : null
       )}
@@ -1876,7 +1910,8 @@ function ClientManagementModal({
   onAddSubscriber,
   onRefreshClient,
   onFollowUpUpdated,
-  clientHasActiveFollowUp
+  clientHasActiveFollowUp,
+  initialTab = 'bans'
 }: {
   client: ClientDetail;
   onClose: () => void;
@@ -1885,8 +1920,9 @@ function ClientManagementModal({
   onRefreshClient?: () => Promise<void>;
   onFollowUpUpdated?: () => Promise<void> | void;
   clientHasActiveFollowUp: (clientId: number) => boolean;
+  initialTab?: 'info' | 'bans' | 'history' | 'calls';
 }) {
-  const [activeTab, setActiveTab] = useState<'info' | 'bans' | 'history' | 'calls'>('bans');
+  const [activeTab, setActiveTab] = useState<'info' | 'bans' | 'history' | 'calls'>(initialTab);
   const [showBANForm, setShowBANForm] = useState(false);
   const [editingBAN, setEditingBAN] = useState<BAN | null>(null);
   const [formMessage, setFormMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);

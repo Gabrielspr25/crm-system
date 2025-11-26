@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect } from "react";
-import { Search, Plus, Phone, Edit3, Settings, Trash2 } from "lucide-react";
+import { useSearchParams } from "react-router";
+import { Search, Plus, Phone, Edit3, Settings, Trash2, ArrowLeft } from "lucide-react";
 import { useApi } from "../hooks/useApi";
 import { authFetch, getCurrentUser } from "@/react-app/utils/auth";
 
@@ -72,6 +73,7 @@ interface Client {
 }
 
 export default function FollowUp() {
+  const [searchParams] = useSearchParams();
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedProspect, setSelectedProspect] = useState<FollowUpProspect | null>(null);
   const [showModal, setShowModal] = useState(false);
@@ -88,16 +90,43 @@ export default function FollowUp() {
 
   const uniqueProspects = useMemo(() => {
     const seen = new Map<number, FollowUpProspect>();
+    const activeClientIds = new Set((clients || []).filter(c => c.is_active === 1).map(c => c.id));
+    
     (prospects || []).forEach((prospect) => {
       const key = prospect.client_id ?? prospect.id;
       if (!seen.has(key)) {
         seen.set(key, prospect);
       }
     });
+    
     return Array.from(seen.values()).filter(
-      (prospect) => Boolean(prospect.is_active ?? true) && !Boolean(prospect.is_completed)
+      (prospect) => {
+        // Debe estar activo y no completado
+        const isActive = Boolean(prospect.is_active ?? true);
+        const isNotCompleted = !Boolean(prospect.is_completed);
+        
+        // Si tiene client_id, el cliente debe existir y estar activo
+        const hasValidClient = prospect.client_id 
+          ? activeClientIds.has(prospect.client_id)
+          : true; // Si no tiene client_id, permitir (por compatibilidad)
+        
+        return isActive && isNotCompleted && hasValidClient;
+      }
     );
-  }, [prospects]);
+  }, [prospects, clients]);
+
+  // Abrir automáticamente el cliente si viene client_id en la URL
+  useEffect(() => {
+    const clientIdParam = searchParams.get('client_id');
+    if (clientIdParam && uniqueProspects.length > 0) {
+      const clientId = Number(clientIdParam);
+      const prospect = uniqueProspects.find(p => p.client_id === clientId);
+      if (prospect && !selectedProspect) {
+        setSelectedProspect(prospect);
+        setShowModal(true);
+      }
+    }
+  }, [searchParams, uniqueProspects, selectedProspect]);
 
   const filteredProspects = uniqueProspects.filter(prospect =>
     prospect.company_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -186,17 +215,14 @@ export default function FollowUp() {
   };
 
   const handleReturnToBD = async (prospect: FollowUpProspect) => {
-    if (!confirm(`¿Devolver "${prospect.company_name}" a la base de datos?`)) {
+    if (!confirm(`¿Devolver "${prospect.company_name}" a la base de datos disponibles?`)) {
       return;
     }
 
     try {
+      // Eliminar el registro de follow_up_prospects para que vuelva a disponibles
       await authFetch(`/api/follow-up-prospects/${prospect.id}`, {
-        method: 'PUT',
-        json: {
-          is_active: false,
-          is_completed: false
-        }
+        method: 'DELETE'
       });
 
       refetchProspects();
@@ -371,10 +397,11 @@ export default function FollowUp() {
                       </button>
                       <button
                         onClick={() => handleReturnToBD(prospect)}
-                        className="text-orange-400 hover:text-orange-300 transition-colors"
-                        title="Devolver a BD"
+                        className="px-3 py-1 bg-orange-600 hover:bg-orange-700 text-white rounded text-xs transition-colors flex items-center gap-1"
+                        title="Devolver a disponibles"
                       >
-                        <Trash2 className="w-4 h-4" />
+                        <ArrowLeft className="w-3 h-3" />
+                        Devolver
                       </button>
                     </div>
                   </td>

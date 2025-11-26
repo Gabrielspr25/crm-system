@@ -20,9 +20,10 @@ export default function BANModal({ onSave, onClose, ban }: BANModalProps) {
   // Actualizar formData cuando cambie el prop ban
   useEffect(() => {
     if (ban) {
+      console.log('📝 BANModal - Editando BAN:', ban);
       setFormData({
         ban_number: ban.ban_number || '',
-        description: ban.description || '',
+        description: ban.description ?? '',
         status: (ban.status || 'active') as 'active' | 'cancelled',
       });
     } else {
