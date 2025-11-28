@@ -15,8 +15,10 @@ export default function SubscriberModal({ banId, subscriber, onSave, onClose }: 
     ban_id: banId,
     service_type: '',
     monthly_value: 0,
-    months: 12,
-    remaining_payments: 0,
+    months: 12 as number | '',
+    remaining_payments: 0 as number | '',
+    status: 'activo' as 'activo' | 'cancelado' | 'suspendido',
+    cancel_reason: '',
   });
   const [errors, setErrors] = useState<{[key: string]: string}>({});
 
@@ -52,6 +54,8 @@ export default function SubscriberModal({ banId, subscriber, onSave, onClose }: 
         monthly_value: subscriber.monthly_value || 0,
         months: subscriber.months || 12,
         remaining_payments: subscriber.remaining_payments || 0,
+        status: (subscriber.status || 'activo') as 'activo' | 'cancelado' | 'suspendido',
+        cancel_reason: '',
       });
     }
   }, [subscriber, banId]);
@@ -77,8 +81,12 @@ export default function SubscriberModal({ banId, subscriber, onSave, onClose }: 
       newErrors.months = 'La duración del contrato debe ser mayor a 0';
     }
 
-    if (formData.remaining_payments < 0) {
+    if (typeof formData.remaining_payments === 'number' && formData.remaining_payments < 0) {
       newErrors.remaining_payments = 'Los plazos faltantes no pueden ser negativos';
+    }
+
+    if (formData.status === 'cancelado' && !formData.cancel_reason) {
+      newErrors.cancel_reason = 'Debes seleccionar una razón de cancelación';
     }
 
     setErrors(newErrors);
@@ -94,16 +102,19 @@ export default function SubscriberModal({ banId, subscriber, onSave, onClose }: 
 
     try {
       // Calculate contract end date automatically based on remaining payments (for database)
-      const contractEndDate = calculateContractEndDateForDB(formData.remaining_payments);
+      const remainingPaymentsValue = typeof formData.remaining_payments === 'number' ? formData.remaining_payments : 0;
+      const contractEndDate = calculateContractEndDateForDB(remainingPaymentsValue);
 
       const cleanData: any = {
         phone: formData.phone.trim(),
         ban_id: formData.ban_id,
         service_type: formData.service_type.trim(),
         monthly_value: Number(formData.monthly_value),
-        months: Number(formData.months),
-        remaining_payments: Number(formData.remaining_payments),
+        months: Number(formData.months || 0),
+        remaining_payments: Number(formData.remaining_payments || 0),
         contract_end_date: contractEndDate,
+        status: formData.status,
+        cancel_reason: formData.status === 'cancelado' ? formData.cancel_reason : undefined,
       };
 
       // If editing, include the subscriber ID
@@ -241,10 +252,10 @@ export default function SubscriberModal({ banId, subscriber, onSave, onClose }: 
             <input
               type="text"
               inputMode="numeric"
-              value={formData.months}
+              value={formData.months === '' ? '' : formData.months}
               onChange={(e) => {
                 const value = e.target.value.replace(/\D/g, '');
-                setFormData(prev => ({ ...prev, months: value ? parseInt(value) : '' as any }));
+                setFormData(prev => ({ ...prev, months: value === '' ? '' as any : parseInt(value) }));
                 if (errors.months) {
                   setErrors(prev => ({ ...prev, months: '' }));
                 }
@@ -267,10 +278,10 @@ export default function SubscriberModal({ banId, subscriber, onSave, onClose }: 
             <input
               type="text"
               inputMode="numeric"
-              value={formData.remaining_payments}
+              value={formData.remaining_payments === '' ? '' : formData.remaining_payments}
               onChange={(e) => {
                 const value = e.target.value.replace(/\D/g, '');
-                setFormData(prev => ({ ...prev, remaining_payments: value ? parseInt(value) : 0 }));
+                setFormData(prev => ({ ...prev, remaining_payments: value === '' ? '' as any : parseInt(value) }));
                 if (errors.remaining_payments) {
                   setErrors(prev => ({ ...prev, remaining_payments: '' }));
                 }
@@ -290,7 +301,7 @@ export default function SubscriberModal({ banId, subscriber, onSave, onClose }: 
           </div>
 
           {/* Contract End Date - Auto Calculated Display */}
-          {formData.remaining_payments > 0 && (
+          {typeof formData.remaining_payments === 'number' && formData.remaining_payments > 0 && (
             <div>
               <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
                 Fecha de Vencimiento del Contrato (Calculada)
@@ -307,6 +318,49 @@ export default function SubscriberModal({ banId, subscriber, onSave, onClose }: 
               <p className="text-xs text-blue-600 dark:text-blue-400 mt-2 flex items-center">
                 <span className="w-1 h-1 bg-blue-500 rounded-full mr-2"></span>
                 Se calcula automáticamente basado en los plazos faltantes
+              </p>
+            </div>
+          )}
+
+          {/* Status */}
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
+              Estado
+            </label>
+            <select
+              value={formData.status}
+              onChange={(e) => setFormData(prev => ({ ...prev, status: e.target.value as 'activo' | 'cancelado' | 'suspendido' }))}
+              className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-800 dark:bg-gray-800 text-gray-100 dark:text-gray-100"
+            >
+              <option value="activo">Activo</option>
+              <option value="cancelado">Cancelado</option>
+              <option value="suspendido">Suspendido</option>
+            </select>
+          </div>
+
+          {/* Cancel Reason - Solo si está cancelado */}
+          {formData.status === 'cancelado' && (
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
+                Razón de Cancelación *
+              </label>
+              <select
+                value={formData.cancel_reason}
+                onChange={(e) => setFormData(prev => ({ ...prev, cancel_reason: e.target.value }))}
+                className={`w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-800 dark:bg-gray-800 text-gray-100 dark:text-gray-100 ${
+                  errors.cancel_reason ? 'border-red-500 dark:border-red-400' : 'border-gray-300 dark:border-gray-600'
+                }`}
+                required
+              >
+                <option value="">Seleccionar razón...</option>
+                <option value="Deuda">Deuda</option>
+                <option value="Portout">Portout</option>
+              </select>
+              {errors.cancel_reason && (
+                <p className="text-sm text-red-600 dark:text-red-400 mt-2">{errors.cancel_reason}</p>
+              )}
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                Obligatorio cuando el suscriptor está cancelado
               </p>
             </div>
           )}

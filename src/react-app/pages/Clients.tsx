@@ -732,8 +732,21 @@ export default function Clients() {
 
       const client = await clientResponse.json();
 
+      // Verificar si tiene seguimiento activo (no completado)
       if (clientHasActiveFollowUp(clientId)) {
         notify('info', 'Este cliente ya está en seguimiento activo.');
+        return;
+      }
+
+      // Verificar si tiene prospecto completado
+      const completedProspect = (prospects || []).find(
+        (p) => p.client_id === clientId && Boolean(p.is_completed)
+      );
+
+      if (completedProspect) {
+        // Si existe un prospecto completado, navegar a FollowUp para editarlo automáticamente
+        notify('info', 'Este cliente fue completado. Abriendo en seguimiento...');
+        navigate(`/follow-up?edit=${completedProspect.id}&completed=true`);
         return;
       }
 

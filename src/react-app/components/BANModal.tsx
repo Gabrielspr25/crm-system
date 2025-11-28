@@ -2,7 +2,7 @@
 import { X } from "lucide-react";
 
 interface BANModalProps {
-  onSave: (data: { ban_number: string; description?: string; status?: string }) => Promise<boolean | { error?: boolean; message?: string } | void>;
+  onSave: (data: { ban_number: string; description?: string; status?: string; cancel_reason?: string }) => Promise<boolean | { error?: boolean; message?: string } | void>;
   onClose: () => void;
   ban?: { id: number; ban_number: string; description?: string | null; status?: string };
 }
@@ -12,6 +12,7 @@ export default function BANModal({ onSave, onClose, ban }: BANModalProps) {
     ban_number: ban?.ban_number || '',
     description: ban?.description || '',
     status: (ban?.status || 'active') as 'active' | 'cancelled',
+    cancel_reason: '',
   });
 
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -25,12 +26,14 @@ export default function BANModal({ onSave, onClose, ban }: BANModalProps) {
         ban_number: ban.ban_number || '',
         description: ban.description ?? '',
         status: (ban.status || 'active') as 'active' | 'cancelled',
+        cancel_reason: '',
       });
     } else {
       setFormData({
         ban_number: '',
         description: '',
         status: 'active',
+        cancel_reason: '',
       });
     }
   }, [ban]);
@@ -48,12 +51,18 @@ export default function BANModal({ onSave, onClose, ban }: BANModalProps) {
       return;
     }
 
+    if (formData.status === 'cancelled' && !formData.cancel_reason) {
+      alert('Debes seleccionar una razón de cancelación');
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       const result = await onSave({
         ban_number: formData.ban_number,
         description: formData.description.trim() || undefined,
         status: formData.status,
+        cancel_reason: formData.status === 'cancelled' ? formData.cancel_reason : undefined,
       });
       
       // Verificar si onSave retornó un error (false o un objeto con error)
@@ -73,7 +82,7 @@ export default function BANModal({ onSave, onClose, ban }: BANModalProps) {
       
       // Si llegamos aquí, el BAN se creó exitosamente - resetear y cerrar
       setIsSubmitting(false);
-      setFormData({ ban_number: '', description: '', status: 'active' });
+      setFormData({ ban_number: '', description: '', status: 'active', cancel_reason: '' });
       
       // Cerrar el modal inmediatamente
       onClose();
@@ -85,7 +94,7 @@ export default function BANModal({ onSave, onClose, ban }: BANModalProps) {
   };
 
   const handleClose = () => {
-    setFormData({ ban_number: '', description: '', status: 'active' });
+    setFormData({ ban_number: '', description: '', status: 'active', cancel_reason: '' });
     setIsSubmitting(false);
     setErrorMessage(null);
     onClose();
@@ -178,6 +187,28 @@ export default function BANModal({ onSave, onClose, ban }: BANModalProps) {
               <option value="cancelled">Cancelado</option>
             </select>
           </div>
+
+          {/* Cancel Reason - Solo si está cancelado */}
+          {formData.status === 'cancelled' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Razón de Cancelación *
+              </label>
+              <select
+                value={formData.cancel_reason}
+                onChange={(e) => setFormData(prev => ({ ...prev, cancel_reason: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-800 dark:bg-gray-800 text-gray-100 dark:text-gray-100"
+                required
+              >
+                <option value="">Seleccionar razón...</option>
+                <option value="Deuda">Deuda</option>
+                <option value="Portout">Portout</option>
+              </select>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                Obligatorio cuando el BAN está cancelado
+              </p>
+            </div>
+          )}
 
           {/* Footer */}
           <div className="flex justify-end space-x-3 pt-4">

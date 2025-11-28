@@ -99,7 +99,7 @@ export default function Reports() {
   const [paymentAmount, setPaymentAmount] = useState("");
   const [paymentNotes, setPaymentNotes] = useState("");
   
-  const { data: prospects } = useApi<FollowUpProspect[]>("/api/follow-up-prospects");
+  const { data: prospects } = useApi<FollowUpProspect[]>("/api/completed-prospects"); // Cambiado a completados
   const { data: subscribers } = useApi<Subscriber[]>("/api/subscribers");
   const { data: bans } = useApi<BAN[]>("/api/bans");
   const { data: products } = useApi<Product[]>("/api/products");
@@ -119,11 +119,10 @@ export default function Reports() {
     }
   }, []);
 
-  // Filtrar prospects por vendedor y solo los completados
+  // Filtrar prospects por vendedor (ya vienen solo completados del endpoint)
   const filteredProspects = useMemo(() => {
     if (!prospects) return [];
-    // Solo mostrar prospects completados (ventas realizadas)
-    let filtered = prospects.filter(p => p.is_completed === true);
+    let filtered = prospects; // Ya vienen completados del endpoint /api/completed-prospects
     
     // Si es vendedor, solo mostrar sus propios prospects
     if (isVendor && currentUser?.salespersonId) {

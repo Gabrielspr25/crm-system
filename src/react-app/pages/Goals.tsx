@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { Plus, Search, Edit, Trash2, Target, TrendingUp, DollarSign, Package, Building } from "lucide-react";
+import { Plus, Search, Edit, Trash2, Target, TrendingUp, Package, Building } from "lucide-react";
 import { useApi } from "../hooks/useApi";
 import { authFetch, getCurrentUser } from "@/react-app/utils/auth";
 
@@ -544,87 +544,118 @@ export default function Goals() {
         )}
       </div>
 
-      {/* Summary Cards */}
-      <div className={`grid gap-4 ${isVendorUser ? "sm:grid-cols-2" : "md:grid-cols-2 lg:grid-cols-4"}`}>
+      {/* Summary Cards - Diseño Profesional */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {/* Meta de Negocio */}
         {!isVendorUser && (
-          <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center">
-                <div className="p-3 bg-gradient-to-r from-blue-500 to-purple-600 bg-opacity-20 rounded-lg">
-                  <Building className="w-5 h-5 text-white" />
+          <div className="bg-gradient-to-br from-slate-800 to-slate-900 border border-slate-700 rounded-2xl p-6 shadow-xl">
+            <div className="flex items-start justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div className="p-3 bg-gradient-to-br from-purple-500/20 to-blue-500/20 rounded-xl">
+                  <Building className="w-6 h-6 text-purple-400" />
                 </div>
-                <div className="ml-3">
-                  <p className="text-xs uppercase tracking-wide text-slate-400">Meta negocio</p>
-                  <h3 className="text-xl font-semibold text-white">${(totals.businessTarget / 1000).toFixed(1)}K</h3>
+                <div>
+                  <p className="text-xs uppercase tracking-wider text-slate-400 font-semibold">Meta Negocio</p>
+                  <h3 className="text-3xl font-bold text-white mt-1">${(totals.businessTarget / 1000).toFixed(1)}K</h3>
                 </div>
               </div>
-              <span className="text-sm font-semibold text-white">{totals.businessProgress.toFixed(1)}%</span>
+              <div className="text-right">
+                <span className="inline-block px-3 py-1 bg-purple-500/20 rounded-full text-purple-300 text-sm font-bold">
+                  {totals.businessProgress.toFixed(1)}%
+                </span>
+              </div>
             </div>
-            <div className="w-full bg-slate-700 rounded-full h-2">
+            <div className="space-y-2">
+              <div className="flex justify-between text-sm">
+                <span className="text-slate-400">Ventas actuales</span>
+                <span className="text-emerald-400 font-semibold">${(totals.businessCurrent / 1000).toFixed(1)}K</span>
+              </div>
+              <div className="w-full bg-slate-700/50 rounded-full h-3 overflow-hidden">
+                <div
+                  className="bg-gradient-to-r from-purple-500 via-blue-500 to-cyan-500 h-3 rounded-full transition-all duration-500"
+                  style={{ width: `${Math.min(totals.businessProgress, 100)}%` }}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Meta de Vendedores */}
+        <div className="bg-gradient-to-br from-slate-800 to-slate-900 border border-slate-700 rounded-2xl p-6 shadow-xl">
+          <div className="flex items-start justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <div className="p-3 bg-gradient-to-br from-blue-500/20 to-teal-500/20 rounded-xl">
+                <Target className="w-6 h-6 text-blue-400" />
+              </div>
+              <div>
+                <p className="text-xs uppercase tracking-wider text-slate-400 font-semibold">
+                  {isVendorUser ? "Mis Metas" : "Meta Vendedores"}
+                </p>
+                <h3 className="text-3xl font-bold text-white mt-1">${(totals.vendorTarget / 1000).toFixed(1)}K</h3>
+              </div>
+            </div>
+            <div className="text-right">
+              <span className="inline-block px-3 py-1 bg-blue-500/20 rounded-full text-blue-300 text-sm font-bold">
+                {isVendorUser ? totals.vendorProgress.toFixed(1) : totals.vendorCoverage.toFixed(1)}%
+              </span>
+            </div>
+          </div>
+          <div className="space-y-2">
+            <div className="flex justify-between text-sm">
+              <span className="text-slate-400">{isVendorUser ? "Progreso" : "Cobertura"}</span>
+              <span className="text-teal-400 font-semibold">${(totals.vendorCurrent / 1000).toFixed(1)}K</span>
+            </div>
+            <div className="w-full bg-slate-700/50 rounded-full h-3 overflow-hidden">
               <div
-                className="bg-gradient-to-r from-blue-500 to-purple-600 h-2 rounded-full"
-                style={{ width: `${Math.min(totals.businessProgress, 100)}%` }}
+                className="bg-gradient-to-r from-blue-500 to-teal-500 h-3 rounded-full transition-all duration-500"
+                style={{ width: `${Math.min(isVendorUser ? totals.vendorProgress : totals.vendorCoverage, 100)}%` }}
               />
             </div>
           </div>
-        )}
+        </div>
 
-        <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center">
-              <div className="p-3 bg-blue-500/20 rounded-lg">
-                <Target className="w-5 h-5 text-blue-300" />
+        {/* Ventas Actuales */}
+        <div className="bg-gradient-to-br from-slate-800 to-slate-900 border border-slate-700 rounded-2xl p-6 shadow-xl">
+          <div className="flex items-start justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <div className="p-3 bg-gradient-to-br from-emerald-500/20 to-green-500/20 rounded-xl">
+                <TrendingUp className="w-6 h-6 text-emerald-400" />
               </div>
-              <div className="ml-3">
-                <p className="text-xs uppercase tracking-wide text-slate-400">
-                  {isVendorUser ? "Mis metas asignadas" : "Meta vendedores"}
+              <div>
+                <p className="text-xs uppercase tracking-wider text-slate-400 font-semibold">
+                  {isVendorUser ? "Mis Ventas" : "Ventas Totales"}
                 </p>
-                <h3 className="text-xl font-semibold text-white">${(totals.vendorTarget / 1000).toFixed(1)}K</h3>
-              </div>
-            </div>
-            <span className="text-sm font-semibold text-white">
-              {isVendorUser ? totals.vendorProgress.toFixed(1) : totals.vendorCoverage.toFixed(1)}%
-            </span>
-          </div>
-          <div className="w-full bg-slate-700 rounded-full h-2">
-            <div
-              className="bg-gradient-to-r from-green-500 to-teal-600 h-2 rounded-full"
-              style={{ width: `${Math.min(isVendorUser ? totals.vendorProgress : totals.vendorCoverage, 100)}%` }}
-            />
-          </div>
-        </div>
-
-        <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
-          <div className="flex items-center">
-            <div className="p-3 bg-emerald-500/20 rounded-lg">
-              <TrendingUp className="w-5 h-5 text-emerald-300" />
-            </div>
-            <div className="ml-3">
-              <p className="text-xs uppercase tracking-wide text-slate-400">
-                {isVendorUser ? "Ventas logradas (yo)" : "Ventas actuales"}
-              </p>
-              <h3 className="text-xl font-semibold text-white">
-                ${((isVendorUser ? totals.vendorCurrent : totals.businessCurrent) / 1000).toFixed(1)}K
-              </h3>
-            </div>
-          </div>
-        </div>
-
-        {!isVendorUser && (
-          <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
-            <div className="flex items-center">
-              <div className="p-3 bg-amber-500/20 rounded-lg">
-                <DollarSign className="w-5 h-5 text-amber-300" />
-              </div>
-              <div className="ml-3">
-                <p className="text-xs uppercase tracking-wide text-slate-400">Meta sin asignar</p>
-                <h3 className={`text-xl font-semibold ${totals.gapTarget <= 0 ? "text-green-300" : "text-amber-200"}`}>
-                  ${(totals.gapTarget / 1000).toFixed(1)}K
+                <h3 className="text-3xl font-bold text-white mt-1">
+                  ${((isVendorUser ? totals.vendorCurrent : totals.businessCurrent) / 1000).toFixed(1)}K
                 </h3>
               </div>
             </div>
+            <div className="text-right">
+              <span className="inline-block px-3 py-1 bg-emerald-500/20 rounded-full text-emerald-300 text-sm font-bold">
+                {isVendorUser ? totals.vendorProgress.toFixed(1) : totals.businessProgress.toFixed(1)}%
+              </span>
+            </div>
           </div>
-        )}
+          <div className="space-y-2">
+            <div className="flex justify-between text-sm">
+              <span className="text-slate-400">Del objetivo</span>
+              <span className="text-slate-300 font-semibold">
+                ${((isVendorUser ? totals.vendorTarget : totals.businessTarget) / 1000).toFixed(1)}K
+              </span>
+            </div>
+            <div className="w-full bg-slate-700/50 rounded-full h-3 overflow-hidden">
+              <div
+                className="bg-gradient-to-r from-emerald-500 to-green-500 h-3 rounded-full transition-all duration-500"
+                style={{ 
+                  width: `${Math.min(
+                    isVendorUser ? totals.vendorProgress : totals.businessProgress, 
+                    100
+                  )}%` 
+                }}
+              />
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Search */}

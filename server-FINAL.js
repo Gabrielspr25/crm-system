@@ -1875,7 +1875,7 @@ app.get('/api/bans', async (req, res) => {
 });
 
 app.post('/api/bans', async (req, res) => {
-  const { ban_number, client_id, description = null, status = 'active', is_active = 1 } = req.body || {};
+  const { ban_number, client_id, description = null, status = 'active', is_active = 1, cancel_reason } = req.body || {};
 
   if (!ban_number || typeof ban_number !== 'string') {
     return badRequest(res, 'El BAN es obligatorio');
@@ -1883,6 +1883,10 @@ app.post('/api/bans', async (req, res) => {
 
   if (!client_id) {
     return badRequest(res, 'client_id es obligatorio');
+  }
+
+  if (status === 'cancelled' && !cancel_reason) {
+    return badRequest(res, 'Razón de cancelación es obligatoria para BANs cancelados');
   }
 
   try {
@@ -1940,6 +1944,15 @@ app.post('/api/bans', async (req, res) => {
     );
 
     const ban = enrich(rows[0], ['client_id', 'is_active'], [], ['created_at', 'updated_at']);
+
+    // Si está cancelado, guardar la razón
+    if (status === 'cancelled' && cancel_reason) {
+      await query(
+        `INSERT INTO ban_cancel_reason (ban_id, reason, created_at) VALUES ($1, $2, NOW())`,
+        [ban.id, cancel_reason]
+      );
+    }
+
     res.status(201).json(ban);
   } catch (error) {
     serverError(res, error, 'Error creando BAN');
@@ -1957,13 +1970,18 @@ app.put('/api/bans/:id', async (req, res) => {
     client_id,
     description = null,
     status = 'active',
-    is_active = 1
+    is_active = 1,
+    cancel_reason
   } = req.body || {};
 
-  console.log('📝 PUT /api/bans/:id - Datos recibidos:', { banId, ban_number, client_id, description, status, is_active });
+  console.log('📝 PUT /api/bans/:id - Datos recibidos:', { banId, ban_number, client_id, description, status, is_active, cancel_reason });
 
   if (!ban_number || typeof ban_number !== 'string') {
     return badRequest(res, 'El BAN es obligatorio');
+  }
+
+  if (status === 'cancelled' && !cancel_reason) {
+    return badRequest(res, 'Razón de cancelación es obligatoria para BANs cancelados');
   }
 
   try {
@@ -2023,6 +2041,17 @@ app.put('/api/bans/:id', async (req, res) => {
 
     if (rows.length === 0) {
       return notFound(res, 'BAN');
+    }
+
+    // Si cambió a cancelado, guardar la razón
+    if (normalizedStatus === 'cancelled' && cancel_reason) {
+      // Eliminar razones anteriores si existen
+      await query(`DELETE FROM ban_cancel_reason WHERE ban_id = $1`, [banId]);
+      // Insertar nueva razón
+      await query(
+        `INSERT INTO ban_cancel_reason (ban_id, reason, created_at) VALUES ($1, $2, NOW())`,
+        [banId, cancel_reason]
+      );
     }
 
     const ban = enrich(rows[0], ['client_id', 'is_active'], [], ['created_at', 'updated_at']);
@@ -2629,7 +2658,9 @@ app.post('/api/subscribers', async (req, res) => {
     monthly_value = null,
     months = null,
     remaining_payments = null,
-    is_active = 1
+    is_active = 1,
+    status = 'activo',
+    cancel_reason
   } = req.body || {};
 
   if (!phone || typeof phone !== 'string') {
@@ -2638,6 +2669,10 @@ app.post('/api/subscribers', async (req, res) => {
 
   if (!ban_id) {
     return badRequest(res, 'ban_id es obligatorio');
+  }
+
+  if (status === 'cancelado' && !cancel_reason) {
+    return badRequest(res, 'Razón de cancelación es obligatoria para suscriptores cancelados');
   }
 
   try {
@@ -2662,8 +2697,8 @@ app.post('/api/subscribers', async (req, res) => {
 
     const rows = await query(
       `INSERT INTO subscribers
-        (phone, ban_id, contract_start_date, contract_end_date, service_type, monthly_value, months, remaining_payments, is_active, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW(),NOW())
+        (phone, ban_id, contract_start_date, contract_end_date, service_type, monthly_value, months, remaining_payments, is_active, status, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW(),NOW())
        RETURNING *`,
       [
         phone.trim(),
@@ -2674,7 +2709,8 @@ app.post('/api/subscribers', async (req, res) => {
         monthly_value,
         months,
         remaining_payments,
-        is_active ? 1 : 0
+        is_active ? 1 : 0,
+        status
       ]
     );
 
@@ -2684,6 +2720,14 @@ app.post('/api/subscribers', async (req, res) => {
       ['is_active'],
       ['contract_start_date', 'contract_end_date', 'created_at', 'updated_at']
     );
+
+    // Si está cancelado, guardar la razón
+    if (status === 'cancelado' && cancel_reason) {
+      await query(
+        `INSERT INTO subscriber_cancel_reason (subscriber_id, reason, created_at) VALUES ($1, $2, NOW())`,
+        [subscriber.id, cancel_reason]
+      );
+    }
 
     res.status(201).json(subscriber);
   } catch (error) {
@@ -2706,11 +2750,17 @@ app.put('/api/subscribers/:id', async (req, res) => {
     monthly_value = null,
     months = null,
     remaining_payments = null,
-    is_active = 1
+    is_active = 1,
+    status = 'activo',
+    cancel_reason
   } = req.body || {};
 
   if (!phone || typeof phone !== 'string') {
     return badRequest(res, 'El teléfono es obligatorio');
+  }
+
+  if (status === 'cancelado' && !cancel_reason) {
+    return badRequest(res, 'Razón de cancelación es obligatoria para suscriptores cancelados');
   }
 
   try {
@@ -2764,8 +2814,9 @@ app.put('/api/subscribers/:id', async (req, res) => {
               months = $7,
               remaining_payments = $8,
               is_active = $9,
+              status = $10,
               updated_at = NOW()
-        WHERE id = $10
+        WHERE id = $11
         RETURNING *`,
       [
         phone.trim(),
@@ -2777,12 +2828,24 @@ app.put('/api/subscribers/:id', async (req, res) => {
         months,
         remaining_payments,
         is_active ? 1 : 0,
+        status,
         subscriberId
       ]
     );
 
     if (rows.length === 0) {
       return notFound(res, 'Suscriptor');
+    }
+
+    // Si cambió a cancelado, guardar la razón
+    if (status === 'cancelado' && cancel_reason) {
+      // Eliminar razones anteriores si existen
+      await query(`DELETE FROM subscriber_cancel_reason WHERE subscriber_id = $1`, [subscriberId]);
+      // Insertar nueva razón
+      await query(
+        `INSERT INTO subscriber_cancel_reason (subscriber_id, reason, created_at) VALUES ($1, $2, NOW())`,
+        [subscriberId, cancel_reason]
+      );
     }
 
     const subscriber = enrich(
@@ -2864,14 +2927,20 @@ function mapProspectRow(row) {
 
 app.get('/api/follow-up-prospects', async (req, res) => {
   try {
+    // Permitir incluir completados con query param ?include_completed=true
+    const includeCompleted = req.query.include_completed === 'true';
+    
+    let whereConditions = `c.is_active = 1 AND COALESCE(fp.is_active, true) = true`;
+    if (!includeCompleted) {
+      whereConditions += ` AND COALESCE(fp.is_completed, false) = false`;
+    }
+    
     const rows = await query(
       `SELECT fp.*, v.name AS vendor_name, c.name AS client_name, c.business_name AS client_business_name
          FROM follow_up_prospects fp
          LEFT JOIN vendors v ON fp.vendor_id = v.id
          INNER JOIN clients c ON fp.client_id = c.id
-         WHERE c.is_active = 1 
-           AND COALESCE(fp.is_active, 1) = 1 
-           AND COALESCE(fp.is_completed, 0) = 0
+         WHERE ${whereConditions}
          ORDER BY fp.created_at DESC`
     );
     const authorizedRows = req.user?.role === 'vendedor'
@@ -2880,6 +2949,27 @@ app.get('/api/follow-up-prospects', async (req, res) => {
     res.json(authorizedRows.map(mapProspectRow));
   } catch (error) {
     serverError(res, error, 'Error obteniendo prospectos');
+  }
+});
+
+// Endpoint para obtener prospectos completados (ventas) - para la página de Reportes
+app.get('/api/completed-prospects', async (req, res) => {
+  try {
+    const rows = await query(
+      `SELECT fp.*, v.name AS vendor_name, c.name AS client_name, c.business_name AS client_business_name
+         FROM follow_up_prospects fp
+         LEFT JOIN vendors v ON fp.vendor_id = v.id
+         INNER JOIN clients c ON fp.client_id = c.id
+         WHERE c.is_active = 1 
+           AND fp.is_completed = true
+         ORDER BY fp.completed_date DESC`
+    );
+    const authorizedRows = req.user?.role === 'vendedor'
+      ? rows.filter((row) => sameId(row.vendor_id, req.user.salespersonId))
+      : rows;
+    res.json(authorizedRows.map(mapProspectRow));
+  } catch (error) {
+    serverError(res, error, 'Error obteniendo prospectos completados');
   }
 });
 
@@ -2913,6 +3003,21 @@ app.post('/api/follow-up-prospects', async (req, res) => {
   if (!company_name || typeof company_name !== 'string') {
     return badRequest(res, 'El nombre de la empresa es obligatorio');
   }
+
+  // Calcular total_amount sumando todos los productos
+  const calculatedTotal = 
+    Number(fijo_ren || 0) + 
+    Number(fijo_new || 0) + 
+    Number(movil_nueva || 0) + 
+    Number(movil_renovacion || 0) + 
+    Number(claro_tv || 0) + 
+    Number(cloud || 0) + 
+    Number(mpls || 0) + 
+    Number(base || 0);
+  
+  console.log('💰 POST calculatedTotal:', calculatedTotal, 'de productos:', {
+    fijo_ren, fijo_new, movil_nueva, movil_renovacion, claro_tv, cloud, mpls, base
+  });
 
   try {
     let finalVendorId = toDbId(vendor_id);
@@ -3023,7 +3128,7 @@ app.post('/api/follow-up-prospects', async (req, res) => {
         call_count,
         is_completed ? 1 : 0,
         completed_date,
-        total_amount,
+        calculatedTotal,  // Usar el total calculado
         notes,
         contact_phone,
         contact_email,
@@ -3074,8 +3179,23 @@ app.put('/api/follow-up-prospects/:id', async (req, res) => {
     return badRequest(res, 'El nombre de la empresa es obligatorio');
   }
 
+  // Calcular total_amount sumando todos los productos
+  const calculatedTotal = 
+    Number(fijo_ren || 0) + 
+    Number(fijo_new || 0) + 
+    Number(movil_nueva || 0) + 
+    Number(movil_renovacion || 0) + 
+    Number(claro_tv || 0) + 
+    Number(cloud || 0) + 
+    Number(mpls || 0) + 
+    Number(base || 0);
+  
+  console.log('💰 PUT calculatedTotal:', calculatedTotal, 'de productos:', {
+    fijo_ren, fijo_new, movil_nueva, movil_renovacion, claro_tv, cloud, mpls, base
+  });
+
   try {
-    const existing = await query(`SELECT vendor_id, client_id FROM follow_up_prospects WHERE id = $1`, [prospectId]);
+    const existing = await query(`SELECT vendor_id, client_id, is_completed FROM follow_up_prospects WHERE id = $1`, [prospectId]);
     if (existing.length === 0) {
       return notFound(res, 'Prospecto');
     }
@@ -3148,7 +3268,7 @@ app.put('/api/follow-up-prospects/:id', async (req, res) => {
         call_count,
         is_completed,
         completed_date,
-        total_amount,
+        calculatedTotal,  // Usar el total calculado en lugar del valor del frontend
         notes,
         contact_phone,
         contact_email,
@@ -3162,7 +3282,150 @@ app.put('/api/follow-up-prospects/:id', async (req, res) => {
       return notFound(res, 'Prospecto');
     }
 
-    res.json(mapProspectRow(rows[0]));
+    const prospect = rows[0];
+
+    // Si se marcó como completado, crear reporte y actualizar metas
+    if (is_completed && !existing[0].is_completed) {
+      console.log('🎯 Creando reporte de venta completada:', {
+        prospect_id: prospectId,
+        client_id: prospect.client_id,
+        vendor_id: prospect.vendor_id,
+        total_amount: prospect.total_amount
+      });
+
+      // 1. Crear registro en sales_reports
+      await query(
+        `INSERT INTO sales_reports (follow_up_prospect_id, client_id, vendor_id, company_name, total_amount, sale_date, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+        [
+          prospectId,
+          prospect.client_id,
+          prospect.vendor_id,
+          prospect.company_name,
+          prospect.total_amount || 0,
+          prospect.completed_date || new Date().toISOString()
+        ]
+      );
+
+      // 2. Actualizar metas del vendedor (goals)
+      if (prospect.vendor_id && prospect.total_amount > 0) {
+        const currentMonth = new Date().getMonth() + 1;
+        const currentYear = new Date().getFullYear();
+        
+        // Buscar meta activa del vendedor para el período actual
+        const vendorGoals = await query(
+          `SELECT id, current_amount 
+           FROM goals 
+           WHERE vendor_id = $1 
+             AND period_type = 'monthly'
+             AND period_year = $2 
+             AND period_month = $3
+             AND is_active = 1
+           LIMIT 1`,
+          [prospect.vendor_id, currentYear, currentMonth]
+        );
+
+        if (vendorGoals.length > 0) {
+          await query(
+            `UPDATE goals 
+             SET current_amount = current_amount + $1 
+             WHERE id = $2`,
+            [prospect.total_amount, vendorGoals[0].id]
+          );
+          console.log('✅ Meta del vendedor actualizada:', vendorGoals[0].id, 'Nuevo monto:', parseFloat(vendorGoals[0].current_amount) + parseFloat(prospect.total_amount));
+        } else {
+          console.log('⚠️ No se encontró meta activa del vendedor para el periodo actual');
+        }
+      }
+
+      // 3. Actualizar metas de productos específicos según lo vendido
+      if (prospect.total_amount > 0) {
+        const currentMonth = new Date().getMonth() + 1;
+        const currentYear = new Date().getFullYear();
+        
+        // Mapeo de campos de prospect a nombres de productos
+        const productMapping = [
+          { field: 'fijo_ren', productName: 'Fijo Renovación' },
+          { field: 'fijo_new', productName: 'Fijo Nueva' },
+          { field: 'movil_nueva', productName: 'Móvil Nueva' },
+          { field: 'movil_renovacion', productName: 'Móvil Renovación' },
+          { field: 'claro_tv', productName: 'Claro TV Nueva' },
+          { field: 'cloud', productName: 'Cloud Nueva' }
+        ];
+
+        let updatedCount = 0;
+        
+        for (const mapping of productMapping) {
+          const amount = parseFloat(prospect[mapping.field] || 0);
+          
+          if (amount > 0) {
+            // Actualizar meta de negocio (vendor_id IS NULL)
+            const businessGoals = await query(
+              `SELECT pg.id, pg.current_revenue 
+               FROM product_goals pg
+               INNER JOIN products p ON pg.product_id = p.id
+               WHERE p.name = $1
+                 AND pg.vendor_id IS NULL
+                 AND pg.period_type = 'monthly'
+                 AND pg.period_year = $2 
+                 AND pg.period_month = $3
+                 AND pg.is_active = 1
+               LIMIT 1`,
+              [mapping.productName, currentYear, currentMonth]
+            );
+
+            if (businessGoals.length > 0) {
+              await query(
+                `UPDATE product_goals 
+                 SET current_revenue = current_revenue + $1 
+                 WHERE id = $2`,
+                [amount, businessGoals[0].id]
+              );
+              console.log(`✅ Meta de negocio actualizada: ${mapping.productName} +$${amount}`);
+              updatedCount++;
+            }
+
+            // Actualizar meta del vendedor específico (vendor_id = prospect.vendor_id)
+            if (prospect.vendor_id) {
+              const vendorGoals = await query(
+                `SELECT pg.id, pg.current_revenue 
+                 FROM product_goals pg
+                 INNER JOIN products p ON pg.product_id = p.id
+                 WHERE p.name = $1
+                   AND pg.vendor_id = $2
+                   AND pg.period_type = 'monthly'
+                   AND pg.period_year = $3 
+                   AND pg.period_month = $4
+                   AND pg.is_active = 1
+                 LIMIT 1`,
+                [mapping.productName, prospect.vendor_id, currentYear, currentMonth]
+              );
+
+              if (vendorGoals.length > 0) {
+                await query(
+                  `UPDATE product_goals 
+                   SET current_revenue = current_revenue + $1 
+                   WHERE id = $2`,
+                  [amount, vendorGoals[0].id]
+                );
+                console.log(`✅ Meta del vendedor actualizada: ${mapping.productName} +$${amount}`);
+                updatedCount++;
+              }
+            }
+          }
+        }
+        
+        if (updatedCount > 0) {
+          console.log(`✅ Total de metas actualizadas: ${updatedCount}`);
+        } else {
+          console.log('⚠️ No se encontraron metas de productos para actualizar');
+        }
+      }
+
+      console.log('✅ Reporte creado y metas actualizadas exitosamente');
+    }
+
+    res.json(mapProspectRow(prospect));
   } catch (error) {
     serverError(res, error, 'Error actualizando prospecto');
   }

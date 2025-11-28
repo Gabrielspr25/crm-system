@@ -75,6 +75,7 @@ interface Client {
 export default function FollowUp() {
   const [searchParams] = useSearchParams();
   const [searchTerm, setSearchTerm] = useState("");
+  const [showCompleted, setShowCompleted] = useState(false); // Nuevo estado para filtrar completados
   const [selectedProspect, setSelectedProspect] = useState<FollowUpProspect | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [showCallModal, setShowCallModal] = useState(false);
@@ -82,7 +83,7 @@ export default function FollowUp() {
   const [showStepManager, setShowStepManager] = useState(false);
   const [callLogs, setCallLogs] = useState<CallLog[]>([]);
 
-  const { data: prospects, loading, refetch: refetchProspects } = useApi<FollowUpProspect[]>("/api/follow-up-prospects");
+  const { data: prospects, loading, refetch: refetchProspects } = useApi<FollowUpProspect[]>("/api/follow-up-prospects?include_completed=true");
   const { data: priorities, refetch: refetchPriorities } = useApi<Priority[]>("/api/priorities");
   const { data: vendors } = useApi<Vendor[]>("/api/vendors");
   const { data: steps, refetch: refetchSteps } = useApi<FollowUpStep[]>("/api/follow-up-steps");
@@ -101,16 +102,15 @@ export default function FollowUp() {
     
     return Array.from(seen.values()).filter(
       (prospect) => {
-        // Debe estar activo y no completado
+        // Debe estar activo (incluye completados)
         const isActive = Boolean(prospect.is_active ?? true);
-        const isNotCompleted = !Boolean(prospect.is_completed);
         
         // Si tiene client_id, el cliente debe existir y estar activo
         const hasValidClient = prospect.client_id 
           ? activeClientIds.has(prospect.client_id)
           : true; // Si no tiene client_id, permitir (por compatibilidad)
         
-        return isActive && isNotCompleted && hasValidClient;
+        return isActive && hasValidClient;
       }
     );
   }, [prospects, clients]);
@@ -128,10 +128,17 @@ export default function FollowUp() {
     }
   }, [searchParams, uniqueProspects, selectedProspect]);
 
-  const filteredProspects = uniqueProspects.filter(prospect =>
-    prospect.company_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (prospect.vendor_name && prospect.vendor_name.toLowerCase().includes(searchTerm.toLowerCase()))
-  );
+  const filteredProspects = uniqueProspects.filter(prospect => {
+    // Filtro por búsqueda
+    const matchesSearch = prospect.company_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (prospect.vendor_name && prospect.vendor_name.toLowerCase().includes(searchTerm.toLowerCase()));
+    
+    // Filtro por estado completado/activo
+    const isCompleted = Boolean(prospect.is_completed);
+    const matchesStatus = showCompleted ? isCompleted : !isCompleted;
+    
+    return matchesSearch && matchesStatus;
+  });
 
   const authUser = getCurrentUser();
   const isVendorUser = authUser?.role === "vendedor";
@@ -151,6 +158,27 @@ export default function FollowUp() {
     setSelectedProspect(prospect);
     setShowModal(true);
   };
+
+  // Detectar si se debe abrir el modal automáticamente desde la URL
+  useEffect(() => {
+    const editId = searchParams.get('edit');
+    const isCompleted = searchParams.get('completed') === 'true';
+    
+    if (editId && prospects) {
+      const prospectToEdit = prospects.find(p => p.id === Number(editId));
+      if (prospectToEdit) {
+        // Si viene de un completado, mostrar la vista de completados
+        if (isCompleted) {
+          setShowCompleted(true);
+        }
+        // Abrir el modal automáticamente
+        handleEdit(prospectToEdit);
+        
+        // Limpiar los parámetros de la URL para evitar que se abra de nuevo
+        window.history.replaceState({}, '', '/follow-up');
+      }
+    }
+  }, [searchParams, prospects]);
 
   const handleCall = async (prospect: FollowUpProspect) => {
     setSelectedProspect(prospect);
@@ -268,16 +296,42 @@ export default function FollowUp() {
         </button>
       </div>
 
-      {/* Search */}
-      <div className="relative flex-1 max-w-md">
-        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500 w-5 h-5" />
-        <input
-          type="text"
-          placeholder="Buscar por empresa o vendedor..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="w-full pl-10 pr-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-white placeholder-gray-500"
-        />
+      {/* Search and Filter */}
+      <div className="flex items-center gap-4">
+        <div className="relative flex-1 max-w-md">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500 w-5 h-5" />
+          <input
+            type="text"
+            placeholder="Buscar por empresa o vendedor..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full pl-10 pr-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-white placeholder-gray-500"
+          />
+        </div>
+        
+        {/* Toggle Activos/Completados */}
+        <div className="flex bg-gray-800 border border-gray-700 rounded-lg p-1">
+          <button
+            onClick={() => setShowCompleted(false)}
+            className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+              !showCompleted
+                ? 'bg-blue-600 text-white'
+                : 'text-gray-400 hover:text-white'
+            }`}
+          >
+            Activos ({uniqueProspects.filter(p => !p.is_completed).length})
+          </button>
+          <button
+            onClick={() => setShowCompleted(true)}
+            className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+              showCompleted
+                ? 'bg-purple-600 text-white'
+                : 'text-gray-400 hover:text-white'
+            }`}
+          >
+            Completados ({uniqueProspects.filter(p => p.is_completed).length})
+          </button>
+        </div>
       </div>
 
       <div className="flex items-center gap-2">
@@ -495,11 +549,12 @@ function ProspectModal({
   vendors: Vendor[];
   steps: FollowUpStep[];
   clients: Client[];
-  onSave: (data: Partial<FollowUpProspect>) => void;
+  onSave: (data: Partial<FollowUpProspect>) => Promise<void>;
   onClose: () => void;
   enforcedVendorId?: number;
   disableVendorSelect?: boolean;
 }) {
+  const [saving, setSaving] = useState(false);
   const [formData, setFormData] = useState({
     company_name: prospect?.company_name || '',
     client_id: prospect?.client_id ? String(prospect.client_id) : '',
@@ -542,24 +597,36 @@ function ProspectModal({
     });
   }, [prospect, enforcedVendorId]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    if (saving) return; // Prevenir doble submit
+    
+    setSaving(true);
+    try {
+      const resolvedVendorId = disableVendorSelect && enforcedVendorId != null
+        ? enforcedVendorId
+        : formData.vendor_id
+          ? parseInt(formData.vendor_id.toString(), 10)
+          : null;
 
-    const resolvedVendorId = disableVendorSelect && enforcedVendorId != null
-      ? enforcedVendorId
-      : formData.vendor_id
-        ? parseInt(formData.vendor_id.toString(), 10)
-        : null;
+      const data = {
+        ...formData,
+        client_id: formData.client_id ? parseInt(formData.client_id.toString(), 10) : null,
+        priority_id: formData.priority_id ? parseInt(formData.priority_id.toString(), 10) : null,
+        vendor_id: resolvedVendorId,
+        step_id: formData.step_id ? parseInt(formData.step_id.toString(), 10) : null,
+      };
 
-    const data = {
-      ...formData,
-      client_id: formData.client_id ? parseInt(formData.client_id.toString(), 10) : null,
-      priority_id: formData.priority_id ? parseInt(formData.priority_id.toString(), 10) : null,
-      vendor_id: resolvedVendorId,
-      step_id: formData.step_id ? parseInt(formData.step_id.toString(), 10) : null,
-    };
-
-    onSave(data);
+      await onSave(data);
+      // Cerrar modal después de guardar exitosamente
+      onClose();
+    } catch (error) {
+      console.error('Error al guardar prospecto:', error);
+      // El modal NO se cierra si hay error, para que el usuario pueda reintentar
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -767,9 +834,10 @@ function ProspectModal({
               </button>
               <button
                 type="submit"
-                className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white px-6 py-2 rounded-lg transition-all duration-200 shadow-lg hover:shadow-xl"
+                disabled={saving}
+                className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white px-6 py-2 rounded-lg transition-all duration-200 shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {prospect ? 'Actualizar' : 'Crear'}
+                {saving ? 'Guardando...' : (prospect ? 'Actualizar' : 'Crear')}
               </button>
             </div>
           </form>
@@ -1061,36 +1129,34 @@ function PriorityManagerModal({ priorities, onClose, onSaved }: PriorityManagerM
         )}
 
         <div className="p-6 space-y-6">
-          <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
+          <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
             <h3 className="text-sm font-semibold text-white mb-4">Nueva prioridad</h3>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="space-y-4">
               <input
                 type="text"
                 value={newItem.name}
                 onChange={(e) => setNewItem(prev => ({ ...prev, name: e.target.value }))}
-                placeholder="Nombre"
-                className="px-3 py-2 bg-gray-850 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500"
+                placeholder="Nombre de la prioridad"
+                className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white text-base focus:ring-2 focus:ring-blue-500"
               />
-              <input
-                type="color"
-                value={newItem.color_hex}
-                onChange={(e) => setNewItem(prev => ({ ...prev, color_hex: e.target.value }))}
-                className="w-full h-10 bg-gray-850 border border-gray-700 rounded-lg"
-              />
-              <input
-                type="number"
-                value={newItem.order_index}
-                onChange={(e) => setNewItem(prev => ({ ...prev, order_index: Number(e.target.value) }))}
-                className="px-3 py-2 bg-gray-850 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500"
-                placeholder="Orden"
-              />
-              <button
-                onClick={handleCreate}
-                disabled={loadingId === 'new'}
-                className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-900 disabled:text-blue-200 text-white px-3 py-2 rounded-lg transition-colors"
-              >
-                {loadingId === 'new' ? 'Guardando...' : 'Crear Prioridad'}
-              </button>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs text-gray-400 mb-2">Color</label>
+                  <input
+                    type="color"
+                    value={newItem.color_hex}
+                    onChange={(e) => setNewItem(prev => ({ ...prev, color_hex: e.target.value }))}
+                    className="w-full h-10 bg-gray-800 border border-gray-700 rounded-lg cursor-pointer"
+                  />
+                </div>
+                <button
+                  onClick={handleCreate}
+                  disabled={loadingId === 'new'}
+                  className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-900 disabled:text-blue-200 text-white px-4 py-2 rounded-lg transition-colors font-medium self-end"
+                >
+                  {loadingId === 'new' ? 'Guardando...' : 'Crear Prioridad'}
+                </button>
+              </div>
             </div>
           </div>
 
@@ -1099,26 +1165,23 @@ function PriorityManagerModal({ priorities, onClose, onSaved }: PriorityManagerM
               <p className="text-sm text-gray-400">No hay prioridades configuradas.</p>
             ) : (
               items.map(item => (
-                <div key={item.id} className="border border-gray-700 rounded-lg p-3 space-y-2">
-                  <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+                <div key={item.id} className="border border-gray-700 rounded-lg p-4 space-y-3 bg-gray-800/30">
+                  <div className="flex items-center gap-3">
                     <input
                       type="text"
                       value={item.name}
                       onChange={(e) => handleFieldChange(item.id, 'name', e.target.value)}
-                      className="w-full px-3 py-1.5 border border-gray-600 rounded-lg text-white bg-transparent focus:ring-2 focus:ring-blue-500"
+                      placeholder="Nombre de la prioridad"
+                      className="flex-1 px-4 py-2.5 border border-gray-600 rounded-lg text-white bg-gray-800 focus:ring-2 focus:ring-blue-500 text-base"
                     />
                     <input
                       type="color"
                       value={item.color_hex || '#3B82F6'}
                       onChange={(e) => handleFieldChange(item.id, 'color_hex', e.target.value)}
-                      className="w-full h-8 border border-gray-600 rounded-lg bg-transparent"
+                      className="w-12 h-10 border border-gray-600 rounded-lg bg-gray-800 cursor-pointer"
                     />
-                    <input
-                      type="number"
-                      value={item.order_index ?? 0}
-                      onChange={(e) => handleFieldChange(item.id, 'order_index', Number(e.target.value))}
-                      className="w-full px-3 py-1.5 border border-gray-600 rounded-lg text-white bg-transparent focus:ring-2 focus:ring-blue-500"
-                    />
+                  </div>
+                  <div className="flex items-center gap-3 justify-between">
                     <label className="flex items-center gap-2 text-sm text-gray-300">
                       <input
                         type="checkbox"
@@ -1128,18 +1191,18 @@ function PriorityManagerModal({ priorities, onClose, onSaved }: PriorityManagerM
                       />
                       Activa
                     </label>
-                    <div className="flex items-center gap-2 justify-end">
+                    <div className="flex items-center gap-2">
                       <button
                         onClick={() => handleUpdate(item)}
                         disabled={loadingId === item.id}
-                        className="px-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-900 disabled:text-blue-200 text-white rounded-lg text-sm"
+                        className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-900 disabled:text-blue-200 text-white rounded-lg text-sm font-medium"
                       >
                         {loadingId === item.id ? 'Guardando...' : 'Guardar'}
                       </button>
                       <button
                         onClick={() => handleDelete(item.id)}
                         disabled={loadingId === item.id}
-                        className="px-3 py-2 bg-red-600 hover:bg-red-700 disabled:bg-red-900 disabled:text-red-200 text-white rounded-lg text-sm flex items-center gap-1"
+                        className="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:bg-red-900 disabled:text-red-200 text-white rounded-lg text-sm flex items-center gap-1 font-medium"
                       >
                         <Trash2 className="w-4 h-4" /> Eliminar
                       </button>
@@ -1296,34 +1359,20 @@ function StepManagerModal({ steps, onClose, onSaved }: StepManagerModalProps) {
         )}
 
         <div className="p-6 space-y-6">
-          <div className="border border-gray-700 rounded-lg p-3">
-            <h3 className="text-sm font-semibold text-white mb-3">Nuevo paso</h3>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+          <div className="border border-gray-700 rounded-lg p-4 bg-gray-800/50">
+            <h3 className="text-sm font-semibold text-white mb-4">Nuevo paso</h3>
+            <div className="flex gap-3">
               <input
                 type="text"
                 value={newItem.name}
                 onChange={(e) => setNewItem(prev => ({ ...prev, name: e.target.value }))}
-                placeholder="Nombre"
-                className="w-full px-3 py-1.5 border border-gray-600 rounded-lg text-white bg-transparent focus:ring-2 focus:ring-blue-500"
-              />
-              <input
-                type="text"
-                value={newItem.description}
-                onChange={(e) => setNewItem(prev => ({ ...prev, description: e.target.value }))}
-                placeholder="Descripción"
-                className="w-full px-3 py-1.5 border border-gray-600 rounded-lg text-white bg-transparent focus:ring-2 focus:ring-blue-500"
-              />
-              <input
-                type="number"
-                value={newItem.order_index}
-                onChange={(e) => setNewItem(prev => ({ ...prev, order_index: Number(e.target.value) }))}
-                className="w-full px-3 py-1.5 border border-gray-600 rounded-lg text-white bg-transparent focus:ring-2 focus:ring-blue-500"
-                placeholder="Orden"
+                placeholder="Nombre del paso"
+                className="flex-1 px-4 py-3 border border-gray-600 rounded-lg text-white text-base bg-gray-800 focus:ring-2 focus:ring-blue-500"
               />
               <button
                 onClick={handleCreate}
                 disabled={loadingId === 'new'}
-                className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-900 disabled:text-blue-200 text-white px-3 py-2 rounded-lg transition-colors"
+                className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-900 disabled:text-blue-200 text-white px-6 py-3 rounded-lg transition-colors font-medium"
               >
                 {loadingId === 'new' ? 'Guardando...' : 'Crear Paso'}
               </button>
@@ -1335,51 +1384,29 @@ function StepManagerModal({ steps, onClose, onSaved }: StepManagerModalProps) {
               <p className="text-sm text-gray-400">No hay pasos configurados.</p>
             ) : (
               items.map(item => (
-                <div key={item.id} className="border border-gray-700 rounded-lg p-3 space-y-2">
-                  <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+                <div key={item.id} className="border border-gray-700 rounded-lg p-4 bg-gray-800/30">
+                  <div className="flex items-center gap-3">
                     <input
                       type="text"
                       value={item.name}
                       onChange={(e) => handleFieldChange(item.id, 'name', e.target.value)}
-                      className="w-full px-3 py-1.5 border border-gray-600 rounded-lg text-white bg-transparent focus:ring-2 focus:ring-blue-500"
+                      placeholder="Nombre del paso"
+                      className="flex-1 px-4 py-2.5 border border-gray-600 rounded-lg text-white bg-gray-800 focus:ring-2 focus:ring-blue-500 text-base"
                     />
-                    <input
-                      type="text"
-                      value={item.description || ''}
-                      onChange={(e) => handleFieldChange(item.id, 'description', e.target.value)}
-                      className="w-full px-3 py-1.5 border border-gray-600 rounded-lg text-white bg-transparent focus:ring-2 focus:ring-blue-500"
-                    />
-                    <input
-                      type="number"
-                      value={item.order_index ?? 0}
-                      onChange={(e) => handleFieldChange(item.id, 'order_index', Number(e.target.value))}
-                      className="w-full px-3 py-1.5 border border-gray-600 rounded-lg text-white bg-transparent focus:ring-2 focus:ring-blue-500"
-                    />
-                    <label className="flex items-center gap-2 text-sm text-gray-300">
-                      <input
-                        type="checkbox"
-                        checked={Boolean((item as any).is_active ?? true)}
-                        onChange={(e) => setItems(prev => prev.map(p => p.id === item.id ? { ...p, is_active: e.target.checked } : p))}
-                        className="w-4 h-4 text-blue-600 border-gray-700 rounded"
-                      />
-                      Activo
-                    </label>
-                    <div className="flex items-center gap-2 justify-end">
-                      <button
-                        onClick={() => handleUpdate(item)}
-                        disabled={loadingId === item.id}
-                        className="px-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-900 disabled:text-blue-200 text-white rounded-lg text-sm"
-                      >
-                        {loadingId === item.id ? 'Guardando...' : 'Guardar'}
-                      </button>
-                      <button
-                        onClick={() => handleDelete(item.id)}
-                        disabled={loadingId === item.id}
-                        className="px-3 py-2 bg-red-600 hover:bg-red-700 disabled:bg-red-900 disabled:text-red-200 text-white rounded-lg text-sm flex items-center gap-1"
-                      >
-                        <Trash2 className="w-4 h-4" /> Eliminar
-                      </button>
-                    </div>
+                    <button
+                      onClick={() => handleUpdate(item)}
+                      disabled={loadingId === item.id}
+                      className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-900 disabled:text-blue-200 text-white rounded-lg text-sm font-medium"
+                    >
+                      {loadingId === item.id ? 'Guardando...' : 'Guardar'}
+                    </button>
+                    <button
+                      onClick={() => handleDelete(item.id)}
+                      disabled={loadingId === item.id}
+                      className="px-6 py-2.5 bg-red-600 hover:bg-red-700 disabled:bg-red-900 disabled:text-red-200 text-white rounded-lg text-sm flex items-center gap-2 font-medium"
+                    >
+                      <Trash2 className="w-4 h-4" /> Eliminar
+                    </button>
                   </div>
                 </div>
               ))
