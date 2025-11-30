@@ -1856,9 +1856,10 @@ app.get('/api/bans', async (req, res) => {
 
   try {
     const rows = await query(
-      `SELECT b.*, c.name AS client_name, c.vendor_id
+      `SELECT b.*, c.name AS client_name, c.vendor_id, bcr.reason as cancel_reason
          FROM bans b
          LEFT JOIN clients c ON b.client_id = c.id
+         LEFT JOIN ban_cancel_reason bcr ON b.id = bcr.ban_id
          ${filter}
          ORDER BY b.created_at DESC`,
       params
@@ -2636,10 +2637,11 @@ app.get('/api/subscribers', async (req, res) => {
 
   try {
     const rows = await query(
-      `SELECT s.*, b.ban_number, b.client_id, c.vendor_id
+      `SELECT s.*, b.ban_number, b.client_id, c.vendor_id, scr.reason as cancel_reason
          FROM subscribers s
          LEFT JOIN bans b ON s.ban_id = b.id
          LEFT JOIN clients c ON b.client_id = c.id
+         LEFT JOIN subscriber_cancel_reason scr ON s.id = scr.subscriber_id
          ${filter}
          ORDER BY s.created_at DESC`,
       params

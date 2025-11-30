@@ -55,6 +55,7 @@ interface BAN {
   client_id: number;
   description: string | null;
   status?: string;
+  cancel_reason?: string | null;
   is_active: number;
   created_at: string;
   updated_at: string;
@@ -71,6 +72,8 @@ interface Subscriber {
   monthly_value: number | null;
   months: number | null;
   remaining_payments: number | null;
+  status?: string;
+  cancel_reason?: string | null;
   is_active: number;
   created_at: string;
   updated_at: string;
@@ -2835,6 +2838,11 @@ function ClientManagementModal({
                             <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${(ban.status === "cancelled" || ban.status === "cancelado") ? "bg-red-900/40 text-red-100 border border-red-500/30" : "bg-emerald-900/40 text-emerald-100 border border-emerald-500/30"}`}>
                               {(ban.status === "cancelled" || ban.status === "cancelado") ? "Cancelado" : "Activo"}
                             </span>
+                            {(ban.status === "cancelled" || ban.status === "cancelado") && ban.cancel_reason && (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-orange-900/40 text-orange-100 border border-orange-500/30">
+                                {ban.cancel_reason}
+                              </span>
+                            )}
                             {ban.description && (
                               <p className="text-xs text-gray-400">{ban.description}</p>
                             )}
@@ -2887,6 +2895,18 @@ function ClientManagementModal({
                                     {subscriber.monthly_value && (
                                       <div className="text-green-400 font-semibold">${subscriber.monthly_value}/mes</div>
                                     )}
+
+                                    {/* Estado del Suscriptor */}
+                                    <div className="flex items-center gap-2">
+                                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${(subscriber.status === "cancelado" || subscriber.status === "cancelled") ? "bg-red-900/40 text-red-100 border border-red-500/30" : (subscriber.status === "suspendido" ? "bg-yellow-900/40 text-yellow-100 border border-yellow-500/30" : "bg-emerald-900/40 text-emerald-100 border border-emerald-500/30")}`}>
+                                        {(subscriber.status === "cancelado" || subscriber.status === "cancelled") ? "Cancelado" : (subscriber.status === "suspendido" ? "Suspendido" : "Activo")}
+                                      </span>
+                                      {(subscriber.status === "cancelado" || subscriber.status === "cancelled") && subscriber.cancel_reason && (
+                                        <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-orange-900/40 text-orange-100 border border-orange-500/30">
+                                          {subscriber.cancel_reason}
+                                        </span>
+                                      )}
+                                    </div>
                                     
                                     {(() => {
                                       const { status, days } = computeSubscriberTiming(subscriber.contract_end_date);
