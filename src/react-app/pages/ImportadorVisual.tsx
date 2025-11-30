@@ -58,6 +58,10 @@ export default function ImportadorVisual() {
         "remaining_payments": "Plazos Faltantes",
         "contract_start_date": "Fecha Inicio Contrato",
         "contract_end_date": "Fecha Fin Contrato",
+        "status": "Estado (activo/cancelado)",
+        "equipment": "Equipo",
+        "city": "Ciudad",
+        "notes": "Notas",
       },
     };
     return labels[table]?.[col] || col;
@@ -97,7 +101,11 @@ export default function ImportadorVisual() {
         "months",
         "remaining_payments",
         "contract_start_date",
-        "contract_end_date"
+        "contract_end_date",
+        "status",
+        "equipment",
+        "city",
+        "notes"
       ]
     },
   ]);

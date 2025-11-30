@@ -2532,8 +2532,12 @@ app.post('/api/importador/save', async (req, res) => {
                  remaining_payments = COALESCE($5, remaining_payments),
                  contract_start_date = COALESCE($6, contract_start_date),
                  contract_end_date = COALESCE($7, contract_end_date),
+                 status = COALESCE($8, status),
+                 equipment = COALESCE($9, equipment),
+                 city = COALESCE($10, city),
+                 notes = COALESCE($11, notes),
                  updated_at = NOW()
-             WHERE id = $8`,
+             WHERE id = $12`,
               [
                 banId, // Asegurar que esté en el BAN correcto
                 subscriberData.service_type || null,
@@ -2542,14 +2546,18 @@ app.post('/api/importador/save', async (req, res) => {
                 subscriberData.remaining_payments ? (isNaN(Number(subscriberData.remaining_payments)) ? null : Number(subscriberData.remaining_payments)) : null,
                 subscriberData.contract_start_date || null,
                 subscriberData.contract_end_date || calculatedEndDate || null,
+                subscriberData.status || null,
+                subscriberData.equipment || null,
+                subscriberData.city || null,
+                subscriberData.notes || null,
                 existingSub.id,
               ]
             );
           } else if (banId && subscriberPhone) {
             // Crear nuevo suscriptor (solo si hay BAN y teléfono)
             await client.query(
-              `INSERT INTO subscribers (phone, ban_id, service_type, monthly_value, months, remaining_payments, contract_start_date, contract_end_date, is_active, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 1, NOW(), NOW())`,
+              `INSERT INTO subscribers (phone, ban_id, service_type, monthly_value, months, remaining_payments, contract_start_date, contract_end_date, status, equipment, city, notes, is_active, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 1, NOW(), NOW())`,
               [
                 subscriberPhone,
                 banId,
@@ -2559,6 +2567,10 @@ app.post('/api/importador/save', async (req, res) => {
                 subscriberData.remaining_payments ? (isNaN(Number(subscriberData.remaining_payments)) ? null : Number(subscriberData.remaining_payments)) : null,
                 subscriberData.contract_start_date || null,
                 subscriberData.contract_end_date || calculatedEndDate || null,
+                subscriberData.status || 'active',
+                subscriberData.equipment || null,
+                subscriberData.city || null,
+                subscriberData.notes || null,
               ]
             );
           }
