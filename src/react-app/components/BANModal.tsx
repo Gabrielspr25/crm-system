@@ -202,6 +202,7 @@ export default function BANModal({ onSave, onClose, ban }: BANModalProps) {
               >
                 <option value="">Seleccionar razón...</option>
                 <option value="Deuda">Deuda</option>
+                <option value="Sin Deuda">Sin Deuda</option>
                 <option value="Portout">Portout</option>
               </select>
               <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">

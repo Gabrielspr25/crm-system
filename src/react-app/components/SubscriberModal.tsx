@@ -354,6 +354,7 @@ export default function SubscriberModal({ banId, subscriber, onSave, onClose }: 
               >
                 <option value="">Seleccionar razón...</option>
                 <option value="Deuda">Deuda</option>
+                <option value="Sin Deuda">Sin Deuda</option>
                 <option value="Portout">Portout</option>
               </select>
               {errors.cancel_reason && (
