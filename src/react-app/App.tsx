@@ -11,6 +11,8 @@ import ProfilePage from "@/react-app/pages/Profile";
 import LoginPage from "@/react-app/pages/Login";
 import ImportadorVisual from "@/react-app/pages/ImportadorVisual";
 import GoalsPage from "@/react-app/pages/Goals";
+import AuditLogPage from "@/react-app/pages/AuditLog";
+
 function ProtectedRoutes() {
   return (
     <ProtectedLayout>
@@ -24,6 +26,7 @@ function ProtectedRoutes() {
         <Route path="/metas" element={<GoalsPage />} />
         <Route path="/perfil" element={<ProfilePage />} />
         <Route path="/importador" element={<ImportadorVisual />} />
+        <Route path="/historial" element={<AuditLogPage />} />
       </Routes>
     </ProtectedLayout>
   );

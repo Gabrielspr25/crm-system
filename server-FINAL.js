@@ -2943,10 +2943,8 @@ app.get('/api/follow-up-prospects', async (req, res) => {
          WHERE ${whereConditions}
          ORDER BY fp.created_at DESC`
     );
-    const authorizedRows = req.user?.role === 'vendedor'
-      ? rows.filter((row) => sameId(row.vendor_id, req.user.salespersonId))
-      : rows;
-    res.json(authorizedRows.map(mapProspectRow));
+    // TODOS VEN TODO - Sin filtro por vendedor
+    res.json(rows.map(mapProspectRow));
   } catch (error) {
     serverError(res, error, 'Error obteniendo prospectos');
   }
@@ -2964,10 +2962,8 @@ app.get('/api/completed-prospects', async (req, res) => {
            AND fp.is_completed = true
          ORDER BY fp.completed_date DESC`
     );
-    const authorizedRows = req.user?.role === 'vendedor'
-      ? rows.filter((row) => sameId(row.vendor_id, req.user.salespersonId))
-      : rows;
-    res.json(authorizedRows.map(mapProspectRow));
+    // TODOS VEN TODO - Sin filtro por vendedor
+    res.json(rows.map(mapProspectRow));
   } catch (error) {
     serverError(res, error, 'Error obteniendo prospectos completados');
   }
@@ -3137,7 +3133,21 @@ app.post('/api/follow-up-prospects', async (req, res) => {
       ]
     );
 
-    res.status(201).json(mapProspectRow(rows[0]));
+    const prospect = mapProspectRow(rows[0]);
+    
+    // AUDIT LOG - Registrar creación de prospecto
+    await logAudit(
+      req.user?.id,
+      req.user?.username,
+      'MOVER_A_SEGUIMIENTO',
+      'prospecto',
+      prospect.id,
+      company_name,
+      `Cliente movido a seguimiento. Vendor: ${finalVendorId}`,
+      req.ip
+    );
+
+    res.status(201).json(prospect);
   } catch (error) {
     serverError(res, error, 'Error creando prospecto');
   }
@@ -3423,6 +3433,18 @@ app.put('/api/follow-up-prospects/:id', async (req, res) => {
       }
 
       console.log('✅ Reporte creado y metas actualizadas exitosamente');
+      
+      // AUDIT LOG - Registrar venta completada
+      await logAudit(
+        req.user?.id,
+        req.user?.username,
+        'COMPLETAR_VENTA',
+        'prospecto',
+        prospectId,
+        company_name,
+        `Venta completada. Total: $${calculatedTotal}`,
+        req.ip
+      );
     }
 
     res.json(mapProspectRow(prospect));
@@ -3438,22 +3460,32 @@ app.delete('/api/follow-up-prospects/:id', async (req, res) => {
   }
 
   try {
-    const existing = await query(`SELECT vendor_id FROM follow_up_prospects WHERE id = $1`, [prospectId]);
+    const existing = await query(`SELECT company_name FROM follow_up_prospects WHERE id = $1`, [prospectId]);
     if (existing.length === 0) {
       return notFound(res, 'Prospecto');
     }
 
-    if (req.user?.role === 'vendedor') {
-      const currentVendorId = existing[0].vendor_id;
-      if (currentVendorId && !sameId(currentVendorId, req.user.salespersonId)) {
-        return res.status(403).json({ error: 'No autorizado para eliminar este prospecto' });
-      }
-    }
+    const companyName = existing[0].company_name;
+
+    // TODOS PUEDEN ELIMINAR - Sin restricción por vendedor
 
     const rows = await query(`DELETE FROM follow_up_prospects WHERE id = $1 RETURNING *`, [prospectId]);
     if (rows.length === 0) {
       return notFound(res, 'Prospecto');
     }
+    
+    // AUDIT LOG - Registrar devolución
+    await logAudit(
+      req.user?.id,
+      req.user?.username,
+      'DEVOLVER',
+      'prospecto',
+      prospectId,
+      companyName,
+      `Cliente devuelto al pool desde seguimiento`,
+      req.ip
+    );
+
     res.json({ success: true });
   } catch (error) {
     serverError(res, error, 'Error eliminando prospecto');
@@ -3784,6 +3816,76 @@ app.use((req, res) => {
 // ======================================================
 const server = app.listen(PORT, () => {
   console.log(`✅ CRM Pro API escuchando en el puerto ${PORT}`);
+});
+
+// ============================================================
+// AUDIT LOG - Sistema de auditoría
+// ============================================================
+
+// Función helper para registrar eventos
+async function logAudit(userId, username, action, entityType, entityId, entityName, details, ipAddress = null) {
+  try {
+    await query(
+      `INSERT INTO audit_log (user_id, username, action, entity_type, entity_id, entity_name, details, ip_address)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [userId, username, action, entityType, entityId, entityName, details, ipAddress]
+    );
+  } catch (error) {
+    console.error('❌ Error registrando auditoría:', error);
+  }
+}
+
+// GET /api/audit-log - Obtener historial de auditoría (SOLO ADMIN)
+app.get('/api/audit-log', async (req, res) => {
+  try {
+    // SOLO ADMIN puede ver el historial
+    if (req.user?.role !== 'admin') {
+      return res.status(403).json({ error: 'Acceso denegado. Solo administradores.' });
+    }
+
+    const limit = parseInt(req.query.limit) || 100;
+    const offset = parseInt(req.query.offset) || 0;
+    const action = req.query.action;
+    const entityType = req.query.entity_type;
+    const userId = req.query.user_id;
+
+    let whereConditions = [];
+    let params = [];
+    let paramCount = 1;
+
+    if (action) {
+      whereConditions.push(`action = $${paramCount++}`);
+      params.push(action);
+    }
+    if (entityType) {
+      whereConditions.push(`entity_type = $${paramCount++}`);
+      params.push(entityType);
+    }
+    if (userId) {
+      whereConditions.push(`user_id = $${paramCount++}`);
+      params.push(parseInt(userId));
+    }
+
+    const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
+
+    params.push(limit, offset);
+    const rows = await query(
+      `SELECT * FROM audit_log ${whereClause} ORDER BY created_at DESC LIMIT $${paramCount++} OFFSET $${paramCount++}`,
+      params
+    );
+
+    const countResult = await query(`SELECT COUNT(*) as total FROM audit_log ${whereClause}`, params.slice(0, -2));
+    const total = parseInt(countResult[0].total);
+
+    res.json({
+      logs: rows,
+      total,
+      limit,
+      offset
+    });
+  } catch (error) {
+    serverError(res, error, 'Error obteniendo historial de auditoría');
+  }
 });
 
 // Configurar timeouts del servidor para importaciones grandes (1 hora)

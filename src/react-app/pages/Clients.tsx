@@ -1,7 +1,7 @@
 ﻿// VERSION: 2025-01-15-T7-FINAL-FIX (statusPriority indentado - Error #300 RESUELTO DEFINITIVAMENTE)
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router";
-import { Plus, Search, Edit, Users, Building, Phone, Mail, MapPin, Hash, Calendar, Trash2, UserPlus, Download, FileSpreadsheet, FileText, Check, X, Package } from "lucide-react";
+import { Plus, Search, Edit, Users, Building, Phone, Mail, MapPin, Hash, Calendar, Trash2, UserPlus, Download, FileSpreadsheet, FileText, Check, X, Package, BarChart3 } from "lucide-react";
 import { useApi } from "../hooks/useApi";
 import { authFetch } from "@/react-app/utils/auth";
 import ClientModal from "../components/ClientModal";
@@ -211,6 +211,7 @@ export default function Clients() {
   console.log("✅✅✅ Clients V3.4 FINAL - statusPriority FIXED - Error #300 RESUELTO ✅✅✅");
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState("");
+  const [selectedMonth, setSelectedMonth] = useState<string>(""); // Nuevo: filtro de mes
   const [showClientModal, setShowClientModal] = useState(false);
   const [showBANModal, setShowBANModal] = useState(false);
   const [showSubscriberModal, setShowSubscriberModal] = useState(false);
@@ -680,6 +681,14 @@ export default function Clients() {
       if (!matchesSearch) return false;
     }
     
+    // Filtrar por mes
+    if (selectedMonth) {
+      const dateToCheck = item.primaryContractEndDate || item.primarySubscriberCreatedAt || item.lastActivity;
+      if (!dateToCheck) return false;
+      const itemMonth = new Date(dateToCheck).toISOString().slice(0, 7); // YYYY-MM
+      if (itemMonth !== selectedMonth) return false;
+    }
+    
     return true;
   });
 
@@ -721,9 +730,10 @@ export default function Clients() {
   // Reset página cuando cambien filtros o pestañas
   useEffect(() => {
     setCurrentPage(1);
-  }, [activeTab, searchTerm]);
+  }, [activeTab, searchTerm, selectedMonth]);
 
   const handleSendToFollowUp = async (clientId: number) => {
+    console.log('🔵 handleSendToFollowUp EJECUTADO - clientId:', clientId);
     try {
       const clientResponse = await authFetch(`/api/clients/${clientId}`);
       if (!clientResponse.ok) {
@@ -731,6 +741,7 @@ export default function Clients() {
       }
 
       const client = await clientResponse.json();
+      console.log('🔵 Cliente cargado:', client.name);
 
       // Verificar si tiene seguimiento activo (no completado)
       if (clientHasActiveFollowUp(clientId)) {
@@ -738,27 +749,14 @@ export default function Clients() {
         return;
       }
 
-      // Verificar si tiene prospecto completado
-      const completedProspect = (prospects || []).find(
-        (p) => p.client_id === clientId && Boolean(p.is_completed)
-      );
-
-      if (completedProspect) {
-        // Si existe un prospecto completado, navegar a FollowUp para editarlo automáticamente
-        notify('info', 'Este cliente fue completado. Abriendo en seguimiento...');
-        navigate(`/follow-up?edit=${completedProspect.id}&completed=true`);
-        return;
-      }
-
-      // Los vendedores pueden enviar clientes a seguimiento incluso sin vendor_id
-      // El backend asignará automáticamente el vendor_id del vendedor
+      // SIMPLIFICADO: Crear prospect directamente sin complicaciones
       const prospectData = {
         company_name: client.business_name || client.name,
         client_id: clientId,
-        vendor_id: client.vendor_id || null, // Permitir null, el backend lo asignará si es vendedor
+        vendor_id: client.vendor_id || null,
         contact_phone: client.phone || '',
         contact_email: client.email || '',
-        notes: 'Cliente enviado automáticamente desde gestión de clientes',
+        notes: 'Cliente enviado desde gestión de clientes',
         fijo_ren: 0,
         fijo_new: 0,
         movil_nueva: 0,
@@ -768,6 +766,7 @@ export default function Clients() {
         mpls: 0
       };
 
+      console.log('📤 Enviando prospecto:', prospectData);
       const response = await authFetch('/api/follow-up-prospects', {
         method: 'POST',
         json: prospectData
@@ -775,13 +774,18 @@ export default function Clients() {
 
       if (!response.ok) {
         const errorPayload = await response.json().catch(() => null);
+        console.error('❌ Error del servidor:', errorPayload);
         throw new Error(errorPayload?.error || 'No fue posible enviar al seguimiento.');
       }
 
-      notify('success', `Cliente ${client.business_name || client.name} enviado a seguimiento.`);
+      const clientName = client.business_name || client.name;
+      console.log('✅ Cliente enviado a seguimiento exitosamente:', clientName);
+      notify('success', `✅ Cliente "${clientName}" enviado a seguimiento exitosamente.`);
+      
       await Promise.all([refetchProspects(), refetchClients()]);
       
       // Cambiar a la pestaña de "Seguimiento" automáticamente
+      console.log('🔄 Cambiando a pestaña "Siguiendo"');
       setActiveTab('following');
     } catch (error) {
       console.error('Error sending client to follow-up:', error);
@@ -1378,6 +1382,40 @@ export default function Clients() {
             className="w-full pl-10 pr-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-white placeholder-gray-500"
           />
         </div>
+        
+        <div className="w-full sm:w-auto min-w-[180px]">
+          <select
+            value={selectedMonth}
+            onChange={(e) => setSelectedMonth(e.target.value)}
+            className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-white"
+          >
+            <option value="">Todos los meses</option>
+            <option value="2025-01">Enero 2025</option>
+            <option value="2025-02">Febrero 2025</option>
+            <option value="2025-03">Marzo 2025</option>
+            <option value="2025-04">Abril 2025</option>
+            <option value="2025-05">Mayo 2025</option>
+            <option value="2025-06">Junio 2025</option>
+            <option value="2025-07">Julio 2025</option>
+            <option value="2025-08">Agosto 2025</option>
+            <option value="2025-09">Septiembre 2025</option>
+            <option value="2025-10">Octubre 2025</option>
+            <option value="2025-11">Noviembre 2025</option>
+            <option value="2025-12">Diciembre 2025</option>
+            <option value="2024-01">Enero 2024</option>
+            <option value="2024-02">Febrero 2024</option>
+            <option value="2024-03">Marzo 2024</option>
+            <option value="2024-04">Abril 2024</option>
+            <option value="2024-05">Mayo 2024</option>
+            <option value="2024-06">Junio 2024</option>
+            <option value="2024-07">Julio 2024</option>
+            <option value="2024-08">Agosto 2024</option>
+            <option value="2024-09">Septiembre 2024</option>
+            <option value="2024-10">Octubre 2024</option>
+            <option value="2024-11">Noviembre 2024</option>
+            <option value="2024-12">Diciembre 2024</option>
+          </select>
+        </div>
       </div>
 
       {/* Statistics - V2.0 */}
@@ -1669,9 +1707,14 @@ export default function Clients() {
                           Completar
                         </button>
                       ) : item.wasCompleted ? (
-                        <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-purple-900/60 text-purple-200 text-xs font-medium">
-                          âœ" Completado
-                        </span>
+                        <button
+                          onClick={() => navigate('/reportes')}
+                          className="px-3 py-1 rounded text-xs transition-colors flex items-center gap-1 mx-auto bg-purple-600 hover:bg-purple-700 text-white"
+                          title="Ver en reportes"
+                        >
+                          <BarChart3 className="w-3 h-3" />
+                          Ver Reporte
+                        </button>
                       ) : item.isBeingFollowed ? (
                         <div className="flex flex-col items-center gap-2">
                           <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-green-900/60 text-green-200 text-xs font-medium">
@@ -1704,25 +1747,19 @@ export default function Clients() {
                           </div>
                         </div>
                       ) : (
-                        (() => {
-                          const currentUser = JSON.parse(localStorage.getItem('crm_user') || '{}');
-                          const isVendor = currentUser?.role?.toLowerCase() === 'vendedor';
-                          if (isVendor) {
-                            return (
-                              <span className="text-xs text-gray-500">No disponible</span>
-                            );
-                          }
-                          return (
-                            <button
-                              onClick={() => handleSendToFollowUp(item.clientId)}
-                              className="px-3 py-1 rounded text-xs transition-colors flex items-center gap-1 mx-auto bg-blue-600 hover:bg-blue-700 text-white"
-                              title="Enviar a seguimiento"
-                            >
-                              <UserPlus className="w-3 h-3" />
-                              A Seguimiento
-                            </button>
-                          );
-                        })()
+                        <button
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            console.log('🟡 CLICK DETECTADO en botón A Seguimiento - clientId:', item.clientId);
+                            handleSendToFollowUp(item.clientId);
+                          }}
+                          className="px-3 py-1 rounded text-xs transition-colors flex items-center gap-1 mx-auto bg-blue-600 hover:bg-blue-700 text-white"
+                          title="Enviar a seguimiento"
+                        >
+                          <UserPlus className="w-3 h-3" />
+                          A Seguimiento
+                        </button>
                       )}
                     </td>
                   </tr>
@@ -1970,23 +2007,24 @@ function ClientManagementModal({
   };
 
   const handleSendToFollowUpFromDetail = async () => {
+    console.log('🟢 handleSendToFollowUpFromDetail EJECUTADO - client:', client?.name);
     try {
       if (clientHasActiveFollowUp(client.id)) {
         setFormMessage({ type: 'info', text: 'Este cliente ya está en seguimiento activo.' });
         return;
       }
 
+      console.log('🟢 Enviando a seguimiento...');
       setIsSendingToFollowUp(true);
 
-      // Los vendedores pueden enviar clientes a seguimiento incluso sin vendor_id
-      // El backend asignará automáticamente el vendor_id del vendedor
+      // SIMPLIFICADO: Igual para todos
       const prospectData = {
         company_name: client.business_name || client.name,
         client_id: client.id,
-        vendor_id: client.vendor_id || null, // Permitir null, el backend lo asignará si es vendedor
+        vendor_id: client.vendor_id || null,
         contact_phone: client.phone || '',
         contact_email: client.email || '',
-        notes: `Cliente enviado automáticamente desde gestión de clientes`,
+        notes: 'Cliente enviado desde gestión de clientes',
         fijo_ren: 0,
         fijo_new: 0,
         movil_nueva: 0,
@@ -1996,6 +2034,7 @@ function ClientManagementModal({
         mpls: 0
       };
 
+      console.log('📤 [MODAL] Enviando prospecto:', prospectData);
       const response = await authFetch('/api/follow-up-prospects', {
         method: 'POST',
         json: prospectData
@@ -2003,10 +2042,14 @@ function ClientManagementModal({
 
       if (!response.ok) {
         const error = await response.json().catch(() => null);
+        console.error('❌ [MODAL] Error del servidor:', error);
         throw new Error(error?.error || 'No fue posible enviar a seguimiento.');
       }
 
-      setFormMessage({ type: 'success', text: 'Cliente enviado a seguimiento.' });
+      const clientName = client.business_name || client.name;
+      console.log('✅ [MODAL] Cliente enviado a seguimiento exitosamente:', clientName);
+      setFormMessage({ type: 'success', text: `✅ Cliente "${clientName}" enviado a seguimiento.` });
+      
       if (onFollowUpUpdated) {
         await onFollowUpUpdated();
       }
@@ -2297,12 +2340,10 @@ function ClientManagementModal({
           </div>
           <div className="flex items-center space-x-3">
             {(() => {
-              const currentUser = JSON.parse(localStorage.getItem('crm_user') || '{}');
-              const isVendor = currentUser?.role?.toLowerCase() === 'vendedor';
               const hasActiveFollowUp = clientHasActiveFollowUp(client.id);
               
-              // No mostrar el botón si es vendedor o si el cliente ya está en seguimiento
-              if (isVendor || hasActiveFollowUp) {
+              // No mostrar el botón si el cliente ya está en seguimiento
+              if (hasActiveFollowUp) {
                 return null;
               }
               

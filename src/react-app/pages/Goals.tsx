@@ -527,8 +527,11 @@ export default function Goals() {
       {/* Header */}
       <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between space-y-4 lg:space-y-0">
         <div>
-          <h1 className="text-3xl font-bold text-white">⚙️ Configuración de Metas ⚙️</h1>
-          <p className="text-slate-300 mt-1">
+          <h1 className="text-3xl font-bold text-white flex items-center gap-3">
+            <Target className="w-8 h-8 text-purple-400" />
+            Configuración de Metas
+          </h1>
+          <p className="text-slate-400 mt-2">
             {isVendorUser
               ? "Visualiza y gestiona tus metas asignadas por producto y período."
               : "Configura las metas del negocio y asigna metas individuales a los vendedores por producto y período."}
@@ -537,9 +540,10 @@ export default function Goals() {
         {!isVendorUser && (
             <button
               onClick={openBulkModal}
-            className="inline-flex items-center px-6 py-3 bg-gradient-to-r from-blue-500 via-purple-600 to-indigo-600 text-white font-semibold rounded-lg shadow-xl hover:shadow-2xl transition-all duration-200 border-2 border-blue-400/50 hover:scale-105 text-lg"
+            className="inline-flex items-center px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl transition-all duration-200 hover:scale-105"
             >
-            <Package className="w-6 h-6 mr-2" /> 🎯 CONFIGURAR METAS 🎯
+            <Package className="w-5 h-5 mr-2" />
+            Configurar Metas
             </button>
         )}
       </div>
@@ -548,168 +552,163 @@ export default function Goals() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {/* Meta de Negocio */}
         {!isVendorUser && (
-          <div className="bg-gradient-to-br from-slate-800 to-slate-900 border border-slate-700 rounded-2xl p-6 shadow-xl">
-            <div className="flex items-start justify-between mb-4">
+          <div className="bg-gradient-to-br from-purple-600 to-purple-700 rounded-xl p-6 shadow-lg">
+            <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-3">
-                <div className="p-3 bg-gradient-to-br from-purple-500/20 to-blue-500/20 rounded-xl">
-                  <Building className="w-6 h-6 text-purple-400" />
-                </div>
+                <Building className="w-10 h-10 text-purple-100 opacity-80" />
                 <div>
-                  <p className="text-xs uppercase tracking-wider text-slate-400 font-semibold">Meta Negocio</p>
-                  <h3 className="text-3xl font-bold text-white mt-1">${(totals.businessTarget / 1000).toFixed(1)}K</h3>
+                  <p className="text-sm text-purple-100 font-medium">Meta Negocio</p>
+                  <h3 className="text-3xl font-bold text-white">${(totals.businessTarget / 1000).toFixed(1)}K</h3>
                 </div>
-              </div>
-              <div className="text-right">
-                <span className="inline-block px-3 py-1 bg-purple-500/20 rounded-full text-purple-300 text-sm font-bold">
-                  {totals.businessProgress.toFixed(1)}%
-                </span>
               </div>
             </div>
             <div className="space-y-2">
               <div className="flex justify-between text-sm">
-                <span className="text-slate-400">Ventas actuales</span>
-                <span className="text-emerald-400 font-semibold">${(totals.businessCurrent / 1000).toFixed(1)}K</span>
+                <span className="text-purple-100">Ventas actuales</span>
+                <span className="text-white font-semibold">${(totals.businessCurrent / 1000).toFixed(1)}K</span>
               </div>
-              <div className="w-full bg-slate-700/50 rounded-full h-3 overflow-hidden">
+              <div className="w-full bg-purple-800/40 rounded-full h-2.5 overflow-hidden">
                 <div
-                  className="bg-gradient-to-r from-purple-500 via-blue-500 to-cyan-500 h-3 rounded-full transition-all duration-500"
+                  className="bg-white h-2.5 rounded-full transition-all duration-500"
                   style={{ width: `${Math.min(totals.businessProgress, 100)}%` }}
                 />
+              </div>
+              <div className="text-right">
+                <span className="text-xs text-purple-100 font-semibold">
+                  {totals.businessProgress.toFixed(1)}% completado
+                </span>
               </div>
             </div>
           </div>
         )}
 
         {/* Meta de Vendedores */}
-        <div className="bg-gradient-to-br from-slate-800 to-slate-900 border border-slate-700 rounded-2xl p-6 shadow-xl">
-          <div className="flex items-start justify-between mb-4">
+        <div className="bg-gradient-to-br from-blue-600 to-cyan-600 rounded-xl p-6 shadow-lg">
+          <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-3">
-              <div className="p-3 bg-gradient-to-br from-blue-500/20 to-teal-500/20 rounded-xl">
-                <Target className="w-6 h-6 text-blue-400" />
-              </div>
+              <Target className="w-10 h-10 text-blue-100 opacity-80" />
               <div>
-                <p className="text-xs uppercase tracking-wider text-slate-400 font-semibold">
+                <p className="text-sm text-blue-100 font-medium">
                   {isVendorUser ? "Mis Metas" : "Meta Vendedores"}
                 </p>
-                <h3 className="text-3xl font-bold text-white mt-1">${(totals.vendorTarget / 1000).toFixed(1)}K</h3>
+                <h3 className="text-3xl font-bold text-white">${(totals.vendorTarget / 1000).toFixed(1)}K</h3>
               </div>
-            </div>
-            <div className="text-right">
-              <span className="inline-block px-3 py-1 bg-blue-500/20 rounded-full text-blue-300 text-sm font-bold">
-                {isVendorUser ? totals.vendorProgress.toFixed(1) : totals.vendorCoverage.toFixed(1)}%
-              </span>
             </div>
           </div>
           <div className="space-y-2">
             <div className="flex justify-between text-sm">
-              <span className="text-slate-400">{isVendorUser ? "Progreso" : "Cobertura"}</span>
-              <span className="text-teal-400 font-semibold">${(totals.vendorCurrent / 1000).toFixed(1)}K</span>
+              <span className="text-blue-100">Ventas logradas</span>
+              <span className="text-white font-semibold">${(totals.vendorCurrent / 1000).toFixed(1)}K</span>
             </div>
-            <div className="w-full bg-slate-700/50 rounded-full h-3 overflow-hidden">
+            <div className="w-full bg-blue-800/40 rounded-full h-2.5 overflow-hidden">
               <div
-                className="bg-gradient-to-r from-blue-500 to-teal-500 h-3 rounded-full transition-all duration-500"
-                style={{ width: `${Math.min(isVendorUser ? totals.vendorProgress : totals.vendorCoverage, 100)}%` }}
+                className="bg-white h-2.5 rounded-full transition-all duration-500"
+                style={{ width: `${Math.min(totals.vendorProgress, 100)}%` }}
               />
+            </div>
+            <div className="text-right">
+              <span className="text-xs text-blue-100 font-semibold">
+                {totals.vendorProgress.toFixed(1)}% completado
+              </span>
             </div>
           </div>
         </div>
 
         {/* Ventas Actuales */}
-        <div className="bg-gradient-to-br from-slate-800 to-slate-900 border border-slate-700 rounded-2xl p-6 shadow-xl">
-          <div className="flex items-start justify-between mb-4">
+        <div className="bg-gradient-to-br from-green-600 to-emerald-600 rounded-xl p-6 shadow-lg">
+          <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-3">
-              <div className="p-3 bg-gradient-to-br from-emerald-500/20 to-green-500/20 rounded-xl">
-                <TrendingUp className="w-6 h-6 text-emerald-400" />
-              </div>
+              <TrendingUp className="w-10 h-10 text-green-100 opacity-80" />
               <div>
-                <p className="text-xs uppercase tracking-wider text-slate-400 font-semibold">
+                <p className="text-sm text-green-100 font-medium">
                   {isVendorUser ? "Mis Ventas" : "Ventas Totales"}
                 </p>
-                <h3 className="text-3xl font-bold text-white mt-1">
+                <h3 className="text-3xl font-bold text-white">
                   ${((isVendorUser ? totals.vendorCurrent : totals.businessCurrent) / 1000).toFixed(1)}K
                 </h3>
               </div>
             </div>
-            <div className="text-right">
-              <span className="inline-block px-3 py-1 bg-emerald-500/20 rounded-full text-emerald-300 text-sm font-bold">
-                {isVendorUser ? totals.vendorProgress.toFixed(1) : totals.businessProgress.toFixed(1)}%
-              </span>
-            </div>
           </div>
           <div className="space-y-2">
             <div className="flex justify-between text-sm">
-              <span className="text-slate-400">Del objetivo</span>
-              <span className="text-slate-300 font-semibold">
+              <span className="text-green-100">Del objetivo</span>
+              <span className="text-white font-semibold">
                 ${((isVendorUser ? totals.vendorTarget : totals.businessTarget) / 1000).toFixed(1)}K
               </span>
             </div>
-            <div className="w-full bg-slate-700/50 rounded-full h-3 overflow-hidden">
+            <div className="w-full bg-green-800/40 rounded-full h-2.5 overflow-hidden">
               <div
-                className="bg-gradient-to-r from-emerald-500 to-green-500 h-3 rounded-full transition-all duration-500"
+                className="bg-white h-2.5 rounded-full transition-all duration-500"
                 style={{ 
                   width: `${Math.min(
-                    isVendorUser ? totals.vendorProgress : totals.businessProgress, 
+                    isVendorUser ? totals.vendorProgress : totals.businessProgress,
                     100
-                  )}%` 
+                  )}%`
                 }}
               />
+            </div>
+            <div className="text-right">
+              <span className="text-xs text-green-100 font-semibold">
+                {isVendorUser ? totals.vendorProgress.toFixed(1) : totals.businessProgress.toFixed(1)}% completado
+              </span>
             </div>
           </div>
         </div>
       </div>
 
       {/* Search */}
-      <div className="relative max-w-md">
-        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400 w-5 h-5" />
-        <input
-          type="text"
-          placeholder="Buscar producto o vendedor..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="w-full pl-10 pr-4 py-2 bg-slate-700 border border-slate-600 text-white placeholder-slate-400 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-        />
-      </div>
-
-      {/* Table */}
+      <div className="bg-gray-800 rounded-xl p-6 border border-gray-700 shadow-lg">
+        <label className="block text-sm font-medium text-gray-300 mb-2">Buscar</label>
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+          <input
+            type="text"
+            placeholder="Producto o vendedor..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full pl-10 pr-4 py-2.5 bg-gray-900 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+          />
+        </div>
+      </div>      {/* Table */}
       {filteredMetas.length === 0 ? (
-        <div className="text-center py-16">
-          <Target className="mx-auto h-12 w-12 text-slate-500" />
-          <h3 className="mt-2 text-lg font-medium text-white">No hay metas configuradas</h3>
-          <p className="mt-1 text-sm text-slate-400">
+        <div className="bg-gray-800 rounded-xl border border-gray-700 text-center py-20">
+          <Target className="mx-auto h-16 w-16 text-gray-600 mb-4" />
+          <h3 className="text-xl font-semibold text-white">No hay metas configuradas</h3>
+          <p className="mt-2 text-sm text-gray-400">
             {isVendorUser
               ? "No tienes metas asignadas aún."
               : "Crea una meta de negocio y luego asigna las metas individuales a los vendedores."}
           </p>
         </div>
       ) : (
-        <div className="bg-slate-900 border border-blue-500/30 rounded-xl overflow-hidden">
+        <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden shadow-lg">
           <div className="overflow-x-auto">
             <table className="w-full">
-              <thead className="bg-slate-800 border-b border-blue-500/30">
+              <thead className="bg-gradient-to-r from-gray-900 to-gray-800 border-b-2 border-gray-700">
                 <tr>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-white uppercase tracking-wider border-r border-blue-500/20">Producto</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-white uppercase tracking-wider border-r border-blue-500/20">Período</th>
+                  <th className="px-4 py-4 text-left text-xs font-bold text-gray-200 uppercase tracking-wider">Producto</th>
+                  <th className="px-4 py-4 text-left text-xs font-bold text-gray-200 uppercase tracking-wider">Período</th>
                       {!isVendorUser && (
                         <>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-white uppercase tracking-wider border-r border-blue-500/20">Meta Negocio</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-white uppercase tracking-wider border-r border-blue-500/20">Ventas Actuales</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-white uppercase tracking-wider border-r border-blue-500/20">Progreso</th>
+                      <th className="px-4 py-4 text-right text-xs font-bold text-purple-300 uppercase tracking-wider">Meta Negocio</th>
+                      <th className="px-4 py-4 text-right text-xs font-bold text-gray-200 uppercase tracking-wider">Ventas Actual</th>
+                      <th className="px-4 py-4 text-center text-xs font-bold text-gray-200 uppercase tracking-wider">Progreso</th>
                         </>
                       )}
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-white uppercase tracking-wider border-r border-blue-500/20">
+                  <th className="px-4 py-4 text-right text-xs font-bold text-blue-300 uppercase tracking-wider">
                     {isVendorUser ? "Mi Meta" : "Suma Vendedores"}
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-white uppercase tracking-wider border-r border-blue-500/20">
-                    {isVendorUser ? "Ventas Logradas" : "Ventas Vendedores"}
+                  <th className="px-4 py-4 text-right text-xs font-bold text-gray-200 uppercase tracking-wider">
+                    {isVendorUser ? "Ventas" : "Ventas Vend."}
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-white uppercase tracking-wider border-r border-blue-500/20">Progreso</th>
+                  <th className="px-4 py-4 text-center text-xs font-bold text-gray-200 uppercase tracking-wider">Progreso</th>
                       {!isVendorUser && (
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-white uppercase tracking-wider border-r border-blue-500/20">Meta Sin Asignar</th>
+                    <th className="px-4 py-4 text-right text-xs font-bold text-orange-300 uppercase tracking-wider">Sin Asignar</th>
                   )}
-                  <th className="px-4 py-3 text-center text-xs font-semibold text-white uppercase tracking-wider">Acciones</th>
+                  <th className="px-4 py-4 text-center text-xs font-bold text-gray-200 uppercase tracking-wider">Acciones</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-blue-500/10">
+              <tbody className="divide-y divide-gray-700/50">
                 {filteredMetas.map((meta) => {
                   const businessProgress = meta.businessTarget > 0 ? (meta.businessCurrent / meta.businessTarget) * 100 : 0;
                   const vendorGoalsForRow = isVendorUser
@@ -726,57 +725,57 @@ export default function Goals() {
                   const vendorProgress = vendorTargetForRow > 0 ? (vendorCurrentForRow / vendorTargetForRow) * 100 : 0;
 
                   return (
-                    <tr key={meta.key} className="hover:bg-slate-800/50 transition-colors">
+                    <tr key={meta.key} className="hover:bg-gray-700/30 transition-all">
                       <td className="px-4 py-4 whitespace-nowrap">
                         <div className="flex items-center gap-2">
-                          <Package className="w-4 h-4 text-blue-400" />
-                          <span className="text-sm font-medium text-white">{meta.productName}</span>
+                          <Package className="w-5 h-5 text-blue-400" />
+                          <span className="text-sm font-semibold text-white">{meta.productName}</span>
                           </div>
                       </td>
                       <td className="px-4 py-4 whitespace-nowrap">
-                        <span className="text-sm text-slate-300">{meta.periodLabel}</span>
+                        <span className="text-sm text-gray-300 font-medium">{meta.periodLabel}</span>
                       </td>
                       {!isVendorUser && (
                         <>
-                          <td className="px-4 py-4 whitespace-nowrap">
-                            <span className="text-sm font-semibold text-white">${meta.businessTarget.toLocaleString()}</span>
+                          <td className="px-4 py-4 whitespace-nowrap text-right">
+                            <span className="text-sm font-bold text-purple-400 font-mono">${meta.businessTarget.toLocaleString()}</span>
+                          </td>
+                          <td className="px-4 py-4 whitespace-nowrap text-right">
+                            <span className="text-sm text-gray-300 font-mono">${meta.businessCurrent.toLocaleString()}</span>
                           </td>
                           <td className="px-4 py-4 whitespace-nowrap">
-                            <span className="text-sm text-slate-300">${meta.businessCurrent.toLocaleString()}</span>
-                          </td>
-                          <td className="px-4 py-4 whitespace-nowrap">
-                            <div className="flex items-center gap-2">
-                              <div className="w-16 h-2 bg-slate-700 rounded-full overflow-hidden">
+                            <div className="flex items-center gap-3 justify-center">
+                              <div className="w-24 h-2.5 bg-gray-700 rounded-full overflow-hidden">
                             <div
-                                  className="h-full bg-blue-400/80 rounded-full"
+                                  className="h-full bg-gradient-to-r from-purple-500 to-purple-400 rounded-full transition-all"
                               style={{ width: `${Math.min(businessProgress, 100)}%` }}
                             />
                           </div>
-                              <span className="text-xs text-slate-400">{Math.round(businessProgress)}%</span>
+                              <span className="text-xs text-gray-400 font-semibold">{Math.round(businessProgress)}%</span>
                           </div>
                           </td>
                         </>
                       )}
-                      <td className="px-4 py-4 whitespace-nowrap">
-                        <span className="text-sm font-semibold text-white">${vendorTargetForRow.toLocaleString()}</span>
+                      <td className="px-4 py-4 whitespace-nowrap text-right">
+                        <span className="text-sm font-bold text-blue-400 font-mono">${vendorTargetForRow.toLocaleString()}</span>
+                      </td>
+                      <td className="px-4 py-4 whitespace-nowrap text-right">
+                        <span className="text-sm text-gray-300 font-mono">${vendorCurrentForRow.toLocaleString()}</span>
                       </td>
                       <td className="px-4 py-4 whitespace-nowrap">
-                        <span className="text-sm text-slate-300">${vendorCurrentForRow.toLocaleString()}</span>
-                      </td>
-                      <td className="px-4 py-4 whitespace-nowrap">
-                        <div className="flex items-center gap-2">
-                          <div className="w-16 h-2 bg-slate-700 rounded-full overflow-hidden">
+                        <div className="flex items-center gap-3 justify-center">
+                          <div className="w-24 h-2.5 bg-gray-700 rounded-full overflow-hidden">
                           <div
-                              className="h-full bg-green-400/80 rounded-full"
+                              className="h-full bg-gradient-to-r from-blue-500 to-cyan-400 rounded-full transition-all"
                               style={{ width: `${Math.min(vendorProgress, 100)}%` }}
                           />
                         </div>
-                          <span className="text-xs text-slate-400">{Math.round(vendorProgress)}%</span>
+                          <span className="text-xs text-gray-400 font-semibold">{Math.round(vendorProgress)}%</span>
                         </div>
                       </td>
                       {!isVendorUser && (
-                        <td className="px-4 py-4 whitespace-nowrap">
-                          <span className={`text-sm font-semibold ${meta.gapTarget <= 0 ? "text-green-300" : "text-amber-200"}`}>
+                        <td className="px-4 py-4 whitespace-nowrap text-right">
+                          <span className={`text-sm font-bold font-mono ${meta.gapTarget <= 0 ? "text-green-400" : "text-orange-400"}`}>
                             ${meta.gapTarget.toLocaleString()}
                           </span>
                         </td>
@@ -786,7 +785,7 @@ export default function Goals() {
                       {!isVendorUser && (
                             <>
                         <button
-                                className="p-2 rounded-lg bg-blue-500/20 border border-blue-500/50 text-blue-300 hover:bg-blue-500/30 transition"
+                                className="p-2 rounded-lg bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/30 text-purple-300 hover:text-purple-200 transition-all"
                           onClick={() => {
                                   setEditingBusinessGoal(meta.businessGoal ?? null);
                                   setEditingVendorGoal(null);
@@ -822,7 +821,7 @@ export default function Goals() {
                         </button>
                               {meta.businessGoal && (
                                 <button
-                                  className="p-2 rounded-lg bg-red-500/20 border border-red-500/50 text-red-300 hover:bg-red-500/30 transition"
+                                  className="p-2 rounded-lg bg-red-600/20 hover:bg-red-600/30 border border-red-500/30 text-red-300 hover:text-red-200 transition-all"
                                   onClick={() => handleDeleteBusiness(meta.businessGoal!)}
                                   title="Eliminar meta de negocio"
                                 >
@@ -830,7 +829,7 @@ export default function Goals() {
                                 </button>
                               )}
                           <button
-                                className="p-2 rounded-lg bg-green-500/20 border border-green-500/50 text-green-300 hover:bg-green-500/30 transition"
+                                className="p-2 rounded-lg bg-green-600/20 hover:bg-green-600/30 border border-green-500/30 text-green-300 hover:text-green-200 transition-all"
                             onClick={() => {
                                   setEditingBusinessGoal(null);
                                   setEditingVendorGoal(null);
@@ -877,77 +876,107 @@ export default function Goals() {
             if (vendorGoalsForList.length === 0) return null;
 
             return (
-              <div key={`vendors-${meta.key}`} className="border-t border-blue-500/20 bg-slate-800/30">
+              <div key={`vendors-${meta.key}`} className="border-t border-gray-700">
                 <details className="group">
-                  <summary className="px-4 py-3 cursor-pointer flex items-center justify-between text-sm font-semibold text-white hover:bg-slate-800/50 transition-colors">
-                    <div className="flex items-center gap-2">
+                  <summary className="px-6 py-3 cursor-pointer flex items-center justify-between bg-gray-800/50 hover:bg-gray-700/50 transition-all">
+                    <div className="flex items-center gap-3">
+                      <svg className="w-4 h-4 text-blue-400 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
                       <Package className="w-4 h-4 text-blue-400" />
-                      <span>{meta.productName} - {meta.periodLabel}</span>
-                      <span className="text-xs text-slate-400">({vendorGoalsForList.length} vendedor{vendorGoalsForList.length !== 1 ? 'es' : ''})</span>
+                      <span className="text-sm font-semibold text-white">{meta.productName}</span>
+                      <span className="text-sm text-gray-400">• {meta.periodLabel}</span>
+                      <span className="px-2 py-0.5 bg-blue-600/20 rounded text-xs font-medium text-blue-300">
+                        {vendorGoalsForList.length}
+                      </span>
                     </div>
-                    <span className="text-xs text-slate-400 group-open:hidden">Ver vendedores ▼</span>
-                    <span className="text-xs text-slate-400 hidden group-open:inline">Ocultar ▲</span>
+                    <span className="text-xs text-gray-400">Click para {!vendorGoalsForList ? 'ver' : 'expandir'} detalle</span>
                   </summary>
-                  <div className="px-4 py-3 space-y-2">
-                    {vendorGoalsForList.map((goal) => {
+                  
+                  <div className="bg-gray-900/50">
+                    <table className="w-full">
+                      <thead className="bg-gray-800/80 border-y border-gray-700">
+                        <tr>
+                          <th className="px-6 py-3 text-left text-xs font-bold text-gray-300 uppercase">Vendedor</th>
+                          <th className="px-6 py-3 text-right text-xs font-bold text-gray-300 uppercase">Meta</th>
+                          <th className="px-6 py-3 text-right text-xs font-bold text-gray-300 uppercase">Ventas</th>
+                          <th className="px-6 py-3 text-center text-xs font-bold text-gray-300 uppercase">Progreso</th>
+                          {!isVendorUser && (
+                            <th className="px-6 py-3 text-center text-xs font-bold text-gray-300 uppercase">Acciones</th>
+                          )}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-700/50">
+                        {vendorGoalsForList.map((goal) => {
                           const vendorProgress = goal.target_amount > 0 ? (goal.current_amount / goal.target_amount) * 100 : 0;
                           return (
-                        <div key={goal.id} className="bg-slate-900/50 border border-blue-500/20 rounded-lg p-3 flex items-center justify-between">
-                          <div className="flex-1">
-                                  <p className="text-sm font-semibold text-white">{goal.vendor_name || "Vendedor"}</p>
-                            <div className="flex items-center gap-4 mt-1">
-                              <span className="text-xs text-slate-300">
-                                Meta: <span className="text-white font-medium">${goal.target_amount.toLocaleString()}</span>
-                              </span>
-                              <span className="text-xs text-slate-300">
-                                Actual: <span className="text-white font-medium">${goal.current_amount.toLocaleString()}</span>
-                              </span>
-                              <span className="text-xs text-slate-400">{Math.round(vendorProgress)}%</span>
-                            </div>
-                            <div className="mt-2 w-full h-1.5 bg-slate-700 rounded-full overflow-hidden">
-                              <div
-                                className="h-full bg-green-400/80 rounded-full"
-                                style={{ width: `${Math.min(vendorProgress, 100)}%` }}
-                              />
-                            </div>
+                            <tr key={goal.id} className="hover:bg-gray-800/30 transition-colors">
+                              <td className="px-6 py-3">
+                                <div className="flex items-center gap-2">
+                                  <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white text-xs font-bold">
+                                    {(goal.vendor_name || "V").charAt(0).toUpperCase()}
+                                  </div>
+                                  <span className="text-sm font-medium text-white">{goal.vendor_name || "Vendedor"}</span>
                                 </div>
-                                {!isVendorUser && (
-                            <div className="flex gap-2 ml-4">
+                              </td>
+                              <td className="px-6 py-3 text-right">
+                                <span className="text-sm font-bold text-blue-400 font-mono">${goal.target_amount.toLocaleString()}</span>
+                              </td>
+                              <td className="px-6 py-3 text-right">
+                                <span className="text-sm font-bold text-green-400 font-mono">${goal.current_amount.toLocaleString()}</span>
+                              </td>
+                              <td className="px-6 py-3">
+                                <div className="flex items-center gap-3 justify-center">
+                                  <div className="w-32 h-2 bg-gray-700 rounded-full overflow-hidden">
+                                    <div
+                                      className="h-full bg-gradient-to-r from-blue-500 to-green-400 rounded-full transition-all"
+                                      style={{ width: `${Math.min(vendorProgress, 100)}%` }}
+                                    />
+                                  </div>
+                                  <span className="text-xs font-bold text-gray-300 min-w-[3rem] text-right">{Math.round(vendorProgress)}%</span>
+                                </div>
+                              </td>
+                              {!isVendorUser && (
+                                <td className="px-6 py-3">
+                                  <div className="flex items-center justify-center gap-2">
                                     <button
-                                className="p-1.5 rounded bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200"
-                                onClick={() => {
-                                  setEditingVendorGoal(goal);
-                                  setEditingBusinessGoal(null);
-                                  setFormMode("vendor");
-                                  setFormData({
-                                    vendor_id: goal.vendor_id?.toString() || "",
-                                    product_id: goal.product_id?.toString() || "",
-                                    period_type: goal.period_type || "monthly",
-                                    period_year: goal.period_year,
-                                    period_month: goal.period_month || new Date().getMonth() + 1,
-                                    period_quarter: goal.period_quarter || 1,
-                                    target_amount: goal.target_amount.toString(),
-                                    description: goal.description || "",
-                                  });
-                                  setShowModal(true);
-                                }}
-                                      title="Editar meta del vendedor"
+                                      className="p-2 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 text-blue-300 transition-all"
+                                      onClick={() => {
+                                        setEditingVendorGoal(goal);
+                                        setEditingBusinessGoal(null);
+                                        setFormMode("vendor");
+                                        setFormData({
+                                          vendor_id: goal.vendor_id?.toString() || "",
+                                          product_id: goal.product_id?.toString() || "",
+                                          period_type: goal.period_type || "monthly",
+                                          period_year: goal.period_year,
+                                          period_month: goal.period_month || new Date().getMonth() + 1,
+                                          period_quarter: goal.period_quarter || 1,
+                                          target_amount: goal.target_amount.toString(),
+                                          description: goal.description || "",
+                                        });
+                                        setShowModal(true);
+                                      }}
+                                      title="Editar"
                                     >
-                                      <Edit className="w-3 h-3" />
+                                      <Edit className="w-4 h-4" />
                                     </button>
                                     <button
-                                className="p-1.5 rounded bg-slate-800 hover:bg-red-600/50 border border-red-500/40 text-slate-200"
+                                      className="p-2 rounded-lg bg-red-600/20 hover:bg-red-600/30 border border-red-500/30 text-red-300 transition-all"
                                       onClick={() => handleDeleteVendor(goal)}
-                                      title="Eliminar meta del vendedor"
+                                      title="Eliminar"
                                     >
-                                      <Trash2 className="w-3 h-3" />
+                                      <Trash2 className="w-4 h-4" />
                                     </button>
                                   </div>
-                                )}
-                            </div>
+                                </td>
+                              )}
+                            </tr>
                           );
                         })}
-                      </div>
+                      </tbody>
+                    </table>
+                  </div>
                 </details>
               </div>
             );

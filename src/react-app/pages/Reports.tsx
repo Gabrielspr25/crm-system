@@ -1,7 +1,6 @@
 import { useState, useMemo, useEffect } from "react";
 import { DollarSign, FileText, Search, Save, History, X } from "lucide-react";
 import { useApi } from "../hooks/useApi";
-import { getCurrentUser } from "@/react-app/utils/auth";
 
 interface FollowUpProspect {
   id: number;
@@ -17,24 +16,11 @@ interface FollowUpProspect {
   mpls: number;
   total_amount: number;
   is_completed: boolean;
+  completed_date: string | null;
+  created_at: string;
   vendor_name?: string;
   client_name?: string;
   client_business_name?: string;
-}
-
-interface Subscriber {
-  id: number;
-  phone: string;
-  ban_id: number;
-  service_type: string | null;
-  monthly_value: number | null;
-  client_id?: number;
-}
-
-interface BAN {
-  id: number;
-  ban_number: string;
-  client_id: number;
 }
 
 interface Product {
@@ -42,17 +28,6 @@ interface Product {
   name: string;
   base_price: number;
   commission_percentage: number;
-}
-
-interface Goal {
-  id: number;
-  vendor_id: number | null;
-  product_id: number | null;
-  product_name: string | null;
-  target_amount: number;
-  current_amount: number;
-  period_year: number;
-  period_month: number | null;
 }
 
 interface ClientSalesRow {
@@ -89,6 +64,7 @@ interface PaymentRecord {
 export default function Reports() {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedVendor, setSelectedVendor] = useState<number | null>(null);
+  const [selectedMonth, setSelectedMonth] = useState<string>(""); // Nuevo: filtro de mes
   const [movilNuevaManual, setMovilNuevaManual] = useState<Record<number, number>>({});
   const [movilRenManual, setMovilRenManual] = useState<Record<number, number>>({});
   const [notes, setNotes] = useState<Record<number, string>>({});
@@ -100,12 +76,9 @@ export default function Reports() {
   const [paymentNotes, setPaymentNotes] = useState("");
   
   const { data: prospects } = useApi<FollowUpProspect[]>("/api/completed-prospects"); // Cambiado a completados
-  const { data: subscribers } = useApi<Subscriber[]>("/api/subscribers");
-  const { data: bans } = useApi<BAN[]>("/api/bans");
   const { data: products } = useApi<Product[]>("/api/products");
-  const { data: goals } = useApi<Goal[]>("/api/goals");
-  const currentUser = getCurrentUser();
-  const isVendor = currentUser?.role?.toLowerCase() === "vendedor";
+
+  console.log('🔍 REPORTS - prospects:', prospects?.length || 0, 'productos:', products?.length || 0);
 
   // Cargar pagos desde localStorage
   useEffect(() => {
@@ -119,80 +92,75 @@ export default function Reports() {
     }
   }, []);
 
-  // Filtrar prospects por vendedor (ya vienen solo completados del endpoint)
+  // Filtrar prospects (ya vienen solo completados del endpoint)
   const filteredProspects = useMemo(() => {
     if (!prospects) return [];
     let filtered = prospects; // Ya vienen completados del endpoint /api/completed-prospects
     
-    // Si es vendedor, solo mostrar sus propios prospects
-    if (isVendor && currentUser?.salespersonId) {
-      filtered = filtered.filter(p => {
-        const vendorId = p.vendor_id;
-        if (typeof vendorId === 'number' && typeof currentUser.salespersonId === 'number') {
-          return vendorId === currentUser.salespersonId;
-        }
-        return String(vendorId) === String(currentUser.salespersonId);
-      });
-    } else if (selectedVendor) {
+    // TODOS VEN TODO - Sin filtros por vendedor
+    if (selectedVendor) {
       filtered = filtered.filter(p => p.vendor_id === selectedVendor);
     }
     
+    // Filtrar por mes
+    if (selectedMonth) {
+      filtered = filtered.filter(p => {
+        const date = p.completed_date || p.created_at;
+        if (!date) return false;
+        const prospectMonth = new Date(date).toISOString().slice(0, 7); // YYYY-MM
+        return prospectMonth === selectedMonth;
+      });
+    }
+    
     return filtered;
-  }, [prospects, isVendor, currentUser, selectedVendor]);
+  }, [prospects, selectedVendor, selectedMonth]);
 
   // Crear filas de ventas (una por cliente)
   const salesRows = useMemo(() => {
-    if (!filteredProspects || !products || !subscribers || !bans) return [];
+    if (!filteredProspects || !products) return [];
     
     const rows: ClientSalesRow[] = [];
-    
-    // Crear mapa de ban_id -> client_id
-    const banToClientMap = new Map<number, number>();
-    bans.forEach(ban => {
-      banToClientMap.set(ban.id, ban.client_id);
-    });
     
     filteredProspects.forEach((prospect) => {
       const clientName = prospect.client_business_name || prospect.client_name || prospect.company_name;
       const clientId = prospect.client_id;
       
-      // Obtener suscriptores del cliente: buscar bans del cliente y luego suscriptores de esos bans
-      const clientBans = clientId ? bans.filter(b => b.client_id === clientId) : [];
-      const clientBanIds = clientBans.map(b => b.id);
-      const clientSubscribers = subscribers.filter(s => clientBanIds.includes(s.ban_id));
-      
-      // Calcular comisión total por suscriptores
+      // Calcular comisión basada en los productos del prospecto
       let totalCommission = 0;
-      let totalPercentage = 0;
       let commissionCount = 0;
       
-      clientSubscribers.forEach(subscriber => {
-        if (subscriber.service_type && subscriber.monthly_value) {
-          // Buscar producto por service_type
-          const product = products.find(p => 
-            p.name.toLowerCase().includes(subscriber.service_type!.toLowerCase()) ||
-            subscriber.service_type!.toLowerCase().includes(p.name.toLowerCase())
+      // Mapeo de campos del prospecto a nombres de productos
+      const productFields = [
+        { field: 'fijo_ren', productName: 'Fijo Renovación' },
+        { field: 'fijo_new', productName: 'Fijo Nueva' },
+        { field: 'movil_nueva', productName: 'Móvil Nueva' },
+        { field: 'movil_renovacion', productName: 'Móvil Renovación' },
+        { field: 'claro_tv', productName: 'Claro TV Nueva' },
+        { field: 'cloud', productName: 'Cloud Nueva' },
+        { field: 'mpls', productName: 'MPLS' }
+      ];
+      
+      productFields.forEach(({ field, productName }) => {
+        const fieldValue = prospect[field as keyof typeof prospect];
+        const amount = typeof fieldValue === 'number' ? fieldValue : 0;
+        
+        if (amount > 0) {
+          // Buscar producto por nombre
+          const product = products?.find(p => 
+            p.name.toLowerCase() === productName.toLowerCase()
           );
           
           if (product && product.commission_percentage) {
-            const commission = (subscriber.monthly_value * product.commission_percentage) / 100;
+            const commission = (amount * product.commission_percentage) / 100;
             totalCommission += commission;
-            totalPercentage += product.commission_percentage;
             commissionCount++;
           }
         }
       });
       
-      const avgPercentage = commissionCount > 0 ? totalPercentage / commissionCount : 0;
-      
-      // Buscar meta del vendedor (usar la primera meta encontrada como referencia)
-      const vendorGoal = goals?.find(g => 
-        g.vendor_id === prospect.vendor_id &&
-        g.period_year === new Date().getFullYear() &&
-        (g.period_month === new Date().getMonth() + 1 || g.period_month === null)
-      );
-      
-      const mobile = vendorGoal?.target_amount || 0;
+      const avgPercentage = totalCommission > 0 && prospect.total_amount > 0
+        ? (totalCommission / prospect.total_amount) * 100
+        : 0;
       
       const rowId = prospect.id;
       const movilNueva = movilNuevaManual[rowId] || 0;
@@ -217,14 +185,14 @@ export default function Reports() {
         mpls: prospect.mpls || 0,
         commission: totalCommission,
         percentage: avgPercentage,
-        mobile,
+        mobile: 0, // Removido - no se usa
         notes: rowNotes,
         total
       });
     });
     
     return rows;
-  }, [filteredProspects, products, subscribers, goals, movilNuevaManual, movilRenManual, notes]);
+  }, [filteredProspects, products, movilNuevaManual, movilRenManual, notes]);
 
   // Filtrar por búsqueda
   const filteredRows = useMemo(() => {
@@ -336,14 +304,17 @@ export default function Reports() {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-      <div>
-          <h1 className="text-3xl font-bold text-white">Reporte de Ventas por Vendedor</h1>
-          <p className="text-gray-400 mt-1">Cálculo de comisiones por suscriptor y pagos a vendedores</p>
-      </div>
+        <div>
+          <h1 className="text-3xl font-bold text-white flex items-center gap-3">
+            <DollarSign className="w-8 h-8 text-green-400" />
+            Reportes de Ventas
+          </h1>
+          <p className="text-gray-400 mt-1">Seguimiento de ventas completadas y comisiones</p>
+        </div>
         <div className="flex gap-2">
           <button
             onClick={() => setShowPaymentHistory(true)}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg flex items-center gap-2"
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg flex items-center gap-2 transition-colors"
           >
             <History className="w-5 h-5" />
             Historial de Pagos
@@ -351,44 +322,128 @@ export default function Reports() {
           {selectedRowsForPayment.size > 0 && (
             <button
               onClick={() => setShowPaymentModal(true)}
-              className="px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg flex items-center gap-2"
+              className="px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg flex items-center gap-2 transition-colors"
             >
               <Save className="w-5 h-5" />
               Registrar Pago ({selectedRowsForPayment.size})
             </button>
           )}
-              </div>
+        </div>
+      </div>
+
+      {/* Tarjetas de Resumen */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="bg-gradient-to-br from-blue-600 to-blue-700 rounded-xl p-6 shadow-lg">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-blue-100 text-sm font-medium">Ventas Totales</p>
+              <p className="text-3xl font-bold text-white mt-2">{filteredRows.length}</p>
             </div>
+            <FileText className="w-12 h-12 text-blue-200 opacity-50" />
+          </div>
+        </div>
+
+        <div className="bg-gradient-to-br from-green-600 to-green-700 rounded-xl p-6 shadow-lg">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-green-100 text-sm font-medium">Comisión Total</p>
+              <p className="text-3xl font-bold text-white mt-2">
+                ${totals.commission.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </p>
+            </div>
+            <DollarSign className="w-12 h-12 text-green-200 opacity-50" />
+          </div>
+        </div>
+
+        <div className="bg-gradient-to-br from-purple-600 to-purple-700 rounded-xl p-6 shadow-lg">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-purple-100 text-sm font-medium">Total General</p>
+              <p className="text-3xl font-bold text-white mt-2">
+                ${totals.total.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </p>
+            </div>
+            <DollarSign className="w-12 h-12 text-purple-200 opacity-50" />
+          </div>
+        </div>
+
+        <div className="bg-gradient-to-br from-orange-600 to-orange-700 rounded-xl p-6 shadow-lg">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-orange-100 text-sm font-medium">Seleccionadas</p>
+              <p className="text-3xl font-bold text-white mt-2">{selectedRowsForPayment.size}</p>
+            </div>
+            <FileText className="w-12 h-12 text-orange-200 opacity-50" />
+          </div>
+        </div>
+      </div>
 
       {/* Filtros */}
-      <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 flex flex-wrap gap-4 items-center">
-        <div className="flex-1 min-w-[200px]">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
-            <input
-              type="text"
-              placeholder="Buscar por cliente o vendedor..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-              </div>
+      <div className="bg-gray-800 rounded-xl p-6 border border-gray-700 shadow-lg">
+        <div className="flex flex-wrap gap-4 items-center">
+          <div className="flex-1 min-w-[250px]">
+            <label className="block text-sm font-medium text-gray-300 mb-2">Buscar</label>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+              <input
+                type="text"
+                placeholder="Cliente o vendedor..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-10 pr-4 py-2.5 bg-gray-900 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+              />
             </div>
+          </div>
+          
+          <div className="min-w-[180px]">
+            <label className="block text-sm font-medium text-gray-300 mb-2">Mes</label>
+            <select
+              value={selectedMonth}
+              onChange={(e) => setSelectedMonth(e.target.value)}
+              className="w-full px-4 py-2.5 bg-gray-900 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+            >
+              <option value="">Todos los meses</option>
+              <option value="2025-01">Enero 2025</option>
+              <option value="2025-02">Febrero 2025</option>
+              <option value="2025-03">Marzo 2025</option>
+              <option value="2025-04">Abril 2025</option>
+              <option value="2025-05">Mayo 2025</option>
+              <option value="2025-06">Junio 2025</option>
+              <option value="2025-07">Julio 2025</option>
+              <option value="2025-08">Agosto 2025</option>
+              <option value="2025-09">Septiembre 2025</option>
+              <option value="2025-10">Octubre 2025</option>
+              <option value="2025-11">Noviembre 2025</option>
+              <option value="2025-12">Diciembre 2025</option>
+              <option value="2024-01">Enero 2024</option>
+              <option value="2024-02">Febrero 2024</option>
+              <option value="2024-03">Marzo 2024</option>
+              <option value="2024-04">Abril 2024</option>
+              <option value="2024-05">Mayo 2024</option>
+              <option value="2024-06">Junio 2024</option>
+              <option value="2024-07">Julio 2024</option>
+              <option value="2024-08">Agosto 2024</option>
+              <option value="2024-09">Septiembre 2024</option>
+              <option value="2024-10">Octubre 2024</option>
+              <option value="2024-11">Noviembre 2024</option>
+              <option value="2024-12">Diciembre 2024</option>
+            </select>
+          </div>
         
-        {!isVendor && (
           <div className="min-w-[200px]">
+            <label className="block text-sm font-medium text-gray-300 mb-2">Vendedor</label>
             <select
               value={selectedVendor || ""}
               onChange={(e) => setSelectedVendor(e.target.value ? Number(e.target.value) : null)}
-              className="w-full px-4 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="w-full px-4 py-2.5 bg-gray-900 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
             >
-              <option value="">Todos los vendedores</option>
+              <option value="">Todos</option>
               {vendors.map(v => (
                 <option key={v.id} value={v.id}>{v.name}</option>
               ))}
             </select>
           </div>
-        )}
+        </div>
       </div>
 
       {/* Tabla de Reporte */}
@@ -421,7 +476,6 @@ export default function Reports() {
                 <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider">MPLS</th>
                 <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider">Comisión</th>
                 <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider">%</th>
-                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider">Móvil (Meta)</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">Notas</th>
                 <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider">Total</th>
               </tr>
@@ -429,7 +483,7 @@ export default function Reports() {
             <tbody className="divide-y divide-gray-700">
               {filteredRows.length === 0 ? (
                 <tr>
-                  <td colSpan={15} className="px-4 py-8 text-center text-gray-400">
+                  <td colSpan={14} className="px-4 py-8 text-center text-gray-400">
                     <FileText className="mx-auto h-12 w-12 text-gray-600 mb-2" />
                     <p>No hay ventas registradas</p>
                   </td>
@@ -486,9 +540,6 @@ export default function Reports() {
                         </td>
                         <td className="px-4 py-3 text-sm text-right text-gray-300">
                           {row.percentage.toFixed(1)}%
-                        </td>
-                        <td className="px-4 py-3 text-sm text-right text-gray-300">
-                          {row.mobile.toLocaleString('es-ES')}
                         </td>
                         <td className="px-4 py-3">
                           <input

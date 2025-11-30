@@ -8,6 +8,7 @@ import {
   Building2,
   Folder,
   Package,
+  FileText,
   UserCircle2,
   Sun,
   Moon,
@@ -29,12 +30,13 @@ type NavItem = {
 const navigation: NavItem[] = [
   { name: "Clientes", href: "/", icon: Users, roles: ["admin", "supervisor", "vendedor"] },
   { name: "Seguimiento", href: "/seguimiento", icon: PhoneCall, roles: ["admin", "supervisor", "vendedor"] },
-  { name: "Reportes", href: "/reportes", icon: BarChart3, roles: ["admin", "supervisor"] },
+  { name: "Reportes", href: "/reportes", icon: BarChart3, roles: ["admin", "supervisor", "vendedor"] },
   { name: "Vendedores", href: "/vendedores", icon: Building2, roles: ["admin", "supervisor"] },
   { name: "Categorías", href: "/categorias", icon: Folder, roles: ["admin"] },
   { name: "Productos", href: "/productos", icon: Package, roles: ["admin", "supervisor"] },
-  { name: "Metas", href: "/metas", icon: Target, roles: ["admin", "supervisor", "vendedor"] },
+  { name: "Metas", href: "/metas", icon: Target, roles: ["admin", "supervisor"] },
   { name: "Importador", href: "/importador", icon: Upload, roles: ["admin", "supervisor"] },
+  { name: "Historial", href: "/historial", icon: FileText, roles: ["admin"] },
   { name: "Perfil", href: "/perfil", icon: UserCircle2, roles: ["admin", "supervisor", "vendedor"] }
 ];
 
