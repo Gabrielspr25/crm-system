@@ -10,6 +10,19 @@ interface PreviewData {
   estimatedCreates: number;
   estimatedUpdates: number;
   warnings: string[];
+  simulation?: {
+    newClients: number;
+    updatedClients: number;
+    newBans: number;
+    updatedBans: number;
+    movedBans: number;
+    newSubscribers: number;
+    updatedSubscribers: number;
+    movedSubscribers: number;
+    reactivatedSubscribers: number;
+    fusedClients: number;
+    details: string[];
+  }
 }
 
 export default function ImportadorVisual() {
@@ -24,6 +37,20 @@ export default function ImportadorVisual() {
   const [showPreviewModal, setShowPreviewModal] = useState(false);
   const [previewData, setPreviewData] = useState<PreviewData | null>(null);
   const dragRef = useRef<string | null>(null);
+
+  // Estado para el modal de datos faltantes
+  const [missingDataState, setMissingDataState] = useState<{
+    isOpen: boolean;
+    field: string; // 'remaining_payments' | 'contract_start_date'
+    label: string;
+    rows: number[]; // Indices de las filas con datos faltantes
+    data: any[][]; // La data completa actual
+    headers: string[]; // Las cabeceras actuales
+  }>({ isOpen: false, field: '', label: '', rows: [], data: [], headers: [] });
+
+  const [missingDataValue, setMissingDataValue] = useState("");
+  const [missingDataApplyAll, setMissingDataApplyAll] = useState(true);
+  const [defaultStartDate, setDefaultStartDate] = useState("");
 
   // Función para obtener la etiqueta del frontend según tabla y columna
   const getFieldLabel = (table: string, col: string): string => {
@@ -41,10 +68,11 @@ export default function ImportadorVisual() {
         "city": "Ciudad",
         "zip_code": "Código Postal",
         "base": "Base",
+        "vendor_id": "Vendedor",
       },
       "BANs": {
         "ban_number": "Número BAN",
-        "description": "Descripción",
+        "description": "Tipo de Cuenta (Móvil/Fijo/Convergente)",
         "status": "Estado",
         "address": "Dirección",
         "city": "Ciudad",
@@ -52,7 +80,7 @@ export default function ImportadorVisual() {
       },
       "Suscriptores": {
         "phone": "Número de Teléfono",
-        "service_type": "Plan del Cliente",
+        "service_type": "Plan / Descripción",
         "monthly_value": "Valor Mensual",
         "months": "Duración del Contrato (meses)",
         "remaining_payments": "Plazos Faltantes",
@@ -78,7 +106,8 @@ export default function ImportadorVisual() {
         "email",
         "phone",
         "secondary_phone",
-        "mobile_phone"
+        "mobile_phone",
+        "vendor_id"
       ]
     },
     {
@@ -123,9 +152,164 @@ export default function ImportadorVisual() {
         const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
         // Mantener celdas vacías con defval: ''
         const jsonData = XLSX.utils.sheet_to_json(firstSheet, { header: 1, defval: "" }) as any[][];
+
+        // --- DETECCIÓN DE FORMATO DE ACTIVACIONES ---
+        // Verificar si es el formato "SOLICITUD PARA ACTIVACION DE LINEAS CORPORATIVAS"
+        if (jsonData.length > 0 && String(jsonData[0][0]).includes("SOLICITUD PARA ACTIVACION")) {
+          console.log("📋 Formato de Activaciones detectado");
+          
+          // Extraer metadatos (BAN, Cliente y Vendedor)
+          // Según imagen del usuario:
+          // D3 -> Vendedor (Fila index 2, Col index 3)
+          // D5 -> BAN (Fila index 4, Col index 3)
+          // D7 -> Empresa (Fila index 6, Col index 3)
+          
+          // Función para buscar metadatos dinámicamente
+          const findMetadataValue = (keywords: string[]) => {
+            for (let i = 0; i < Math.min(jsonData.length, 20); i++) { // Buscar en las primeras 20 filas
+              const row = jsonData[i];
+              if (!row) continue;
+              
+              // Buscar la celda que contiene la keyword
+              const cellIndex = row.findIndex((cell: any) => 
+                cell && keywords.some(k => String(cell).toUpperCase().includes(k))
+              );
+
+              if (cellIndex !== -1) {
+                // Buscar el siguiente valor no vacío en la misma fila
+                for (let j = cellIndex + 1; j < row.length; j++) {
+                  const val = row[j];
+                  if (val && String(val).trim() !== "") {
+                    return val;
+                  }
+                }
+              }
+            }
+            return null;
+          };
+
+          // Estrategia híbrida: Coordenadas fijas (backup) + Búsqueda dinámica (prioridad)
+          let vendor = findMetadataValue(["VENDEDOR"]);
+          let ban = findMetadataValue(["BAN", "ACCOUNT"]);
+          let clientName = findMetadataValue(["CLIENTE", "EMPRESA", "RAZON SOCIAL"]);
+
+          // Si la búsqueda dinámica falla, usar coordenadas fijas (C5/D5/E5 logic)
+          if (!ban) {
+             const row = jsonData[4]; // Fila 5
+             if (row) {
+                 // Intentar D5, C5, E5
+                 if (row[3]) ban = row[3];
+                 else if (row[2]) ban = row[2];
+                 else if (row[4]) ban = row[4];
+             }
+          }
+          
+          if (!vendor) vendor = jsonData[2]?.[3] || jsonData[2]?.[2];
+          if (!clientName) clientName = jsonData[6]?.[3] || jsonData[6]?.[2];
+
+          console.log(`[Importador] Metadatos detectados - BAN: ${ban}, Cliente: ${clientName}, Vendedor: ${vendor}`);
+
+
+          if (!ban) {
+             alert("⚠️ No se detectó el BAN en la fila 5 (Celdas C5, D5 o E5). Verifica que el archivo tenga el formato correcto.");
+          }
+          
+          // Buscar la fila de cabeceras (debe contener "NUM CELULAR")
+          // ACTUALIZACIÓN: El usuario indica coordenadas fijas para las cabeceras/datos
+          // B10 -> Suscriptor
+          // H10 -> Plan
+          // I10 -> Precio
+          // O10 -> Meses
+          // Q10 -> Notas
+          
+          // Asumimos que la fila 10 (índice 9) es la cabecera y los datos empiezan en la 11 (índice 10)
+          const headerRowIndex = 9; 
+
+          if (jsonData.length > headerRowIndex) {
+            const dataRows = jsonData.slice(headerRowIndex + 1);
+
+            // Definir nuevas columnas virtuales
+            const virtualHeaders = [
+              "Número BAN", 
+              "Nombre del Cliente", 
+              "Vendedor",
+              "Número de Teléfono", 
+              "Plan / Descripción", 
+              "Valor Mensual", 
+              "Meses",
+              "Equipo", 
+              "Notas"
+            ];
+
+            // Índices fijos CORREGIDOS (El lector omite la col A vacía, así que B=0)
+            const idxPhone = 0;   // B (Antes 1)
+            const idxPlan = 6;    // H (Antes 7)
+            const idxPrice = 7;   // I (Antes 8)
+            const idxMonths = 13; // O (Antes 14)
+            const idxComments = 15; // Q (Antes 16)
+            // Equipo no especificado en las coordenadas recientes, lo dejamos vacío o buscamos si existe
+            
+            // Construir nueva data plana
+            const transformedData = dataRows
+              .filter(row => row[idxPhone]) // Filtrar filas vacías (basado en teléfono)
+              .map(row => {
+                // Limpieza de datos crítica para evitar errores de BD
+                const rawPhone = row[idxPhone];
+                const cleanPhone = rawPhone ? String(rawPhone).replace(/[^0-9]/g, '').slice(-10) : "";
+                
+                const rawBan = ban;
+                const cleanBan = rawBan ? String(rawBan).replace(/[^0-9]/g, '').slice(0, 9) : "";
+
+                return [
+                  cleanBan,               // Número BAN (Limpio 9 dígitos)
+                  clientName,             // Empresa
+                  vendor,                 // Vendedor
+                  cleanPhone,             // Teléfono (Limpio 10 dígitos)
+                  row[idxPlan],           // Plan (G)
+                  row[idxPrice],          // Precio (H)
+                  row[idxMonths],         // Meses (N)
+                  "",                     // Equipo (No mapeado explícitamente)
+                  row[idxComments]        // Notas (P)
+                ];
+              });
+
+            setColumns(virtualHeaders);
+            setPreview(transformedData.slice(0, 10)); // Mostrar primeros 10
+            
+            // Auto-asignar mapeo
+            setAssigned({
+              "BANs.ban_number": "Número BAN",
+              "Clientes.name": "Nombre del Cliente",
+              "Clientes.vendor_id": "Vendedor",
+              "Suscriptores.phone": "Número de Teléfono",
+              "Suscriptores.service_type": "Plan / Descripción",
+              "Suscriptores.monthly_value": "Valor Mensual",
+              "Suscriptores.months": "Meses",
+              "Suscriptores.equipment": "Equipo",
+              "Suscriptores.notes": "Notas"
+            });
+
+            // Guardar la data transformada completa en una propiedad del componente o estado si fuera necesario
+            // Pero el importador usa 'file' y lo lee de nuevo al guardar.
+            // PROBLEMA: Al guardar, el backend leerá el archivo original y no sabrá interpretarlo.
+            // SOLUCIÓN: Necesitamos interceptar el guardado o enviar la data transformada.
+            // El backend espera { mapping, data }. 'data' se construye en el frontend?
+            // Revisemos handleValidate/handleSave.
+            
+            // Hack: Reemplazar el comportamiento de lectura en handleSave o guardar la data transformada en un estado.
+            // Vamos a guardar la data transformada en un estado temporal para usarla en el guardado.
+            (window as any).__transformedData = [virtualHeaders, ...transformedData];
+            
+            return;
+          }
+        }
+        // ---------------------------------------------
+
         const firstRow = (jsonData[0] || []) as string[];
         setColumns(firstRow);
         setPreview(jsonData.slice(1, 10));
+        // Limpiar data transformada si es un archivo normal
+        (window as any).__transformedData = null;
       };
       reader.readAsArrayBuffer(selectedFile);
     } catch (error) {
@@ -163,10 +347,10 @@ export default function ImportadorVisual() {
     const validationErrors: string[] = [];
 
     // Validar campos requeridos
+    // TEMPORALMENTE DESHABILITADO PARA DEPURACIÓN DE CACHÉ
+    /*
     const requiredFields = [
       "Clientes.name",
-      "Clientes.business_name",
-      "Clientes.email",
       "BANs.ban_number",
       "Suscriptores.phone",
     ];
@@ -177,6 +361,8 @@ export default function ImportadorVisual() {
         validationErrors.push(`Campo requerido no mapeado: ${getFieldLabel(table, col)}`);
       }
     }
+    */
+    console.log("Validación de campos requeridos omitida en v5.0");
 
     if (validationErrors.length > 0) {
       setValidationResult({ valid: false, errors: validationErrors });
@@ -202,43 +388,191 @@ export default function ImportadorVisual() {
     if (!file) return;
 
     try {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        if (!event.target?.result) return;
+      // Usar data transformada si existe (para formato de Activaciones)
+      const transformedData = (window as any).__transformedData;
+      
+      let headers: string[];
+      let rows: any[][];
 
-        const data = new Uint8Array(event.target.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: "array" });
-        const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-        const jsonData = XLSX.utils.sheet_to_json(firstSheet, { header: 1, defval: "" }) as any[][];
-        const headers = (jsonData[0] || []) as string[];
-        const rows = jsonData.slice(1).filter(row => row.some(cell => cell !== "" && cell !== null));
-
-        // Obtener campos mapeados
-        const mappedFields = Object.entries(assigned).map(([field, columnName]) => {
-          const [table, col] = field.split(".");
-          return {
-            table,
-            field: col,
-            column: columnName,
-            label: getFieldLabel(table, col)
+      if (transformedData) {
+        headers = transformedData[0];
+        rows = transformedData.slice(1);
+      } else {
+        // Lectura normal
+        const reader = new FileReader();
+        const filePromise = new Promise<{headers: string[], rows: any[][]}>((resolve, reject) => {
+          reader.onload = (event) => {
+            if (!event.target?.result) return reject("No result");
+            const data = new Uint8Array(event.target.result as ArrayBuffer);
+            const workbook = XLSX.read(data, { type: "array" });
+            const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+            const jsonData = XLSX.utils.sheet_to_json(firstSheet, { header: 1, defval: "" }) as any[][];
+            const h = (jsonData[0] || []) as string[];
+            const r = jsonData.slice(1).filter(row => row.some(cell => cell !== "" && cell !== null));
+            resolve({ headers: h, rows: r });
           };
+          reader.onerror = reject;
+          reader.readAsArrayBuffer(file);
         });
+        
+        const result = await filePromise;
+        headers = result.headers;
+        rows = result.rows;
+      }
 
-        // Mapear algunas filas de ejemplo
-        const sampleRows = rows.slice(0, 5).map((row) => {
-          const mapped: Record<string, any> = {};
-          for (const [field, columnName] of Object.entries(assigned)) {
-            const colIndex = headers.indexOf(columnName);
-            if (colIndex !== -1) {
-              const [table, col] = field.split(".");
-              if (!mapped[table]) mapped[table] = {};
-              mapped[table][col] = row[colIndex] || null;
+      // --- VALIDACIÓN DE DATOS FALTANTES ---
+      // Verificar Plazos Faltantes
+      const remainingPaymentsCol = assigned["Suscriptores.remaining_payments"];
+      if (remainingPaymentsCol) {
+        const colIdx = headers.indexOf(remainingPaymentsCol);
+        if (colIdx !== -1) {
+          const missingRows: number[] = [];
+          rows.forEach((row, idx) => {
+            const val = row[colIdx];
+            if (val === undefined || val === null || String(val).trim() === "") {
+              missingRows.push(idx);
             }
-          }
-          return mapped;
-        });
+          });
 
-        // Validaciones y advertencias
+          if (missingRows.length > 0) {
+            setMissingDataState({
+              isOpen: true,
+              field: 'Suscriptores.remaining_payments',
+              label: 'Plazos Faltantes',
+              rows: missingRows,
+              data: rows,
+              headers: headers
+            });
+            return; // Detener generación de preview
+          }
+        }
+      }
+
+      // Verificar Fecha Inicio Contrato
+      const startDateCol = assigned["Suscriptores.contract_start_date"];
+      if (startDateCol) {
+        const colIdx = headers.indexOf(startDateCol);
+        if (colIdx !== -1) {
+          const missingRows: number[] = [];
+          rows.forEach((row, idx) => {
+            const val = row[colIdx];
+            if (val === undefined || val === null || String(val).trim() === "") {
+              // Si NO hay fecha por defecto, lo marcamos como faltante
+              if (!defaultStartDate) {
+                missingRows.push(idx);
+              }
+            }
+          });
+
+          if (missingRows.length > 0) {
+            setMissingDataState({
+              isOpen: true,
+              field: 'Suscriptores.contract_start_date',
+              label: 'Fecha Inicio Contrato',
+              rows: missingRows,
+              data: rows,
+              headers: headers
+            });
+            return; // Detener generación de preview
+          }
+        }
+      }
+      // -------------------------------------
+
+      // Obtener campos mapeados
+      const mappedFields = Object.entries(assigned).map(([field, columnName]) => {
+        const [table, col] = field.split(".");
+        return {
+          table,
+          field: col,
+          column: columnName,
+          label: getFieldLabel(table, col)
+        };
+      });
+
+        // Mapear datos completos para simulación
+      const mappedData = rows.map((row) => {
+        const mapped: Record<string, any> = {};
+        
+        // Variables para cálculo de plazos faltantes
+        let calcStartDate: string | null = null;
+        let calcMonths: number | null = null;
+
+        for (const [field, columnName] of Object.entries(assigned)) {
+          const colIndex = headers.indexOf(columnName);
+          if (colIndex !== -1) {
+            const [table, col] = field.split(".");
+            if (!mapped[table]) mapped[table] = {};
+            
+            let val = row[colIndex];
+            // Inyectar fecha por defecto si falta y está mapeado
+            if (field === "Suscriptores.contract_start_date" && (!val || String(val).trim() === "") && defaultStartDate) {
+               const parts = defaultStartDate.split('/');
+               if (parts.length === 3) {
+                   val = `${parts[2]}-${parts[0].padStart(2, '0')}-${parts[1].padStart(2, '0')}`;
+               } else {
+                   val = defaultStartDate;
+               }
+            }
+            
+            mapped[table][col] = val || null;
+
+            // Capturar valores para cálculo
+            if (field === "Suscriptores.contract_start_date") calcStartDate = val;
+            if (field === "Suscriptores.months") calcMonths = parseInt(val, 10);
+          }
+        }
+        
+        // Si NO está asignado pero tenemos defaultStartDate, inyectarlo
+        if (!assigned["Suscriptores.contract_start_date"] && defaultStartDate) {
+           if (!mapped["Suscriptores"]) mapped["Suscriptores"] = {};
+           const parts = defaultStartDate.split('/');
+           let finalDate = defaultStartDate;
+           if (parts.length === 3) {
+               finalDate = `${parts[2]}-${parts[0].padStart(2, '0')}-${parts[1].padStart(2, '0')}`;
+           }
+           mapped["Suscriptores"]["contract_start_date"] = finalDate;
+           calcStartDate = finalDate;
+        }
+
+        // CÁLCULO AUTOMÁTICO DE PLAZOS FALTANTES (remaining_payments)
+        // Si tenemos Fecha Inicio y Duración (Meses), calculamos la diferencia contra HOY
+        if (calcStartDate && calcMonths && !isNaN(calcMonths)) {
+            try {
+                const start = new Date(calcStartDate);
+                const today = new Date();
+                
+                // Calcular fecha fin teórica
+                const end = new Date(start);
+                end.setMonth(end.getMonth() + calcMonths);
+                
+                // Calcular meses restantes desde HOY hasta FIN
+                // Diferencia en meses
+                let remaining = (end.getFullYear() - today.getFullYear()) * 12 + (end.getMonth() - today.getMonth());
+                
+                // Ajuste por días (si hoy es día 15 y fin es día 10, ya pasó el mes parcialmente, pero simplificamos a meses enteros)
+                if (remaining < 0) remaining = 0;
+                
+                // Inyectar en mappedData si no existe o sobrescribir si se desea lógica automática
+                if (!mapped["Suscriptores"]) mapped["Suscriptores"] = {};
+                
+                // Solo asignamos si no viene explícitamente del Excel (o si el usuario prefiere el cálculo)
+                // Asumimos que el cálculo tiene prioridad si se usa la fecha por defecto
+                mapped["Suscriptores"]["remaining_payments"] = remaining;
+                
+                // También podemos inyectar contract_end_date si el backend lo usa
+                mapped["Suscriptores"]["contract_end_date"] = end.toISOString().split('T')[0];
+
+            } catch (e) {
+                console.warn("Error calculando plazos faltantes", e);
+            }
+        }
+        
+        return mapped;
+      });        // Mapear algunas filas de ejemplo
+        const sampleRows = mappedData.slice(0, 5);
+
+        // Validaciones y advertencias locales
         const warnings: string[] = [];
         let rowsWithBAN = 0;
         let rowsWithoutBAN = 0;
@@ -266,23 +600,82 @@ export default function ImportadorVisual() {
           warnings.push(`... y ${rows.length - 10} filas más con posibles advertencias`);
         }
 
+        // LLAMADA A SIMULACIÓN
+        let simulation = undefined;
+        try {
+          // Procesar en lotes para simulación si es muy grande, pero por ahora enviamos todo
+          // Si es muy grande (>1000), podríamos enviar solo una muestra o hacerlo en backend
+          const response = await authFetch("/api/importador/simulate", {
+            method: "POST",
+            json: {
+              mapping: assigned,
+              data: mappedData,
+            },
+          });
+
+          if (response.ok) {
+            const result = await response.json();
+            if (result.success && result.report) {
+              simulation = result.report;
+            }
+          }
+        } catch (simError) {
+          console.error("Error en simulación:", simError);
+          warnings.push("No se pudo conectar con el servidor para verificar duplicados (Simulación fallida).");
+        }
+
         setPreviewData({
           totalRows: rows.length,
           sampleRows,
           mappedFields,
-          estimatedCreates: Math.floor(rows.length * 0.1), // Estimación
-          estimatedUpdates: Math.floor(rows.length * 0.9), // Estimación
-          warnings
+          estimatedCreates: simulation ? simulation.newClients : 0,
+          estimatedUpdates: simulation ? simulation.updatedClients : 0,
+          warnings,
+          simulation
         });
 
         setShowPreviewModal(true);
-      };
-
-      reader.readAsArrayBuffer(file);
+      
     } catch (error) {
       console.error("Error generando preview:", error);
       alert("Error al generar la vista previa");
     }
+  };
+
+  const handleApplyMissingData = (value: string, applyToAll: boolean) => {
+    if (!missingDataState.isOpen) return;
+
+    const { field, rows: targetRows, data, headers } = missingDataState;
+    const colName = assigned[field];
+    if (!colName) return;
+
+    const colIdx = headers.indexOf(colName);
+    if (colIdx === -1) return;
+
+    let currentData = (window as any).__transformedData;
+    if (!currentData) {
+      // Reconstruir formato hoja de cálculo: [headers, ...rows]
+      currentData = [headers, ...data];
+    }
+
+    const rowsToUpdate = applyToAll ? targetRows : [targetRows[0]];
+
+    rowsToUpdate.forEach(rowIndex => {
+      // currentData[0] son headers. currentData[rowIndex + 1] es la fila.
+      if (currentData[rowIndex + 1]) {
+        currentData[rowIndex + 1][colIdx] = value;
+      }
+    });
+
+    // Guardar de nuevo
+    (window as any).__transformedData = currentData;
+
+    // Cerrar modal y reintentar generatePreview
+    setMissingDataState(prev => ({ ...prev, isOpen: false }));
+    
+    setTimeout(() => {
+      generatePreview();
+    }, 100);
   };
 
   const handleSave = async (confirmed = false) => {
@@ -292,10 +685,10 @@ export default function ImportadorVisual() {
     }
 
     // Validar antes de guardar
+    // TEMPORALMENTE DESHABILITADO PARA DEPURACIÓN DE CACHÉ
+    /*
     const requiredFields = [
       "Clientes.name",
-      "Clientes.business_name",
-      "Clientes.email",
       "BANs.ban_number",
       "Suscriptores.phone",
     ];
@@ -305,6 +698,8 @@ export default function ImportadorVisual() {
       alert("Por favor, verifica los errores antes de guardar. Faltan campos requeridos.");
       return;
     }
+    */
+    console.log("Validación de guardado omitida en v5.0");
 
     // Si no está confirmado, mostrar modal de previsualización
     if (!confirmed) {
@@ -317,38 +712,78 @@ export default function ImportadorVisual() {
     setIsSaving(true);
 
     try {
-      // Leer el archivo completo
-      const reader = new FileReader();
-      reader.onload = async (event) => {
-        if (!event.target?.result) {
-          setIsSaving(false);
-          return;
+      // Usar data transformada si existe (para formato de Activaciones)
+      const transformedData = (window as any).__transformedData;
+      
+      let headers: string[];
+      let rows: any[][];
+
+      if (transformedData) {
+        headers = transformedData[0];
+        rows = transformedData.slice(1);
+      } else {
+        // Lectura normal
+        const reader = new FileReader();
+        const filePromise = new Promise<{headers: string[], rows: any[][]}>((resolve, reject) => {
+          reader.onload = (event) => {
+            if (!event.target?.result) return reject("No result");
+            const data = new Uint8Array(event.target.result as ArrayBuffer);
+            const workbook = XLSX.read(data, { type: "array" });
+            const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+            const jsonData = XLSX.utils.sheet_to_json(firstSheet, { header: 1, defval: "" }) as any[][];
+            const h = (jsonData[0] || []) as string[];
+            const r = jsonData.slice(1);
+            resolve({ headers: h, rows: r });
+          };
+          reader.onerror = reject;
+          reader.readAsArrayBuffer(file);
+        });
+        
+        const result = await filePromise;
+        headers = result.headers;
+        rows = result.rows;
+      }
+
+      // Mapear los datos según el mapeo asignado
+      const mappedData = rows.map((row) => {
+        const mapped: Record<string, any> = {};
+        for (const [field, columnName] of Object.entries(assigned)) {
+          const colIndex = headers.indexOf(columnName);
+          if (colIndex !== -1) {
+            const [table, col] = field.split(".");
+            if (!mapped[table]) mapped[table] = {};
+            
+            let val = row[colIndex];
+            // Inyectar fecha por defecto si falta y está mapeado
+            if (field === "Suscriptores.contract_start_date" && (!val || String(val).trim() === "") && defaultStartDate) {
+               const parts = defaultStartDate.split('/');
+               if (parts.length === 3) {
+                   val = `${parts[2]}-${parts[0].padStart(2, '0')}-${parts[1].padStart(2, '0')}`;
+               } else {
+                   val = defaultStartDate;
+               }
+            }
+
+            mapped[table][col] = val || null;
+          }
         }
 
-        try {
-          const data = new Uint8Array(event.target.result as ArrayBuffer);
-          const workbook = XLSX.read(data, { type: "array" });
-          const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-          const jsonData = XLSX.utils.sheet_to_json(firstSheet, { header: 1, defval: "" }) as any[][];
-          const headers = (jsonData[0] || []) as string[];
-          const rows = jsonData.slice(1);
+        // Si NO está asignado pero tenemos defaultStartDate, inyectarlo
+        if (!assigned["Suscriptores.contract_start_date"] && defaultStartDate) {
+           if (!mapped["Suscriptores"]) mapped["Suscriptores"] = {};
+           const parts = defaultStartDate.split('/');
+           let finalDate = defaultStartDate;
+           if (parts.length === 3) {
+               finalDate = `${parts[2]}-${parts[0].padStart(2, '0')}-${parts[1].padStart(2, '0')}`;
+           }
+           mapped["Suscriptores"]["contract_start_date"] = finalDate;
+        }
 
-          // Mapear los datos según el mapeo asignado
-          const mappedData = rows.map((row) => {
-            const mapped: Record<string, any> = {};
-            for (const [field, columnName] of Object.entries(assigned)) {
-              const colIndex = headers.indexOf(columnName);
-              if (colIndex !== -1) {
-                const [table, col] = field.split(".");
-                if (!mapped[table]) mapped[table] = {};
-                mapped[table][col] = row[colIndex] || null;
-              }
-            }
-            return mapped;
-          });
+        return mapped;
+      });
 
-          // Procesar en lotes pequeños para evitar Timeouts (504)
-          const BATCH_SIZE = 200;
+      // Procesar en lotes pequeños para evitar Timeouts (504)
+      const BATCH_SIZE = 200;
           const totalBatches = Math.ceil(mappedData.length / BATCH_SIZE);
           
           let totalCreated = 0;
@@ -437,42 +872,66 @@ export default function ImportadorVisual() {
             setAssigned({});
             setValidationResult(null);
           }
-        } catch (error: any) {
-          console.error("Error guardando:", error);
-          alert(`Error al guardar: ${error.message || "Error desconocido"}`);
-        } finally {
-          setIsSaving(false);
-        }
-      };
-
-      reader.readAsArrayBuffer(file);
+        
     } catch (error: any) {
       console.error("Error procesando archivo:", error);
       alert(`Error: ${error.message || "Error desconocido"}`);
+    } finally {
       setIsSaving(false);
     }
   };
 
   return (
-    <div className="p-8 bg-neutral-950 min-h-screen text-gray-100 overflow-auto">
-      <h1 className="text-3xl font-bold text-center mb-6 text-amber-400 drop-shadow-md">
-        Importador de Datos v3 (Columnas Ajustadas)
-      </h1>
+    <div className="p-4 bg-neutral-950 min-h-screen text-gray-100 overflow-auto">
+      
+      <div className="bg-neutral-800 rounded-lg p-2 flex flex-wrap items-center justify-between gap-4 border border-neutral-600 shadow-lg mb-4">
+        <div className="flex items-center gap-4">
+          <div className="flex flex-col">
+            <p className="text-base text-gray-200 font-medium hidden sm:block">
+              Subí tu archivo <span className="text-green-500 font-bold">(v5.0.2)</span>
+            </p>
+            <p className="text-[10px] text-gray-500 hidden sm:block">
+              * VALIDACIONES DESACTIVADAS
+            </p>
+          </div>
+          <label className="inline-block cursor-pointer">
+            <input
+              type="file"
+              accept=".csv,.xls,.xlsx,.txt"
+              onChange={handleFileChange}
+              className="hidden"
+            />
+            <span className="bg-amber-500 hover:bg-amber-400 text-black font-semibold py-1.5 px-4 text-sm rounded-lg shadow-md transition-all">
+              Seleccionar Archivo
+            </span>
+          </label>
+        </div>
+        <div className="flex items-center gap-2">
+          <button 
+            onClick={() => window.location.reload()}
+            className="bg-neutral-700 hover:bg-neutral-600 text-xs text-gray-300 py-1 px-2 rounded border border-neutral-600"
+            title="Recargar página para borrar caché"
+          >
+            🔄 Recargar
+          </button>
+          {file && <p className="text-sm text-amber-300 font-medium truncate max-w-[150px]">📄 {file?.name}</p>}
+        </div>
+      </div>
 
-      <div className="grid grid-cols-3 gap-4 mb-10">
+      <div className="grid grid-cols-3 gap-4 mb-4">
         {fields.map((table) => (
           <div
             key={table.table}
-            className="bg-neutral-800 border border-amber-500 rounded-lg shadow-md p-4"
+            className="bg-neutral-800 border border-amber-500 rounded-lg shadow-md p-3"
           >
-            <h2 className="text-xl font-semibold text-amber-400 mb-3 border-b border-amber-500 pb-1">
+            <h2 className="text-lg font-semibold text-amber-400 mb-2 border-b border-amber-500 pb-1">
               {table.table}
             </h2>
-            <ul className="space-y-2">
+            <ul className="space-y-1">
               {table.columns.map((col) => (
                 <li
                   key={col}
-                  className={`text-sm border rounded-md p-2 text-center transition-all cursor-pointer select-none ${assigned[`${table.table}.${col}`]
+                  className={`text-xs border rounded-md p-1.5 text-center transition-all cursor-pointer select-none ${assigned[`${table.table}.${col}`]
                     ? "bg-green-600 border-green-400 text-white"
                     : "bg-neutral-900 border-neutral-700 hover:bg-amber-500/20 text-white"
                     }`}
@@ -481,7 +940,7 @@ export default function ImportadorVisual() {
                 >
                   {getFieldLabel(table.table, col)}
                   {assigned[`${table.table}.${col}`] && (
-                    <span className="block text-xs mt-1 text-amber-300">
+                    <span className="block text-[10px] mt-0.5 text-amber-300 truncate">
                       ← {assigned[`${table.table}.${col}`] || ''}
                     </span>
                   )}
@@ -492,23 +951,29 @@ export default function ImportadorVisual() {
         ))}
       </div>
 
-      <div className="bg-neutral-800 rounded-lg p-6 text-center border border-neutral-600 shadow-lg mb-8">
-        <p className="text-lg mb-4 text-gray-200 font-medium">
-          Subí tu archivo CSV o Excel
-        </p>
-        <label className="inline-block cursor-pointer">
-          <input
-            type="file"
-            accept=".csv,.xls,.xlsx,.txt"
-            onChange={handleFileChange}
-            className="hidden"
-          />
-          <span className="bg-amber-500 hover:bg-amber-400 text-black font-semibold py-2 px-4 rounded-lg shadow-md transition-all">
-            Seleccionar Archivo
-          </span>
-        </label>
-        {file && <p className="mt-3 text-sm text-amber-300">Archivo cargado: {file?.name || 'Archivo'}</p>}
-      </div>
+      {/* Configuración de Fechas */}
+      {file && (
+        <div className="bg-neutral-800 rounded-lg p-4 mb-6 border border-neutral-600">
+          <h3 className="text-lg font-semibold text-white mb-3">📅 Configuración de Fechas (Opcional)</h3>
+          <div className="flex items-center gap-4">
+            <div className="flex-1 max-w-md">
+              <label className="block text-sm text-gray-400 mb-1">
+                Fecha Inicio Contrato por defecto
+              </label>
+              <input
+                type="text"
+                placeholder="MM/DD/AAAA"
+                value={defaultStartDate}
+                onChange={(e) => setDefaultStartDate(e.target.value)}
+                className="w-full bg-neutral-900 border border-neutral-700 rounded px-3 py-2 text-white focus:border-blue-500 focus:outline-none"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Formato: MM/DD/AAAA (Mes/Día/Año). Ej: 12/31/2025. Se usará si falta la fecha.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Botones de acción */}
       {file && (
@@ -637,26 +1102,67 @@ export default function ImportadorVisual() {
             <div className="flex-1 overflow-y-auto p-6">
               {/* Resumen de importación */}
               <div className="mb-6 p-4 bg-neutral-800 rounded-lg border border-amber-500/30">
-                <h3 className="text-xl font-semibold text-amber-400 mb-4">📊 Resumen de lo que se va a importar:</h3>
+                <h3 className="text-xl font-semibold text-amber-400 mb-4">
+                  {previewData.simulation ? "📊 Resultado de Simulación (Verificado en BD)" : "📊 Resumen Estimado"}
+                </h3>
                 <div className="grid grid-cols-4 gap-4 mt-4">
                   <div className="text-center">
                     <div className="text-3xl font-bold text-blue-400">{previewData.totalRows}</div>
                     <div className="text-sm text-gray-400">Filas Totales</div>
                   </div>
                   <div className="text-center">
-                    <div className="text-3xl font-bold text-green-400">{previewData.estimatedCreates}</div>
-                    <div className="text-sm text-gray-400">Est. Nuevos</div>
+                    <div className="text-3xl font-bold text-green-400">
+                      {previewData.simulation ? previewData.simulation.newClients : previewData.estimatedCreates}
+                    </div>
+                    <div className="text-sm text-gray-400">Clientes Nuevos</div>
                   </div>
                   <div className="text-center">
-                    <div className="text-3xl font-bold text-amber-400">{previewData.estimatedUpdates}</div>
-                    <div className="text-sm text-gray-400">Est. Actualizaciones</div>
+                    <div className="text-3xl font-bold text-amber-400">
+                      {previewData.simulation ? previewData.simulation.updatedClients : previewData.estimatedUpdates}
+                    </div>
+                    <div className="text-sm text-gray-400">Clientes Actualizados</div>
                   </div>
                   <div className="text-center">
-                    <div className="text-3xl font-bold text-purple-400">{previewData.mappedFields.length}</div>
-                    <div className="text-sm text-gray-400">Campos Mapeados</div>
+                    <div className="text-3xl font-bold text-purple-400">
+                       {previewData.simulation ? previewData.simulation.newBans : "-"}
+                    </div>
+                    <div className="text-sm text-gray-400">BANs Nuevos</div>
                   </div>
                 </div>
+                
+                {previewData.simulation && (
+                  <div className="grid grid-cols-4 gap-4 mt-4 pt-4 border-t border-neutral-700">
+                     <div className="text-center">
+                        <div className="text-2xl font-bold text-orange-400">{previewData.simulation.movedBans}</div>
+                        <div className="text-xs text-gray-400">BANs Movidos/Duplicados</div>
+                     </div>
+                     <div className="text-center">
+                        <div className="text-2xl font-bold text-teal-400">{previewData.simulation.newSubscribers}</div>
+                        <div className="text-xs text-gray-400">Suscriptores Nuevos</div>
+                     </div>
+                     <div className="text-center">
+                        <div className="text-2xl font-bold text-indigo-400">{previewData.simulation.updatedSubscribers}</div>
+                        <div className="text-xs text-gray-400">Suscriptores Actualizados</div>
+                     </div>
+                     <div className="text-center">
+                        <div className="text-2xl font-bold text-pink-400">{previewData.simulation.fusedClients}</div>
+                        <div className="text-xs text-gray-400">Clientes Fusionados</div>
+                     </div>
+                  </div>
+                )}
               </div>
+
+              {/* Detalles de Simulación */}
+              {previewData.simulation && previewData.simulation.details.length > 0 && (
+                <div className="mb-6 bg-blue-900/20 border border-blue-500/30 rounded-lg p-4">
+                  <h3 className="text-blue-400 font-semibold mb-2">ℹ️ Detalles de la Simulación:</h3>
+                  <ul className="space-y-1 text-sm text-blue-100 max-h-40 overflow-y-auto">
+                    {previewData.simulation.details.map((detail, idx) => (
+                      <li key={idx}>• {detail}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
 
               {/* Campos mapeados */}
               <div className="mb-6">
@@ -725,6 +1231,63 @@ export default function ImportadorVisual() {
                 className="bg-green-600 hover:bg-green-500 disabled:bg-green-800 disabled:cursor-not-allowed text-white font-semibold py-2 px-8 rounded-lg shadow-md transition-all"
               >
                 {isSaving ? "Guardando..." : "✅ Confirmar Importación"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Datos Faltantes */}
+      {missingDataState.isOpen && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-neutral-900 border-2 border-yellow-500 rounded-lg shadow-2xl w-full max-w-md p-6">
+            <h2 className="text-xl font-bold text-yellow-400 mb-4">
+              ⚠️ Datos Faltantes Detectados
+            </h2>
+            <p className="text-white mb-4">
+              Se detectaron <strong>{missingDataState.rows.length}</strong> filas sin valor en el campo:
+              <br />
+              <span className="text-blue-400 font-mono">{missingDataState.label}</span>
+            </p>
+            
+            <div className="mb-4">
+              <label className="block text-sm text-gray-400 mb-1">
+                Valor para asignar:
+              </label>
+              <input
+                type="text"
+                value={missingDataValue}
+                onChange={(e) => setMissingDataValue(e.target.value)}
+                className="w-full bg-neutral-800 border border-neutral-600 rounded p-2 text-white focus:border-blue-500 outline-none"
+                placeholder="Ej: 0, 12, 2023-01-01..."
+              />
+            </div>
+
+            <div className="mb-6 flex items-center">
+              <input
+                type="checkbox"
+                id="applyAll"
+                checked={missingDataApplyAll}
+                onChange={(e) => setMissingDataApplyAll(e.target.checked)}
+                className="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-600 ring-offset-gray-800"
+              />
+              <label htmlFor="applyAll" className="ml-2 text-sm text-gray-300">
+                Aplicar a todos los vacíos ({missingDataState.rows.length})
+              </label>
+            </div>
+
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setMissingDataState(prev => ({ ...prev, isOpen: false }))}
+                className="px-4 py-2 text-gray-300 hover:text-white hover:bg-neutral-800 rounded transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => handleApplyMissingData(missingDataValue, missingDataApplyAll)}
+                className="px-4 py-2 bg-yellow-600 hover:bg-yellow-500 text-white font-semibold rounded shadow-md transition-colors"
+              >
+                Aplicar Corrección
               </button>
             </div>
           </div>

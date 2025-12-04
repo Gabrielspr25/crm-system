@@ -1454,11 +1454,7 @@ app.get('/api/clients', async (req, res) => {
           c.*,
           v.name AS vendor_name,
           COALESCE(b.ban_count, 0) AS ban_count,
-          CASE 
-            WHEN b.ban_numbers IS NOT NULL AND LENGTH(b.ban_numbers) > 200 
-            THEN LEFT(b.ban_numbers, 200) || '...'
-            ELSE b.ban_numbers
-          END AS ban_numbers,
+          b.ban_numbers,
           b.ban_descriptions,
           CASE WHEN COALESCE(b.ban_count, 0) > 0 THEN 1 ELSE 0 END AS has_bans,
           COALESCE(s.subscriber_count, 0) AS subscriber_count,
@@ -1856,10 +1852,9 @@ app.get('/api/bans', async (req, res) => {
 
   try {
     const rows = await query(
-      `SELECT b.*, c.name AS client_name, c.vendor_id, bcr.reason as cancel_reason
+      `SELECT b.*, c.name AS client_name, c.vendor_id
          FROM bans b
          LEFT JOIN clients c ON b.client_id = c.id
-         LEFT JOIN ban_cancel_reason bcr ON b.id = bcr.ban_id
          ${filter}
          ORDER BY b.created_at DESC`,
       params
@@ -1938,15 +1933,23 @@ app.post('/api/bans', async (req, res) => {
 
     const rows = await query(
       `INSERT INTO bans
-        (ban_number, client_id, description, status, is_active, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,NOW(),NOW())
+        (ban_number, client_id, description, status, is_active, cancel_reason, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,NOW(),NOW())
        RETURNING *`,
-      [ban_number.trim(), client_id, description, status === 'cancelled' ? 'cancelled' : 'active', is_active ? 1 : 0]
+      [
+        ban_number.trim(), 
+        client_id, 
+        description, 
+        status === 'cancelled' ? 'cancelled' : 'active', 
+        is_active ? 1 : 0,
+        status === 'cancelled' ? cancel_reason : null
+      ]
     );
 
     const ban = enrich(rows[0], ['client_id', 'is_active'], [], ['created_at', 'updated_at']);
 
-    // Si está cancelado, guardar la razón
+    // Si está cancelado, guardar la razón (también en tabla separada por compatibilidad si se desea, pero ya está en columna)
+    // Mantenemos la tabla separada por ahora para no romper nada, pero la fuente de verdad será la columna
     if (status === 'cancelled' && cancel_reason) {
       await query(
         `INSERT INTO ban_cancel_reason (ban_id, reason, created_at) VALUES ($1, $2, NOW())`,
@@ -2032,10 +2035,19 @@ app.put('/api/bans/:id', async (req, res) => {
                 description = $3,
                 status = $4,
                 is_active = $5,
+                cancel_reason = $6,
                 updated_at = NOW()
-          WHERE id = $6
+          WHERE id = $7
           RETURNING *`,
-      [ban_number.trim(), finalClientId, description, normalizedStatus, is_active ? 1 : 0, banId]
+      [
+        ban_number.trim(), 
+        finalClientId, 
+        description, 
+        normalizedStatus, 
+        is_active ? 1 : 0, 
+        normalizedStatus === 'cancelled' ? cancel_reason : null,
+        banId
+      ]
     );
 
     console.log('✅ BAN actualizado en BD:', rows[0]);
@@ -2044,7 +2056,7 @@ app.put('/api/bans/:id', async (req, res) => {
       return notFound(res, 'BAN');
     }
 
-    // Si cambió a cancelado, guardar la razón
+    // Si cambió a cancelado, guardar la razón (mantener compatibilidad)
     if (normalizedStatus === 'cancelled' && cancel_reason) {
       // Eliminar razones anteriores si existen
       await query(`DELETE FROM ban_cancel_reason WHERE ban_id = $1`, [banId]);
@@ -2101,8 +2113,201 @@ app.delete('/api/bans/:id', async (req, res) => {
 });
 
 // ======================================================
+// ======================================================
 // Importador Visual
 // ======================================================
+
+app.post('/api/importador/simulate', async (req, res) => {
+  const { mapping, data } = req.body || {};
+
+  if (!mapping || !data || !Array.isArray(data)) {
+    return badRequest(res, 'Datos de mapeo y datos son requeridos');
+  }
+
+  // Reutilizamos la lógica de guardado pero forzamos ROLLBACK al final
+  const client = await pool.connect();
+  let created = 0;
+  let updated = 0;
+  let errors = [];
+  let report = {
+    newClients: 0,
+    updatedClients: 0,
+    newBans: 0,
+    updatedBans: 0,
+    movedBans: 0,
+    newSubscribers: 0,
+    updatedSubscribers: 0,
+    movedSubscribers: 0,
+    reactivatedSubscribers: 0,
+    fusedClients: 0,
+    details: []
+  };
+
+  try {
+    await client.query('BEGIN');
+
+    // Procesar todo en un solo lote para la simulación (o en varios si es muy grande, pero todo dentro de la misma transacción)
+    // Para simulación, procesamos todo junto para tener el reporte completo.
+    
+    let vendorId = req.user?.salespersonId;
+    if (vendorId && typeof vendorId === 'string') {
+      const numId = Number(vendorId);
+      vendorId = !isNaN(numId) ? numId : null;
+    }
+    if (!vendorId || typeof vendorId !== 'number') {
+      vendorId = null;
+    }
+
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      const rowIndex = i;
+
+      try {
+        const clientData = row.Clientes || {};
+        const banData = row.BANs || {};
+        const subscriberData = row.Suscriptores || {};
+
+        let normalizedBan = null;
+        if (banData.ban_number) {
+          normalizedBan = String(banData.ban_number).trim().replace(/[^0-9]/g, '').slice(0, 9);
+          if (!normalizedBan || normalizedBan.length === 0) normalizedBan = null;
+        }
+
+        if (!normalizedBan && !clientData.business_name && !clientData.name) {
+          continue; 
+        }
+
+        let subscriberPhone = null;
+        if (subscriberData.phone) {
+          subscriberPhone = String(subscriberData.phone).trim().replace(/[^0-9]/g, '');
+          if (!subscriberPhone || subscriberPhone.length === 0) subscriberPhone = null;
+        }
+
+        // --- Lógica de Cliente ---
+        let clientId = null;
+        let clientAction = 'none';
+
+        if (normalizedBan) {
+          if (clientData.email) {
+            const emailResult = await client.query(`SELECT id FROM clients WHERE email = $1`, [clientData.email]);
+            if (emailResult.rows.length > 0) clientId = emailResult.rows[0].id;
+          }
+          if (!clientId) {
+            const banClientResult = await client.query(`SELECT client_id FROM bans WHERE ban_number = $1 LIMIT 1`, [normalizedBan]);
+            if (banClientResult.rows.length > 0) clientId = banClientResult.rows[0].client_id;
+          }
+          if (!clientId && subscriberPhone) {
+             const subResult = await client.query(
+               `SELECT b.client_id FROM subscribers s JOIN bans b ON s.ban_id = b.id WHERE s.phone = $1 LIMIT 1`, // Check inactive too?
+               [subscriberPhone]
+             );
+             if (subResult.rows.length > 0) clientId = subResult.rows[0].client_id;
+          }
+          if (!clientId && clientData.business_name) {
+            const businessResult = await client.query(`SELECT id FROM clients WHERE business_name = $1 ORDER BY id ASC`, [clientData.business_name]);
+            if (businessResult.rows.length > 0) {
+              clientId = businessResult.rows[0].id;
+              if (businessResult.rows.length > 1) {
+                report.fusedClients += (businessResult.rows.length - 1);
+                report.details.push(`Fila ${rowIndex + 1}: Fusión de ${businessResult.rows.length - 1} clientes duplicados por Razón Social.`);
+              }
+            }
+          }
+        } else {
+           // Lógica sin BAN (buscar por nombre/empresa)
+           let searchField = clientData.business_name ? 'business_name' : (clientData.name ? 'name' : null);
+           let searchValue = clientData.business_name || clientData.name;
+           
+           if (searchField) {
+              const clientResult = await client.query(`SELECT id FROM clients WHERE ${searchField} = $1 ORDER BY id ASC`, [searchValue]);
+              if (clientResult.rows.length > 0) {
+                clientId = clientResult.rows[0].id;
+                if (clientResult.rows.length > 1) {
+                   report.fusedClients += (clientResult.rows.length - 1);
+                }
+              }
+           }
+        }
+
+        if (clientId) {
+          clientAction = 'updated';
+          report.updatedClients++;
+          // Simular update
+        } else {
+          clientAction = 'created';
+          report.newClients++;
+          // Simular insert
+          const newClient = await client.query(
+            `INSERT INTO clients (name, business_name, vendor_id, is_active) VALUES ($1, $2, $3, 1) RETURNING id`,
+            [clientData.name || normalizedBan || 'Simulado', clientData.business_name, vendorId]
+          );
+          clientId = newClient.rows[0].id;
+        }
+
+        // --- Lógica de BAN ---
+        let banId = null;
+        if (normalizedBan) {
+          let banResult = await client.query(`SELECT id, client_id FROM bans WHERE ban_number = $1`, [normalizedBan]);
+          
+          if (banResult.rows.length > 0) {
+            banId = banResult.rows[0].id;
+            report.updatedBans++;
+            if (banResult.rows[0].client_id !== clientId) {
+               report.movedBans++; // O error de duplicado según lógica actual
+               report.details.push(`Fila ${rowIndex + 1}: BAN ${normalizedBan} pertenece a otro cliente. Se mantendrá en el original (Simulación).`);
+            }
+          } else {
+            if (clientId) {
+              const newBan = await client.query(`INSERT INTO bans (ban_number, client_id, status) VALUES ($1, $2, 'active') RETURNING id`, [normalizedBan, clientId]);
+              banId = newBan.rows[0].id;
+              report.newBans++;
+            }
+          }
+        }
+
+        // --- Lógica de Suscriptor ---
+        if (banId && subscriberPhone) {
+          const subResult = await client.query(`SELECT id, ban_id, is_active FROM subscribers WHERE phone = $1`, [subscriberPhone]);
+          
+          if (subResult.rows.length > 0) {
+            const existingSub = subResult.rows[0];
+            if (existingSub.is_active === 0) {
+               report.reactivatedSubscribers++;
+               report.details.push(`Fila ${rowIndex + 1}: Suscriptor ${subscriberPhone} inactivo será reactivado.`);
+            } else {
+               report.updatedSubscribers++;
+               if (existingSub.ban_id !== banId) {
+                 report.movedSubscribers++;
+                 report.details.push(`Fila ${rowIndex + 1}: Suscriptor ${subscriberPhone} se moverá al BAN ${normalizedBan}.`);
+               }
+            }
+          } else {
+            report.newSubscribers++;
+          }
+        }
+
+      } catch (rowError) {
+        errors.push(`Fila ${rowIndex + 1}: ${rowError.message}`);
+      }
+    }
+
+    // SIEMPRE ROLLBACK EN SIMULACIÓN
+    await client.query('ROLLBACK');
+
+    res.json({
+      success: true,
+      report,
+      errors: errors.slice(0, 20)
+    });
+
+  } catch (error) {
+    await client.query('ROLLBACK');
+    serverError(res, error, 'Error en simulación');
+  } finally {
+    client.release();
+  }
+});
+
 app.post('/api/importador/save', async (req, res) => {
   const { mapping, data } = req.body || {};
 
@@ -2493,10 +2698,41 @@ app.post('/api/importador/save', async (req, res) => {
           // Buscar o crear suscriptor (solo si hay BAN y teléfono)
           let subscriberResult = null;
           
-          // Lógica para calcular fecha de fin de contrato automática basada en pagos restantes
-          // Se usa si no se proporciona una fecha explícita
+          // Lógica para calcular fechas y plazos automáticamente
+          
+          // 1. Si hay Fecha Inicio y Meses, calcular Fecha Fin
+          if (!subscriberData.contract_end_date && subscriberData.contract_start_date && subscriberData.months) {
+             const startDate = new Date(subscriberData.contract_start_date);
+             const months = Number(subscriberData.months);
+             
+             if (!isNaN(startDate.getTime()) && !isNaN(months) && months > 0) {
+                 const endDate = new Date(startDate);
+                 endDate.setMonth(endDate.getMonth() + months);
+                 subscriberData.contract_end_date = endDate.toISOString().split('T')[0];
+             }
+          }
+
+          // 2. Si hay Fecha Fin, calcular Plazos Faltantes (si no viene en el excel)
+          if (!subscriberData.remaining_payments && subscriberData.contract_end_date) {
+              const endDate = new Date(subscriberData.contract_end_date);
+              const today = new Date();
+              
+              if (!isNaN(endDate.getTime())) {
+                  // Calcular diferencia en meses
+                  let diffMonths = (endDate.getFullYear() - today.getFullYear()) * 12 + (endDate.getMonth() - today.getMonth());
+                  
+                  // Ajustar por día del mes (si hoy es 15 y vence el 10, ya pasó el mes)
+                  if (today.getDate() > endDate.getDate()) {
+                      diffMonths--;
+                  }
+                  
+                  subscriberData.remaining_payments = Math.max(0, diffMonths);
+              }
+          }
+
+          // 3. Fallback original: Si solo hay Plazos Faltantes, calcular Fecha Fin
           let calculatedEndDate = null;
-          if (subscriberData.remaining_payments) {
+          if (!subscriberData.contract_end_date && subscriberData.remaining_payments) {
             const remaining = Number(subscriberData.remaining_payments);
             if (!isNaN(remaining) && remaining > 0) {
               const today = new Date();
@@ -2568,7 +2804,7 @@ app.post('/api/importador/save', async (req, res) => {
                 subscriberData.remaining_payments ? (isNaN(Number(subscriberData.remaining_payments)) ? null : Number(subscriberData.remaining_payments)) : null,
                 subscriberData.contract_start_date || null,
                 subscriberData.contract_end_date || calculatedEndDate || null,
-                subscriberData.status || 'active',
+                subscriberData.status || 'activo',
                 subscriberData.equipment || null,
                 subscriberData.city || null,
                 subscriberData.notes || null,
@@ -2637,11 +2873,10 @@ app.get('/api/subscribers', async (req, res) => {
 
   try {
     const rows = await query(
-      `SELECT s.*, b.ban_number, b.client_id, c.vendor_id, scr.reason as cancel_reason
+      `SELECT s.*, b.ban_number, b.client_id, c.vendor_id
          FROM subscribers s
          LEFT JOIN bans b ON s.ban_id = b.id
          LEFT JOIN clients c ON b.client_id = c.id
-         LEFT JOIN subscriber_cancel_reason scr ON s.id = scr.subscriber_id
          ${filter}
          ORDER BY s.created_at DESC`,
       params
@@ -2711,11 +2946,11 @@ app.post('/api/subscribers', async (req, res) => {
 
     const rows = await query(
       `INSERT INTO subscribers
-        (phone, ban_id, contract_start_date, contract_end_date, service_type, monthly_value, months, remaining_payments, is_active, status, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW(),NOW())
+        (phone, ban_id, contract_start_date, contract_end_date, service_type, monthly_value, months, remaining_payments, is_active, status, cancel_reason, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),NOW())
        RETURNING *`,
       [
-        phone.trim(),
+        phone.trim().replace(/[^0-9]/g, ''),
         ban_id,
         contract_start_date,
         contract_end_date,
@@ -2724,7 +2959,8 @@ app.post('/api/subscribers', async (req, res) => {
         months,
         remaining_payments,
         is_active ? 1 : 0,
-        status
+        status,
+        status === 'cancelado' ? cancel_reason : null
       ]
     );
 
@@ -2735,7 +2971,7 @@ app.post('/api/subscribers', async (req, res) => {
       ['contract_start_date', 'contract_end_date', 'created_at', 'updated_at']
     );
 
-    // Si está cancelado, guardar la razón
+    // Si está cancelado, guardar la razón (mantener compatibilidad)
     if (status === 'cancelado' && cancel_reason) {
       await query(
         `INSERT INTO subscriber_cancel_reason (subscriber_id, reason, created_at) VALUES ($1, $2, NOW())`,
@@ -2829,11 +3065,12 @@ app.put('/api/subscribers/:id', async (req, res) => {
               remaining_payments = $8,
               is_active = $9,
               status = $10,
+              cancel_reason = $11,
               updated_at = NOW()
-        WHERE id = $11
+        WHERE id = $12
         RETURNING *`,
       [
-        phone.trim(),
+        phone.trim().replace(/[^0-9]/g, ''),
         ban_id,
         contract_start_date,
         contract_end_date,
@@ -2843,6 +3080,7 @@ app.put('/api/subscribers/:id', async (req, res) => {
         remaining_payments,
         is_active ? 1 : 0,
         status,
+        status === 'cancelado' ? cancel_reason : null,
         subscriberId
       ]
     );
@@ -2851,7 +3089,7 @@ app.put('/api/subscribers/:id', async (req, res) => {
       return notFound(res, 'Suscriptor');
     }
 
-    // Si cambió a cancelado, guardar la razón
+    // Si cambió a cancelado, guardar la razón (mantener compatibilidad)
     if (status === 'cancelado' && cancel_reason) {
       // Eliminar razones anteriores si existen
       await query(`DELETE FROM subscriber_cancel_reason WHERE subscriber_id = $1`, [subscriberId]);

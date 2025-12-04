@@ -106,7 +106,7 @@ export default function BANModal({ onSave, onClose, ban }: BANModalProps) {
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-600 dark:border-gray-700 bg-gradient-to-r from-gray-800 to-gray-700 dark:from-gray-800 dark:to-gray-700 rounded-t-xl">
           <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
-            {ban ? 'Editar BAN' : 'Nuevo BAN'}
+            {ban ? 'Editar BAN (v3)' : 'Nuevo BAN (v3)'}
           </h2>
           <button
             onClick={handleClose}
@@ -151,7 +151,7 @@ export default function BANModal({ onSave, onClose, ban }: BANModalProps) {
           {/* Description */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Tipo de Servicio / Descripción
+              Tipo de Cuenta (Móvil, Fijo, Convergente)
             </label>
             <select
               value={formData.description}
@@ -162,14 +162,9 @@ export default function BANModal({ onSave, onClose, ban }: BANModalProps) {
               <option value="Móvil">Móvil</option>
               <option value="Fijo">Fijo</option>
               <option value="Convergente">Convergente</option>
-              <option value="Internet">Internet</option>
-              <option value="TV">TV</option>
-              <option value="Cloud">Cloud</option>
-              <option value="MPLS">MPLS</option>
-              <option value="Otro">Otro</option>
             </select>
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-              Selecciona el tipo de servicio del BAN
+              Selecciona si la cuenta es Móvil, Fija o Convergente
             </p>
           </div>
 

@@ -14,6 +14,18 @@ const initializeTheme = () => {
 
 initializeTheme();
 
+// 🚨 FUERZA BRUTA: Desregistrar cualquier Service Worker antiguo que pueda estar bloqueando la actualización
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.getRegistrations().then(function(registrations) {
+    for(let registration of registrations) {
+      console.log('🚨 Eliminando Service Worker zombie:', registration);
+      registration.unregister();
+    }
+    // Eliminamos el reload automático para evitar bucles infinitos, como sugirió el profesor.
+    // El SW se eliminará y en la próxima visita estará limpio.
+  });
+}
+
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <App />

@@ -49,6 +49,7 @@ Write-Host "  - Limpiando temporales..."
 # Subir la carpeta client a /tmp/client
 Write-Host "  - Subiendo archivos a /tmp/client..."
 & $pscpPath -batch -pw $ServerPass -r "dist\client" "${ServerUser}@${ServerHost}:/tmp/" | Out-Host
+if ($LASTEXITCODE -ne 0) { Write-Host "Error subiendo frontend" -ForegroundColor Red; exit 1 }
 
 # Limpiar destino y mover archivos
 Write-Host "  - Limpiando destino y moviendo archivos a $WebPath..."
@@ -63,7 +64,13 @@ Write-Host "✓ Servicios reiniciados" -ForegroundColor Green
 
 # 6. Permisos y Nginx
 Write-Host "`n[6/6] Ajustando permisos y Nginx..." -ForegroundColor Yellow
-& $plinkPath -batch -ssh -pw $ServerPass "$ServerUser@$ServerHost" "bash -c 'chown -R www-data:www-data $WebPath && sed -i \"s|root /var/www/crmp/dist;|root /var/www/crmp;|g\" /etc/nginx/sites-available/crmp.ss-group.cloud && systemctl reload nginx && echo OK'" | Out-Host
+
+# Subir nueva configuración de Nginx
+Write-Host "  - Actualizando configuracion Nginx NO-CACHE..."
+& $pscpPath -batch -pw $ServerPass "nginx-crmp-no-cache.conf" "${ServerUser}@${ServerHost}:/tmp/crmp.conf" | Out-Host
+& $plinkPath -batch -ssh -pw $ServerPass "$ServerUser@$ServerHost" "bash -c 'mv /tmp/crmp.conf /etc/nginx/sites-available/crmp.ss-group.cloud && ln -sf /etc/nginx/sites-available/crmp.ss-group.cloud /etc/nginx/sites-enabled/ && nginx -t && systemctl restart nginx'" | Out-Host
+
+& $plinkPath -batch -ssh -pw $ServerPass "$ServerUser@$ServerHost" "bash -c 'chown -R www-data:www-data $WebPath && echo OK'" | Out-Host
 Write-Host "✓ Permisos y Nginx ajustados" -ForegroundColor Green
 
 Write-Host "`n===================================================" -ForegroundColor Cyan

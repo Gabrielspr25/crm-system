@@ -30,10 +30,10 @@ export default defineConfig({
     // Generar nuevos hashes en cada build
     rollupOptions: {
       output: {
-        // Forzar nuevos nombres de archivo
-        entryFileNames: 'assets/[name]-[hash].js',
-        chunkFileNames: 'assets/[name]-[hash].js',
-        assetFileNames: 'assets/[name]-[hash].[ext]',
+        // Forzar nuevos nombres de archivo con VERSION EXPLICITA
+        entryFileNames: 'assets/[name]-v5.0.2-[hash].js',
+        chunkFileNames: 'assets/[name]-v5.0.2-[hash].js',
+        assetFileNames: 'assets/[name]-v5.0.2-[hash].[ext]',
       },
     },
   },

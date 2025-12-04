@@ -151,7 +151,7 @@ export default function Layout({ children }: LayoutProps) {
 
   // Verificación de versión - CON IMPORTADOR VISUAL
   useEffect(() => {
-    console.log('✅ LAYOUT VERSION: 2025-01-15-CON-IMPORTADOR-VISUAL');
+    console.log('✅ LAYOUT VERSION: (v5.0 DEBUG)');
     console.log('✅ Navigation items:', navigation.map(n => n.name).join(', '));
   }, []);
 
@@ -171,12 +171,15 @@ export default function Layout({ children }: LayoutProps) {
       <div className="fixed inset-y-0 left-0 z-50 w-64 bg-slate-800 dark:bg-slate-800 shadow-xl border-r border-slate-700 dark:border-slate-700">
         <div className="flex h-full flex-col">
           {/* Logo */}
-          <div className="flex h-16 items-center justify-center border-b border-slate-700 dark:border-slate-700">
+          <div className="flex flex-col items-center justify-center py-4 border-b border-slate-700 dark:border-slate-700">
             <div className="text-center">
               <h1 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
                 VentasPro
               </h1>
-              <p className="text-xs text-slate-400 mt-1">
+              <div className="text-[10px] font-bold text-emerald-400 mt-0.5 mb-1">
+                v5.0.2
+              </div>
+              <p className="text-xs text-slate-400">
                 {userLabel} · {role.toUpperCase()}
               </p>
             </div>
@@ -321,6 +324,9 @@ export default function Layout({ children }: LayoutProps) {
             >
               Cerrar sesión
             </button>
+            <div className="text-center text-xs text-blue-400 pt-2 font-bold">
+              v5.0.2 (CACHE BUSTER)
+            </div>
           </div>
 
         </div>
