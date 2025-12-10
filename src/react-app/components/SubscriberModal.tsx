@@ -24,8 +24,18 @@ export default function SubscriberModal({ banId, subscriber, onSave, onClose }: 
 
   // Calculate contract end date based on remaining payments
   const calculateContractEndDate = (remainingPayments: number) => {
-    if (remainingPayments <= 0) return '';
+    if (remainingPayments < 0) return '';
+    
     const today = new Date();
+    
+    // Si es 0, la fecha de fin es HOY (vence hoy)
+    if (remainingPayments === 0) {
+        const month = String(today.getMonth() + 1).padStart(2, '0');
+        const day = String(today.getDate()).padStart(2, '0');
+        const year = today.getFullYear();
+        return `${month}/${day}/${year}`;
+    }
+
     const endDate = new Date(today);
     endDate.setMonth(endDate.getMonth() + remainingPayments);
     // Format as MM/DD/YYYY for display
@@ -37,8 +47,15 @@ export default function SubscriberModal({ banId, subscriber, onSave, onClose }: 
 
   // Calculate contract end date for database (YYYY-MM-DD format)
   const calculateContractEndDateForDB = (remainingPayments: number) => {
-    if (remainingPayments <= 0) return null;
+    if (remainingPayments < 0) return null;
+    
     const today = new Date();
+    
+    // Si es 0, la fecha de fin es HOY (vence hoy)
+    if (remainingPayments === 0) {
+        return today.toISOString().split('T')[0];
+    }
+
     const endDate = new Date(today);
     endDate.setMonth(endDate.getMonth() + remainingPayments);
     return endDate.toISOString().split('T')[0];

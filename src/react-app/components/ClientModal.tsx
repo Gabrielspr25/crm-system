@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { X, Plus, Hash, Calendar } from "lucide-react";
+import { X, Plus, Hash, Calendar, Edit, Ban } from "lucide-react";
 import { Client, Vendor, CreateClient } from "@/shared/types";
 import { getCurrentUser } from "@/react-app/utils/auth";
 
@@ -8,6 +8,8 @@ interface BAN {
   ban_number: string;
   client_id: number;
   description: string | null;
+  status?: string;
+  cancel_reason?: string | null;
   is_active: number;
   created_at: string;
   updated_at: string;
@@ -23,6 +25,9 @@ interface Subscriber {
   service_type: string | null;
   monthly_value: number | null;
   months: number | null;
+  remaining_payments: number | null;
+  status?: string;
+  cancel_reason?: string | null;
   is_active: number;
   created_at: string;
   updated_at: string;
@@ -36,6 +41,8 @@ interface ClientModalProps {
   clientBANs?: BAN[];
   onCreateBAN?: () => void;
   onAddSubscriber?: (banId: number) => void;
+  onEditBAN?: (ban: BAN) => void;
+  onEditSubscriber?: (subscriber: Subscriber, banId: number) => void;
   banRequirementPending?: boolean;
 }
 
@@ -47,6 +54,8 @@ export default function ClientModal({
   clientBANs = [],
   onCreateBAN,
   onAddSubscriber,
+  onEditBAN,
+  onEditSubscriber,
   banRequirementPending
 }: ClientModalProps) {
   const [formData, setFormData] = useState<CreateClient>({
@@ -553,10 +562,30 @@ export default function ClientModal({
                             {ban.ban_number}
                           </span>
                         </div>
-                        <div className="flex items-center space-x-1">
+                        <div className="flex items-center space-x-2">
                           <span className="text-xs text-gray-500 dark:text-gray-400">
                             {ban.subscribers?.length || 0} subs
                           </span>
+                          {onEditBAN && (
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => onEditBAN(ban)}
+                                className="p-1 text-blue-400 hover:text-blue-300 transition-colors"
+                                title="Editar BAN"
+                              >
+                                <Edit className="w-3 h-3" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => onEditBAN(ban)}
+                                className="p-1 text-red-400 hover:text-red-300 transition-colors"
+                                title="Cancelar BAN"
+                              >
+                                <Ban className="w-3 h-3" />
+                              </button>
+                            </div>
+                          )}
                         </div>
                       </div>
 
@@ -602,6 +631,26 @@ export default function ClientModal({
                                   })()}
                                 </div>
                               </div>
+                              {onEditSubscriber && (
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => onEditSubscriber(subscriber, ban.id)}
+                                    className="p-1.5 text-blue-400 hover:text-blue-300 transition-colors"
+                                    title="Editar Suscriptor"
+                                  >
+                                    <Edit className="w-3 h-3" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => onEditSubscriber(subscriber, ban.id)}
+                                    className="p-1.5 text-red-400 hover:text-red-300 transition-colors"
+                                    title="Cancelar Suscriptor"
+                                  >
+                                    <Ban className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              )}
                             </div>
                           ))
                         ) : (

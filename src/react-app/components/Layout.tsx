@@ -1,5 +1,5 @@
 import { Link, useLocation, useNavigate } from "react-router";
-import { useMemo, useEffect } from "react";
+import { useMemo, useEffect, useState } from "react";
 import type { LucideIcon } from "lucide-react";
 import {
   Users,
@@ -67,13 +67,13 @@ function getWorkingDaysRemaining(): number {
   const today = new Date();
   const currentYear = today.getFullYear();
   const currentMonth = today.getMonth();
-  
+
   // Último día del mes
   const lastDay = new Date(currentYear, currentMonth + 1, 0);
-  
+
   let workingDays = 0;
   const currentDate = new Date(today);
-  
+
   // Iterar desde hoy hasta el último día del mes
   while (currentDate <= lastDay) {
     const dayOfWeek = currentDate.getDay();
@@ -83,7 +83,7 @@ function getWorkingDaysRemaining(): number {
     }
     currentDate.setDate(currentDate.getDate() + 1);
   }
-  
+
   return workingDays;
 }
 
@@ -95,28 +95,29 @@ export default function Layout({ children }: LayoutProps) {
   const user = useMemo(() => getCurrentUser(), []);
   const userLabel = user?.salespersonName || user?.username || "Usuario";
   const isVendor = role.toLowerCase() === "vendedor";
-  
+  const [goalFilter, setGoalFilter] = useState("");
+
   // Obtener metas del vendedor para el mes actual
   const currentYear = new Date().getFullYear();
   const currentMonth = new Date().getMonth() + 1;
   const goalsUrl = isVendor ? `/api/goals?period_year=${currentYear}&period_month=${currentMonth}` : '/api/goals?period_year=0&period_month=0';
   const { data: vendorGoals } = useApi<Goal[]>(goalsUrl, { immediate: isVendor });
-  
+
   // Calcular resumen de metas por producto
   const goalsByProduct = useMemo(() => {
     if (!isVendor || !vendorGoals || vendorGoals.length === 0) {
       return [];
     }
-    
+
     const workingDaysRemaining = getWorkingDaysRemaining();
-    
+
     // Agrupar metas por producto
     const productMap = new Map<number, { productName: string; target: number; current: number }>();
-    
+
     vendorGoals.forEach((goal) => {
       const productId = goal.product_id || 0;
       const productName = goal.product_name || 'Sin producto';
-      
+
       if (!productMap.has(productId)) {
         productMap.set(productId, {
           productName,
@@ -124,18 +125,18 @@ export default function Layout({ children }: LayoutProps) {
           current: 0
         });
       }
-      
+
       const product = productMap.get(productId)!;
       product.target += goal.target_amount;
       product.current += goal.current_amount;
     });
-    
+
     // Convertir a array y calcular métricas por producto
     return Array.from(productMap.entries()).map(([productId, product]) => {
       const remaining = product.target - product.current;
       const dailyGoal = workingDaysRemaining > 0 ? remaining / workingDaysRemaining : 0;
       const progress = product.target > 0 ? (product.current / product.target) * 100 : 0;
-      
+
       return {
         productId,
         productName: product.productName,
@@ -177,7 +178,7 @@ export default function Layout({ children }: LayoutProps) {
                 VentasPro
               </h1>
               <div className="text-[10px] font-bold text-emerald-400 mt-0.5 mb-1">
-                v5.0.2
+                v5.1.26
               </div>
               <p className="text-xs text-slate-400">
                 {userLabel} · {role.toUpperCase()}
@@ -206,62 +207,49 @@ export default function Layout({ children }: LayoutProps) {
           {isVendor && goalsByProduct.length > 0 && (
             <div className="p-4 border-b border-slate-700 dark:border-slate-700 space-y-3 max-h-[400px] overflow-y-auto">
               <div className="flex items-center gap-2 mb-2">
-                <Target className="w-5 h-5 text-emerald-400" />
                 <h3 className="text-sm font-semibold text-white">Mis Metas</h3>
               </div>
-              
-              {goalsByProduct.map((productGoal) => (
-                <div key={productGoal.productId} className="bg-gradient-to-br from-emerald-900/40 to-blue-900/40 border border-emerald-500/30 rounded-lg p-3 shadow-lg">
-                  {/* Nombre del Producto */}
-                  <div className="mb-2">
-                    <p className="text-xs font-semibold text-emerald-300 truncate" title={productGoal.productName}>
-                      {productGoal.productName}
-                    </p>
-                  </div>
-                  
-                  {/* Meta del Mes */}
-                  <div className="mb-2">
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="text-[10px] text-slate-300">Meta</span>
-                      <span className="text-xs font-bold text-white">
-                        ${productGoal.target.toLocaleString('es-ES', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
-                      </span>
+
+              <input
+                type="text"
+                placeholder="Filtrar producto..."
+                value={goalFilter}
+                onChange={(e) => setGoalFilter(e.target.value)}
+                className="w-full px-2 py-1 text-xs bg-slate-800 border border-slate-600 rounded text-slate-200 mb-2 focus:ring-1 focus:ring-blue-500"
+              />
+
+              <div className="bg-gradient-to-br from-emerald-900/40 to-blue-900/40 border border-emerald-500/30 rounded-lg p-3 shadow-lg space-y-4">
+                {goalsByProduct
+                  .filter(g => g.productName.toLowerCase().includes(goalFilter.toLowerCase()))
+                  .map(productGoal => (
+                    <div key={productGoal.productId} className="border-b border-slate-700/50 last:border-0 pb-3 last:pb-0">
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="text-xs font-semibold text-emerald-300 truncate max-w-[60%]" title={productGoal.productName}>
+                          {productGoal.productName}
+                        </span>
+                        <span className="text-[10px] font-bold text-white">
+                          {productGoal.progress.toFixed(1)}%
+                        </span>
+                      </div>
+
+                      <div className="w-full h-1.5 bg-slate-700/50 rounded-full overflow-hidden mb-1">
+                        <div
+                          className="h-full bg-gradient-to-r from-emerald-500 to-blue-500 rounded-full transition-all duration-300"
+                          style={{ width: `${Math.min(productGoal.progress, 100)}%` }}
+                        />
+                      </div>
+
+                      <div className="flex justify-between text-[10px] text-slate-400">
+                        <span>{productGoal.current.toLocaleString('es-ES', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} / {productGoal.target.toLocaleString('es-ES', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
+                        <span className="text-blue-400">Diaria: ${productGoal.dailyGoal.toLocaleString('es-ES', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
+                      </div>
                     </div>
-                    <div className="w-full h-1.5 bg-slate-700/50 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-gradient-to-r from-emerald-500 to-blue-500 rounded-full transition-all duration-300"
-                        style={{ width: `${Math.min(productGoal.progress, 100)}%` }}
-                      />
-                    </div>
-                    <div className="flex justify-between mt-0.5">
-                      <span className="text-[10px] text-slate-400">
-                        ${productGoal.current.toLocaleString('es-ES', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
-                      </span>
-                      <span className="text-[10px] font-semibold text-emerald-400">
-                        {productGoal.progress.toFixed(1)}%
-                      </span>
-                    </div>
-                  </div>
-                  
-                  {/* Meta Faltante y Diaria */}
-                  <div className="pt-1.5 border-t border-slate-600/50 space-y-1">
-                    <div className="flex justify-between items-center">
-                      <span className="text-[10px] text-slate-300">Faltante</span>
-                      <span className="text-xs font-bold text-orange-400">
-                        ${productGoal.remaining.toLocaleString('es-ES', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
-                      </span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-[10px] text-slate-300">Diaria</span>
-                      <span className="text-xs font-bold text-blue-400">
-                        ${productGoal.dailyGoal.toLocaleString('es-ES', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              ))}
-              
-              {/* Días restantes (común para todos) */}
+                  ))}
+                {goalsByProduct.filter(g => g.productName.toLowerCase().includes(goalFilter.toLowerCase())).length === 0 && (
+                  <p className="text-xs text-slate-500 text-center">No hay productos.</p>
+                )}
+              </div>
+
               {goalsByProduct.length > 0 && (
                 <p className="text-[10px] text-slate-400 text-center pt-1">
                   {goalsByProduct[0].workingDaysRemaining} días laborables restantes
@@ -280,10 +268,9 @@ export default function Layout({ children }: LayoutProps) {
                   to={item.href}
                   className={`
                     group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200
-                    ${
-                      isActive
-                        ? "bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-lg"
-                        : "text-slate-300 dark:text-slate-300 hover:bg-slate-700 dark:hover:bg-slate-700 hover:text-slate-100 dark:hover:text-slate-100"
+                    ${isActive
+                      ? "bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-lg"
+                      : "text-slate-300 dark:text-slate-300 hover:bg-slate-700 dark:hover:bg-slate-700 hover:text-slate-100 dark:hover:text-slate-100"
                     }
                   `}
                 >
@@ -324,8 +311,8 @@ export default function Layout({ children }: LayoutProps) {
             >
               Cerrar sesión
             </button>
-            <div className="text-center text-xs text-blue-400 pt-2 font-bold">
-              v5.0.2 (CACHE BUSTER)
+            <div className="text-center pt-1">
+              <span className="text-[10px] text-slate-600 dark:text-slate-500 font-mono select-all">v5.1.29</span>
             </div>
           </div>
 

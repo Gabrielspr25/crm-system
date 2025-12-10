@@ -14,10 +14,12 @@ const initializeTheme = () => {
 
 initializeTheme();
 
+console.log('%c VERSION ACTUAL: v5.1.25 ', 'background: #222; color: #bada55; font-size: 20px');
+
 // 🚨 FUERZA BRUTA: Desregistrar cualquier Service Worker antiguo que pueda estar bloqueando la actualización
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.getRegistrations().then(function(registrations) {
-    for(let registration of registrations) {
+  navigator.serviceWorker.getRegistrations().then(function (registrations) {
+    for (let registration of registrations) {
       console.log('🚨 Eliminando Service Worker zombie:', registration);
       registration.unregister();
     }

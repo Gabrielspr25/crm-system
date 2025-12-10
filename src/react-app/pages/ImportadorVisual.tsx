@@ -238,7 +238,8 @@ export default function ImportadorVisual() {
               "Valor Mensual", 
               "Meses",
               "Equipo", 
-              "Notas"
+              "Notas",
+              "Status"
             ];
 
             // Índices fijos CORREGIDOS (El lector omite la col A vacía, así que B=0)
@@ -260,6 +261,24 @@ export default function ImportadorVisual() {
                 const rawBan = ban;
                 const cleanBan = rawBan ? String(rawBan).replace(/[^0-9]/g, '').slice(0, 9) : "";
 
+                // Buscar status en columnas probables (J, K, L, M, N, P)
+                // J=8, K=9, L=10, M=11, N=12, P=14
+                // Si el usuario dice "os que tienen c", es probable que sea una columna de estado.
+                // Vamos a intentar buscar "C" o "A" en las columnas cercanas.
+                let status = "";
+                // Buscar en TODAS las columnas a partir de la 5 (F) para ser más agresivos
+                for(let k=5; k < row.length; k++) {
+                    const val = String(row[k] || "").trim().toUpperCase();
+                    // Buscar coincidencia exacta o que empiece con C/A si es una palabra corta
+                    if (val === 'C' || val === 'CANCELADO' || val === 'BAJA' || val === 'SUSPENDIDO' || val.startsWith('CANCEL')) {
+                        status = 'cancelado';
+                        break;
+                    } else if (val === 'A' || val === 'ACTIVO' || val === 'ALTA' || val.startsWith('ACTIV')) {
+                        status = 'activo';
+                        break;
+                    }
+                }
+
                 return [
                   cleanBan,               // Número BAN (Limpio 9 dígitos)
                   clientName,             // Empresa
@@ -269,7 +288,8 @@ export default function ImportadorVisual() {
                   row[idxPrice],          // Precio (H)
                   row[idxMonths],         // Meses (N)
                   "",                     // Equipo (No mapeado explícitamente)
-                  row[idxComments]        // Notas (P)
+                  row[idxComments],       // Notas (P)
+                  status                  // Status detectado
                 ];
               });
 
@@ -286,7 +306,9 @@ export default function ImportadorVisual() {
               "Suscriptores.monthly_value": "Valor Mensual",
               "Suscriptores.months": "Meses",
               "Suscriptores.equipment": "Equipo",
-              "Suscriptores.notes": "Notas"
+              "Suscriptores.notes": "Notas",
+              "Suscriptores.status": "Status",
+              "BANs.status": "Status" // Mapear explícitamente al BAN también
             });
 
             // Guardar la data transformada completa en una propiedad del componente o estado si fuera necesario
@@ -421,7 +443,7 @@ export default function ImportadorVisual() {
       }
 
       // --- VALIDACIÓN DE DATOS FALTANTES ---
-      // Verificar Plazos Faltantes
+      // (Validación de Plazos Faltantes ACTIVADA)
       const remainingPaymentsCol = assigned["Suscriptores.remaining_payments"];
       if (remainingPaymentsCol) {
         const colIdx = headers.indexOf(remainingPaymentsCol);
@@ -888,7 +910,7 @@ export default function ImportadorVisual() {
         <div className="flex items-center gap-4">
           <div className="flex flex-col">
             <p className="text-base text-gray-200 font-medium hidden sm:block">
-              Subí tu archivo <span className="text-green-500 font-bold">(v5.0.2)</span>
+              Subí tu archivo
             </p>
             <p className="text-[10px] text-gray-500 hidden sm:block">
               * VALIDACIONES DESACTIVADAS
@@ -987,7 +1009,7 @@ export default function ImportadorVisual() {
           </button>
           <button
             onClick={() => handleSave(false)}
-            disabled={isSaving || isValidating || preview.length === 0 || (validationResult !== null && !validationResult.valid)}
+            disabled={isSaving || isValidating || preview.length === 0}
             className="bg-green-600 hover:bg-green-500 disabled:bg-green-800 disabled:cursor-not-allowed text-white font-semibold py-2 px-6 rounded-lg shadow-md transition-all"
           >
             {isSaving ? "Guardando..." : "💾 Guardar Datos"}
@@ -1168,39 +1190,27 @@ export default function ImportadorVisual() {
               <div className="mb-6">
                 <h3 className="text-lg font-semibold text-white mb-3">📌 Campos que se van a importar:</h3>
                 <div className="grid grid-cols-3 gap-2">
-                  {previewData.mappedFields.map((field, idx) => (
-                    <div key={idx} className="bg-neutral-800 border border-green-500/30 rounded p-2">
-                      <div className="text-xs text-gray-400">{field.table}</div>
-                      <div className="text-sm text-white font-semibold">{field.label}</div>
-                      <div className="text-xs text-green-300">← {field.column}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
+                  {previewData.mappedFields.map((field, idx) => {
+                    // Obtener valor de ejemplo de la primera fila
+                    const sampleValue = previewData.sampleRows.length > 0 
+                      ? previewData.sampleRows[0]?.[field.table]?.[field.field] 
+                      : null;
 
-              {/* Muestra de filas */}
-              <div className="mb-6">
-                <h3 className="text-lg font-semibold text-white mb-3">👁️ Muestra de las primeras {previewData.sampleRows.length} filas:</h3>
-                <div className="bg-neutral-800 rounded-lg border border-neutral-700 p-4 max-h-64 overflow-y-auto">
-                  {previewData.sampleRows.map((row, idx) => (
-                    <div key={idx} className="mb-4 pb-4 border-b border-neutral-700 last:border-0">
-                      <div className="text-xs text-gray-500 mb-2">Fila {idx + 2}</div>
-                      <div className="grid grid-cols-2 gap-2 text-sm">
-                        {row.Clientes && (
-                          <>
-                            <div><span className="text-gray-400">Empresa:</span> <span className="text-white">{row.Clientes.business_name || '-'}</span></div>
-                            <div><span className="text-gray-400">Email:</span> <span className="text-white">{row.Clientes.email || '-'}</span></div>
-                          </>
-                        )}
-                        {row.BANs && (
-                          <div><span className="text-gray-400">BAN:</span> <span className="text-amber-300">{row.BANs.ban_number || '-'}</span></div>
-                        )}
-                        {row.Suscriptores && (
-                          <div><span className="text-gray-400">Teléfono:</span> <span className="text-white">{row.Suscriptores.phone || '-'}</span></div>
-                        )}
+                    return (
+                      <div key={idx} className="bg-neutral-800 border border-green-500/30 rounded p-2">
+                        <div className="text-xs text-gray-400">{field.table}</div>
+                        <div className="text-sm text-white font-semibold">{field.label}</div>
+                        <div className="text-xs text-green-300">← {field.column}</div>
+                        {/* Mostrar ejemplo si existe */}
+                        <div className="mt-1 pt-1 border-t border-gray-700 text-xs">
+                          <span className="text-gray-500">Ej: </span>
+                          <span className="text-amber-200 truncate block" title={String(sampleValue || '')}>
+                            {sampleValue ? String(sampleValue) : <span className="italic text-gray-600">(vacío)</span>}
+                          </span>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
 
@@ -1334,6 +1344,27 @@ export default function ImportadorVisual() {
                     <div className="text-sm text-gray-400">Filas Omitidas</div>
                   </div>
                 </div>
+                
+                {/* Botón de Exportar Errores */}
+                {((saveResult.errors && saveResult.errors.length > 0) || (saveResult.warnings && saveResult.warnings.length > 0)) && (
+                  <div className="mt-4 flex justify-center">
+                    <button
+                      onClick={() => {
+                        const errorRows = (saveResult.errors || []).map(e => ({ Tipo: 'ERROR', Mensaje: e }));
+                        const warningRows = (saveResult.warnings || []).map(w => ({ Tipo: 'ADVERTENCIA', Mensaje: w }));
+                        const allRows = [...errorRows, ...warningRows];
+                        
+                        const ws = XLSX.utils.json_to_sheet(allRows);
+                        const wb = XLSX.utils.book_new();
+                        XLSX.utils.book_append_sheet(wb, ws, "Errores_Importacion");
+                        XLSX.writeFile(wb, `Errores_Importacion_${new Date().toISOString().split('T')[0]}.xlsx`);
+                      }}
+                      className="bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded flex items-center gap-2 text-sm font-bold transition-colors"
+                    >
+                      📥 Descargar Reporte de Errores y Advertencias
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Explicación de filas omitidas */}

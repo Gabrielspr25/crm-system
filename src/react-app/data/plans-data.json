@@ -1,0 +1,206 @@
+{
+  "generated_at": "2025-12-09T00:56:05.254Z",
+  "source_file": "Tabla Ofertas Financiamiento 1ro al 17 de diciembre de 2025 - PYMES.xlsx",
+  "plans": [
+    {
+      "code": "VOLT412",
+      "price": 12,
+      "description": "VOLTE - 1000 MIN EN PR Y USA, 100 LD A USA, 900 SMS, 100 MMS, DATA PR Y USA PUJ 4.5GB",
+      "name": "Plan $12 (VOLT412)"
+    },
+    {
+      "code": "VOLT820",
+      "price": 20,
+      "description": "VOLTE - Voz local ilimitada,SMS/MMS en PR, a US y a ciertos destinos INT, SMS/MMS roaming en USA, LD ilimitado a USA, 100 minutos para Larga distancia a destinos internacionales, Roaming ilimitado en USA y data ilimitada en PR & USA con PUJ de 8GB",
+      "name": "Plan $20 (VOLT820)"
+    },
+    {
+      "code": "RED3535",
+      "price": 35,
+      "description": " Voz local ilimitada, SMS/MMS en PR, a US, Mejico, Canada y a ciertos destinos INT, SMS/MMS roaming en USA, Mejico y Canada, LD ilimitado a USA, Mejico y Canada, Roaming ilimitado en USA, Mejico y Canada y Data ilimitada en PR, USA, Mejico y Canada con PUJ 35GB",
+      "name": "Plan $35 (RED3535)"
+    },
+    {
+      "code": "RED4050",
+      "price": 40,
+      "description": " Voz local ilimitada, SMS/MMS en PR, a US, Mejico, Canada y a ciertos destinos INT, SMS/MMS roaming en USA, Mejico y Canada, LD ilimitado a USA, Mejico y Canada, Roaming ilimitado en USA, Mejico y Canada y Data ilimitada en PR, USA, Mejico y Canada con PUJ de 50GB ",
+      "name": "Plan $40 (RED4050)"
+    },
+    {
+      "code": "RED4560",
+      "price": 45,
+      "description": " Voz local ilimitada, SMS/MMS en PR, a US, Mejico, Canada y a ciertos destinos INT, SMS/MMS roaming en USA, Mejico y Canada, LD ilimitado a USA, Mejico y Canada, Roaming ilimitado en USA, Mejico y Canada y Data ilimitada en PR, USA, Mejico y Canada con PUJ de 60GB ",
+      "name": "Plan $45 (RED4560)"
+    },
+    {
+      "code": "REDBAS",
+      "price": 50,
+      "description": "VOLTE-  Voz local ilimitada, SMS/MMS en PR, a US, Mejico, Canada y a ciertos destinos INT, SMS/MMS roaming en USA, Mejico y Canada, LD ilimitado a USA, Mejico y Canada, Roaming ilimitado en USA, Mejico y Canada y Data ilimitada en PR, USA, Mejico y Canada (sin reduccion) HOTSPOT 10GB",
+      "name": "Plan $50 (REDBAS)"
+    },
+    {
+      "code": "BREDPLUS",
+      "price": 65,
+      "description": "VOLTE-  Voz local ilimitada, SMS/MMS en PR, a US, Mejico, Canada y a ciertos destinos INT, SMS/MMS roaming en USA, Mejico y Canada, LD ilimitado a USA, Mejico y Canada, Roaming ilimitado en USA, Mejico y Canada y Data ilimitada en PR, USA, Mejico y Canada (sin reduccion) HOTSPOT 15GB //  (PERMITE MOVIL Y BANDA ANCHA)",
+      "name": "Plan $65 (BREDPLUS)"
+    },
+    {
+      "code": "BREDEXT",
+      "price": 75,
+      "description": "VOLTE -Voz local ilimitada, SMS/MMS en PR, a US, Mejico, Canada y a ciertos destinos INT, SMS/MMS roaming en USA, Mejico y Canada, LD ilimitado a USA, Mejico y Canada, Roaming ilimitado en USA, Mejico y Canada y Data ilimitada en PR, USA, Mejico y Canada (sin reduccion) HOTSPOT 50GB //  (PERMITE MOVIL Y BANDA ANCHA)",
+      "name": "Plan $75 (BREDEXT)"
+    },
+    {
+      "code": "BREDSUP",
+      "price": 95,
+      "description": "VOLTE -Voz local ilimitada, SMS/MMS en PR, a US, Mejico, Canada y a ciertos destinos INT, SMS/MMS roaming en USA, Mejico y Canada, LD ilimitado a USA, 100 minutos de Larga Distancia Internacional, Roaming ilimitado en USA, Mejico y Canada y Data ilimitada en PR, USA, Mejico y Canada (sin reduccion) HOTSPOT 100GB //  (PERMITE MOVIL Y BANDA ANCHA)",
+      "name": "Plan $95 (BREDSUP)"
+    },
+    {
+      "code": " BREDSF",
+      "price": 100,
+      "description": "VOLTE- Voz local, LD, RM,  SMS/MMS y Data ilimitada en PR,  en USA, México, Canadá, República Dominicana, Argentina,  Uruguay,  Paraguay,  Panamá, Guatemala,  Nicaragua,  Honduras, Costa Rica,  Perú,  Chile,  Colombia,  El Salvador,  Brasil y  Ecuador con Data Ilimitada Sin reduccion de Velocidad con 100GB de Hotspot //  (PERMITE MOVIL Y BANDA ANCHA)",
+      "name": "Plan $100 ( BREDSF)"
+    },
+    {
+      "code": "Codigo",
+      "price": null,
+      "description": "CLARO SIN FRONTERAS",
+      "name": "Plan $Renta Mensual (Codigo)"
+    },
+    {
+      "code": "VOLCSF50",
+      "price": 50,
+      "description": "VOLTE-Voz local, LD, RM,  SMS/MMS y Data ilimitada en PR,  en USA, México, Canadá, República Dominicana, Argentina,  Uruguay,  Paraguay,  Panamá, Guatemala,  Nicaragua,  Honduras, Costa Rica,  Perú,  Chile,  Colombia,  El Salvador,  Brasil y  Ecuador con PUJ de 5GB./HOT SPOT MISMOS 5GB (PR y US solamente, NO ROAMING INTERNACIONAL)",
+      "name": "Plan $50 (VOLCSF50)"
+    },
+    {
+      "code": "VOLCSF60",
+      "price": 60,
+      "description": "VOLTE-Voz local, LD, RM,  SMS/MMS y Data ilimitada en PR,  en USA, México, Canadá, República Dominicana, Argentina,  Uruguay,  Paraguay,  Panamá, Guatemala,  Nicaragua,  Honduras, Costa Rica,  Perú,  Chile,  Colombia,  El Salvador,  Brasil y  Ecuador con PUJ de 10GB./HOT SPOT MISMOS 10GB (PR y US solamente, NO ROAMING INTERNACIONAL)",
+      "name": "Plan $60 (VOLCSF60)"
+    },
+    {
+      "code": "VOLCSF70",
+      "price": 70,
+      "description": "VOLTE-Voz local, LD, RM,  SMS/MMS y Data ilimitada en PR,  en USA, México, Canadá, República Dominicana, Argentina,  Uruguay,  Paraguay,  Panamá, Guatemala,  Nicaragua,  Honduras, Costa Rica,  Perú,  Chile,  Colombia,  El Salvador,  Brasil y  Ecuador con PUJ de 15GB./ HOT SPOT MISMOS 15GB (PR y US solamente, NO ROAMING INTERNACIONAL)",
+      "name": "Plan $70 (VOLCSF70)"
+    },
+    {
+      "code": "\r\n BREDSF",
+      "price": 100,
+      "description": "VOLTE- Voz local, LD, RM,  SMS/MMS y Data ilimitada en PR,  en USA, México, Canadá, República Dominicana, Argentina,  Uruguay,  Paraguay,  Panamá, Guatemala,  Nicaragua,  Honduras, Costa Rica,  Perú,  Chile,  Colombia,  El Salvador,  Brasil y  Ecuador con Data Ilimitada Sin reduccion de Velocidad con 100GB de Hotspot //  (PERMITE MOVIL Y BANDA ANCHA)",
+      "name": "Plan $100 (\r\n BREDSF)"
+    },
+    {
+      "code": "Codigo",
+      "price": null,
+      "description": "PLANES NACIONALES FAMILIARES",
+      "name": "Plan $Renta (Codigo)"
+    },
+    {
+      "code": "BREDP1",
+      "price": 10,
+      "description": "Voz local ilimitada, SMS/MMS en PR, a US, Méjico, Canadá y a ciertos destinos INT, SMS/MMS roaming en USA, Méjico y Canadá, LD ilimitado a USA, Méjico y Canadá, Roaming ilimitado en USA, Méjico y Canadá y Data ilimitada en PR, USA, Méjico y Canadá (Sin Reducción) // PLAN MULTILÍNEAS HASTA 10 LINEAS (PERMITE MOVIL Y BANDA ANCHA)//  HOTSPOT 15GB",
+      "name": "Plan $10 LÍNEAS X $350 (BREDP1)"
+    },
+    {
+      "code": "BREDE1",
+      "price": 10,
+      "description": "Voz local ilimitada, SMS/MMS en PR, a US, Méjico, Canadá y a ciertos destinos INT, SMS/MMS roaming en USA, Méjico y Canadá, LD ilimitado a USA, Méjico y Canadá, Roaming ilimitado en USA, Méjico y Canadá y Data ilimitada en PR, USA, Méjico y Canadá (Sin Reducción) // PLAN MULTILÍNEAS HASTA 10 LINEAS (PERMITE MOVIL Y BANDA ANCHA)// HOTSPOT 50GB",
+      "name": "Plan $10 LÍNEAS X $400 (BREDE1)"
+    },
+    {
+      "code": "BREDS1",
+      "price": 10,
+      "description": "Voz local ilimitada, SMS/MMS en PR, a US, Méjico, Canadá y a ciertos destinos INT, SMS/MMS roaming en USA, Méjico y Canadá, LD ilimitado a USA, 100 minutos de Larga Distancia Internacional, Roaming ilimitado en USA, Méjico y Canadá y Data ilimitada en PR, USA, Méjico y Canadá (Sin Reducción) // PLAN MULTILÍNEAS HASTA 10 LINEAS (PERMITE MOVIL Y BANDA ANCHA)// HOTSPOT 100GB",
+      "name": "Plan $10 LÍNEAS X $500 (BREDS1)"
+    },
+    {
+      "code": "BREDSF1",
+      "price": 10,
+      "description": "VOLTE- Voz local, LD, RM,  SMS/MMS y Data ilimitada en PR,  en USA, México, Canadá, República Dominicana, Argentina,  Uruguay,  Paraguay,  Panamá, Guatemala,  Nicaragua,  Honduras, Costa Rica,  Perú,  Chile,  Colombia,  El Salvador,  Brasil y  Ecuador con Data Ilimitada (Sin Reducción) // PLAN MULTILÍNEAS HASTA 10 LINEAS (PERMITE MOVIL Y BANDA ANCHA)// HOTSPOT 100GB",
+      "name": "Plan $10 LÍNEAS X $550 (BREDSF1)"
+    }
+  ],
+  "offers": [
+    {
+      "plan_requirement": "Equipos GRATIS  CLIENTE NUEVO, PORTABILIDADES Y RENOVACIONES",
+      "device_name": "Plan de $20",
+      "type": "FREE",
+      "details": "Equipo GRATIS en financiamiento"
+    },
+    {
+      "plan_requirement": "Equipos GRATIS NO REQUIERE TRADE IN CLIENTE NUEVO, PORTABILIDADES Y RENOVACIONES",
+      "device_name": "Plan de $35",
+      "type": "FREE",
+      "details": "Equipo GRATIS en financiamiento"
+    },
+    {
+      "plan_requirement": "Equipo GRATIS   NO REQUIERE TRADE IN  CLIENTE NUEVO, PORTABILIDADES Y RENOVACIONES  SOLO 30 PLAZOS",
+      "device_name": "Plan de $40",
+      "type": "FREE",
+      "details": "Equipo GRATIS en financiamiento"
+    },
+    {
+      "plan_requirement": "Equipo GRATIS  NO REQUIERE TRADE IN  CLIENTE NUEVO, PORTABILIDADES Y RENOVACIONES  SOLO 30 PLAZOS",
+      "device_name": "Plan de $45",
+      "type": "FREE",
+      "details": "Equipo GRATIS en financiamiento"
+    },
+    {
+      "plan_requirement": "Equipo GRATIS  NO REQUIERE TRADE IN  CLIENTE NUEVO, PORTABILIDADES Y RENOVACIONES  SOLO 30 PLAZOS",
+      "device_name": "Planes desde $50",
+      "type": "FREE",
+      "details": "Equipo GRATIS en financiamiento"
+    },
+    {
+      "plan_requirement": "Equipo GRATIS  NO REQUIERE TRADE IN  CLIENTE NUEVO, PORTABILIDADES Y RENOVACIONES  SOLO 30 PLAZOS",
+      "device_name": "Planes desde $50",
+      "type": "FREE",
+      "details": "Equipo GRATIS en financiamiento"
+    },
+    {
+      "plan_requirement": "Equipo GRATIS  NO REQUIERE TRADE IN  CLIENTE NUEVO, PORTABILIDADES Y RENOVACIONES  SOLO 30 PLAZOS",
+      "device_name": "Planes desde $60",
+      "type": "FREE",
+      "details": "Equipo GRATIS en financiamiento"
+    },
+    {
+      "plan_requirement": "¡NUEVO!   Equipo GRATIS  NO REQUIERE TRADE IN  CLIENTE NUEVO, PORTABILIDADES Y RENOVACIONES  SOLO 30 PLAZOS",
+      "device_name": "Planes desde $60",
+      "type": "FREE",
+      "details": "Equipo GRATIS en financiamiento"
+    },
+    {
+      "plan_requirement": "Equipo GRATIS  NO REQUIERE TRADE IN  CLIENTE NUEVO, PORTABILIDADES Y RENOVACIONES  SOLO 30 PLAZOS",
+      "device_name": "Planes Individuales desde $75",
+      "type": "FREE",
+      "details": "Equipo GRATIS en financiamiento"
+    },
+    {
+      "plan_requirement": "NUEVO  OFERTA PLANES MULTILÍNEAS: DOS EQUIPOS GRATIS  NO REQUIERE TRADE IN  CLIENTE NUEVO, PORTABILIDADES Y RENOVACIONES  SOLO 30 PLAZOS",
+      "device_name": "Planes multilíneas desde $60",
+      "type": "FREE",
+      "details": "Equipo GRATIS en financiamiento"
+    },
+    {
+      "plan_requirement": "NUEVO! 50% de descuento NO REQUIERE TRADE IN SIN VALORIZACION   LINEAS NUEVAS, PORTABILIDADES Y RENOVACIONES   SOLO A 30 PLAZOS",
+      "device_name": "Planes de $50 en adelante",
+      "type": "FREE",
+      "details": "Equipo GRATIS en financiamiento"
+    },
+    {
+      "plan_requirement": "¡NUEVO!   CREDITO DE HASTA $1,000  NO REQUIERE TRADE IN  CLIENTE NUEVO, PORTABILIDADES Y RENOVACIONES  SOLO 30 PLAZOS",
+      "device_name": "Planes desde $75",
+      "type": "FREE",
+      "details": "Equipo GRATIS en financiamiento"
+    },
+    {
+      "plan_requirement": "NUEVO! CREDITO DE HASTA $1,100  REQUIERE TRADE IN SIN VALORIZACION   LINEAS NUEVAS, PORTABILIDADES Y RENOVACIONES   SOLO A 30 PLAZOS",
+      "device_name": "Planes Individuales desde $75",
+      "type": "FREE",
+      "details": "Equipo GRATIS en financiamiento"
+    }
+  ]
+}

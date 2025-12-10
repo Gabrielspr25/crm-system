@@ -567,6 +567,10 @@ export default function Goals() {
                 <span className="text-purple-100">Ventas actuales</span>
                 <span className="text-white font-semibold">${(totals.businessCurrent / 1000).toFixed(1)}K</span>
               </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-purple-200">Faltante</span>
+                <span className="text-white font-semibold">${((totals.businessTarget - totals.businessCurrent) / 1000).toFixed(1)}K</span>
+              </div>
               <div className="w-full bg-purple-800/40 rounded-full h-2.5 overflow-hidden">
                 <div
                   className="bg-white h-2.5 rounded-full transition-all duration-500"
@@ -599,6 +603,10 @@ export default function Goals() {
             <div className="flex justify-between text-sm">
               <span className="text-blue-100">Ventas logradas</span>
               <span className="text-white font-semibold">${(totals.vendorCurrent / 1000).toFixed(1)}K</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-blue-200">Faltante</span>
+              <span className="text-white font-semibold">${((totals.vendorTarget - totals.vendorCurrent) / 1000).toFixed(1)}K</span>
             </div>
             <div className="w-full bg-blue-800/40 rounded-full h-2.5 overflow-hidden">
               <div
@@ -634,6 +642,12 @@ export default function Goals() {
               <span className="text-green-100">Del objetivo</span>
               <span className="text-white font-semibold">
                 ${((isVendorUser ? totals.vendorTarget : totals.businessTarget) / 1000).toFixed(1)}K
+              </span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-green-200">Faltante</span>
+              <span className="text-white font-semibold">
+                ${(((isVendorUser ? totals.vendorTarget : totals.businessTarget) - (isVendorUser ? totals.vendorCurrent : totals.businessCurrent)) / 1000).toFixed(1)}K
               </span>
             </div>
             <div className="w-full bg-green-800/40 rounded-full h-2.5 overflow-hidden">

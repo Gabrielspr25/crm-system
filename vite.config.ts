@@ -3,39 +3,40 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { cloudflare } from "@cloudflare/vite-plugin";
 
+const timestamp = Date.now();
+
 export default defineConfig({
   plugins: [react(), cloudflare()],
   server: {
-    allowedHosts: true,
+    port: 5173,
+    strictPort: true,
+    host: true,
     hmr: {
       overlay: true,
-      // Forzar recarga completa en lugar de HMR parcial
-      clientPort: 5173,
+      protocol: 'ws',
+      host: 'localhost',
+      port: 5173
     },
-    // Deshabilitar cache en desarrollo
-    headers: {
-      'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
-      'Pragma': 'no-cache',
-      'Expires': '0',
-    },
-    proxy: {
-      '/api': {
-        target: 'http://localhost:3000',
-        changeOrigin: true,
-      },
+    watch: {
+      usePolling: true,
+      interval: 100
     },
   },
   build: {
-    chunkSizeWarningLimit: 5000,
-    // Generar nuevos hashes en cada build
     rollupOptions: {
       output: {
-        // Forzar nuevos nombres de archivo con VERSION EXPLICITA
-        entryFileNames: 'assets/[name]-v5.0.2-[hash].js',
-        chunkFileNames: 'assets/[name]-v5.0.2-[hash].js',
-        assetFileNames: 'assets/[name]-v5.0.2-[hash].[ext]',
-      },
+        // HASH ÚNICO POR BUILD - IMPOSIBLE DE CACHEAR
+        entryFileNames: `assets/[name]-${timestamp}-[hash].js`,
+        chunkFileNames: `assets/[name]-${timestamp}-[hash].js`,
+        assetFileNames: `assets/[name]-${timestamp}-[hash].[ext]`,
+        manualChunks: undefined
+      }
     },
+    sourcemap: true,
+    minify: 'terser',
+    emptyOutDir: true,
+    // FORZAR rebuild completo
+    target: 'esnext',
   },
   resolve: {
     alias: {
@@ -44,9 +45,11 @@ export default defineConfig({
   },
   optimizeDeps: {
     force: true,
-    // Invalidar cache de dependencias
     entries: ['src/react-app/main.tsx'],
   },
-  // Configuración adicional para evitar cache
   clearScreen: false,
+  // Variable global única
+  define: {
+    __BUILD_TIME__: JSON.stringify(timestamp),
+  },
 });

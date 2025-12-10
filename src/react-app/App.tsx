@@ -1,6 +1,7 @@
 import { BrowserRouter as Router, Routes, Route } from "react-router";
 import ProtectedLayout from "@/react-app/components/ProtectedLayout";
 import ClientsPage from "@/react-app/pages/Clients";
+import ClientsNew from "@/react-app/pages/ClientsNew"; // <- NUEVO
 import FollowUpPage from "@/react-app/pages/FollowUp";
 import ReportsPage from "@/react-app/pages/Reports";
 import VendorsPage from "@/react-app/pages/Vendors";
@@ -18,6 +19,7 @@ function ProtectedRoutes() {
     <ProtectedLayout>
       <Routes>
         <Route path="/" element={<ClientsPage />} />
+        <Route path="/clientes" element={<ClientsNew />} /> {/* <- CAMBIAR */}
         <Route path="/seguimiento" element={<FollowUpPage />} />
         <Route path="/reportes" element={<ReportsPage />} />
         <Route path="/vendedores" element={<VendorsPage />} />

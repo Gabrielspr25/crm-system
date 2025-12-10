@@ -21,6 +21,9 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
+// Servir archivos estáticos del frontend (dist/client)
+app.use(express.static(path.join(__dirname, 'dist/client')));
+
 const JWT_SECRET = process.env.JWT_SECRET || 'development-secret';
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'development-refresh-secret';
 const ACCESS_TOKEN_TTL = process.env.JWT_EXPIRES_IN || '15m';
@@ -1444,7 +1447,9 @@ app.get('/api/clients', async (req, res) => {
   try {
     console.log('📋 GET /api/clients - Usuario:', req.user?.username, 'Role:', req.user?.role);
     const params = [];
-    let whereClause = 'WHERE COALESCE(c.is_active,1) = 1';
+    // MODIFICADO: Eliminamos el filtro is_active=1 para que se devuelvan también los clientes cancelados/inactivos
+    // El frontend se encarga de filtrarlos en las pestañas correspondientes (Disponibles vs Cancelados)
+    let whereClause = ''; 
 
     // Todos los usuarios (admin, supervisor, vendedor) ven todos los clientes
     // Sin filtro por vendor_id
@@ -1454,25 +1459,31 @@ app.get('/api/clients', async (req, res) => {
           c.*,
           v.name AS vendor_name,
           COALESCE(b.ban_count, 0) AS ban_count,
+          COALESCE(b.active_ban_count, 0) AS active_ban_count,
+          COALESCE(b.cancelled_ban_count, 0) AS cancelled_ban_count,
           b.ban_numbers,
           b.ban_descriptions,
           CASE WHEN COALESCE(b.ban_count, 0) > 0 THEN 1 ELSE 0 END AS has_bans,
           COALESCE(s.subscriber_count, 0) AS subscriber_count,
+          COALESCE(s.active_subscriber_count, 0) AS active_subscriber_count,
+          COALESCE(s.cancelled_subscriber_count, 0) AS cancelled_subscriber_count,
           s.primary_subscriber_phone,
           s.primary_contract_end_date,
           s.primary_subscriber_created_at,
           s.primary_service_type,
           s.all_service_types,
           COALESCE(la.last_activity, c.updated_at) AS last_activity,
-          CASE WHEN b.cancelled_status IS NOT NULL THEN 1 ELSE 0 END AS has_cancelled_bans
+          CASE WHEN b.cancelled_ban_count > 0 AND b.active_ban_count = 0 THEN 1 ELSE 0 END AS has_cancelled_bans
         FROM clients c
         LEFT JOIN vendors v ON c.vendor_id = v.id
         LEFT JOIN (
           SELECT 
             client_id,
             COUNT(*) AS ban_count,
+            COUNT(CASE WHEN UPPER(status) NOT IN ('CANCELADO', 'CANCELLED', 'C', 'BAJA', 'SUSPENDIDO', 'INACTIVE') THEN 1 END) AS active_ban_count,
+            COUNT(CASE WHEN UPPER(status) IN ('CANCELADO', 'CANCELLED', 'C', 'BAJA', 'SUSPENDIDO', 'INACTIVE') THEN 1 END) AS cancelled_ban_count,
             STRING_AGG(ban_number, ', ' ORDER BY ban_number) AS ban_numbers,
-            STRING_AGG(DISTINCT CASE WHEN status = 'cancelled' OR status = 'cancelado' THEN 'cancelled' END, ', ') AS cancelled_status,
+            STRING_AGG(DISTINCT CASE WHEN UPPER(status) IN ('CANCELADO', 'CANCELLED', 'C', 'BAJA', 'SUSPENDIDO', 'INACTIVE') THEN 'cancelled' END, ', ') AS cancelled_status,
             STRING_AGG(DISTINCT CASE WHEN description IS NOT NULL AND description <> '' THEN description END, ', ') AS ban_descriptions
           FROM bans
           WHERE COALESCE(is_active,1) = 1
@@ -1482,6 +1493,8 @@ app.get('/api/clients', async (req, res) => {
           SELECT 
             b.client_id,
             COUNT(DISTINCT s.id) AS subscriber_count,
+            COUNT(DISTINCT CASE WHEN UPPER(COALESCE(s.status, '')) NOT IN ('CANCELADO', 'CANCELLED', 'C', 'BAJA', 'SUSPENDIDO', 'INACTIVE') THEN s.id END) AS active_subscriber_count,
+            COUNT(DISTINCT CASE WHEN UPPER(COALESCE(s.status, '')) IN ('CANCELADO', 'CANCELLED', 'C', 'BAJA', 'SUSPENDIDO', 'INACTIVE') THEN s.id END) AS cancelled_subscriber_count,
             COUNT(DISTINCT CASE WHEN COALESCE(s.remaining_payments, 0) = 0 THEN s.id END) AS subscribers_in_opportunity,
             MAX(CASE WHEN s.phone IS NOT NULL THEN s.phone END) AS primary_subscriber_phone,
             MAX(CASE WHEN s.contract_end_date IS NOT NULL THEN s.contract_end_date END) AS primary_contract_end_date,
@@ -1519,7 +1532,7 @@ app.get('/api/clients', async (req, res) => {
     const mapped = rows.map((row) =>
       enrich(
         row,
-        ['includes_ban', 'vendor_id', 'ban_count', 'is_active', 'subscriber_count', 'subscribers_in_opportunity', 'has_cancelled_bans', 'base'],
+        ['includes_ban', 'vendor_id', 'ban_count', 'active_ban_count', 'cancelled_ban_count', 'is_active', 'subscriber_count', 'active_subscriber_count', 'cancelled_subscriber_count', 'subscribers_in_opportunity', 'has_cancelled_bans', 'base'],
         ['has_bans'],
         ['created_at', 'updated_at', 'primary_contract_end_date', 'primary_subscriber_created_at', 'last_activity']
       )
@@ -1589,6 +1602,9 @@ app.post('/api/clients', async (req, res) => {
     return badRequest(res, 'La empresa (business_name) es obligatoria');
   }
 
+  // Si no hay nombre, usar la empresa como nombre
+  const finalName = name?.trim() || business_name.trim();
+
   try {
     let assignedVendorId = toDbId(vendor_id);
 
@@ -1634,7 +1650,7 @@ app.post('/api/clients', async (req, res) => {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,1,NOW(),NOW())
        RETURNING *`,
       [
-        name?.trim() || null,
+        finalName,
         business_name.trim(),
         contact_person,
         email,
@@ -1659,6 +1675,9 @@ app.post('/api/clients', async (req, res) => {
 
     res.status(201).json(client);
   } catch (error) {
+    if (error.code === '23505' && error.constraint === 'clients_business_name_unique_idx') {
+      return conflict(res, 'Ya existe un cliente registrado con esta Empresa.');
+    }
     serverError(res, error, 'Error creando cliente');
   }
 });
@@ -2369,10 +2388,34 @@ app.post('/api/importador/save', async (req, res) => {
         const row = batch[i];
 
         try {
+          await client.query('SAVEPOINT row_savepoint');
 
           const clientData = row.Clientes || {};
           const banData = row.BANs || {};
           const subscriberData = row.Suscriptores || {};
+
+          // Normalizar status
+          const rawStatus = subscriberData.status ? String(subscriberData.status).trim().toUpperCase() : "";
+          
+          // Normalizar status del BAN si viene mapeado directamente
+          if (banData.status) {
+             const rawBanStatus = String(banData.status).trim().toUpperCase();
+             if (rawBanStatus === 'C' || rawBanStatus === 'CANCELADO' || rawBanStatus === 'BAJA' || rawBanStatus.startsWith('CANCEL') || rawBanStatus === 'SUSPENDIDO') {
+                 banData.status = 'cancelado';
+             } else if (rawBanStatus === 'A' || rawBanStatus === 'ACTIVO' || rawBanStatus === 'ALTA' || rawBanStatus.startsWith('ACTIV')) {
+                 banData.status = 'active'; // Usar 'active' para consistencia con DB (o 'activo' si prefieres)
+             }
+          }
+
+          if (rawStatus === 'C' || rawStatus === 'CANCELADO' || rawStatus === 'BAJA' || rawStatus.startsWith('CANCEL') || rawStatus === 'SUSPENDIDO') {
+             subscriberData.status = 'cancelado';
+             // PROPAGAR AL BAN: Si el suscriptor está cancelado, el BAN también
+             banData.status = 'cancelado';
+             console.log(`🔄 Fila ${rowIndex + 1}: Detectado status CANCELADO. Propagando a BAN ${banData.ban_number || '?'}`);
+          } else if (rawStatus === 'A' || rawStatus === 'ACTIVO' || rawStatus === 'ALTA' || rawStatus.startsWith('ACTIV')) {
+             subscriberData.status = 'activo';
+             // Opcional: banData.status = 'active';
+          }
 
           // REGLA 1: BAN siempre requerido
           // Si no hay BAN, buscar por empresa; si no hay empresa, omitir fila
@@ -2811,7 +2854,38 @@ app.post('/api/importador/save', async (req, res) => {
               ]
             );
           }
+
+          // --- RECALCULAR ESTADO DEL CLIENTE ---
+          // Verificar si el cliente tiene al menos un BAN activo
+          if (clientId) {
+             // Normalizar estados: 'active', 'activo', 'ACTIVO' -> son activos.
+             // 'cancelado', 'baja', 'suspended' -> son inactivos.
+             // Contamos cuántos BANs NO están cancelados/baja
+             const activeBansResult = await client.query(
+                `SELECT COUNT(*) as count 
+                 FROM bans 
+                 WHERE client_id = $1 
+                 AND (status IS NULL OR status NOT IN ('cancelado', 'baja', 'suspended', 'inactive'))`,
+                [clientId]
+             );
+             const activeCount = parseInt(activeBansResult.rows[0].count || '0');
+             
+             // Si tiene 0 BANs activos, marcar cliente como inactivo (0)
+             // Si tiene > 0 BANs activos, marcar cliente como activo (1)
+             const finalClientStatus = activeCount > 0 ? 1 : 0;
+             
+             await client.query(
+                `UPDATE clients SET is_active = $1 WHERE id = $2`,
+                [finalClientStatus, clientId]
+             );
+          }
+
         } catch (rowError) {
+          try {
+            await client.query('ROLLBACK TO SAVEPOINT row_savepoint');
+          } catch (rbError) {
+            console.error('Error haciendo rollback al savepoint:', rbError);
+          }
           console.error(`❌ Error procesando fila ${rowIndex + 1}:`, rowError);
           errors.push(`Fila ${rowIndex + 1}: ${rowError.message || 'Error desconocido'}`);
           continue;
@@ -3785,7 +3859,9 @@ app.post('/api/call-logs', async (req, res) => {
     call_date,
     notes = null,
     outcome = null,
-    next_call_date = null
+    next_call_date = null,
+    step_id = null,
+    step_completed = false
   } = req.body || {};
 
   if (!follow_up_id) {
@@ -3809,13 +3885,48 @@ app.post('/api/call-logs', async (req, res) => {
 
     const rows = await query(
       `INSERT INTO call_logs
-        (follow_up_id, vendor_id, call_date, notes, outcome, next_call_date, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,NOW(),NOW())
+        (follow_up_id, vendor_id, call_date, notes, outcome, next_call_date, step_id, step_completed, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW(),NOW())
        RETURNING *`,
-      [follow_up_id, finalVendorId, call_date || new Date(), notes, outcome, next_call_date]
+      [follow_up_id, finalVendorId, call_date || new Date(), notes, outcome, next_call_date, step_id, step_completed]
     );
 
-    const log = enrich(rows[0], ['follow_up_id', 'vendor_id'], [], ['call_date', 'next_call_date', 'created_at', 'updated_at']);
+    // Si se completó el paso, avanzar al siguiente paso en el prospecto
+    if (step_completed && step_id) {
+      try {
+        // 1. Obtener el paso actual para saber su orden
+        const currentStepRows = await query(`SELECT order_index FROM follow_up_steps WHERE id = $1`, [step_id]);
+        
+        if (currentStepRows.length > 0) {
+          const currentOrder = currentStepRows[0].order_index;
+          
+          // 2. Buscar el siguiente paso (el de menor orden que sea mayor al actual)
+          const nextStepRows = await query(
+            `SELECT id FROM follow_up_steps 
+             WHERE order_index > $1 AND is_active = 1 
+             ORDER BY order_index ASC 
+             LIMIT 1`,
+            [currentOrder]
+          );
+
+          if (nextStepRows.length > 0) {
+            // 3. Actualizar el prospecto con el nuevo paso
+            await query(
+              `UPDATE follow_up_prospects SET step_id = $1, updated_at = NOW() WHERE id = $2`,
+              [nextStepRows[0].id, follow_up_id]
+            );
+          } else {
+             // Si no hay siguiente paso, quizás marcar como completado o dejarlo en el último
+             // Opcional: await query(`UPDATE follow_up_prospects SET is_completed = 1 WHERE id = $1`, [follow_up_id]);
+          }
+        }
+      } catch (err) {
+        console.error('Error auto-advancing step:', err);
+        // No fallamos el request principal si esto falla, pero lo logueamos
+      }
+    }
+
+    const log = enrich(rows[0], ['follow_up_id', 'vendor_id', 'step_id'], ['step_completed'], ['call_date', 'next_call_date', 'created_at', 'updated_at']);
     res.status(201).json(log);
   } catch (error) {
     serverError(res, error, 'Error registrando llamada');
@@ -4057,10 +4168,15 @@ app.delete('/api/admin/clean-database', authenticateRequest, async (req, res) =>
 });
 
 // ======================================================
-// Rutas no encontradas
+// Rutas no encontradas - Servir index.html para SPA
 // ======================================================
-app.use((req, res) => {
-  res.status(404).json({ error: 'Ruta no encontrada' });
+app.get('*', (req, res) => {
+  // Si es una petición API y no se encontró, devolver 404
+  if (req.path.startsWith('/api/')) {
+    return res.status(404).json({ error: 'Ruta API no encontrada' });
+  }
+  // Para cualquier otra ruta, servir el index.html (SPA)
+  res.sendFile(path.join(__dirname, 'dist/client/index.html'));
 });
 
 // ======================================================
