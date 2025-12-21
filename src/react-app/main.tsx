@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "@/react-app/index.css";
 import App from "@/react-app/App.tsx";
+import { APP_VERSION } from "@/version";
 
 // Initialize dark mode
 const initializeTheme = () => {
@@ -14,7 +15,7 @@ const initializeTheme = () => {
 
 initializeTheme();
 
-console.log('%c VERSION ACTUAL: v5.1.25 ', 'background: #222; color: #bada55; font-size: 20px');
+console.log(`%c VERSION ACTUAL: ${APP_VERSION} `, 'background: #222; color: #bada55; font-size: 20px');
 
 // 🚨 FUERZA BRUTA: Desregistrar cualquier Service Worker antiguo que pueda estar bloqueando la actualización
 if ('serviceWorker' in navigator) {

@@ -4,11 +4,14 @@ import { config } from '../config/env.js';
 const { Pool } = pg;
 
 const pool = new Pool({
-    host: config.db.host,
-    port: config.db.port,
-    user: config.db.user,
+    host: config.db.host || '127.0.0.1',
+    port: config.db.port || 5432,
+    user: config.db.user || 'crm_user',
     password: config.db.password,
-    database: config.db.database,
+    database: config.db.database || 'crm_pro',
+    max: 15,
+    idleTimeoutMillis: 30000,
+    ssl: false
 });
 
 // Eventos del pool

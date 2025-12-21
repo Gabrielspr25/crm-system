@@ -18,6 +18,7 @@ import {
 import { useTheme } from "@/react-app/hooks/useTheme";
 import { getCurrentRole, getCurrentUser, clearAuthToken } from "@/react-app/utils/auth";
 import { useApi } from "@/react-app/hooks/useApi";
+import { APP_VERSION } from "@/version";
 
 type NavItem = {
   name: string;
@@ -177,11 +178,11 @@ export default function Layout({ children }: LayoutProps) {
               <h1 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
                 VentasPro
               </h1>
-              <div className="text-[10px] font-bold text-emerald-400 mt-0.5 mb-1">
-                v5.1.26
-              </div>
               <p className="text-xs text-slate-400">
                 {userLabel} · {role.toUpperCase()}
+              </p>
+              <p className="text-xs font-bold text-green-400 mt-1">
+                {APP_VERSION}
               </p>
             </div>
           </div>
@@ -312,7 +313,7 @@ export default function Layout({ children }: LayoutProps) {
               Cerrar sesión
             </button>
             <div className="text-center pt-1">
-              <span className="text-[10px] text-slate-600 dark:text-slate-500 font-mono select-all">v5.1.29</span>
+              <p className="text-xs font-bold text-green-400 mt-1">{APP_VERSION}</p>
             </div>
           </div>
 

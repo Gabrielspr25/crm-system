@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router";
 import { Search, Plus, Phone, Edit3, Settings, Trash2, ArrowLeft, Calendar as CalendarIcon, List, ChevronLeft, ChevronRight } from "lucide-react";
 import { useApi } from "../hooks/useApi";
 import { authFetch, getCurrentUser } from "@/react-app/utils/auth";
+import { APP_VERSION } from "@/version";
 
 interface Priority {
   id: number;
@@ -307,7 +308,6 @@ export default function FollowUp() {
         <div>
           <h1 className="text-3xl font-bold text-white flex items-center gap-3">
             Seguimiento
-            <span className="text-xs font-normal bg-orange-900/50 text-orange-300 px-2 py-0.5 rounded-full border border-orange-800">v5.1.22</span>
           </h1>
           <p className="text-gray-400 mt-1">Gestiona el seguimiento de tus prospectos</p>
         </div>

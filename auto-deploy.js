@@ -76,7 +76,7 @@ try {
 
     console.log('\n✅ DEPLOY COMPLETADO EXITOSAMENTE');
     console.log('🌐 Abre en INCÓGNITO: http://143.244.191.139');
-    console.log('🔍 Verifica en consola que diga: V5.1.35 o superior\n');
+    console.log('🔍 Verifica en consola que diga: V5.1.37 o superior\n');
 
 } catch (error) {
     console.error('❌ ERROR durante el deploy:');

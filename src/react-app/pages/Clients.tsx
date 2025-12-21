@@ -1,14 +1,16 @@
-﻿// VERSION: 2025-01-15-T15-PRODUCTION-V5.1.35-FINAL-FIX
+﻿// VERSION: 2025-01-15-T16-FINAL-V5.1.37-PRODUCTION
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router";
-import { Plus, Search, Edit, Users, Building, Phone, Mail, MapPin, Hash, Calendar, Trash2, UserPlus, Download, FileSpreadsheet, FileText, Check, X, Package, BarChart3, Sparkles } from "lucide-react";
+import { Plus, Search, Edit, Users, Building, Phone, Mail, MapPin, Hash, Calendar, Trash2, UserPlus, Download, FileSpreadsheet, FileText, Check, X, Package, BarChart3, Sparkles, Send, Merge } from "lucide-react";
 import { useApi } from "../hooks/useApi";
 import { authFetch } from "@/react-app/utils/auth";
+import { APP_VERSION, BUILD_LABEL } from "@/version";
 import ClientModal from "../components/ClientModal";
 import BANModal from "../components/BANModal";
 import SubscriberModal from "../components/SubscriberModal";
 import SalesHistoryTab from "../components/SalesHistoryTab";
 import OfferGenerator from "../components/OfferGenerator";
+import EmailModal from "../components/EmailModal";
 import * as XLSX from 'xlsx';
 
 interface Client {
@@ -194,9 +196,28 @@ const computeSubscriberTiming = (contractEndDate: string | null) => {
   if (!contractEndDate) {
     return { status: 'overdue' as ClientStatus, days: -999 };
   }
-  const endDate = new Date(contractEndDate);
+  
+  // Parsear manualmente YYYY-MM-DD para asegurar fecha local (evitar UTC offset)
+  const parts = contractEndDate.split('-');
+  let endDate: Date;
+  
+  if (parts.length === 3) {
+      const year = parseInt(parts[0], 10);
+      const month = parseInt(parts[1], 10) - 1; // Meses 0-11
+      const day = parseInt(parts[2], 10);
+      endDate = new Date(year, month, day);
+  } else {
+      // Fallback por si el formato no es YYYY-MM-DD
+      endDate = new Date(contractEndDate);
+      endDate.setHours(0, 0, 0, 0);
+  }
+
   const today = new Date();
-  const days = Math.ceil((endDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+  today.setHours(0, 0, 0, 0); // Normalizar hoy a medianoche
+
+  // Calcular diferencia en milisegundos y convertir a días
+  const diffTime = endDate.getTime() - today.getTime();
+  const days = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
   let status: ClientStatus = 'good';
   if (days < 0) status = 'expired';
@@ -245,15 +266,16 @@ const getStatusBadge = (status: ClientStatus, days: number, createdAt?: string |
 
 // V3.4 FINAL FIX - 2025-01-15 - statusPriority indentación corregida
 export default function Clients() {
-  const BUILD_TIMESTAMP = "2025-01-15T15:00:00-PRODUCTION-FIX";
-  const UNIQUE_BUILD_ID = "BUILD_PROD_1736960500000";
+  const BUILD_TIMESTAMP = "2025-12-21T16:30:00-PRODUCTION";
+  const UNIQUE_BUILD_ID = "BUILD_PROD_FINAL_v5.1.52";
   
   console.log("🚀🚀🚀 ============================================");
-  console.log("🚀 Clients V5.1.35 - PRODUCTION FIX - 2025-01-15");
+  console.log("🚀 Clients V5.1.52 - PRODUCTION FINAL - 2025-12-21");
   console.log("🚀 Build Timestamp:", BUILD_TIMESTAMP);
   console.log("🚀 Unique Build ID:", UNIQUE_BUILD_ID);
   console.log("🚀 Runtime:", new Date().toISOString());
   console.log("🚀🚀🚀 ============================================");
+  
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedMonth, setSelectedMonth] = useState<string>(""); // Nuevo: filtro de mes
@@ -286,13 +308,23 @@ export default function Clients() {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(50);
 
-  const { data: clients, loading: clientsLoading, refetch: refetchClients } = useApi<Client[]>("/api/clients");
-  const { data: vendors } = useApi<Vendor[]>("/api/vendors");
-  const { data: prospects, refetch: refetchProspects } = useApi<FollowUpProspect[]>("/api/follow-up-prospects");
+  const [showMergeModal, setShowMergeModal] = useState(false);
+  const [mergeSourceId, setMergeSourceId] = useState<number | null>(null);
+  const [mergeTargetId, setMergeTargetId] = useState<number | null>(null);
+  const [isMerging, setIsMerging] = useState(false);
 
-  const notify = (type: 'success' | 'error' | 'info', text: string) => {
+  const { data: clients, loading: clientsLoading, error: clientsError, refetch: refetchClients } = useApi<Client[]>("/api/clients");
+    const { data: vendors } = useApi<Vendor[]>("/api/vendors");
+    const { data: prospects, refetch: refetchProspects } = useApi<FollowUpProspect[]>("/api/follow-up-prospects?include_completed=true");  const notify = (type: 'success' | 'error' | 'info', text: string) => {
     setNotification({ type, text });
   };
+
+  // Mostrar error si falla la carga
+  useEffect(() => {
+    if (clientsError) {
+      notify('error', `Error cargando clientes: ${clientsError}`);
+    }
+  }, [clientsError]);
 
   const statusPriority: Record<ClientStatus, number> = {
     overdue: 0,
@@ -765,6 +797,11 @@ export default function Clients() {
       const matchesSearch = (
         item.clientName.toLowerCase().includes(term) ||
         (item.businessName && item.businessName.toLowerCase().includes(term)) ||
+        (item.email && item.email.toLowerCase().includes(term)) ||
+        (item.phone && item.phone.toLowerCase().includes(term)) ||
+        (item.contactPerson && item.contactPerson.toLowerCase().includes(term)) ||
+        (item.address && item.address.toLowerCase().includes(term)) ||
+        (item.city && item.city.toLowerCase().includes(term)) ||
         item.banNumbers.some(ban => ban.toLowerCase().includes(term)) ||
         item.subscriberPhones.some(phone => phone.includes(term))
       );
@@ -921,6 +958,45 @@ export default function Clients() {
     }
   };
 
+  const handleMergeClients = async () => {
+    if (!mergeSourceId || !mergeTargetId) {
+        notify('error', 'Selecciona ambos clientes para fusionar.');
+        return;
+    }
+    if (mergeSourceId === mergeTargetId) {
+        notify('error', 'No puedes fusionar el mismo cliente.');
+        return;
+    }
+
+    if (!window.confirm("¿Estás seguro de fusionar estos clientes? Esta acción NO se puede deshacer. El cliente 'Origen' será eliminado y sus datos pasarán al 'Destino'.")) {
+        return;
+    }
+
+    setIsMerging(true);
+    try {
+        const res = await authFetch('/api/clients/merge', {
+            method: 'POST',
+            json: { sourceId: mergeSourceId, targetId: mergeTargetId }
+        });
+
+        if (res.ok) {
+            notify('success', 'Clientes fusionados correctamente.');
+            setShowMergeModal(false);
+            setMergeSourceId(null);
+            setMergeTargetId(null);
+            refetchClients();
+        } else {
+            const err = await res.json();
+            notify('error', err.error || 'Error al fusionar clientes.');
+        }
+    } catch (error) {
+        console.error("Error merging clients:", error);
+        notify('error', 'Error de conexión al fusionar.');
+    } finally {
+        setIsMerging(false);
+    }
+  };
+
   const handleStopFollowing = (prospectId: number, clientName: string) => {
     setSelectedFollowUpProspect({ prospectId, clientName });
     setStopFollowNotes('');
@@ -1010,32 +1086,27 @@ export default function Clients() {
 
       const client = await clientResponse.json();
 
-      // Load client's BANs with subscribers (en paralelo para mejor rendimiento)
-      const [bansResponse] = await Promise.all([
-        authFetch(`/api/bans?client_id=${clientId}`)
+      // Load client's BANs and Subscribers in parallel (Optimized)
+      const [bansResponse, subscribersResponse] = await Promise.all([
+        authFetch(`/api/bans?client_id=${clientId}`),
+        authFetch(`/api/subscribers?client_id=${clientId}`)
       ]);
 
       let bans: BAN[] = [];
+      let allSubscribers: any[] = [];
+
+      if (subscribersResponse.ok) {
+        allSubscribers = await subscribersResponse.json();
+      }
 
       if (bansResponse.ok) {
         const clientBans: BAN[] = await bansResponse.json();
 
-        // Load subscribers for each BAN (en paralelo)
-        bans = await Promise.all(
-          clientBans.map(async (ban) => {
-            try {
-              const subscribersResponse = await authFetch(`/api/subscribers?ban_id=${ban.id}`);
-              if (subscribersResponse.ok) {
-                const subscribers = await subscribersResponse.json();
-                return { ...ban, subscribers };
-              }
-              return { ...ban, subscribers: [] };
-            } catch (error) {
-              console.error(`Error loading subscribers for BAN ${ban.id}:`, error);
-              return { ...ban, subscribers: [] };
-            }
-          })
-        );
+        // Map subscribers to their BANs in memory
+        bans = clientBans.map(ban => ({
+          ...ban,
+          subscribers: allSubscribers.filter((s: any) => s.ban_id === ban.id)
+        }));
       }
 
       setClientDetail({ ...client, bans });
@@ -1051,26 +1122,25 @@ export default function Clients() {
   // Función para cargar BANs del cliente cuando se abre el modal de edición
   const loadClientBANs = async (clientId: number) => {
     try {
-      const bansResponse = await authFetch(`/api/bans?client_id=${clientId}`);
+      // Load client's BANs and Subscribers in parallel (Optimized)
+      const [bansResponse, subscribersResponse] = await Promise.all([
+        authFetch(`/api/bans?client_id=${clientId}`),
+        authFetch(`/api/subscribers?client_id=${clientId}`)
+      ]);
+
       if (bansResponse.ok) {
         const fetchedBans: BAN[] = await bansResponse.json();
+        let allSubscribers: any[] = [];
 
-        // Cargar suscriptores para cada BAN
-        const bansWithSubscribers = await Promise.all(
-          fetchedBans.map(async (ban) => {
-            try {
-              const subscribersResponse = await authFetch(`/api/subscribers?ban_id=${ban.id}`);
-              if (subscribersResponse.ok) {
-                const subscribers = await subscribersResponse.json();
-                return { ...ban, subscribers };
-              }
-              return { ...ban, subscribers: [] };
-            } catch (error) {
-              console.error(`Error loading subscribers for BAN ${ban.id}:`, error);
-              return { ...ban, subscribers: [] };
-            }
-          })
-        );
+        if (subscribersResponse.ok) {
+          allSubscribers = await subscribersResponse.json();
+        }
+
+        // Map subscribers to their BANs in memory
+        const bansWithSubscribers = fetchedBans.map(ban => ({
+          ...ban,
+          subscribers: allSubscribers.filter((s: any) => s.ban_id === ban.id)
+        }));
 
         setClientBANs(bansWithSubscribers);
         evaluateBanRequirement(clientId, bansWithSubscribers);
@@ -1538,9 +1608,6 @@ export default function Clients() {
         <div>
           <h1 className="text-3xl font-bold text-white">
             Clientes 
-            <span className="text-sm text-red-400 bg-red-900/50 px-2 py-1 rounded border border-red-500 ml-3 font-mono animate-pulse">
-              v5.1.35 🔥 PRODUCTION FIX
-            </span>
             <span className="text-xs text-gray-500 ml-2 font-mono">
               {UNIQUE_BUILD_ID}
             </span>
@@ -1699,7 +1766,6 @@ export default function Clients() {
               <p className="text-2xl font-bold text-white">{totalClients}</p>
               <div className="flex gap-2 text-xs mt-1">
                 <span className="text-green-400" title="Clientes activos, en seguimiento o completados">Clt. Act: {availableClients.length + followingClients.length + completedClients.length}</span>
-                <span className="text-red-400" title="Clientes con BANs cancelados">Clt. Canc: {cancelledClients.length}</span>
               </div>
             </div>
             <Users className="w-8 h-8 text-blue-500" />
@@ -2046,19 +2112,35 @@ export default function Clients() {
                           </div>
                         </div>
                       ) : (
-                        <button
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            console.log('🟡 CLICK DETECTADO en botón A Seguimiento - clientId:', item.clientId);
-                            handleSendToFollowUp(item.clientId);
-                          }}
-                          className="px-3 py-1 rounded text-xs transition-colors flex items-center gap-1 mx-auto bg-blue-600 hover:bg-blue-700 text-white"
-                          title="Enviar a seguimiento"
-                        >
-                          <UserPlus className="w-3 h-3" />
-                          A Seguimiento
-                        </button>
+                        <div className="flex items-center justify-center gap-2">
+                            <button
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                console.log('🟡 CLICK DETECTADO en botón A Seguimiento - clientId:', item.clientId);
+                                handleSendToFollowUp(item.clientId);
+                              }}
+                              className="px-3 py-1 rounded text-xs transition-colors flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white"
+                              title="Enviar a seguimiento"
+                            >
+                              <UserPlus className="w-3 h-3" />
+                              A Seguimiento
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                console.log('🟣 CLICK FUSIONAR - ID:', item.clientId);
+                                setMergeSourceId(item.clientId);
+                                setShowMergeModal(true);
+                              }}
+                              className="p-1 text-purple-400 hover:text-purple-300 transition-colors z-10 relative"
+                              title="Fusionar Cliente (Este será el Origen/Eliminado)"
+                            >
+                              <Merge size={16} />
+                            </button>
+                        </div>
                       )}
                     </td>
                   </tr>
@@ -2268,6 +2350,64 @@ export default function Clients() {
             onClose={() => setShowOfferGenerator(false)}
         />
       )}
+
+      {/* Merge Modal */}
+      {showMergeModal && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[9999] p-4">
+          <div className="bg-gray-900 border border-purple-500 rounded-xl shadow-2xl w-full max-w-lg p-6 relative z-[10000]">
+            <h2 className="text-xl font-bold text-purple-400 mb-4 flex items-center gap-2">
+              <Merge size={24} />
+              Fusionar Clientes
+            </h2>
+            <p className="text-gray-300 mb-4">
+              Estás a punto de fusionar el cliente <span className="text-red-400 font-bold">Origen (Se eliminará)</span> con un cliente <span className="text-green-400 font-bold">Destino (Recibirá los datos)</span>.
+            </p>
+            
+            <div className="mb-4">
+              <label className="block text-sm text-gray-400 mb-1">Cliente Origen (ID: {mergeSourceId})</label>
+              <div className="p-2 bg-red-900/20 border border-red-500/30 rounded text-red-200">
+                 {clients?.find(c => c.id === mergeSourceId)?.business_name || clients?.find(c => c.id === mergeSourceId)?.name || 'Desconocido'}
+              </div>
+            </div>
+
+            <div className="mb-6">
+              <label className="block text-sm text-gray-400 mb-1">Selecciona Cliente Destino</label>
+              <select 
+                className="w-full bg-gray-800 border border-gray-600 rounded p-2 text-white focus:border-purple-500 outline-none"
+                onChange={(e) => setMergeTargetId(Number(e.target.value))}
+                value={mergeTargetId || ''}
+              >
+                <option value="">-- Seleccionar Destino --</option>
+                {clients?.filter(c => c.id !== mergeSourceId).map(c => (
+                    <option key={c.id} value={c.id}>
+                        {c.business_name || c.name} (ID: {c.id})
+                    </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex justify-end gap-3">
+              <button 
+                onClick={() => {
+                    setShowMergeModal(false);
+                    setMergeSourceId(null);
+                    setMergeTargetId(null);
+                }}
+                className="px-4 py-2 rounded bg-gray-700 hover:bg-gray-600 text-white"
+              >
+                Cancelar
+              </button>
+              <button 
+                onClick={handleMergeClients}
+                disabled={!mergeTargetId || isMerging}
+                className="px-4 py-2 rounded bg-purple-600 hover:bg-purple-500 text-white font-bold disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isMerging ? 'Fusionando...' : 'Confirmar Fusión'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2294,6 +2434,7 @@ function ClientManagementModal({
 }) {
   const [activeTab, setActiveTab] = useState<'info' | 'bans' | 'history' | 'calls'>(initialTab);
   const [showBANForm, setShowBANForm] = useState(false);
+  const [showEmailModal, setShowEmailModal] = useState(false);
   const [editingBAN, setEditingBAN] = useState<BAN | null>(null);
   const [formMessage, setFormMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const [isSendingToFollowUp, setIsSendingToFollowUp] = useState(false);
@@ -2389,7 +2530,12 @@ function ClientManagementModal({
     }
   };
 
-  const handleSaveClientEdit = async () => {
+  const handleSaveClientEdit = async (e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    console.log('🟢 Guardando cambios cliente...', editClientData);
     try {
       const response = await authFetch(`/api/clients/${client.id}`, {
         method: 'PUT',
@@ -2760,6 +2906,14 @@ function ClientManagementModal({
                   {!isEditingClient ? (
                     <>
                       <button
+                        onClick={() => setShowEmailModal(true)}
+                        className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors"
+                        title="Enviar correo"
+                      >
+                        <Mail className="w-4 h-4" />
+                        Enviar Correo
+                      </button>
+                      <button
                         onClick={() => setIsEditingClient(true)}
                         className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors"
                       >
@@ -2808,6 +2962,7 @@ function ClientManagementModal({
                   ) : (
                     <>
                       <button
+                        type="button"
                         onClick={handleSaveClientEdit}
                         className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors"
                       >
@@ -2815,7 +2970,11 @@ function ClientManagementModal({
                         Guardar Cambios
                       </button>
                       <button
-                        onClick={() => {
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          console.log('🔴 Cancelando edición...');
                           setIsEditingClient(false);
                           setEditClientData({
                             name: client.name || '',
@@ -3334,6 +3493,8 @@ function ClientManagementModal({
         </div>
       </div>
 
+
+
       {/* BAN Edit Form */}
       {editingBAN && (
         <BANModal
@@ -3351,7 +3512,13 @@ function ClientManagementModal({
         />
       )}
 
-
+      {/* Email Modal */}
+      <EmailModal
+        isOpen={showEmailModal}
+        onClose={() => setShowEmailModal(false)}
+        recipientEmail={client.email || ''}
+        recipientName={client.contact_person || client.name}
+      />
     </div>
   );
 }

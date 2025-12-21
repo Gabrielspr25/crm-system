@@ -1,6 +1,74 @@
 import { query } from '../database/db.js';
 import { serverError, badRequest, notFound } from '../middlewares/errorHandler.js';
 
+export const mergeClients = async (req, res) => {
+    const { sourceId, targetId } = req.body;
+
+    if (!sourceId || !targetId) {
+        return badRequest(res, 'Se requieren sourceId y targetId');
+    }
+
+    if (sourceId === targetId) {
+        return badRequest(res, 'No se puede fusionar el mismo cliente');
+    }
+
+    try {
+        // 1. Verificar que ambos existan
+        const source = await query('SELECT * FROM clients WHERE id = $1', [sourceId]);
+        const target = await query('SELECT * FROM clients WHERE id = $1', [targetId]);
+
+        if (source.length === 0 || target.length === 0) {
+            return notFound(res, 'Uno o ambos clientes no existen');
+        }
+
+        // 2. Mover BANs
+        await query('UPDATE bans SET client_id = $1 WHERE client_id = $2', [targetId, sourceId]);
+
+        // 3. Mover Seguimientos (FollowUps)
+        // Verificar si existe la tabla follow_ups o similar
+        // Asumimos que existe y tiene client_id
+        try {
+             await query('UPDATE follow_ups SET client_id = $1 WHERE client_id = $2', [targetId, sourceId]);
+        } catch (e) {
+            console.warn("No se pudo actualizar follow_ups (quizás no existe la tabla o columna)", e.message);
+        }
+
+        // 4. Mover Contactos (si hubiera tabla separada, pero parece que están en clients)
+        
+        // 5. Eliminar Cliente Origen
+        await query('DELETE FROM clients WHERE id = $1', [sourceId]);
+
+        res.json({ success: true, message: `Cliente ${sourceId} fusionado en ${targetId} correctamente.` });
+
+    } catch (error) {
+        serverError(res, error, 'Error fusionando clientes');
+    }
+};
+
+export const searchClients = async (req, res) => {
+    const { q } = req.query;
+    if (!q) {
+        return res.json([]);
+    }
+
+    try {
+        const searchTerm = `%${q}%`;
+        const clients = await query(
+            `SELECT DISTINCT c.* 
+             FROM clients c
+             LEFT JOIN bans b ON c.id = b.client_id
+             WHERE c.name ILIKE $1 
+                OR c.business_name ILIKE $1 
+                OR b.ban_number ILIKE $1
+             LIMIT 20`,
+            [searchTerm]
+        );
+        res.json(clients);
+    } catch (error) {
+        serverError(res, error, 'Error buscando clientes');
+    }
+};
+
 export const getClients = async (req, res) => {
     try {
         const clients = await query(

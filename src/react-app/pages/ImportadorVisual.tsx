@@ -1,7 +1,9 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import * as XLSX from "xlsx";
 import { motion } from "framer-motion";
 import { authFetch } from "@/react-app/utils/auth";
+
+import { FileSpreadsheet, BarChart3, Database, AlertTriangle, Check, X, Loader2 } from "lucide-react";
 
 interface PreviewData {
   totalRows: number;
@@ -21,7 +23,7 @@ interface PreviewData {
     movedSubscribers: number;
     reactivatedSubscribers: number;
     fusedClients: number;
-    details: string[];
+    details: any[]; // Changed from string[] to any[] to support object details
   }
 }
 
@@ -36,6 +38,19 @@ export default function ImportadorVisual() {
   const [saveResult, setSaveResult] = useState<{ success: boolean; message?: string; created?: number; updated?: number; total?: number; errors?: string[]; omitted?: number; warnings?: string[] } | null>(null);
   const [showPreviewModal, setShowPreviewModal] = useState(false);
   const [previewData, setPreviewData] = useState<PreviewData | null>(null);
+  
+  // --- MODO ACTIVACIONES STATE ---
+  const [showActivacionesModal, setShowActivacionesModal] = useState(false);
+  const [activacionesMetadata, setActivacionesMetadata] = useState({ ban: "", vendor: "", business_name: "", saleDate: new Date().toISOString().split('T')[0] });
+  const [activacionesRows, setActivacionesRows] = useState<any[]>([]);
+  const [existingPhones, setExistingPhones] = useState<Set<string>>(new Set());
+  
+  // Autocomplete State
+  const [clientSuggestions, setClientSuggestions] = useState<any[]>([]);
+  const [showClientSuggestions, setShowClientSuggestions] = useState(false);
+  const [isSearchingClients, setIsSearchingClients] = useState(false);
+  const [isChecking, setIsChecking] = useState(false);
+
   const dragRef = useRef<string | null>(null);
 
   // Estado para el modal de datos faltantes
@@ -51,6 +66,11 @@ export default function ImportadorVisual() {
   const [missingDataValue, setMissingDataValue] = useState("");
   const [missingDataApplyAll, setMissingDataApplyAll] = useState(true);
   const [defaultStartDate, setDefaultStartDate] = useState("");
+
+  // Estado para edición en el modal de vista previa
+  const [editableData, setEditableData] = useState<any[][]>([]);
+  const [virtualHeaders, setVirtualHeaders] = useState<string[]>([]);
+  const [isActivacionesMode, setIsActivacionesMode] = useState(false);
 
   // Función para obtener la etiqueta del frontend según tabla y columna
   const getFieldLabel = (table: string, col: string): string => {
@@ -139,6 +159,84 @@ export default function ImportadorVisual() {
     },
   ]);
 
+  // Función para verificar existencia de suscriptores
+  const checkSubscribersExistence = async (phones: string[]) => {
+    try {
+      setIsChecking(true);
+      // Obtener todos los suscriptores (optimización: filtrar en cliente)
+      const res = await authFetch('/api/subscribers');
+      if (!res.ok) throw new Error("Error consultando suscriptores");
+      const allSubscribers = await res.json();
+      
+      const existing = new Set<string>();
+      allSubscribers.forEach((sub: any) => {
+        if (sub.subscriber_number) {
+          // Normalizar: quitar no numéricos y tomar últimos 10
+          const clean = String(sub.subscriber_number).replace(/[^0-9]/g, '').slice(-10);
+          existing.add(clean);
+        }
+      });
+      
+      setExistingPhones(existing);
+      return existing;
+    } catch (error) {
+      console.error("Error verificando suscriptores:", error);
+      return new Set<string>();
+    } finally {
+      setIsChecking(false);
+    }
+  };
+
+  // Search Clients Function
+  const searchClients = async (term: string) => {
+    if (!term || term.length < 2) {
+      setClientSuggestions([]);
+      setShowClientSuggestions(false);
+      return;
+    }
+    
+    setIsSearchingClients(true);
+    // Mostrar sugerencias vacías mientras busca o si no hay resultados
+    setShowClientSuggestions(true); 
+
+    try {
+      const res = await authFetch(`/api/clients/search?q=${encodeURIComponent(term)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setClientSuggestions(data);
+      } else {
+        setClientSuggestions([]);
+      }
+    } catch (error) {
+      console.error("Error searching clients:", error);
+      setClientSuggestions([]);
+    } finally {
+      setIsSearchingClients(false);
+    }
+  };
+
+  // Debounce effect for client search
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (isActivacionesMode && activacionesMetadata.business_name) {
+         searchClients(activacionesMetadata.business_name);
+      }
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [activacionesMetadata.business_name, isActivacionesMode]);
+
+  const handleSelectClient = (client: any) => {
+    setActivacionesMetadata(prev => ({
+        ...prev,
+        business_name: client.business_name,
+        // Si el cliente tiene un BAN asociado y estamos buscando por BAN, podríamos querer autocompletarlo también
+        // Pero cuidado de no sobrescribir si el usuario ya puso uno diferente.
+        // Por ahora solo nombre.
+    }));
+    setShowClientSuggestions(false);
+  };
+
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
     if (!selectedFile) return;
@@ -153,183 +251,84 @@ export default function ImportadorVisual() {
         // Mantener celdas vacías con defval: ''
         const jsonData = XLSX.utils.sheet_to_json(firstSheet, { header: 1, defval: "" }) as any[][];
 
-        // --- DETECCIÓN DE FORMATO DE ACTIVACIONES ---
-        // Verificar si es el formato "SOLICITUD PARA ACTIVACION DE LINEAS CORPORATIVAS"
-        if (jsonData.length > 0 && String(jsonData[0][0]).includes("SOLICITUD PARA ACTIVACION")) {
-          console.log("📋 Formato de Activaciones detectado");
+        // --- MODO ACTIVACIONES (MANUAL) ---
+        if (isActivacionesMode) {
+          console.log("📋 Procesando en Modo Activaciones (Estricto)...");
           
-          // Extraer metadatos (BAN, Cliente y Vendedor)
-          // Según imagen del usuario:
-          // D3 -> Vendedor (Fila index 2, Col index 3)
-          // D5 -> BAN (Fila index 4, Col index 3)
-          // D7 -> Empresa (Fila index 6, Col index 3)
+          // 1. Metadatos (Posiciones Fijas)
+          // Vendedor: Fila 3 (idx 2), Col D (idx 3) o C (idx 2)
+          const vendor = jsonData[2] ? (jsonData[2][3] || jsonData[2][2] || "") : "";
+          // BAN: Fila 5 (idx 4), Col D (idx 3) o C (idx 2)
+          const ban = jsonData[4] ? (jsonData[4][3] || jsonData[4][2] || "") : "";
+          // Cliente (Empresa): Fila 7 (idx 6), Col D (idx 3) o C (idx 2)
+          const businessName = jsonData[6] ? (jsonData[6][3] || jsonData[6][2] || "") : "";
+
+          // 2. Tabla de Datos (Desde Fila 11 - idx 10)
+          const dataRows = jsonData.slice(10); // Fila 11 en adelante
           
-          // Función para buscar metadatos dinámicamente
-          const findMetadataValue = (keywords: string[]) => {
-            for (let i = 0; i < Math.min(jsonData.length, 20); i++) { // Buscar en las primeras 20 filas
-              const row = jsonData[i];
-              if (!row) continue;
+          // Columnas Fijas:
+          // Suscriptor: B (idx 1)
+          // Plan: H (idx 7)
+          // Valor: I (idx 8)
+          // Meses: O (idx 14)
+          // Notas: Q (idx 16)
+
+          const extractedRows = dataRows
+            .filter(row => {
+                const phone = row[1];
+                // Filtrar filas vacías o sin teléfono válido (mínimo 8 dígitos)
+                return phone && String(phone).replace(/[^0-9]/g, '').length >= 8;
+            })
+            .map(row => {
+              const cleanPhone = String(row[1] || "").replace(/[^0-9]/g, '').slice(-10);
               
-              // Buscar la celda que contiene la keyword
-              const cellIndex = row.findIndex((cell: any) => 
-                cell && keywords.some(k => String(cell).toUpperCase().includes(k))
-              );
-
-              if (cellIndex !== -1) {
-                // Buscar el siguiente valor no vacío en la misma fila
-                for (let j = cellIndex + 1; j < row.length; j++) {
-                  const val = row[j];
-                  if (val && String(val).trim() !== "") {
-                    return val;
-                  }
-                }
+              // Cálculo de Fechas
+              let contractEndDate = "";
+              const months = parseInt(String(row[14] || "0").replace(/[^0-9]/g, ''), 10);
+              
+              if (months > 0) {
+                  const startDate = new Date(); // Asumimos hoy como inicio si no hay columna fecha
+                  const endDate = new Date(startDate);
+                  endDate.setMonth(endDate.getMonth() + months);
+                  contractEndDate = endDate.toISOString().split('T')[0];
               }
-            }
-            return null;
-          };
 
-          // Estrategia híbrida: Coordenadas fijas (backup) + Búsqueda dinámica (prioridad)
-          let vendor = findMetadataValue(["VENDEDOR"]);
-          let ban = findMetadataValue(["BAN", "ACCOUNT"]);
-          let clientName = findMetadataValue(["CLIENTE", "EMPRESA", "RAZON SOCIAL"]);
-
-          // Si la búsqueda dinámica falla, usar coordenadas fijas (C5/D5/E5 logic)
-          if (!ban) {
-             const row = jsonData[4]; // Fila 5
-             if (row) {
-                 // Intentar D5, C5, E5
-                 if (row[3]) ban = row[3];
-                 else if (row[2]) ban = row[2];
-                 else if (row[4]) ban = row[4];
-             }
-          }
-          
-          if (!vendor) vendor = jsonData[2]?.[3] || jsonData[2]?.[2];
-          if (!clientName) clientName = jsonData[6]?.[3] || jsonData[6]?.[2];
-
-          console.log(`[Importador] Metadatos detectados - BAN: ${ban}, Cliente: ${clientName}, Vendedor: ${vendor}`);
-
-
-          if (!ban) {
-             alert("⚠️ No se detectó el BAN en la fila 5 (Celdas C5, D5 o E5). Verifica que el archivo tenga el formato correcto.");
-          }
-          
-          // Buscar la fila de cabeceras (debe contener "NUM CELULAR")
-          // ACTUALIZACIÓN: El usuario indica coordenadas fijas para las cabeceras/datos
-          // B10 -> Suscriptor
-          // H10 -> Plan
-          // I10 -> Precio
-          // O10 -> Meses
-          // Q10 -> Notas
-          
-          // Asumimos que la fila 10 (índice 9) es la cabecera y los datos empiezan en la 11 (índice 10)
-          const headerRowIndex = 9; 
-
-          if (jsonData.length > headerRowIndex) {
-            const dataRows = jsonData.slice(headerRowIndex + 1);
-
-            // Definir nuevas columnas virtuales
-            const virtualHeaders = [
-              "Número BAN", 
-              "Nombre del Cliente", 
-              "Vendedor",
-              "Número de Teléfono", 
-              "Plan / Descripción", 
-              "Valor Mensual", 
-              "Meses",
-              "Equipo", 
-              "Notas",
-              "Status"
-            ];
-
-            // Índices fijos CORREGIDOS (El lector omite la col A vacía, así que B=0)
-            const idxPhone = 0;   // B (Antes 1)
-            const idxPlan = 6;    // H (Antes 7)
-            const idxPrice = 7;   // I (Antes 8)
-            const idxMonths = 13; // O (Antes 14)
-            const idxComments = 15; // Q (Antes 16)
-            // Equipo no especificado en las coordenadas recientes, lo dejamos vacío o buscamos si existe
-            
-            // Construir nueva data plana
-            const transformedData = dataRows
-              .filter(row => row[idxPhone]) // Filtrar filas vacías (basado en teléfono)
-              .map(row => {
-                // Limpieza de datos crítica para evitar errores de BD
-                const rawPhone = row[idxPhone];
-                const cleanPhone = rawPhone ? String(rawPhone).replace(/[^0-9]/g, '').slice(-10) : "";
-                
-                const rawBan = ban;
-                const cleanBan = rawBan ? String(rawBan).replace(/[^0-9]/g, '').slice(0, 9) : "";
-
-                // Buscar status en columnas probables (J, K, L, M, N, P)
-                // J=8, K=9, L=10, M=11, N=12, P=14
-                // Si el usuario dice "os que tienen c", es probable que sea una columna de estado.
-                // Vamos a intentar buscar "C" o "A" en las columnas cercanas.
-                let status = "";
-                // Buscar en TODAS las columnas a partir de la 5 (F) para ser más agresivos
-                for(let k=5; k < row.length; k++) {
-                    const val = String(row[k] || "").trim().toUpperCase();
-                    // Buscar coincidencia exacta o que empiece con C/A si es una palabra corta
-                    if (val === 'C' || val === 'CANCELADO' || val === 'BAJA' || val === 'SUSPENDIDO' || val.startsWith('CANCEL')) {
-                        status = 'cancelado';
-                        break;
-                    } else if (val === 'A' || val === 'ACTIVO' || val === 'ALTA' || val.startsWith('ACTIV')) {
-                        status = 'activo';
-                        break;
-                    }
-                }
-
-                return [
-                  cleanBan,               // Número BAN (Limpio 9 dígitos)
-                  clientName,             // Empresa
-                  vendor,                 // Vendedor
-                  cleanPhone,             // Teléfono (Limpio 10 dígitos)
-                  row[idxPlan],           // Plan (G)
-                  row[idxPrice],          // Precio (H)
-                  row[idxMonths],         // Meses (N)
-                  "",                     // Equipo (No mapeado explícitamente)
-                  row[idxComments],       // Notas (P)
-                  status                  // Status detectado
-                ];
-              });
-
-            setColumns(virtualHeaders);
-            setPreview(transformedData.slice(0, 10)); // Mostrar primeros 10
-            
-            // Auto-asignar mapeo
-            setAssigned({
-              "BANs.ban_number": "Número BAN",
-              "Clientes.name": "Nombre del Cliente",
-              "Clientes.vendor_id": "Vendedor",
-              "Suscriptores.phone": "Número de Teléfono",
-              "Suscriptores.service_type": "Plan / Descripción",
-              "Suscriptores.monthly_value": "Valor Mensual",
-              "Suscriptores.months": "Meses",
-              "Suscriptores.equipment": "Equipo",
-              "Suscriptores.notes": "Notas",
-              "Suscriptores.status": "Status",
-              "BANs.status": "Status" // Mapear explícitamente al BAN también
+              return {
+                phone: cleanPhone,
+                plan: row[7] || "",
+                monthly_value: String(row[8] || "").replace(',', '.'),
+                months: row[14] || "",
+                notes: row[16] || "",
+                contract_end_date: contractEndDate
+              };
             });
 
-            // Guardar la data transformada completa en una propiedad del componente o estado si fuera necesario
-            // Pero el importador usa 'file' y lo lee de nuevo al guardar.
-            // PROBLEMA: Al guardar, el backend leerá el archivo original y no sabrá interpretarlo.
-            // SOLUCIÓN: Necesitamos interceptar el guardado o enviar la data transformada.
-            // El backend espera { mapping, data }. 'data' se construye en el frontend?
-            // Revisemos handleValidate/handleSave.
-            
-            // Hack: Reemplazar el comportamiento de lectura en handleSave o guardar la data transformada en un estado.
-            // Vamos a guardar la data transformada en un estado temporal para usarla en el guardado.
-            (window as any).__transformedData = [virtualHeaders, ...transformedData];
-            
-            return;
-          }
+          // 3. Verificar Existencia en BD
+          const phonesToCheck = extractedRows.map(r => r.phone);
+          checkSubscribersExistence(phonesToCheck).then(() => {
+             const initialSaleDate = new Date().toISOString().split('T')[0];
+             setActivacionesMetadata({ 
+                 ban: String(ban), 
+                 vendor: String(vendor), 
+                 business_name: String(businessName),
+                 saleDate: initialSaleDate
+             });
+             setActivacionesRows(extractedRows);
+             setShowActivacionesModal(true);
+          });
+
+          return; // Detener flujo normal
         }
-        // ---------------------------------------------
+        // -------------------------------------
 
         const firstRow = (jsonData[0] || []) as string[];
         setColumns(firstRow);
         setPreview(jsonData.slice(1, 10));
+        
+        // Inicializar datos editables para archivos normales también
+        setEditableData(jsonData.slice(1));
+        setVirtualHeaders(firstRow);
+
         // Limpiar data transformada si es un archivo normal
         (window as any).__transformedData = null;
       };
@@ -411,7 +410,15 @@ export default function ImportadorVisual() {
 
     try {
       // Usar data transformada si existe (para formato de Activaciones)
-      const transformedData = (window as any).__transformedData;
+      let transformedData = null;
+
+      // Priorizar datos editados si existen
+      if (editableData.length > 0) {
+        const headersToUse = virtualHeaders.length > 0 ? virtualHeaders : columns;
+        if (headersToUse.length > 0) {
+           transformedData = [headersToUse, ...editableData];
+        }
+      }
       
       let headers: string[];
       let rows: any[][];
@@ -535,6 +542,11 @@ export default function ImportadorVisual() {
                } else {
                    val = defaultStartDate;
                }
+            }
+
+            // CORRECCIÓN DECIMALES: Reemplazar coma por punto en monthly_value
+            if (field === "Suscriptores.monthly_value" && val && typeof val === 'string') {
+                val = val.replace(',', '.');
             }
             
             mapped[table][col] = val || null;
@@ -735,8 +747,16 @@ export default function ImportadorVisual() {
 
     try {
       // Usar data transformada si existe (para formato de Activaciones)
-      const transformedData = (window as any).__transformedData;
+      // Priorizar editableData si existe y tiene datos
+      let transformedData = (window as any).__transformedData;
       
+      if (editableData.length > 0) {
+         const headersToUse = virtualHeaders.length > 0 ? virtualHeaders : columns;
+         if (headersToUse.length > 0) {
+            transformedData = [headersToUse, ...editableData];
+         }
+      }
+
       let headers: string[];
       let rows: any[][];
 
@@ -769,6 +789,9 @@ export default function ImportadorVisual() {
       // Mapear los datos según el mapeo asignado
       const mappedData = rows.map((row) => {
         const mapped: Record<string, any> = {};
+        let calcStartDate: string | null = null;
+        let calcMonths: number | null = null;
+
         for (const [field, columnName] of Object.entries(assigned)) {
           const colIndex = headers.indexOf(columnName);
           if (colIndex !== -1) {
@@ -787,6 +810,10 @@ export default function ImportadorVisual() {
             }
 
             mapped[table][col] = val || null;
+
+            // Capturar para cálculo
+            if (field === "Suscriptores.contract_start_date") calcStartDate = val;
+            if (field === "Suscriptores.months") calcMonths = parseInt(val, 10);
           }
         }
 
@@ -799,10 +826,31 @@ export default function ImportadorVisual() {
                finalDate = `${parts[2]}-${parts[0].padStart(2, '0')}-${parts[1].padStart(2, '0')}`;
            }
            mapped["Suscriptores"]["contract_start_date"] = finalDate;
+           calcStartDate = finalDate;
+        }
+
+        // Calcular Fecha Fin
+        if (calcMonths && calcMonths > 0 && calcStartDate) {
+            try {
+                const startDate = new Date(calcStartDate);
+                if (!isNaN(startDate.getTime())) {
+                    const endDate = new Date(startDate);
+                    endDate.setMonth(endDate.getMonth() + calcMonths);
+                    const endStr = endDate.toISOString().split('T')[0];
+                    if (!mapped["Suscriptores"]) mapped["Suscriptores"] = {};
+                    mapped["Suscriptores"]["contract_end_date"] = endStr;
+                }
+            } catch (e) { console.warn("Error fecha fin", e); }
         }
 
         return mapped;
       });
+
+      if (mappedData.length === 0) {
+          alert("⚠️ No hay datos válidos para guardar. Verifica que el archivo no esté vacío y que las columnas estén mapeadas correctamente.");
+          setIsSaving(false);
+          return;
+      }
 
       // Procesar en lotes pequeños para evitar Timeouts (504)
       const BATCH_SIZE = 200;
@@ -903,6 +951,104 @@ export default function ImportadorVisual() {
     }
   };
 
+  const handleActivacionRowChange = (index: number, field: string, value: string) => {
+    const newRows = [...activacionesRows];
+    newRows[index] = { ...newRows[index], [field]: value };
+    setActivacionesRows(newRows);
+  };
+
+  const handleSaleDateChange = (newDate: string) => {
+      setActivacionesMetadata(prev => ({ ...prev, saleDate: newDate }));
+      
+      // Recalcular fechas de fin de contrato
+      const newRows = activacionesRows.map(row => {
+          let contractEndDate = row.contract_end_date;
+          const months = parseInt(String(row.months || "0").replace(/[^0-9]/g, ''), 10);
+          
+          if (months > 0 && newDate) {
+              const startDate = new Date(newDate);
+              // Ajustar zona horaria para evitar desfases
+              const userTimezoneOffset = startDate.getTimezoneOffset() * 60000;
+              const adjustedDate = new Date(startDate.getTime() + userTimezoneOffset);
+              
+              const endDate = new Date(adjustedDate);
+              endDate.setMonth(endDate.getMonth() + months);
+              contractEndDate = endDate.toISOString().split('T')[0];
+          }
+          return { ...row, contract_end_date: contractEndDate };
+      });
+      setActivacionesRows(newRows);
+  };
+
+  const saveActivaciones = async () => {
+    if (!activacionesRows.length) return;
+    setIsSaving(true);
+    try {
+        // Construir payload compatible con el backend
+        const payload = activacionesRows.map(row => ({
+            "BANs": {
+                "ban_number": activacionesMetadata.ban,
+                "status": "activo"
+            },
+            "Clientes": {
+                "business_name": activacionesMetadata.business_name, // Mapeado a Empresa
+                "vendor_id": activacionesMetadata.vendor,
+                "name": activacionesMetadata.business_name // Fallback
+            },
+            "Suscriptores": {
+                "phone": row.phone,
+                "service_type": row.plan,
+                "monthly_value": row.monthly_value,
+                "months": row.months,
+                "notes": row.notes,
+                "contract_end_date": row.contract_end_date,
+                "status": "activo"
+            }
+        }));
+
+        // Enviar en lotes
+        const BATCH_SIZE = 200;
+        const totalBatches = Math.ceil(payload.length / BATCH_SIZE);
+        let totalCreated = 0;
+        let totalUpdated = 0;
+        let totalErrors: string[] = [];
+
+        for (let i = 0; i < totalBatches; i++) {
+            const batch = payload.slice(i * BATCH_SIZE, (i + 1) * BATCH_SIZE);
+            const res = await authFetch('/api/importador/save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ data: batch })
+            });
+            
+            if (!res.ok) {
+                const err = await res.json();
+                totalErrors.push(`Lote ${i+1}: ${err.error || "Error desconocido"}`);
+            } else {
+                const json = await res.json();
+                totalCreated += json.created || 0;
+                totalUpdated += json.updated || 0;
+                if (json.errors) totalErrors.push(...json.errors);
+            }
+        }
+
+        setSaveResult({
+            success: totalErrors.length === 0,
+            created: totalCreated,
+            updated: totalUpdated,
+            errors: totalErrors,
+            total: payload.length
+        });
+        setShowActivacionesModal(false);
+
+    } catch (error: any) {
+        console.error("Error guardando activaciones:", error);
+        alert("Error guardando: " + error.message);
+    } finally {
+        setIsSaving(false);
+    }
+  };
+
   return (
     <div className="p-4 bg-neutral-950 min-h-screen text-gray-100 overflow-auto">
       
@@ -910,11 +1056,29 @@ export default function ImportadorVisual() {
         <div className="flex items-center gap-4">
           <div className="flex flex-col">
             <p className="text-base text-gray-200 font-medium hidden sm:block">
-              Subí tu archivo
+              Subí tu archivo <span className="text-xs text-amber-400 ml-2 font-bold">v5.1.52 (NUEVO)</span>
             </p>
             <p className="text-[10px] text-gray-500 hidden sm:block">
               * VALIDACIONES DESACTIVADAS
             </p>
+            <button
+                onClick={() => {
+                    if (!isActivacionesMode) {
+                        if (window.confirm("¿Estás seguro de activar el MODO ACTIVACIONES?\n\nEste modo usa un formato estricto para archivos de activaciones.\nAsegúrate de que el archivo cumple con la estructura esperada.")) {
+                            setIsActivacionesMode(true);
+                        }
+                    } else {
+                        setIsActivacionesMode(false);
+                    }
+                }}
+                className={`text-[10px] px-2 py-0.5 rounded border mt-1 transition-colors ${
+                    isActivacionesMode 
+                    ? "bg-blue-900 text-blue-200 border-blue-700 hover:bg-blue-800" 
+                    : "bg-neutral-700 text-gray-400 border-neutral-600 hover:bg-neutral-600"
+                }`}
+            >
+                {isActivacionesMode ? "📋 Modo Activaciones: ON" : "📄 Modo Activaciones: OFF"}
+            </button>
           </div>
           <label className="inline-block cursor-pointer">
             <input
@@ -984,9 +1148,15 @@ export default function ImportadorVisual() {
               </label>
               <input
                 type="text"
-                placeholder="MM/DD/AAAA"
+                placeholder="MM/DD/AAAA (Auto)"
                 value={defaultStartDate}
-                onChange={(e) => setDefaultStartDate(e.target.value)}
+                onChange={(e) => {
+                  let val = e.target.value.replace(/[^0-9]/g, '');
+                  if (val.length > 2) val = val.slice(0, 2) + '/' + val.slice(2);
+                  if (val.length > 5) val = val.slice(0, 5) + '/' + val.slice(5);
+                  if (val.length > 10) val = val.slice(0, 10);
+                  setDefaultStartDate(val);
+                }}
                 className="w-full bg-neutral-900 border border-neutral-700 rounded px-3 py-2 text-white focus:border-blue-500 focus:outline-none"
               />
               <p className="text-xs text-gray-500 mt-1">
@@ -1044,55 +1214,63 @@ export default function ImportadorVisual() {
         // Obtener índices de las columnas no asignadas
         const unassignedIndices = columns.map((col, idx) => assignedColumns.includes(col) ? -1 : idx).filter(idx => idx !== -1);
 
-        if (unassignedColumns.length === 0) {
-          return (
-            <div className="bg-green-900/40 border border-green-500/50 rounded-lg p-6 text-center">
-              <p className="text-green-200 font-semibold text-lg">✅ Todas las columnas han sido mapeadas</p>
-              <p className="text-green-100 text-sm mt-2">Puedes proceder a verificar y guardar los datos</p>
-            </div>
-          );
-        }
-
         return (
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm text-gray-200 border border-neutral-700 rounded-md">
-              <thead className="bg-neutral-800">
-                <tr>
-                  {unassignedColumns.map((col, i) => (
-                    <th
-                      key={i}
-                      className="px-3 py-2 text-left border border-neutral-700 text-amber-300"
-                    >
-                      <motion.div
-                        draggable
-                        onDragStart={() => handleDragStart(col)}
-                        whileHover={{ scale: 1.05 }}
-                        className="flex items-center justify-between bg-blue-700 hover:bg-blue-500 text-white px-3 py-1 rounded-md cursor-grab select-none shadow-md"
+          <div className="space-y-4">
+            {unassignedColumns.length === 0 && (
+              <div className="bg-green-900/40 border border-green-500/50 rounded-lg p-6 text-center">
+                <p className="text-green-200 font-semibold text-lg">✅ Todas las columnas han sido mapeadas</p>
+                <p className="text-green-100 text-sm mt-2">Puedes proceder a verificar y guardar los datos</p>
+              </div>
+            )}
+
+            <div className="overflow-x-auto">
+              <h3 className="text-sm font-semibold text-gray-400 mb-2">
+                Vista Previa de Datos ({unassignedColumns.length === 0 ? "Todas las columnas mapeadas" : "Columnas sin mapear"}):
+              </h3>
+              <table className="min-w-full text-sm text-gray-200 border border-neutral-700 rounded-md">
+                <thead className="bg-neutral-800">
+                  <tr>
+                    {/* Mostrar TODAS las columnas si todo está mapeado, o solo las no asignadas si faltan */}
+                    {(unassignedColumns.length === 0 ? columns : unassignedColumns).map((col, i) => (
+                      <th
+                        key={i}
+                        className="px-3 py-2 text-left border border-neutral-700 text-amber-300"
                       >
-                        {col}
-                        <span className="text-xs bg-white/20 px-2 py-0.5 rounded-md ml-2">
-                          ⇅ Arrastrar
-                        </span>
-                      </motion.div>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {preview.map((row, rIndex) => (
-                  <tr key={rIndex} className="hover:bg-neutral-700/30">
-                    {unassignedIndices.map((colIndex, cIndex) => (
-                      <td
-                        key={cIndex}
-                        className="px-3 py-2 border border-neutral-700 text-gray-100"
-                      >
-                        {row[colIndex] !== undefined ? row[colIndex] : ""}
-                      </td>
+                        <motion.div
+                          draggable
+                          onDragStart={() => handleDragStart(col)}
+                          whileHover={{ scale: 1.05 }}
+                          className={`flex items-center justify-between px-3 py-1 rounded-md cursor-grab select-none shadow-md ${
+                            assignedColumns.includes(col) 
+                              ? "bg-green-700 hover:bg-green-600 text-white" 
+                              : "bg-blue-700 hover:bg-blue-500 text-white"
+                          }`}
+                        >
+                          {col}
+                          <span className="text-xs bg-white/20 px-2 py-0.5 rounded-md ml-2">
+                            ⇅ Arrastrar
+                          </span>
+                        </motion.div>
+                      </th>
                     ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {preview.map((row, rIndex) => (
+                    <tr key={rIndex} className="hover:bg-neutral-700/30">
+                      {(unassignedColumns.length === 0 ? columns.map((_, idx) => idx) : unassignedIndices).map((colIndex, cIndex) => (
+                        <td
+                          key={cIndex}
+                          className="px-3 py-2 border border-neutral-700 text-gray-100"
+                        >
+                          {row[colIndex] !== undefined ? row[colIndex] : ""}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         );
       })()}
@@ -1103,144 +1281,164 @@ export default function ImportadorVisual() {
         </p>
       )}
 
-      {/* Modal de previsualización */}
+      {/* Modal de Vista Previa */}
       {showPreviewModal && previewData && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
-          <div className="bg-neutral-900 border-2 border-amber-500 rounded-lg shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col">
-            {/* Header */}
-            <div className="flex items-center justify-between p-6 border-b border-neutral-700 bg-amber-900/30">
-              <h2 className="text-2xl font-bold text-amber-300">
-                📋 Vista Previa de Importación
-              </h2>
+          <div className="bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl w-full h-full flex flex-col">
+            <div className="flex items-center justify-between p-6 border-b border-neutral-800 bg-neutral-900/50">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-amber-500/10 rounded-lg">
+                  <FileSpreadsheet className="w-6 h-6 text-amber-500" />
+                </div>
+                <h2 className="text-xl font-bold text-white">Vista Previa de Importación</h2>
+              </div>
               <button
                 onClick={() => setShowPreviewModal(false)}
-                className="text-gray-400 hover:text-white text-2xl font-bold"
+                className="text-gray-400 hover:text-white transition-colors"
               >
-                ×
+                <X className="w-6 h-6" />
               </button>
             </div>
 
-            {/* Contenido con scroll */}
-            <div className="flex-1 overflow-y-auto p-6">
-              {/* Resumen de importación */}
-              <div className="mb-6 p-4 bg-neutral-800 rounded-lg border border-amber-500/30">
-                <h3 className="text-xl font-semibold text-amber-400 mb-4">
-                  {previewData.simulation ? "📊 Resultado de Simulación (Verificado en BD)" : "📊 Resumen Estimado"}
-                </h3>
-                <div className="grid grid-cols-4 gap-4 mt-4">
-                  <div className="text-center">
-                    <div className="text-3xl font-bold text-blue-400">{previewData.totalRows}</div>
-                    <div className="text-sm text-gray-400">Filas Totales</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-3xl font-bold text-green-400">
-                      {previewData.simulation ? previewData.simulation.newClients : previewData.estimatedCreates}
-                    </div>
-                    <div className="text-sm text-gray-400">Clientes Nuevos</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-3xl font-bold text-amber-400">
-                      {previewData.simulation ? previewData.simulation.updatedClients : previewData.estimatedUpdates}
-                    </div>
-                    <div className="text-sm text-gray-400">Clientes Actualizados</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-3xl font-bold text-purple-400">
-                       {previewData.simulation ? previewData.simulation.newBans : "-"}
-                    </div>
-                    <div className="text-sm text-gray-400">BANs Nuevos</div>
-                  </div>
+            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+              {/* Resumen de Simulación */}
+              <div className="bg-neutral-800/50 rounded-xl border border-neutral-700 p-6">
+                <div className="flex items-center gap-2 mb-6">
+                  <BarChart3 className="w-5 h-5 text-blue-400" />
+                  <h3 className="text-lg font-semibold text-white">Resumen Estimado (Simulación)</h3>
                 </div>
                 
-                {previewData.simulation && (
-                  <div className="grid grid-cols-4 gap-4 mt-4 pt-4 border-t border-neutral-700">
-                     <div className="text-center">
-                        <div className="text-2xl font-bold text-orange-400">{previewData.simulation.movedBans}</div>
-                        <div className="text-xs text-gray-400">BANs Movidos/Duplicados</div>
-                     </div>
-                     <div className="text-center">
-                        <div className="text-2xl font-bold text-teal-400">{previewData.simulation.newSubscribers}</div>
-                        <div className="text-xs text-gray-400">Suscriptores Nuevos</div>
-                     </div>
-                     <div className="text-center">
-                        <div className="text-2xl font-bold text-indigo-400">{previewData.simulation.updatedSubscribers}</div>
-                        <div className="text-xs text-gray-400">Suscriptores Actualizados</div>
-                     </div>
-                     <div className="text-center">
-                        <div className="text-2xl font-bold text-pink-400">{previewData.simulation.fusedClients}</div>
-                        <div className="text-xs text-gray-400">Clientes Fusionados</div>
-                     </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+                  <div className="bg-neutral-900/50 p-4 rounded-lg border border-neutral-800 text-center">
+                    <div className="text-3xl font-bold text-blue-400 mb-1">{previewData.totalRows}</div>
+                    <div className="text-sm text-gray-400 font-medium">Filas Totales</div>
                   </div>
-                )}
+                  
+                  <div className="bg-neutral-900/50 p-4 rounded-lg border border-neutral-800 text-center">
+                    <div className="flex justify-center gap-4 mb-1">
+                        <span className="text-green-400 font-bold text-2xl" title="Nuevos">+{previewData.simulation?.newClients || 0}</span>
+                        <span className="text-amber-400 font-bold text-2xl" title="Existentes">~{previewData.simulation?.updatedClients || 0}</span>
+                    </div>
+                    <div className="text-sm text-gray-400 font-medium">Clientes (Nuevos / Existentes)</div>
+                  </div>
+
+                  <div className="bg-neutral-900/50 p-4 rounded-lg border border-neutral-800 text-center">
+                    <div className="flex justify-center gap-4 mb-1">
+                        <span className="text-green-400 font-bold text-2xl" title="Nuevos">+{previewData.simulation?.newBans || 0}</span>
+                        <span className="text-amber-400 font-bold text-2xl" title="Existentes">~{previewData.simulation?.updatedBans || 0}</span>
+                    </div>
+                    <div className="text-sm text-gray-400 font-medium">BANs (Nuevos / Existentes)</div>
+                  </div>
+
+                  <div className="bg-neutral-900/50 p-4 rounded-lg border border-neutral-800 text-center">
+                    <div className="flex justify-center gap-4 mb-1">
+                        <span className="text-green-400 font-bold text-2xl" title="Nuevos">+{previewData.simulation?.newSubscribers || 0}</span>
+                        <span className="text-amber-400 font-bold text-2xl" title="Existentes">~{previewData.simulation?.updatedSubscribers || 0}</span>
+                    </div>
+                    <div className="text-sm text-gray-400 font-medium">Suscriptores (Nuevos / Existentes)</div>
+                  </div>
+                </div>
               </div>
 
-              {/* Detalles de Simulación */}
-              {previewData.simulation && previewData.simulation.details.length > 0 && (
-                <div className="mb-6 bg-blue-900/20 border border-blue-500/30 rounded-lg p-4">
-                  <h3 className="text-blue-400 font-semibold mb-2">ℹ️ Detalles de la Simulación:</h3>
-                  <ul className="space-y-1 text-sm text-blue-100 max-h-40 overflow-y-auto">
-                    {previewData.simulation.details.map((detail, idx) => (
-                      <li key={idx}>• {detail}</li>
-                    ))}
-                  </ul>
+              {/* Tabla Detallada */}
+              {editableData.length > 0 && (
+                <div className="bg-neutral-800/50 rounded-xl border border-neutral-700 overflow-hidden">
+                  <div className="p-4 border-b border-neutral-700 bg-neutral-800">
+                    <h3 className="font-semibold text-white flex items-center gap-2">
+                      <Database className="w-4 h-4 text-purple-400" />
+                      Detalle de Registros a Importar (Editable)
+                    </h3>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm text-left text-gray-300">
+                      <thead className="text-xs text-gray-400 uppercase bg-neutral-900/50">
+                        <tr>
+                          {/* Renderizado dinámico de cabeceras */}
+                          {(virtualHeaders.length > 0 ? virtualHeaders : columns).map((header, i) => (
+                            <th key={i} className="px-4 py-3 whitespace-nowrap">{header}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-neutral-700">
+                        {editableData.slice(0, 100).map((row: any[], idx: number) => {
+                          const sim = (previewData.simulation?.details && previewData.simulation.details[idx]) || {};
+                          
+                          const handleEdit = (colIndex: number, value: string) => {
+                             const newData = [...editableData];
+                             newData[idx] = [...newData[idx]];
+                             newData[idx][colIndex] = value;
+                             setEditableData(newData);
+                          };
+
+                          // Renderizado genérico para archivos normales
+                          return (
+                            <tr key={idx} className="hover:bg-neutral-700/30 transition-colors">
+                                {row.map((cell, cellIdx) => (
+                                    <td key={cellIdx} className="px-4 py-2 border-r border-neutral-800 last:border-0">
+                                        <input 
+                                            type="text" 
+                                            value={cell || ''} 
+                                            onChange={(e) => handleEdit(cellIdx, e.target.value)}
+                                            className="bg-transparent border-b border-transparent hover:border-gray-500 focus:border-blue-500 outline-none w-full min-w-[100px]"
+                                        />
+                                    </td>
+                                ))}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                    {editableData.length > 100 && (
+                        <div className="p-3 text-center text-xs text-gray-500 bg-neutral-900/30">
+                            Mostrando primeros 100 registros de {editableData.length}
+                        </div>
+                    )}
+                  </div>
                 </div>
               )}
 
-              {/* Campos mapeados */}
-              <div className="mb-6">
-                <h3 className="text-lg font-semibold text-white mb-3">📌 Campos que se van a importar:</h3>
-                <div className="grid grid-cols-3 gap-2">
-                  {previewData.mappedFields.map((field, idx) => {
-                    // Obtener valor de ejemplo de la primera fila
-                    const sampleValue = previewData.sampleRows.length > 0 
-                      ? previewData.sampleRows[0]?.[field.table]?.[field.field] 
-                      : null;
-
-                    return (
-                      <div key={idx} className="bg-neutral-800 border border-green-500/30 rounded p-2">
-                        <div className="text-xs text-gray-400">{field.table}</div>
-                        <div className="text-sm text-white font-semibold">{field.label}</div>
-                        <div className="text-xs text-green-300">← {field.column}</div>
-                        {/* Mostrar ejemplo si existe */}
-                        <div className="mt-1 pt-1 border-t border-gray-700 text-xs">
-                          <span className="text-gray-500">Ej: </span>
-                          <span className="text-amber-200 truncate block" title={String(sampleValue || '')}>
-                            {sampleValue ? String(sampleValue) : <span className="italic text-gray-600">(vacío)</span>}
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
               {/* Advertencias */}
               {previewData.warnings.length > 0 && (
-                <div className="bg-yellow-900/30 border border-yellow-500/50 rounded-lg p-4">
-                  <h3 className="text-yellow-400 font-semibold mb-2">⚠️ Advertencias detectadas:</h3>
-                  <ul className="space-y-1 text-sm text-yellow-100 max-h-40 overflow-y-auto">
+                <div className="bg-yellow-900/20 border border-yellow-500/30 rounded-xl p-6">
+                  <h3 className="text-yellow-400 font-semibold mb-3 flex items-center gap-2">
+                    <AlertTriangle className="w-5 h-5" />
+                    Advertencias ({previewData.warnings.length})
+                  </h3>
+                  <ul className="space-y-2 max-h-40 overflow-y-auto pr-2 custom-scrollbar">
                     {previewData.warnings.map((warning, idx) => (
-                      <li key={idx}>• {warning}</li>
+                      <li key={idx} className="text-yellow-200/80 text-sm flex items-start gap-2">
+                        <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-yellow-500/50 shrink-0" />
+                        {warning}
+                      </li>
                     ))}
                   </ul>
                 </div>
               )}
             </div>
 
-            {/* Footer con botones */}
-            <div className="p-6 border-t border-neutral-700 flex justify-end gap-4 bg-neutral-800/50">
+            <div className="p-6 border-t border-neutral-800 bg-neutral-900/50 flex justify-end gap-3">
               <button
                 onClick={() => setShowPreviewModal(false)}
-                className="bg-gray-600 hover:bg-gray-500 text-white font-semibold py-2 px-6 rounded-lg shadow-md transition-all"
+                className="px-6 py-2.5 rounded-lg text-gray-300 hover:text-white hover:bg-neutral-800 font-medium transition-colors"
               >
                 Cancelar
               </button>
               <button
                 onClick={() => handleSave(true)}
                 disabled={isSaving}
-                className="bg-green-600 hover:bg-green-500 disabled:bg-green-800 disabled:cursor-not-allowed text-white font-semibold py-2 px-8 rounded-lg shadow-md transition-all"
+                className="px-6 py-2.5 rounded-lg bg-green-600 hover:bg-green-500 text-white font-bold shadow-lg shadow-green-900/20 flex items-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {isSaving ? "Guardando..." : "✅ Confirmar Importación"}
+                {isSaving ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    Importando...
+                  </>
+                ) : (
+                  <>
+                    <Check className="w-5 h-5" />
+                    Confirmar Importación
+                  </>
+                )}
               </button>
             </div>
           </div>
@@ -1267,9 +1465,19 @@ export default function ImportadorVisual() {
               <input
                 type="text"
                 value={missingDataValue}
-                onChange={(e) => setMissingDataValue(e.target.value)}
+                onChange={(e) => {
+                  let val = e.target.value;
+                  // Auto-formato fecha si el campo es de fecha
+                  if (missingDataState.field.includes('date')) {
+                    val = val.replace(/[^0-9]/g, '');
+                    if (val.length > 2) val = val.slice(0, 2) + '/' + val.slice(2);
+                    if (val.length > 5) val = val.slice(0, 5) + '/' + val.slice(5);
+                    if (val.length > 10) val = val.slice(0, 10);
+                  }
+                  setMissingDataValue(val);
+                }}
                 className="w-full bg-neutral-800 border border-neutral-600 rounded p-2 text-white focus:border-blue-500 outline-none"
-                placeholder="Ej: 0, 12, 2023-01-01..."
+                placeholder={missingDataState.field.includes('date') ? "MM/DD/AAAA" : "Ej: 0, 12..."}
               />
             </div>
 
@@ -1305,6 +1513,192 @@ export default function ImportadorVisual() {
       )}
 
       {/* Modal de resultados */}
+      {/* MODAL DE ACTIVACIONES (NUEVO) */}
+      {showActivacionesModal && (
+        <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-4">
+          <div className="bg-neutral-900 border border-blue-500 rounded-xl shadow-2xl w-full max-w-6xl h-[90vh] flex flex-col">
+            
+            {/* Header Modal */}
+            <div className="p-6 border-b border-neutral-800 bg-neutral-900/50 flex justify-between items-center">
+              <div>
+                <h2 className="text-2xl font-bold text-blue-400 flex items-center gap-2">
+                  📋 Importación de Activaciones
+                </h2>
+                <p className="text-gray-400 text-sm mt-1">
+                  Verifica los datos antes de importar. <span className="text-green-400">Verde = Nuevo</span>, <span className="text-blue-400">Azul = Actualización</span>
+                </p>
+              </div>
+              <button onClick={() => setShowActivacionesModal(false)} className="text-gray-400 hover:text-white">
+                <X size={24} />
+              </button>
+            </div>
+
+            {/* Body Modal */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+              
+              {/* 1. Metadatos Editables */}
+              <div className="grid grid-cols-4 gap-4 bg-neutral-800 p-4 rounded-lg border border-neutral-700">
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Fecha de Venta (Inicio)</label>
+                  <input 
+                    type="date"
+                    value={activacionesMetadata.saleDate} 
+                    onChange={e => handleSaleDateChange(e.target.value)}
+                    className="w-full bg-neutral-900 border border-neutral-600 rounded px-3 py-2 text-white focus:border-blue-500 outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Número BAN</label>
+                  <input 
+                    value={activacionesMetadata.ban} 
+                    onChange={e => setActivacionesMetadata({...activacionesMetadata, ban: e.target.value})}
+                    className="w-full bg-neutral-900 border border-neutral-600 rounded px-3 py-2 text-white focus:border-blue-500 outline-none"
+                  />
+                </div>
+                <div className="relative">
+                  <label className="block text-xs text-gray-400 mb-1">Empresa (Cliente)</label>
+                  <input 
+                    value={activacionesMetadata.business_name} 
+                    onChange={e => setActivacionesMetadata({...activacionesMetadata, business_name: e.target.value})}
+                    onFocus={() => {
+                        if (clientSuggestions.length > 0) setShowClientSuggestions(true);
+                    }}
+                    onBlur={() => {
+                        // Delay hiding to allow click on suggestion
+                        setTimeout(() => setShowClientSuggestions(false), 200);
+                    }}
+                    className="w-full bg-neutral-900 border border-neutral-600 rounded px-3 py-2 text-white focus:border-blue-500 outline-none"
+                    placeholder="Buscar por Nombre o BAN..."
+                  />
+                  {isSearchingClients && (
+                      <div className="absolute right-2 top-8">
+                          <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
+                      </div>
+                  )}
+                  {showClientSuggestions && (
+                      <div className="absolute z-[100] w-full bg-neutral-800 border border-neutral-600 rounded-md shadow-lg mt-1 max-h-60 overflow-y-auto">
+                          {clientSuggestions.length === 0 && !isSearchingClients && activacionesMetadata.business_name.length >= 2 && (
+                              <div className="px-3 py-2 text-sm text-gray-400 italic">No se encontraron resultados</div>
+                          )}
+                          {clientSuggestions.map((client) => (
+                              <div 
+                                key={client.id}
+                                className="px-3 py-2 hover:bg-neutral-700 cursor-pointer text-sm text-gray-200 border-b border-neutral-700 last:border-0"
+                                onClick={() => handleSelectClient(client)}
+                              >
+                                  <div className="font-medium text-amber-400">{client.business_name}</div>
+                                  {client.ban_number && <div className="text-xs text-blue-300">BAN: {client.ban_number}</div>}
+                                  {client.name && client.name !== client.business_name && <div className="text-xs text-gray-500">{client.name}</div>}
+                              </div>
+                          ))}
+                      </div>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Vendedor</label>
+                  <input 
+                    value={activacionesMetadata.vendor} 
+                    onChange={e => setActivacionesMetadata({...activacionesMetadata, vendor: e.target.value})}
+                    className="w-full bg-neutral-900 border border-neutral-600 rounded px-3 py-2 text-white focus:border-blue-500 outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* 2. Tabla de Datos */}
+              <div className="border border-neutral-700 rounded-lg overflow-hidden">
+                <table className="w-full text-sm text-left">
+                  <thead className="bg-neutral-800 text-gray-300 font-medium">
+                    <tr>
+                      <th className="px-4 py-2">#</th>
+                      <th className="px-4 py-2">Teléfono</th>
+                      <th className="px-4 py-2">Plan</th>
+                      <th className="px-4 py-2">Valor</th>
+                      <th className="px-4 py-2">Meses</th>
+                      <th className="px-4 py-2">Fin Contrato</th>
+                      <th className="px-4 py-2">Estado BD</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-800">
+                    {activacionesRows.map((row, idx) => {
+                      const exists = existingPhones.has(row.phone);
+                      const rowClass = exists 
+                        ? "bg-blue-900/20 text-blue-200 hover:bg-blue-900/30" 
+                        : "bg-green-900/20 text-green-200 hover:bg-green-900/30";
+                      
+                      return (
+                        <tr key={idx} className={rowClass}>
+                          <td className="px-4 py-2 text-gray-500">{idx + 1}</td>
+                          <td className="px-4 py-2">
+                            <input 
+                                value={row.phone} 
+                                onChange={(e) => handleActivacionRowChange(idx, 'phone', e.target.value)}
+                                className="bg-transparent border-b border-transparent hover:border-gray-500 focus:border-white outline-none w-full font-mono font-bold"
+                            />
+                          </td>
+                          <td className="px-4 py-2">
+                            <input 
+                                value={row.plan} 
+                                onChange={(e) => handleActivacionRowChange(idx, 'plan', e.target.value)}
+                                className="bg-transparent border-b border-transparent hover:border-gray-500 focus:border-white outline-none w-full"
+                            />
+                          </td>
+                          <td className="px-4 py-2">
+                            <input 
+                                value={row.monthly_value} 
+                                onChange={(e) => handleActivacionRowChange(idx, 'monthly_value', e.target.value)}
+                                className="bg-transparent border-b border-transparent hover:border-gray-500 focus:border-white outline-none w-full"
+                            />
+                          </td>
+                          <td className="px-4 py-2">
+                            <input 
+                                value={row.months} 
+                                onChange={(e) => handleActivacionRowChange(idx, 'months', e.target.value)}
+                                className="bg-transparent border-b border-transparent hover:border-gray-500 focus:border-white outline-none w-full"
+                            />
+                          </td>
+                          <td className="px-4 py-2">
+                            <input 
+                                value={row.contract_end_date} 
+                                onChange={(e) => handleActivacionRowChange(idx, 'contract_end_date', e.target.value)}
+                                className="bg-transparent border-b border-transparent hover:border-gray-500 focus:border-white outline-none w-full"
+                            />
+                          </td>
+                          <td className="px-4 py-2">
+                            {exists 
+                              ? <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-blue-900 text-blue-300 text-xs border border-blue-700">Actualizar</span>
+                              : <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-green-900 text-green-300 text-xs border border-green-700">Nuevo</span>
+                            }
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+            </div>
+
+            {/* Footer Modal */}
+            <div className="p-6 border-t border-neutral-800 bg-neutral-900/50 flex justify-end gap-3">
+              <button 
+                onClick={() => setShowActivacionesModal(false)}
+                className="px-4 py-2 rounded-lg border border-neutral-600 text-gray-300 hover:bg-neutral-800 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button 
+                onClick={saveActivaciones}
+                disabled={isSaving}
+                className="px-6 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold shadow-lg shadow-blue-900/20 transition-all flex items-center gap-2"
+              >
+                {isSaving ? <Loader2 className="animate-spin" size={18} /> : <Database size={18} />}
+                Confirmar e Importar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {saveResult && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
           <div className="bg-neutral-900 border-2 border-blue-500 rounded-lg shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col">

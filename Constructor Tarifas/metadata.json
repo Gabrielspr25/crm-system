@@ -1,0 +1,7 @@
+{
+  "name": "Asistente IA Ventas - Claro PR",
+  "description": "Sistema inteligente de gestión de ofertas y planes para vendedores de Claro Puerto Rico, potenciado por Gemini.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}

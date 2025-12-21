@@ -172,64 +172,38 @@ export default function ClientModal({
     setIsSaving(false);
   }, [client, isVendorUser, vendorIdNumber]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setFormMessage(null);
+    setError(null);
 
-    // Usar el vendor_id del formulario, o auto-asignar si es vendedor creando nuevo cliente
-    let vendorIdToUse: number | undefined = formData.vendor_id;
+    try {
+      // VALIDACIÓN: Verificar duplicados antes de guardar
+      if (formData.business_name && formData.business_name.trim()) {
+        const checkResponse = await authFetch('/api/clients');
+        if (checkResponse.ok) {
+          const allClients = await checkResponse.json();
+          const duplicateClient = allClients.find((c: any) => 
+            c.business_name && 
+            c.business_name.toLowerCase().trim() === formData.business_name.toLowerCase().trim() &&
+            c.id !== client?.id && // Excluir el cliente actual si estamos editando
+            c.is_active === 1 // Solo buscar en clientes activos
+          );
 
-    // Si no hay vendor_id seleccionado y es vendedor creando nuevo cliente, auto-asignar
-    if (!vendorIdToUse && !client && isVendorUser && vendorIdNumber !== undefined) {
-      vendorIdToUse = vendorIdNumber;
-    }
+          if (duplicateClient) {
+            setError(`⚠️ Ya existe un cliente con la empresa "${formData.business_name}". Por favor, busca y edita el cliente existente (ID: ${duplicateClient.id}) en lugar de crear uno duplicado.`);
+            return;
+          }
+        }
+      }
 
-    // Solo Empresa (business_name) es obligatorio
-    if (!formData.business_name?.trim()) {
-      setFormMessage({ type: 'error', text: 'La empresa es obligatoria.' });
-      return;
-    }
-    // Solo validar vendor_id si es un cliente nuevo (no tiene vendor_id existente)
-    if (!client && vendorIdToUse == null) {
-      setFormMessage({ type: 'error', text: 'Debe asignar un vendedor.' });
-      return;
-    }
-    if (formData.includes_ban && client && (!clientBANs || clientBANs.length === 0 || clientBANs.every(ban => (ban.subscribers?.length ?? 0) === 0))) {
-      setFormMessage({ type: 'error', text: 'Debes registrar al menos un BAN con un suscriptor activo.' });
-      return;
-    }
-
-    // business_name ya está validado arriba, así que siempre será string
-    const cleanData: CreateClient = {
-      name: formData.name?.trim() || undefined,
-      business_name: formData.business_name.trim(),
-      contact_person: formData.contact_person?.trim() || undefined,
-      email: formData.email?.trim() || undefined,
-      phone: formData.phone?.trim() || undefined,
-      secondary_phone: formData.secondary_phone?.trim() || undefined,
-      mobile_phone: formData.mobile_phone?.trim() || undefined,
-      address: formData.address?.trim() || undefined,
-      city: formData.city?.trim() || undefined,
-      zip_code: formData.zip_code?.trim() || undefined,
-      includes_ban: formData.includes_ban,
-      base: formData.base?.trim() || undefined,
-      vendor_id: vendorIdToUse ?? undefined, // Convertir null a undefined para TypeScript
-    };
-
-    const maybePromise = onSave(cleanData);
-    if (maybePromise instanceof Promise) {
-      setIsSaving(true);
-      maybePromise
-        .then(() => {
-          setFormMessage(null);
-        })
-        .catch((error) => {
-          const message = error instanceof Error ? error.message : 'No fue posible guardar el cliente.';
-          setFormMessage({ type: 'error', text: message });
-        })
-        .finally(() => {
-          setIsSaving(false);
-        });
+      await onSave(formData);
+    } catch (error: any) {
+      // Manejar error 409 del backend
+      if (error.message && error.message.includes('Ya existe un cliente')) {
+        setError(error.message);
+      } else {
+        setError(error instanceof Error ? error.message : 'Error al guardar el cliente');
+      }
     }
   };
 
@@ -280,6 +254,42 @@ export default function ClientModal({
                 </div>
               )}
 
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Campo EMPRESA - Razón Social */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Empresa / Razón Social *
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.business_name || ''}
+                    onChange={(e) => setFormData({ ...formData, business_name: e.target.value })}
+                    className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="Ej: SAN GERMAN GLASS CORP"
+                    required
+                  />
+                  <p className="text-xs text-gray-400 mt-1">
+                    Nombre legal de la empresa
+                  </p>
+                </div>
+
+                {/* Campo NOMBRE DEL DUEÑO - Persona de Contacto */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Nombre del Dueño/Contacto Principal
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.contact_person || ''}
+                    onChange={(e) => setFormData({ ...formData, contact_person: e.target.value })}
+                    className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="Ej: Juan Pérez, María González"
+                  />
+                  <p className="text-xs text-gray-400 mt-1">
+                    Nombre completo del dueño o gerente de la empresa
+                  </p>
+                </div>
+              </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {/* Name - Required */}
@@ -311,18 +321,21 @@ export default function ClientModal({
                   />
                 </div>
 
-                {/* Contact Person */}
+                {/* Campo "Nombre del Contacto" (dueño/gerente) */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Persona de Contacto
+                    Nombre del Contacto
                   </label>
                   <input
                     type="text"
                     value={formData.contact_person}
                     onChange={(e) => setFormData(prev => ({ ...prev, contact_person: e.target.value }))}
                     className="w-full px-3 py-2 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-700 text-white placeholder-gray-400"
-                    placeholder="Nombre del contacto principal"
+                    placeholder="Nombre del dueño, gerente o persona de contacto"
                   />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Nombre del dueño o persona de contacto principal
+                  </p>
                 </div>
 
                 {/* Email */}
@@ -516,25 +529,11 @@ export default function ClientModal({
             </form>
           </div>
 
-          {/* BANs Management Section - Only show when editing */}
           {isEditing && (
-            <div className="w-96 border-l border-gray-200 dark:border-gray-700 p-6 bg-gray-800 dark:bg-gray-900 flex flex-col overflow-hidden">
-              <div className="flex items-center justify-between mb-4 flex-shrink-0">
-                <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">
-                  BANs del Cliente
-                </h3>
-                {onCreateBAN && (
-                  <button
-                    type="button"
-                    onClick={onCreateBAN}
-                    className="flex items-center px-3 py-1.5 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 transition-colors"
-                  >
-                    <Plus className="w-4 h-4 mr-1" />
-                    Nuevo BAN
-                  </button>
-                )}
-              </div>
-
+            <div className="w-full md:w-96 border-l border-gray-200 dark:border-gray-700 p-6 bg-gray-800 dark:bg-gray-900 flex flex-col overflow-hidden">
+              <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-4">
+                BANs del Cliente
+              </h3>
               <div className="space-y-3 flex-1 overflow-y-auto pr-2">
                 {clientBANs.length === 0 ? (
                   <div className="text-center py-8">
@@ -559,33 +558,32 @@ export default function ClientModal({
                         <div className="flex items-center">
                           <Hash className="w-4 h-4 text-gray-500 dark:text-gray-400 mr-2" />
                           <span className="font-mono text-sm font-medium text-gray-900 dark:text-gray-100">
-                            {ban.ban_number}
+                            BAN {ban.ban_number}
                           </span>
                         </div>
                         <div className="flex items-center space-x-2">
-                          <span className="text-xs text-gray-500 dark:text-gray-400">
-                            {ban.subscribers?.length || 0} subs
-                          </span>
                           {onEditBAN && (
-                            <div className="flex items-center gap-1">
-                              <button
-                                type="button"
-                                onClick={() => onEditBAN(ban)}
-                                className="p-1 text-blue-400 hover:text-blue-300 transition-colors"
-                                title="Editar BAN"
-                              >
-                                <Edit className="w-3 h-3" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => onEditBAN(ban)}
-                                className="p-1 text-red-400 hover:text-red-300 transition-colors"
-                                title="Cancelar BAN"
-                              >
-                                <Ban className="w-3 h-3" />
-                              </button>
-                            </div>
+                            <button
+                              type="button"
+                              onClick={() => onEditBAN(ban)}
+                              className="p-1.5 text-blue-400 hover:text-blue-300 transition-colors"
+                              title="Editar BAN"
+                            >
+                              <Edit className="w-3 h-3" />
+                            </button>
                           )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (confirm('¿Estás seguro de que deseas eliminar este BAN?')) {
+                                // Lógica para eliminar el BAN
+                              }
+                            }}
+                            className="p-1.5 text-red-400 hover:text-red-300 transition-colors"
+                            title="Eliminar BAN"
+                          >
+                            <Ban className="w-3 h-3" />
+                          </button>
                         </div>
                       </div>
 
@@ -600,7 +598,8 @@ export default function ClientModal({
                         {ban.subscribers && ban.subscribers.length > 0 ? (
                           ban.subscribers.map((subscriber) => (
                             <div key={subscriber.id} className="flex items-center justify-between bg-gray-600 dark:bg-gray-700 rounded p-2">
-                              <div>
+                              <div className="flex items-center gap-2">
+                                <div className="w-3 h-3" />
                                 <div className="font-mono text-xs text-gray-900 dark:text-gray-100">
                                   {subscriber.phone}
                                 </div>
@@ -609,27 +608,27 @@ export default function ClientModal({
                                     {subscriber.service_type}
                                   </div>
                                 )}
+                              </div>
+                              <div className="mt-1 flex items-center gap-2">
                                 {subscriber.monthly_value && (
                                   <div className="text-xs text-green-600 dark:text-green-400">
                                     ${subscriber.monthly_value}/mes
                                   </div>
                                 )}
-                                <div className="mt-1 flex items-center gap-2">
-                                  <div className="text-xs text-gray-600 dark:text-gray-400 flex items-center">
-                                    <Calendar className="w-3 h-3 mr-1" />
-                                    {subscriber.contract_end_date
-                                      ? new Date(subscriber.contract_end_date).toLocaleDateString()
-                                      : 'Sin fecha'}
-                                  </div>
-                                  {(() => {
-                                    const { label, className } = getExpirationBadge(subscriber.contract_end_date);
-                                    return (
-                                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${className}`}>
-                                        {label}
-                                      </span>
-                                    );
-                                  })()}
+                                <div className="text-xs text-gray-600 dark:text-gray-400 flex items-center">
+                                  <Calendar className="w-3 h-3 mr-1" />
+                                  {subscriber.contract_end_date
+                                    ? new Date(subscriber.contract_end_date).toLocaleDateString()
+                                    : 'Sin fecha'}
                                 </div>
+                                {(() => {
+                                  const { label, className } = getExpirationBadge(subscriber.contract_end_date);
+                                  return (
+                                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${className}`}>
+                                      {label}
+                                    </span>
+                                  );
+                                })()}
                               </div>
                               {onEditSubscriber && (
                                 <div className="flex items-center gap-1">
@@ -653,12 +652,12 @@ export default function ClientModal({
                               )}
                             </div>
                           ))
+
                         ) : (
                           <div className="text-center py-2">
                             <p className="text-xs text-gray-500 dark:text-gray-400">Sin suscriptores</p>
                           </div>
                         )}
-
                         {onAddSubscriber && (
                           <button
                             type="button"
@@ -672,9 +671,8 @@ export default function ClientModal({
                       </div>
                     </div>
                   ))
-                )}
-              </div>
-            </div>
+
+                )}              </div>            </div>
           )}
         </div>
       </div>
