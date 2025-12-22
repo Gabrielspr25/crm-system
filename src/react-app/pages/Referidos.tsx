@@ -13,38 +13,20 @@ import {
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { authFetch } from "@/react-app/utils/auth";
 
-function cn(...inputs) {
+function cn(...inputs: (string | undefined | null | false)[]) {
   return twMerge(clsx(inputs));
 }
 
 // Mock data generator for initial state
-const initialData = [];
+const initialData: any[] = [];
 
-// Helper for auth fetch
-const authFetch = async (url, options = {}) => {
-  const token = localStorage.getItem('crm_token');
-  const headers = {
-    'Content-Type': 'application/json',
-    ...options.headers,
-  };
-  
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-
-  const response = await fetch(url, { ...options, headers });
-  if (response.status === 401) {
-    console.warn('Sesión expirada o no autorizada');
-  }
-  return response;
-};
-
-function App() {
+export default function ReferidosPage() {
   const [data, setData] = useState(initialData);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isStatusModalOpen, setIsStatusModalOpen] = useState(false);
-  const [editingId, setEditingId] = useState(null);
+  const [editingId, setEditingId] = useState<number | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('Todos');
 
@@ -64,14 +46,12 @@ function App() {
     color: '',
     vendedor: '',
     email: '',
-    reservado: false,
+    imei: '',
+    suscriptor: '',
     estado: 'Pendiente',
     fecha: new Date().toISOString().split('T')[0],
     notas: ''
   });
-
-  // Dark Mode State
-  const [theme, setTheme] = useState('light');
 
   useEffect(() => {
     loadReferidos();
@@ -89,27 +69,17 @@ function App() {
     }
   };
 
-  useEffect(() => {
-    if (theme === 'dark') {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
-  }, [theme]);
-
-  const toggleTheme = () => {
-    setTheme(prev => prev === 'light' ? 'dark' : 'light');
-  };
-
-  const handleInputChange = (e) => {
-    const { name, value, type, checked } = e.target;
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+    const { name, value, type } = e.target;
+    const checked = (e.target as HTMLInputElement).checked;
+    
     setFormData(prev => ({
       ...prev,
       [name]: type === 'checkbox' ? checked : value
     }));
   };
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
         if (editingId) {
@@ -138,7 +108,7 @@ function App() {
     }
   };
 
-  const handleAddStatus = (e) => {
+  const handleAddStatus = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newStatusName.trim()) return;
     const newId = Math.max(...statuses.map(s => s.id), 0) + 1;
@@ -148,13 +118,13 @@ function App() {
     setNewStatusName('');
   };
 
-  const handleDeleteStatus = (id) => {
+  const handleDeleteStatus = (id: number) => {
     if (confirm('¿Eliminar este estado?')) {
       setStatuses(prev => prev.filter(s => s.id !== id));
     }
   };
 
-  const openModal = (item = null) => {
+  const openModal = (item: any = null) => {
     if (item) {
       setEditingId(item.id);
       setFormData(item);
@@ -167,7 +137,8 @@ function App() {
         color: '',
         vendedor: '',
         email: '',
-        reservado: false,
+        imei: '',
+        suscriptor: '',
         estado: statuses[0]?.name || '',
         fecha: new Date().toISOString().split('T')[0],
         notas: ''
@@ -181,7 +152,7 @@ function App() {
     setEditingId(null);
   };
 
-  const handleDelete = async (id) => {
+  const handleDelete = async (id: number) => {
     if (confirm('¿Estás seguro de eliminar este registro?')) {
       try {
           const res = await authFetch(`/api/referidos/${id}`, { method: 'DELETE' });
@@ -197,24 +168,23 @@ function App() {
   const filteredData = data.filter(item => {
     const matchesSearch =
       item.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      item.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      item.modelo.toLowerCase().includes(searchTerm.toLowerCase());
+      (item.email && item.email.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      (item.modelo && item.modelo.toLowerCase().includes(searchTerm.toLowerCase()));
 
     const matchesStatus = filterStatus === 'Todos' || item.estado === filterStatus;
 
     return matchesSearch && matchesStatus;
   });
 
-  const getStatusColor = (statusName) => {
+  const getStatusColor = (statusName: string) => {
     const status = statuses.find(s => s.name === statusName);
     return status ? status.color : 'bg-slate-100 text-slate-700';
   };
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-200 font-sans transition-colors duration-200">
-      {/* Header */}
-      <header className="bg-white dark:bg-slate-900 shadow-sm sticky top-0 z-10 transition-colors duration-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      {/* Header - Removed as it is now part of Layout */}
+      <div className="bg-white dark:bg-slate-900 shadow-sm rounded-lg mb-6 p-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="bg-indigo-600 p-2 rounded-lg">
               <User className="w-5 h-5 text-white" />
@@ -222,13 +192,6 @@ function App() {
             <h1 className="text-xl font-bold text-slate-900 dark:text-white">Gestión de Referidos</h1>
           </div>
           <div className="flex items-center gap-3">
-            <button
-              onClick={toggleTheme}
-              className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors"
-              title="Cambiar Tema"
-            >
-              {theme === 'light' ? '🌙' : '☀️'}
-            </button>
             <button
               onClick={() => setIsStatusModalOpen(true)}
               className="hidden sm:flex px-4 py-2 text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
@@ -243,11 +206,10 @@ function App() {
               <span>Nuevo Registro</span>
             </button>
           </div>
-        </div>
-      </header>
+      </div>
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div className="max-w-7xl mx-auto">
 
         {/* Search and Filter Bar */}
         <div className="mb-6 flex flex-col sm:flex-row gap-4 justify-between items-center">
@@ -298,7 +260,8 @@ function App() {
                   <th className="px-6 py-4 font-semibold">Producto</th>
                   <th className="px-6 py-4 font-semibold">Vendedor</th>
                   <th className="px-6 py-4 font-semibold">Estado</th>
-                  <th className="px-6 py-4 font-semibold">Reservado</th>
+                  <th className="px-6 py-4 font-semibold">IMEI</th>
+                  <th className="px-6 py-4 font-semibold">Suscriptor</th>
                   <th className="px-6 py-4 font-semibold">Fecha</th>
                   <th className="px-6 py-4 font-semibold text-right">Acciones</th>
                 </tr>
@@ -343,7 +306,7 @@ function App() {
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-2">
                           <div className="w-6 h-6 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-xs font-bold text-slate-600 dark:text-slate-400">
-                            {item.vendedor.charAt(0)}
+                            {item.vendedor ? item.vendedor.charAt(0) : '?'}
                           </div>
                           <span className="dark:text-slate-300">{item.vendedor}</span>
                         </div>
@@ -357,20 +320,13 @@ function App() {
                         </span>
                       </td>
                       <td className="px-6 py-4">
-                        {item.reservado ? (
-                          <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-medium text-xs">
-                            <CheckCircle2 className="w-4 h-4" /> Sí
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-1.5 text-slate-400 dark:text-slate-500 font-medium text-xs">
-                            <span className="w-4 h-4 flex items-center justify-center rounded-full border border-slate-300 dark:border-slate-600">
-                              <XCircle className="w-3 h-3 text-slate-300 dark:text-slate-600" />
-                            </span> No
-                          </div>
-                        )}
+                        <span className="text-slate-600 dark:text-slate-300 font-mono text-xs">{item.imei || '-'}</span>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className="text-slate-600 dark:text-slate-300 text-xs">{item.suscriptor || '-'}</span>
                       </td>
                       <td className="px-6 py-4 text-slate-500 dark:text-slate-400">
-                        {item.fecha}
+                        {item.fecha ? new Date(item.fecha).toLocaleDateString() : ''}
                       </td>
                       <td className="px-6 py-4 text-right">
                         <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -406,7 +362,7 @@ function App() {
             </table>
           </div>
         </div>
-      </main>
+      </div>
 
       {/* Main Form Modal */}
       {isModalOpen && (
@@ -565,19 +521,29 @@ function App() {
                   />
                 </div>
 
-                {/* Reservado Checkbox */}
-                <div className="space-y-1.5 sm:col-span-2">
-                  <div className="flex items-center gap-3 p-3 border border-slate-200 dark:border-slate-700 rounded-lg cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
-                    <input
-                      type="checkbox"
-                      id="reservado"
-                      name="reservado"
-                      checked={formData.reservado}
-                      onChange={handleInputChange}
-                      className="w-4 h-4 text-indigo-600 rounded border-slate-300 dark:border-slate-600 focus:ring-indigo-600 dark:bg-slate-900"
-                    />
-                    <label htmlFor="reservado" className="cursor-pointer select-none font-medium text-slate-700 dark:text-slate-200">Marcar como Reservado</label>
-                  </div>
+                {/* IMEI */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">IMEI</label>
+                  <input
+                    type="number"
+                    name="imei"
+                    value={formData.imei}
+                    onChange={handleInputChange}
+                    className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 dark:text-white focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition-all placeholder:text-slate-400 dark:placeholder:text-slate-600"
+                    placeholder="Número de IMEI"
+                  />
+                </div>
+
+                {/* Suscriptor */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Suscriptor</label>
+                  <input
+                    name="suscriptor"
+                    value={formData.suscriptor}
+                    onChange={handleInputChange}
+                    className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 dark:text-white focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition-all placeholder:text-slate-400 dark:placeholder:text-slate-600"
+                    placeholder="Nombre del Suscriptor"
+                  />
                 </div>
 
                 {/* Notas */}
@@ -642,16 +608,16 @@ function App() {
                     </span>
                     <button
                       onClick={() => handleDeleteStatus(status.id)}
-                      className="text-rose-500 hover:bg-rose-50 p-1 rounded"
+                      className="text-rose-500 hover:text-rose-700 p-1"
                     >
-                      <Trash2 className="w-3 h-3" />
+                      <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
                 ))}
               </div>
 
               {/* Add New */}
-              <form onSubmit={handleAddStatus} className="flex gap-2">
+              <form onSubmit={handleAddStatus} className="flex gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
                 <input
                   value={newStatusName}
                   onChange={(e) => setNewStatusName(e.target.value)}
@@ -660,8 +626,7 @@ function App() {
                 />
                 <button
                   type="submit"
-                  disabled={!newStatusName.trim()}
-                  className="bg-indigo-600 text-white p-2 rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors"
                 >
                   <Plus className="w-4 h-4" />
                 </button>
@@ -673,5 +638,3 @@ function App() {
     </div>
   );
 }
-
-export default App;

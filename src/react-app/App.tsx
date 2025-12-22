@@ -13,6 +13,7 @@ import LoginPage from "@/react-app/pages/Login";
 import ImportadorVisual from "@/react-app/pages/ImportadorVisual";
 import GoalsPage from "@/react-app/pages/Goals";
 import AuditLogPage from "@/react-app/pages/AuditLog";
+import ReferidosPage from "@/react-app/pages/Referidos";
 
 function ProtectedRoutes() {
   return (
@@ -22,6 +23,7 @@ function ProtectedRoutes() {
         <Route path="/clientes" element={<ClientsNew />} /> {/* <- CAMBIAR */}
         <Route path="/seguimiento" element={<FollowUpPage />} />
         <Route path="/reportes" element={<ReportsPage />} />
+        <Route path="/referidos" element={<ReferidosPage />} />
         <Route path="/vendedores" element={<VendorsPage />} />
         <Route path="/categorias" element={<CategoriesPage />} />
         <Route path="/productos" element={<ProductsPage />} />

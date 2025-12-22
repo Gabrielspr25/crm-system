@@ -10,6 +10,14 @@ try {
     Write-Host "[1/4] Compilando..." -ForegroundColor Yellow
     npm run build
     if ($LASTEXITCODE -ne 0) { throw "Build fallo" }
+    
+    Write-Host "Compilando Referidos App..." -ForegroundColor Yellow
+    cd referidos_app
+    npm install
+    npm run build
+    cd ..
+    if ($LASTEXITCODE -ne 0) { throw "Build Referidos fallo" }
+    
     Write-Host "OK Compilado`n" -ForegroundColor Green
 
     Write-Host "[2/4] Subiendo backend..." -ForegroundColor Yellow
@@ -18,8 +26,9 @@ try {
     Write-Host "OK Backend`n" -ForegroundColor Green
 
     Write-Host "[3/4] Subiendo frontend..." -ForegroundColor Yellow
-    ssh ${ServerUser}@${ServerHost} "rm -rf /var/www/crmp/* && mkdir -p /var/www/crmp"
+    ssh ${ServerUser}@${ServerHost} "rm -rf /var/www/crmp/* && mkdir -p /var/www/crmp/referidos"
     scp -r dist/client/* ${ServerUser}@${ServerHost}:/var/www/crmp/
+    scp -r referidos_app/dist/* ${ServerUser}@${ServerHost}:/var/www/crmp/referidos/
     if ($LASTEXITCODE -ne 0) { throw "Error frontend" }
     Write-Host "OK Frontend`n" -ForegroundColor Green
 
@@ -33,6 +42,11 @@ server {
 
     location / {
         try_files $uri $uri/ /index.html;
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+    }
+
+    location /referidos {
+        try_files $uri $uri/ /referidos/index.html;
         add_header Cache-Control "no-cache, no-store, must-revalidate";
     }
 

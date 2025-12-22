@@ -25,6 +25,7 @@ type NavItem = {
   href: string;
   icon: LucideIcon;
   roles?: string[];
+  external?: boolean;
 };
 
 // VERSION: 2025-01-15-CON-IMPORTADOR-VISUAL
@@ -32,6 +33,7 @@ const navigation: NavItem[] = [
   { name: "Clientes", href: "/", icon: Users, roles: ["admin", "supervisor", "vendedor"] },
   { name: "Seguimiento", href: "/seguimiento", icon: PhoneCall, roles: ["admin", "supervisor", "vendedor"] },
   { name: "Reportes", href: "/reportes", icon: BarChart3, roles: ["admin", "supervisor", "vendedor"] },
+  { name: "Referidos", href: "/referidos", icon: Users, roles: ["admin", "supervisor", "vendedor"] },
   { name: "Vendedores", href: "/vendedores", icon: Building2, roles: ["admin", "supervisor"] },
   { name: "Categorías", href: "/categorias", icon: Folder, roles: ["admin"] },
   { name: "Productos", href: "/productos", icon: Package, roles: ["admin", "supervisor"] },
@@ -263,24 +265,43 @@ export default function Layout({ children }: LayoutProps) {
           <nav className="flex-1 space-y-1 p-4">
             {filteredNavigation.map((item) => {
               const isActive = location.pathname === item.href;
+              const className = `
+                group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200
+                ${isActive
+                  ? "bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-lg"
+                  : "text-slate-300 dark:text-slate-300 hover:bg-slate-700 dark:hover:bg-slate-700 hover:text-slate-100 dark:hover:text-slate-100"
+                }
+              `;
+
+              const icon = (
+                <item.icon
+                  className={`
+                    mr-3 h-5 w-5 transition-colors duration-200
+                    ${isActive ? "text-white" : "text-slate-400 dark:text-slate-400 group-hover:text-slate-300 dark:group-hover:text-slate-300"}
+                  `}
+                />
+              );
+
+              if (item.external) {
+                return (
+                  <a
+                    key={item.name}
+                    href={item.href}
+                    className={className}
+                  >
+                    {icon}
+                    {item.name}
+                  </a>
+                );
+              }
+
               return (
                 <Link
                   key={item.name}
                   to={item.href}
-                  className={`
-                    group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200
-                    ${isActive
-                      ? "bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-lg"
-                      : "text-slate-300 dark:text-slate-300 hover:bg-slate-700 dark:hover:bg-slate-700 hover:text-slate-100 dark:hover:text-slate-100"
-                    }
-                  `}
+                  className={className}
                 >
-                  <item.icon
-                    className={`
-                      mr-3 h-5 w-5 transition-colors duration-200
-                      ${isActive ? "text-white" : "text-slate-400 dark:text-slate-400 group-hover:text-slate-300 dark:group-hover:text-slate-300"}
-                    `}
-                  />
+                  {icon}
                   {item.name}
                 </Link>
               );

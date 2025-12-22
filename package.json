@@ -1,13 +1,14 @@
 {
   "name": "mocha-app",
   "private": true,
-  "version": "5.1.58",
+  "version": "5.1.63",
   "type": "module",
   "dependencies": {
     "@hono/zod-validator": "^0.5.0",
     "@types/bcryptjs": "^2.4.6",
     "bcrypt": "^6.0.0",
     "bcryptjs": "^3.0.3",
+    "clsx": "^2.1.1",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
@@ -25,6 +26,7 @@
     "react": "19.0.0",
     "react-dom": "19.0.0",
     "react-router": "^7.5.3",
+    "tailwind-merge": "^3.4.0",
     "xlsx": "^0.18.5",
     "zod": "^3.24.3"
   },

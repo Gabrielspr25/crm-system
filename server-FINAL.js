@@ -11,6 +11,7 @@ import nodemailer from 'nodemailer';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { saveImportData } from './src/backend/controllers/importController.js';
+import referidosRoutes from './src/backend/routes/referidosRoutes.js';
 
 // ======================================================
 // Configuración base
@@ -25,6 +26,16 @@ app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" },
 }));
 app.use(cors());
+
+// Middleware para evitar caché en index.html
+app.use((req, res, next) => {
+  if (req.url === '/' || req.url === '/index.html') {
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+  }
+  next();
+});
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -365,6 +376,9 @@ app.get('/api/health', async (_req, res) => {
 });
 
 app.use(authenticateRequest);
+
+// Rutas de Referidos
+app.use('/api/referidos', referidosRoutes);
 
 // ======================================================
 // Endpoint para limpiar nombres BAN
@@ -2216,6 +2230,25 @@ app.delete('/api/admin/clean-database', authenticateRequest, async (req, res) =>
   } catch (error) {
     console.error('❌ Error limpiando BD:', error);
     serverError(res, error, 'Error limpiando base de datos');
+  }
+});
+
+// ======================================================
+// SPA Fallback
+// ======================================================
+app.get('*', (req, res) => {
+  if (req.path.startsWith('/api')) {
+    return res.status(404).json({ error: 'Endpoint no encontrado' });
+  }
+  
+  const indexPath = process.platform === 'linux' && fs.existsSync(varWwwPath) 
+    ? path.join(varWwwPath, 'index.html')
+    : path.join(distPath, 'index.html');
+    
+  if (fs.existsSync(indexPath)) {
+    res.sendFile(indexPath);
+  } else {
+    res.status(404).send('Frontend no encontrado. Ejecute npm run build.');
   }
 });
 

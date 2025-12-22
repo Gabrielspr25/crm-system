@@ -14,6 +14,7 @@ import followUpRoutes from './routes/followUpRoutes.js';
 import productRoutes from './routes/productRoutes.js';
 import importRoutes from './routes/importRoutes.js';
 import aiRoutes from './routes/aiRoutes.js';
+import referidosRoutes from './routes/referidosRoutes.js';
 
 const app = express();
 
@@ -32,6 +33,7 @@ app.use('/api/follow-up-prospects', followUpRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/importador', importRoutes);
 app.use('/api/ai', aiRoutes);
+app.use('/api/referidos', referidosRoutes);
 
 // Ruta de prueba
 app.get('/', (req, res) => {

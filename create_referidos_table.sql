@@ -1,0 +1,17 @@
+
+CREATE TABLE IF NOT EXISTS referidos (
+    id SERIAL PRIMARY KEY,
+    nombre VARCHAR(255) NOT NULL,
+    email VARCHAR(255),
+    tipo VARCHAR(50) DEFAULT 'Masivo',
+    suscriptor VARCHAR(255),
+    modelo VARCHAR(100),
+    color VARCHAR(50),
+    vendedor VARCHAR(100),
+    notas TEXT,
+    reservado BOOLEAN DEFAULT FALSE,
+    estado VARCHAR(50) DEFAULT 'Pendiente',
+    fecha DATE DEFAULT CURRENT_DATE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
