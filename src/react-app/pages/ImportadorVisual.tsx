@@ -72,6 +72,28 @@ export default function ImportadorVisual() {
   const [virtualHeaders, setVirtualHeaders] = useState<string[]>([]);
   const [isActivacionesMode, setIsActivacionesMode] = useState(false);
 
+  // --- ENRIQUECIMIENTO DE CLIENTES NUEVOS ---
+  const [newClientsToEnrich, setNewClientsToEnrich] = useState<any[]>([]);
+  const [enrichModalOpen, setEnrichModalOpen] = useState(false);
+  const [currentEnrichIndex, setCurrentEnrichIndex] = useState(0);
+  const [enrichFormData, setEnrichFormData] = useState({
+      email: '',
+      address: '',
+      city: '',
+      phone: ''
+  });
+
+  // --- VENDORS STATE ---
+  const [vendors, setVendors] = useState<any[]>([]);
+
+  useEffect(() => {
+      // Cargar vendedores al inicio
+      authFetch('/api/vendors')
+          .then(res => res.json())
+          .then(data => setVendors(data))
+          .catch(err => console.error("Error cargando vendedores:", err));
+  }, []);
+
   // Función para obtener la etiqueta del frontend según tabla y columna
   const getFieldLabel = (table: string, col: string): string => {
     // Mapeo específico por tabla
@@ -264,27 +286,71 @@ export default function ImportadorVisual() {
           const businessName = jsonData[6] ? (jsonData[6][3] || jsonData[6][2] || "") : "";
 
           // 2. Tabla de Datos (Desde Fila 11 - idx 10)
-          const dataRows = jsonData.slice(10); // Fila 11 en adelante
+          // const dataRows = jsonData.slice(10); // Fila 11 en adelante (COMENTADO PORQUE SE REDEFINE ABAJO)
           
-          // Columnas Fijas:
-          // Suscriptor: B (idx 1)
-          // Plan: H (idx 7)
-          // Valor: I (idx 8)
-          // Meses: O (idx 14)
-          // Notas: Q (idx 16)
+          // --- BÚSQUEDA INTELIGENTE DE COLUMNAS ---
+          // Buscamos la fila de cabecera (donde dice "NUM CELULAR" o similar)
+          let headerRowIdx = 9; // Por defecto fila 10
+          let headers = (jsonData[9] || []) as string[];
+          
+          // Si no encontramos "CELULAR" o "TELEFONO" en la fila 10, buscamos en todo el archivo
+          if (!headers.some(h => String(h).toUpperCase().includes("CELULAR") || String(h).toUpperCase().includes("TELEFONO") || String(h).toUpperCase().includes("PHONE"))) {
+             headerRowIdx = jsonData.findIndex(row => row && row.some((cell: any) => String(cell).toUpperCase().includes("CELULAR") || String(cell).toUpperCase().includes("TELEFONO") || String(cell).toUpperCase().includes("PHONE")));
+             if (headerRowIdx !== -1) {
+                 headers = jsonData[headerRowIdx] as string[];
+                 console.log(`Cabecera encontrada en fila ${headerRowIdx + 1}`);
+             }
+          }
 
+          // Mapeo dinámico de índices basado en nombres
+          const idxPhone = headers.findIndex(h => {
+              const s = String(h).toUpperCase();
+              return s.includes("CELULAR") || s.includes("TELEFONO") || s.includes("PHONE");
+          });
+
+          const idxPlan = headers.findIndex(h => {
+              const s = String(h).toUpperCase();
+              // Buscamos "PLAN" pero evitamos "PLAN DE DATA" o "PRECIO PLAN"
+              return s === "PLAN" || (s.includes("PLAN") && !s.includes("DATA") && !s.includes("PRECIO"));
+          });
+
+          const idxValue = headers.findIndex(h => {
+              const s = String(h).toUpperCase();
+              // Buscamos "PRECIO PLAN" (sin data) o "VALOR" o "RENTA"
+              // EXCLUIMOS explícitamente "PRECIO DE VENTA" porque eso es el costo del equipo, no la renta mensual
+              if (s.includes("PRECIO DE VENTA")) return false;
+              
+              return (s.includes("PRECIO") && s.includes("PLAN") && !s.includes("DATA")) || s.includes("VALOR") || s.includes("RENTA");
+          });
+
+          const idxMonths = headers.findIndex(h => String(h).toUpperCase().includes("MESES"));
+          
+          const idxNotes = headers.findIndex(h => String(h).toUpperCase().includes("COMENTARIOS") || String(h).toUpperCase().includes("NOTAS"));
+
+          // Fallbacks (si no encuentra columna, usa los índices fijos que vimos antes)
+          const finalIdxPhone = idxPhone !== -1 ? idxPhone : 0;
+          const finalIdxPlan = idxPlan !== -1 ? idxPlan : 6;
+          const finalIdxValue = idxValue !== -1 ? idxValue : 7; // Ajustado a 7 (Precio Plan)
+          const finalIdxMonths = idxMonths !== -1 ? idxMonths : 13;
+          const finalIdxNotes = idxNotes !== -1 ? idxNotes : 15;
+
+          console.log("Indices detectados:", { finalIdxPhone, finalIdxPlan, finalIdxValue, finalIdxMonths, finalIdxNotes });
+
+          // 2. Tabla de Datos (Desde Fila siguiente al header)
+          const dataRows = jsonData.slice(headerRowIdx + 1);
+          
           const extractedRows = dataRows
             .filter(row => {
-                const phone = row[1];
+                const phone = row[finalIdxPhone];
                 // Filtrar filas vacías o sin teléfono válido (mínimo 8 dígitos)
                 return phone && String(phone).replace(/[^0-9]/g, '').length >= 8;
             })
             .map(row => {
-              const cleanPhone = String(row[1] || "").replace(/[^0-9]/g, '').slice(-10);
+              const cleanPhone = String(row[finalIdxPhone] || "").replace(/[^0-9]/g, '').slice(-10);
               
               // Cálculo de Fechas
               let contractEndDate = "";
-              const months = parseInt(String(row[14] || "0").replace(/[^0-9]/g, ''), 10);
+              const months = parseInt(String(row[finalIdxMonths] || "0").replace(/[^0-9]/g, ''), 10);
               
               if (months > 0) {
                   const startDate = new Date(); // Asumimos hoy como inicio si no hay columna fecha
@@ -295,10 +361,10 @@ export default function ImportadorVisual() {
 
               return {
                 phone: cleanPhone,
-                plan: row[7] || "",
-                monthly_value: String(row[8] || "").replace(',', '.'),
-                months: row[14] || "",
-                notes: row[16] || "",
+                plan: row[finalIdxPlan] || "",
+                monthly_value: String(row[finalIdxValue] || "").replace(',', '.'),
+                months: row[finalIdxMonths] || "",
+                notes: row[finalIdxNotes] || "",
                 contract_end_date: contractEndDate
               };
             });
@@ -1012,6 +1078,7 @@ export default function ImportadorVisual() {
         let totalCreated = 0;
         let totalUpdated = 0;
         let totalErrors: string[] = [];
+        let allCreatedClients: any[] = [];
 
         for (let i = 0; i < totalBatches; i++) {
             const batch = payload.slice(i * BATCH_SIZE, (i + 1) * BATCH_SIZE);
@@ -1029,7 +1096,22 @@ export default function ImportadorVisual() {
                 totalCreated += json.created || 0;
                 totalUpdated += json.updated || 0;
                 if (json.errors) totalErrors.push(...json.errors);
+                if (json.details && json.details.createdClients) {
+                    allCreatedClients.push(...json.details.createdClients);
+                }
             }
+        }
+
+        // Filtrar clientes únicos creados
+        const uniqueCreatedClients = Array.from(new Map(allCreatedClients.map(item => [item.id, item])).values());
+
+        if (uniqueCreatedClients.length > 0) {
+            setNewClientsToEnrich(uniqueCreatedClients);
+            setCurrentEnrichIndex(0);
+            setEnrichFormData({ email: '', address: '', city: '', phone: '' });
+            setEnrichModalOpen(true);
+            setShowActivacionesModal(false); // Cerrar modal de activaciones pero mantener el flujo
+            return; // Detener aquí para procesar enriquecimiento
         }
 
         setSaveResult({
@@ -1049,14 +1131,131 @@ export default function ImportadorVisual() {
     }
   };
 
+  const handleEnrichSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const currentClient = newClientsToEnrich[currentEnrichIndex];
+    
+    try {
+        // 1. Actualizar Cliente
+        const resClient = await authFetch(`/api/clients/${currentClient.id}`, {
+            method: 'PUT',
+            body: JSON.stringify({
+                email: enrichFormData.email,
+                address: enrichFormData.address,
+                city: enrichFormData.city,
+                phone: enrichFormData.phone
+            })
+        });
+
+        if (!resClient.ok) {
+            const err = await resClient.json();
+            throw new Error(`Error actualizando cliente: ${err.error || resClient.statusText}`);
+        }
+
+        // NOTA: Se eliminó la creación automática de Referido/Venta por solicitud del usuario.
+        // Solo se actualizan los datos del cliente en el CRM.
+
+        // Siguiente o Finalizar
+        if (currentEnrichIndex < newClientsToEnrich.length - 1) {
+            setCurrentEnrichIndex(prev => prev + 1);
+            setEnrichFormData({ email: '', address: '', city: '', phone: '' });
+        } else {
+            setEnrichModalOpen(false);
+            setSaveResult({
+                success: true,
+                message: "Importación y enriquecimiento completados exitosamente.",
+                created: newClientsToEnrich.length,
+                updated: 0,
+                total: newClientsToEnrich.length
+            });
+            // Disparar eventos de actualización
+            window.dispatchEvent(new CustomEvent('refreshClients'));
+        }
+
+    } catch (error) {
+        console.error("Error enriqueciendo cliente:", error);
+        alert("Error al guardar datos adicionales. Intenta de nuevo.");
+    }
+  };
+
   return (
     <div className="p-4 bg-neutral-950 min-h-screen text-gray-100 overflow-auto">
       
+      {/* MODAL DE ENRIQUECIMIENTO */}
+      {enrichModalOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+            <div className="bg-neutral-900 rounded-xl border border-neutral-700 shadow-2xl w-full max-w-md p-6">
+                <div className="mb-6">
+                    <h2 className="text-xl font-bold text-white mb-1">Completar Datos del Cliente</h2>
+                    <p className="text-sm text-gray-400">
+                        Cliente {currentEnrichIndex + 1} de {newClientsToEnrich.length}: <span className="text-amber-400 font-bold">{newClientsToEnrich[currentEnrichIndex]?.name || newClientsToEnrich[currentEnrichIndex]?.business_name}</span>
+                    </p>
+                </div>
+                
+                <form onSubmit={handleEnrichSubmit} className="space-y-4">
+                    <div>
+                        <label className="block text-xs font-medium text-gray-400 mb-1">Email</label>
+                        <input 
+                            type="email" 
+                            required
+                            className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-white focus:ring-2 focus:ring-indigo-500 outline-none"
+                            value={enrichFormData.email}
+                            onChange={e => setEnrichFormData({...enrichFormData, email: e.target.value})}
+                            placeholder="cliente@email.com"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-medium text-gray-400 mb-1">Teléfono Contacto</label>
+                        <input 
+                            type="text" 
+                            className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-white focus:ring-2 focus:ring-indigo-500 outline-none"
+                            value={enrichFormData.phone}
+                            onChange={e => setEnrichFormData({...enrichFormData, phone: e.target.value})}
+                            placeholder="Ej. 3001234567"
+                        />
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                        <div>
+                            <label className="block text-xs font-medium text-gray-400 mb-1">Dirección</label>
+                            <input 
+                                type="text" 
+                                className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-white focus:ring-2 focus:ring-indigo-500 outline-none"
+                                value={enrichFormData.address}
+                                onChange={e => setEnrichFormData({...enrichFormData, address: e.target.value})}
+                                placeholder="Calle 123..."
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-medium text-gray-400 mb-1">Ciudad</label>
+                            <input 
+                                type="text" 
+                                className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-white focus:ring-2 focus:ring-indigo-500 outline-none"
+                                value={enrichFormData.city}
+                                onChange={e => setEnrichFormData({...enrichFormData, city: e.target.value})}
+                                placeholder="Bogotá..."
+                            />
+                        </div>
+                    </div>
+
+                    <div className="pt-4 flex justify-end gap-3">
+                        <button 
+                            type="submit"
+                            className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded-lg font-medium transition-colors flex items-center gap-2"
+                        >
+                            {currentEnrichIndex < newClientsToEnrich.length - 1 ? 'Guardar y Siguiente' : 'Finalizar Importación'}
+                            <Check className="w-4 h-4" />
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+      )}
+
       <div className="bg-neutral-800 rounded-lg p-2 flex flex-wrap items-center justify-between gap-4 border border-neutral-600 shadow-lg mb-4">
         <div className="flex items-center gap-4">
           <div className="flex flex-col">
             <p className="text-base text-gray-200 font-medium hidden sm:block">
-              Subí tu archivo <span className="text-xs text-amber-400 ml-2 font-bold">v5.1.52 (NUEVO)</span>
+              Subí tu archivo <span className="text-xs text-amber-400 ml-2 font-bold">v5.1.68-NO-REFERIDO</span>
             </p>
             <p className="text-[10px] text-gray-500 hidden sm:block">
               * VALIDACIONES DESACTIVADAS
@@ -1596,11 +1795,16 @@ export default function ImportadorVisual() {
                 </div>
                 <div>
                   <label className="block text-xs text-gray-400 mb-1">Vendedor</label>
-                  <input 
+                  <select 
                     value={activacionesMetadata.vendor} 
                     onChange={e => setActivacionesMetadata({...activacionesMetadata, vendor: e.target.value})}
                     className="w-full bg-neutral-900 border border-neutral-600 rounded px-3 py-2 text-white focus:border-blue-500 outline-none"
-                  />
+                  >
+                    <option value="">Seleccionar Vendedor...</option>
+                    {vendors.map(v => (
+                        <option key={v.id} value={v.name}>{v.name}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
 

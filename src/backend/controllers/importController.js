@@ -12,6 +12,11 @@ export const saveImportData = async (req, res) => {
     let created = 0;
     let updated = 0;
     let errors = [];
+    let createdClients = []; // Lista de clientes creados para retorno
+    
+    // Mapa para rastrear ventas por cliente en este lote
+    // Key: client_id, Value: { vendor_id, new_lines, renewed_lines, total_amount, company_name }
+    let clientSalesStats = new Map();
 
     const client = await getClient();
 
@@ -24,6 +29,7 @@ export const saveImportData = async (req, res) => {
                 // 1. Procesar Cliente
                 const clientData = row.Clientes || {};
                 let clientId = null;
+                let finalVendorId = null;
                 
                 // Normalizar nombre para búsqueda
                 const clientName = (clientData.name || clientData.business_name || '').trim();
@@ -31,11 +37,10 @@ export const saveImportData = async (req, res) => {
 
                 if (clientName) {
                     // Buscar vendedor por nombre si viene
-                    let vendorId = null;
                     if (vendorName) {
                         const vendorRes = await client.query('SELECT id FROM vendors WHERE name ILIKE $1', [vendorName]);
                         if (vendorRes.rows.length > 0) {
-                            vendorId = vendorRes.rows[0].id;
+                            finalVendorId = vendorRes.rows[0].id;
                         }
                     }
 
@@ -48,18 +53,26 @@ export const saveImportData = async (req, res) => {
                     if (existingClient.rows.length > 0) {
                         clientId = existingClient.rows[0].id;
                         // Actualizar vendedor si no tiene
-                        if (vendorId) {
-                            await client.query('UPDATE clients SET vendor_id = COALESCE(vendor_id, $1) WHERE id = $2', [vendorId, clientId]);
+                        if (finalVendorId) {
+                            await client.query('UPDATE clients SET vendor_id = COALESCE(vendor_id, $1) WHERE id = $2', [finalVendorId, clientId]);
                         }
                         updated++;
                     } else {
+                        // CORRECCIÓN: Asegurar que se crea el cliente si no existe
+                        console.log(`Creando nuevo cliente desde importación: ${clientName}`);
                         const newClient = await client.query(
                             `INSERT INTO clients (name, business_name, vendor_id, is_active, base, created_at, updated_at)
                              VALUES ($1, $1, $2, 1, 'BD propia', NOW(), NOW())
-                             RETURNING id`,
-                            [clientName, vendorId]
+                             RETURNING id, name, business_name`,
+                            [clientName, finalVendorId]
                         );
                         clientId = newClient.rows[0].id;
+                        createdClients.push({
+                            id: clientId,
+                            name: newClient.rows[0].name,
+                            business_name: newClient.rows[0].business_name,
+                            vendor_id: finalVendorId
+                        });
                         created++;
                     }
                 }
@@ -113,6 +126,18 @@ export const saveImportData = async (req, res) => {
                     const contractStartDate = subData.contract_start_date || null;
                     const contractEndDate = subData.contract_end_date || null;
 
+                    // Inicializar estadísticas del cliente si no existen
+                    if (clientId && !clientSalesStats.has(clientId)) {
+                        clientSalesStats.set(clientId, {
+                            vendor_id: finalVendorId,
+                            company_name: clientName,
+                            new_lines: 0,
+                            renewed_lines: 0,
+                            total_amount: 0
+                        });
+                    }
+                    const stats = clientSalesStats.get(clientId);
+
                     if (existingSub.rows.length > 0) {
                         // CORRECCIÓN: Nombres de columnas (monthly_value, phone)
                         await client.query(
@@ -131,6 +156,11 @@ export const saveImportData = async (req, res) => {
                              WHERE id = $11`,
                             [banId, serviceType, monthlyValue, remainingPayments, notes, isActive, equipment, city, contractStartDate, contractEndDate, existingSub.rows[0].id]
                         );
+                        // Contar como renovación/actualización
+                        if (stats) {
+                            stats.renewed_lines++;
+                            stats.total_amount += monthlyValue;
+                        }
                     } else {
                         // CORRECCIÓN: Nombres de columnas
                         await client.query(
@@ -142,12 +172,56 @@ export const saveImportData = async (req, res) => {
                              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())`,
                             [banId, phone, serviceType, monthlyValue, remainingPayments, months, notes, isActive, equipment, city, contractStartDate, contractEndDate]
                         );
+                        // Contar como línea nueva
+                        if (stats) {
+                            stats.new_lines++;
+                            stats.total_amount += monthlyValue;
+                        }
                     }
                 }
 
             } catch (err) {
                 console.error('Error procesando fila:', err);
                 errors.push(`Error en fila ${processed}: ${err.message}`);
+            }
+        }
+
+        // 4. Generar/Actualizar Registros de Ventas (Follow Up Prospects)
+        for (const [clientId, stats] of clientSalesStats) {
+            if (stats.new_lines > 0 || stats.renewed_lines > 0) {
+                // Buscar si ya existe una venta completada HOY para este cliente
+                const existingSale = await client.query(
+                    `SELECT id, movil_nueva, movil_renovacion, total_amount 
+                     FROM follow_up_prospects 
+                     WHERE client_id = $1 AND is_completed = 1 AND DATE(completed_date) = CURRENT_DATE`,
+                    [clientId]
+                );
+
+                if (existingSale.rows.length > 0) {
+                    // Actualizar venta existente sumando cantidades
+                    await client.query(
+                        `UPDATE follow_up_prospects 
+                         SET movil_nueva = movil_nueva + $1,
+                             movil_renovacion = movil_renovacion + $2,
+                             total_amount = total_amount + $3,
+                             updated_at = NOW()
+                         WHERE id = $4`,
+                        [stats.new_lines, stats.renewed_lines, stats.total_amount, existingSale.rows[0].id]
+                    );
+                } else {
+                    // Crear nueva venta completada
+                    await client.query(
+                        `INSERT INTO follow_up_prospects (
+                            company_name, client_id, vendor_id, 
+                            movil_nueva, movil_renovacion, total_amount,
+                            is_completed, completed_date, is_active, created_at, updated_at
+                        ) VALUES ($1, $2, $3, $4, $5, $6, 1, NOW(), 1, NOW(), NOW())`,
+                        [
+                            stats.company_name, clientId, stats.vendor_id,
+                            stats.new_lines, stats.renewed_lines, stats.total_amount
+                        ]
+                    );
+                }
             }
         }
 
@@ -161,7 +235,8 @@ export const saveImportData = async (req, res) => {
                 created,
                 updated,
                 errors: errors.length,
-                errorList: errors.slice(0, 10) // Devolver solo los primeros 10 errores
+                errorList: errors.slice(0, 10), // Devolver solo los primeros 10 errores
+                createdClients // Devolver lista de clientes nuevos
             }
         });
 

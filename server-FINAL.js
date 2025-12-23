@@ -51,12 +51,9 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Servir archivos estáticos del frontend (dist/client)
 const distPath = path.join(__dirname, 'dist/client');
-const varWwwPath = '/var/www/crmp';
-if (process.platform === 'linux' && fs.existsSync(varWwwPath)) {
-  app.use(express.static(varWwwPath));
-} else {
-  app.use(express.static(distPath));
-}
+// const varWwwPath = '/var/www/crmp'; // DEPRECATED: We now use /opt/crmp/dist/client
+app.use(express.static(distPath));
+
 
 const JWT_SECRET = process.env.JWT_SECRET || 'development-secret';
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'development-refresh-secret';
