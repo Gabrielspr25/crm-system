@@ -18,6 +18,7 @@ import ImportadorVisual from "@/react-app/pages/ImportadorVisual";
 import GoalsPage from "@/react-app/pages/Goals";
 import AuditLogPage from "@/react-app/pages/AuditLog";
 import ReferidosPage from "@/react-app/pages/Referidos";
+import CorreosPage from "@/react-app/pages/Correos";
 import SystemHealthButton from "@/react-app/components/SystemHealthButton";
 
 // Inicializar MSAL fuera del componente
@@ -33,6 +34,7 @@ function ProtectedRoutes() {
         <Route path="/seguimiento" element={<FollowUpPage />} />
         <Route path="/reportes" element={<ReportsPage />} />
         <Route path="/referidos" element={<ReferidosPage />} />
+        <Route path="/correos" element={<CorreosPage />} />
         <Route path="/vendedores" element={<VendorsPage />} />
         <Route path="/categorias" element={<CategoriesPage />} />
         <Route path="/productos" element={<ProductsPage />} />

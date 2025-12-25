@@ -1,2 +1,2 @@
-export const APP_VERSION = "v5.1.92-RANGO-FECHAS";
+export const APP_VERSION = "v5.1.93-CORREOS-MODULO";
 export const BUILD_LABEL = "PRODUCTION FINAL";

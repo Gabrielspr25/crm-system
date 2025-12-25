@@ -14,7 +14,6 @@ import {
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { authFetch } from "@/react-app/utils/auth";
-import OutlookConnector from "@/react-app/components/OutlookConnector";
 
 function cn(...inputs: (string | undefined | null | false)[]) {
   return twMerge(clsx(inputs));
@@ -191,11 +190,6 @@ export default function ReferidosPage() {
               <User className="w-5 h-5 text-white" />
             </div>
             <h1 className="text-xl font-bold text-slate-900 dark:text-white">Gestión de Referidos</h1>
-          </div>
-          
-          {/* Outlook Connector Test */}
-          <div className="w-full sm:w-auto">
-            <OutlookConnector />
           </div>
 
           <div className="flex items-center gap-3 w-full sm:w-auto justify-end">

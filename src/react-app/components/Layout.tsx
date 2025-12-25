@@ -13,7 +13,8 @@ import {
   Sun,
   Moon,
   Upload,
-  Target
+  Target,
+  Mail
 } from "lucide-react";
 import { useTheme } from "@/react-app/hooks/useTheme";
 import { getCurrentRole, getCurrentUser, clearAuthToken } from "@/react-app/utils/auth";
@@ -34,6 +35,7 @@ const navigation: NavItem[] = [
   { name: "Seguimiento", href: "/seguimiento", icon: PhoneCall, roles: ["admin", "supervisor", "vendedor"] },
   { name: "Reportes", href: "/reportes", icon: BarChart3, roles: ["admin", "supervisor", "vendedor"] },
   { name: "Referidos", href: "/referidos", icon: Users, roles: ["admin", "supervisor", "vendedor"] },
+  { name: "Correos", href: "/correos", icon: Mail, roles: ["admin", "supervisor", "vendedor"] },
   { name: "Vendedores", href: "/vendedores", icon: Building2, roles: ["admin", "supervisor"] },
   { name: "Categorías", href: "/categorias", icon: Folder, roles: ["admin"] },
   { name: "Productos", href: "/productos", icon: Package, roles: ["admin", "supervisor"] },
