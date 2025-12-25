@@ -2,7 +2,7 @@
 const XLSX = require('xlsx');
 const path = require('path');
 
-const filePath = path.join(__dirname, 'Copia de TABLA DE ACTIVACIONES (005).xlsx');
+const filePath = path.join(__dirname, 'TABLA DE ACTIVACIONES (005).xlsx');
 
 try {
     const workbook = XLSX.readFile(filePath);

@@ -32,11 +32,7 @@ async function describeTable(tableName) {
 }
 
 async function main() {
-    await describeTable('clients');
-    await describeTable('bans');
-    await describeTable('subscribers');
-    await describeTable('follow_up_prospects');
-    await pool.end();
+  await describeTable('referidos');
 }
 
 main();

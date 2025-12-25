@@ -174,36 +174,20 @@ export default function ClientModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError(null);
+    setFormMessage(null);
+    setIsSaving(true);
 
     try {
-      // VALIDACIÓN: Verificar duplicados antes de guardar
-      if (formData.business_name && formData.business_name.trim()) {
-        const checkResponse = await authFetch('/api/clients');
-        if (checkResponse.ok) {
-          const allClients = await checkResponse.json();
-          const duplicateClient = allClients.find((c: any) => 
-            c.business_name && 
-            c.business_name.toLowerCase().trim() === formData.business_name.toLowerCase().trim() &&
-            c.id !== client?.id && // Excluir el cliente actual si estamos editando
-            c.is_active === 1 // Solo buscar en clientes activos
-          );
-
-          if (duplicateClient) {
-            setError(`⚠️ Ya existe un cliente con la empresa "${formData.business_name}". Por favor, busca y edita el cliente existente (ID: ${duplicateClient.id}) en lugar de crear uno duplicado.`);
-            return;
-          }
-        }
-      }
-
       await onSave(formData);
     } catch (error: any) {
       // Manejar error 409 del backend
       if (error.message && error.message.includes('Ya existe un cliente')) {
-        setError(error.message);
+        setFormMessage({ type: 'error', text: error.message });
       } else {
-        setError(error instanceof Error ? error.message : 'Error al guardar el cliente');
+        setFormMessage({ type: 'error', text: error instanceof Error ? error.message : 'Error al guardar el cliente' });
       }
+    } finally {
+      setIsSaving(false);
     }
   };
 

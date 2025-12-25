@@ -126,10 +126,10 @@ export default function Reports() {
       const clientId = prospect.client_id;
       
       // Calcular comisión basada en los productos del prospecto
+      // La comisión se calcula de TODOS los productos en la BD
       let totalCommission = 0;
-      let commissionCount = 0;
       
-      // Mapeo de campos del prospecto a nombres de productos
+      // TODOS los productos para calcular comisión automáticamente
       const productFields = [
         { field: 'fijo_ren', productName: 'Fijo Renovación' },
         { field: 'fijo_new', productName: 'Fijo Nueva' },
@@ -139,27 +139,51 @@ export default function Reports() {
         { field: 'cloud', productName: 'Cloud Nueva' },
         { field: 'mpls', productName: 'MPLS' }
       ];
-      
-      productFields.forEach(({ field, productName }) => {
-        const fieldValue = prospect[field as keyof typeof prospect];
-        const amount = typeof fieldValue === 'number' ? fieldValue : 0;
-        
-        if (amount > 0) {
-          // Buscar producto por nombre
-          const product = products?.find(p => 
-            p.name.toLowerCase() === productName.toLowerCase()
-          );
-          
-          if (product && product.commission_percentage) {
-            const commission = (amount * product.commission_percentage) / 100;
-            totalCommission += commission;
-            commissionCount++;
-          }
-        }
+
+      const totalAmount = typeof prospect.total_amount === 'string' 
+        ? parseFloat(prospect.total_amount) 
+        : (prospect.total_amount || 0);
+
+      // Detectar productos activos
+      const activeProducts = productFields.filter(({ field }) => {
+        const val = prospect[field as keyof typeof prospect];
+        const numVal = typeof val === 'string' ? parseFloat(val) : (val || 0);
+        return numVal > 0;
       });
-      
-      const avgPercentage = totalCommission > 0 && prospect.total_amount > 0
-        ? (totalCommission / prospect.total_amount) * 100
+
+      // Si hay un solo producto activo, usar el total_amount completo
+      if (activeProducts.length === 1 && totalAmount > 0) {
+        const { productName } = activeProducts[0];
+        const product = products?.find(p => p.name.toLowerCase() === productName.toLowerCase());
+        
+        if (product && product.commission_percentage) {
+          const commPercent = typeof product.commission_percentage === 'string' 
+            ? parseFloat(product.commission_percentage) 
+            : (product.commission_percentage || 0);
+          totalCommission = (totalAmount * commPercent) / 100;
+        }
+      } else {
+        // Múltiples productos o total = 0: calcular por campo
+        productFields.forEach(({ field, productName }) => {
+          const val = prospect[field as keyof typeof prospect];
+          const numVal = typeof val === 'string' ? parseFloat(val) : (val || 0);
+          
+          if (numVal > 0) {
+            const product = products?.find(p => p.name.toLowerCase() === productName.toLowerCase());
+            
+            if (product && product.commission_percentage) {
+              const commPercent = typeof product.commission_percentage === 'string' 
+                ? parseFloat(product.commission_percentage) 
+                : (product.commission_percentage || 0);
+              const commission = (numVal * commPercent) / 100;
+              totalCommission += commission;
+            }
+          }
+        });
+      }
+
+      const avgPercentage = totalCommission > 0 && totalAmount > 0
+        ? (totalCommission / totalAmount) * 100
         : 0;
       
       const rowId = prospect.id;
@@ -167,7 +191,16 @@ export default function Reports() {
       const movilRen = movilRenManual[rowId] || 0;
       const rowNotes = notes[rowId] || "";
       
-      const total = totalCommission + movilNueva + movilRen;
+      // Obtener valores reales de móvil desde la BD (no los manuales)
+      const movilNuevaDB = typeof prospect.movil_nueva === 'string' 
+        ? parseFloat(prospect.movil_nueva) 
+        : (prospect.movil_nueva || 0);
+      const movilRenDB = typeof prospect.movil_renovacion === 'string' 
+        ? parseFloat(prospect.movil_renovacion) 
+        : (prospect.movil_renovacion || 0);
+      
+      // El total es el monto de la venta (total_amount), NO la comisión
+      const total = totalAmount;
       
       rows.push({
         id: rowId,
@@ -176,13 +209,13 @@ export default function Reports() {
         clientId: clientId,
         vendor_id: prospect.vendor_id,
         vendor_name: prospect.vendor_name || null,
-        fijo_ren: prospect.fijo_ren || 0,
-        fijo_new: prospect.fijo_new || 0,
-        movil_nueva_manual: movilNueva,
-        movil_renovacion_manual: movilRen,
-        claro_tv: prospect.claro_tv || 0,
-        cloud: prospect.cloud || 0,
-        mpls: prospect.mpls || 0,
+        fijo_ren: Number(prospect.fijo_ren) || 0,
+        fijo_new: Number(prospect.fijo_new) || 0,
+        movil_nueva_manual: movilNuevaDB, // Mostrar valor de BD
+        movil_renovacion_manual: movilRenDB, // Mostrar valor de BD
+        claro_tv: Number(prospect.claro_tv) || 0,
+        cloud: Number(prospect.cloud) || 0,
+        mpls: Number(prospect.mpls) || 0,
         commission: totalCommission,
         percentage: avgPercentage,
         mobile: 0, // Removido - no se usa
@@ -447,12 +480,12 @@ export default function Reports() {
       </div>
 
       {/* Tabla de Reporte */}
-      <div className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+      <div className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden max-w-full">
         <div className="overflow-x-auto">
-          <table className="w-full">
+          <table className="w-full min-w-[1500px]">
             <thead className="bg-gray-900 border-b border-gray-700">
               <tr>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider w-8">
+                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider w-8 whitespace-nowrap">
                   <input
                     type="checkbox"
                     onChange={(e) => {
@@ -465,19 +498,19 @@ export default function Reports() {
                     className="rounded"
                   />
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">Cliente</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">Vendedor</th>
-                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider">FIJO REN</th>
-                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider">FIJO NEW</th>
-                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider">MÓVIL NUEVA</th>
-                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider">MÓVIL RENO</th>
-                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider">CLAROTV</th>
-                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider">CLOUD</th>
-                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider">MPLS</th>
-                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider">Comisión</th>
-                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider">%</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">Notas</th>
-                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider">Total</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider whitespace-nowrap">Cliente</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider whitespace-nowrap">Vendedor</th>
+                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider whitespace-nowrap">FIJO REN</th>
+                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider whitespace-nowrap">FIJO NEW</th>
+                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider whitespace-nowrap">MÓVIL NUEVA</th>
+                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider whitespace-nowrap">MÓVIL RENO</th>
+                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider whitespace-nowrap">CLAROTV</th>
+                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider whitespace-nowrap">CLOUD</th>
+                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider whitespace-nowrap">MPLS</th>
+                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider whitespace-nowrap">Comisión</th>
+                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider whitespace-nowrap">%</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider whitespace-nowrap">Notas</th>
+                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider whitespace-nowrap">Total</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-700">
@@ -510,28 +543,8 @@ export default function Reports() {
                         <td className="px-4 py-3 text-sm text-gray-300">{row.vendor_name || '-'}</td>
                         <td className="px-4 py-3 text-sm text-right text-gray-300">{row.fijo_ren}</td>
                         <td className="px-4 py-3 text-sm text-right text-gray-300">{row.fijo_new}</td>
-                        <td className="px-4 py-3 text-right">
-                          <input
-                            type="number"
-                            value={row.movil_nueva_manual || ""}
-                            onChange={(e) => handleMovilNuevaChange(row.id, e.target.value)}
-                            placeholder="0.00"
-                            step="0.01"
-                            disabled={isPaid}
-                            className="w-24 px-2 py-1 bg-gray-900 border border-gray-600 rounded text-white text-sm text-right focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50"
-                          />
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          <input
-                            type="number"
-                            value={row.movil_renovacion_manual || ""}
-                            onChange={(e) => handleMovilRenChange(row.id, e.target.value)}
-                            placeholder="0.00"
-                            step="0.01"
-                            disabled={isPaid}
-                            className="w-24 px-2 py-1 bg-gray-900 border border-gray-600 rounded text-white text-sm text-right focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50"
-                          />
-                        </td>
+                        <td className="px-4 py-3 text-sm text-right text-gray-300">{row.movil_nueva_manual}</td>
+                        <td className="px-4 py-3 text-sm text-right text-gray-300">{row.movil_renovacion_manual}</td>
                         <td className="px-4 py-3 text-sm text-right text-gray-300">{row.claro_tv}</td>
                         <td className="px-4 py-3 text-sm text-right text-gray-300">{row.cloud}</td>
                         <td className="px-4 py-3 text-sm text-right text-gray-300">{row.mpls}</td>
@@ -562,30 +575,29 @@ export default function Reports() {
                   <tr className="bg-gray-900 border-t-2 border-gray-600 font-bold">
                     <td colSpan={3} className="px-4 py-3 text-sm text-white">TOTALES</td>
                     <td className="px-4 py-3 text-sm text-right text-gray-300">
-                      {filteredRows.reduce((sum, r) => sum + r.fijo_ren, 0)}
+                      {filteredRows.reduce((sum, r) => sum + (Number(r.fijo_ren) || 0), 0).toFixed(2)}
                     </td>
                     <td className="px-4 py-3 text-sm text-right text-gray-300">
-                      {filteredRows.reduce((sum, r) => sum + r.fijo_new, 0)}
+                      {filteredRows.reduce((sum, r) => sum + (Number(r.fijo_new) || 0), 0).toFixed(2)}
                     </td>
                     <td className="px-4 py-3 text-sm text-right text-gray-300">
-                      ${totals.movilNueva.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      {filteredRows.reduce((sum, r) => sum + (Number(r.movil_nueva_manual) || 0), 0).toFixed(2)}
                     </td>
                     <td className="px-4 py-3 text-sm text-right text-gray-300">
-                      ${totals.movilRen.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      {filteredRows.reduce((sum, r) => sum + (Number(r.movil_renovacion_manual) || 0), 0).toFixed(2)}
                     </td>
                     <td className="px-4 py-3 text-sm text-right text-gray-300">
-                      {filteredRows.reduce((sum, r) => sum + r.claro_tv, 0)}
+                      {filteredRows.reduce((sum, r) => sum + (Number(r.claro_tv) || 0), 0).toFixed(2)}
                     </td>
                     <td className="px-4 py-3 text-sm text-right text-gray-300">
-                      {filteredRows.reduce((sum, r) => sum + r.cloud, 0)}
+                      {filteredRows.reduce((sum, r) => sum + (Number(r.cloud) || 0), 0).toFixed(2)}
                     </td>
                     <td className="px-4 py-3 text-sm text-right text-gray-300">
-                      {filteredRows.reduce((sum, r) => sum + r.mpls, 0)}
+                      {filteredRows.reduce((sum, r) => sum + (Number(r.mpls) || 0), 0).toFixed(2)}
                     </td>
                     <td className="px-4 py-3 text-sm text-right text-gray-300">
                       ${totals.commission.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </td>
-                    <td className="px-4 py-3 text-sm text-right text-gray-300">-</td>
                     <td className="px-4 py-3 text-sm text-right text-gray-300">-</td>
                     <td className="px-4 py-3 text-sm text-right text-gray-300">-</td>
                     <td className="px-4 py-3 text-sm text-right text-green-400">

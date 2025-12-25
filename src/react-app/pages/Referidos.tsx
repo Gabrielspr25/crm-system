@@ -14,6 +14,7 @@ import {
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { authFetch } from "@/react-app/utils/auth";
+import OutlookConnector from "@/react-app/components/OutlookConnector";
 
 function cn(...inputs: (string | undefined | null | false)[]) {
   return twMerge(clsx(inputs));
@@ -184,14 +185,20 @@ export default function ReferidosPage() {
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-200 font-sans transition-colors duration-200">
       {/* Header - Removed as it is now part of Layout */}
-      <div className="bg-white dark:bg-slate-900 shadow-sm rounded-lg mb-6 p-4 flex items-center justify-between">
+      <div className="bg-white dark:bg-slate-900 shadow-sm rounded-lg mb-6 p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div className="flex items-center gap-2">
             <div className="bg-indigo-600 p-2 rounded-lg">
               <User className="w-5 h-5 text-white" />
             </div>
             <h1 className="text-xl font-bold text-slate-900 dark:text-white">Gestión de Referidos</h1>
           </div>
-          <div className="flex items-center gap-3">
+          
+          {/* Outlook Connector Test */}
+          <div className="w-full sm:w-auto">
+            <OutlookConnector />
+          </div>
+
+          <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
             <button
               onClick={() => setIsStatusModalOpen(true)}
               className="hidden sm:flex px-4 py-2 text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
@@ -514,6 +521,8 @@ export default function ReferidosPage() {
                   <label className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Fecha</label>
                   <input
                     type="date"
+                    min="2020-01-01"
+                    max="2030-12-31"
                     name="fecha"
                     value={formData.fecha}
                     onChange={handleInputChange}

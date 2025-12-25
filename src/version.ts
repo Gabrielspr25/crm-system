@@ -1,2 +1,2 @@
-export const APP_VERSION = "v5.1.68-NO-REFERIDO";
+export const APP_VERSION = "v5.1.92-RANGO-FECHAS";
 export const BUILD_LABEL = "PRODUCTION FINAL";

@@ -46,14 +46,21 @@ export const saveImportData = async (req, res) => {
 
                     // Buscar cliente existente
                     const existingClient = await client.query(
-                        'SELECT id FROM clients WHERE LOWER(TRIM(business_name)) = LOWER(TRIM($1)) OR LOWER(TRIM(name)) = LOWER(TRIM($1))',
+                        'SELECT id, vendor_id FROM clients WHERE LOWER(TRIM(business_name)) = LOWER(TRIM($1)) OR LOWER(TRIM(name)) = LOWER(TRIM($1))',
                         [clientName]
                     );
 
                     if (existingClient.rows.length > 0) {
                         clientId = existingClient.rows[0].id;
-                        // Actualizar vendedor si no tiene
-                        if (finalVendorId) {
+                        const existingVendorId = existingClient.rows[0].vendor_id;
+
+                        // Si no viene vendedor en el Excel, usamos el que ya tiene el cliente
+                        if (!finalVendorId && existingVendorId) {
+                            finalVendorId = existingVendorId;
+                        }
+
+                        // Actualizar vendedor si no tiene (y viene uno nuevo)
+                        if (finalVendorId && finalVendorId !== existingVendorId) {
                             await client.query('UPDATE clients SET vendor_id = COALESCE(vendor_id, $1) WHERE id = $2', [finalVendorId, clientId]);
                         }
                         updated++;
@@ -193,7 +200,7 @@ export const saveImportData = async (req, res) => {
                 const existingSale = await client.query(
                     `SELECT id, movil_nueva, movil_renovacion, total_amount 
                      FROM follow_up_prospects 
-                     WHERE client_id = $1 AND is_completed = 1 AND DATE(completed_date) = CURRENT_DATE`,
+                     WHERE client_id = $1 AND is_completed = true AND DATE(completed_date) = CURRENT_DATE`,
                     [clientId]
                 );
 
@@ -215,13 +222,16 @@ export const saveImportData = async (req, res) => {
                             company_name, client_id, vendor_id, 
                             movil_nueva, movil_renovacion, total_amount,
                             is_completed, completed_date, is_active, created_at, updated_at
-                        ) VALUES ($1, $2, $3, $4, $5, $6, 1, NOW(), 1, NOW(), NOW())`,
+                        ) VALUES ($1, $2, $3, $4, $5, $6, true, NOW(), true, NOW(), NOW())`,
                         [
                             stats.company_name, clientId, stats.vendor_id,
                             stats.new_lines, stats.renewed_lines, stats.total_amount
                         ]
                     );
                 }
+
+                // Desasignar vendedor del cliente al completar la venta (Liberar cliente)
+                await client.query('UPDATE clients SET vendor_id = NULL WHERE id = $1', [clientId]);
             }
         }
 

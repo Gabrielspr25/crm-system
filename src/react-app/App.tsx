@@ -1,4 +1,8 @@
 import { BrowserRouter as Router, Routes, Route } from "react-router";
+import { PublicClientApplication } from "@azure/msal-browser";
+import { MsalProvider } from "@azure/msal-react";
+import { msalConfig } from "@/react-app/auth/msalConfig";
+
 import ProtectedLayout from "@/react-app/components/ProtectedLayout";
 import ClientsPage from "@/react-app/pages/Clients";
 import ClientsNew from "@/react-app/pages/ClientsNew"; // <- NUEVO
@@ -14,10 +18,15 @@ import ImportadorVisual from "@/react-app/pages/ImportadorVisual";
 import GoalsPage from "@/react-app/pages/Goals";
 import AuditLogPage from "@/react-app/pages/AuditLog";
 import ReferidosPage from "@/react-app/pages/Referidos";
+import SystemHealthButton from "@/react-app/components/SystemHealthButton";
+
+// Inicializar MSAL fuera del componente
+const msalInstance = new PublicClientApplication(msalConfig);
 
 function ProtectedRoutes() {
   return (
     <ProtectedLayout>
+      <SystemHealthButton />
       <Routes>
         <Route path="/" element={<ClientsPage />} />
         <Route path="/clientes" element={<ClientsNew />} /> {/* <- CAMBIAR */}
@@ -38,11 +47,13 @@ function ProtectedRoutes() {
 
 export default function App() {
   return (
-    <Router>
-      <Routes>
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/*" element={<ProtectedRoutes />} />
-      </Routes>
-    </Router>
+    <MsalProvider instance={msalInstance}>
+      <Router>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/*" element={<ProtectedRoutes />} />
+        </Routes>
+      </Router>
+    </MsalProvider>
   );
 }

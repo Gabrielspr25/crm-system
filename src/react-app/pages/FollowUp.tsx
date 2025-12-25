@@ -1363,6 +1363,8 @@ function CallModal({
                       <div className="relative">
                         <input
                           type="date"
+                          min="2020-01-01"
+                          max="2030-12-31"
                           value={formData.next_call_date}
                           onChange={(e) => setFormData(prev => ({ ...prev, next_call_date: e.target.value }))}
                           className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all pl-10"

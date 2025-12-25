@@ -5,11 +5,17 @@ import { serverError, badRequest, notFound, conflict } from '../middlewares/erro
 export const getUsers = async (req, res) => {
     try {
         const users = await query(
-            `SELECT id, username, role, is_active, created_at, last_login 
-       FROM users 
+            `SELECT id, username, salesperson_id, created_at, last_login 
+       FROM users_auth 
        ORDER BY created_at DESC`
         );
-        res.json(users);
+        // Mapear para frontend que espera role
+        const mappedUsers = users.map(u => ({
+            ...u,
+            role: u.salesperson_id ? 'vendedor' : 'admin',
+            is_active: 1 // Fake active
+        }));
+        res.json(mappedUsers);
     } catch (error) {
         serverError(res, error, 'Error obteniendo usuarios');
     }
@@ -23,21 +29,38 @@ export const createUser = async (req, res) => {
     }
 
     try {
-        const existing = await query('SELECT id FROM users WHERE username = $1', [username]);
+        const existing = await query('SELECT id FROM users_auth WHERE username = $1', [username]);
         if (existing.length > 0) {
             return conflict(res, 'El usuario ya existe');
+        }
+
+        let finalSalespersonId = req.body.salesperson_id;
+
+        // Si no se proporciona salesperson_id, crear un vendedor automáticamente
+        if (!finalSalespersonId) {
+            const newSalesperson = await query(
+                `INSERT INTO salespeople (name, email, role, created_at, updated_at)
+                 VALUES ($1, $2, 'vendedor', NOW(), NOW())
+                 RETURNING id`,
+                [username, `${username}@generated.com`]
+            );
+            finalSalespersonId = newSalesperson[0].id;
         }
 
         const passwordHash = await bcrypt.hash(password, 10);
 
         const result = await query(
-            `INSERT INTO users (username, password_hash, role, is_active) 
-       VALUES ($1, $2, $3, 1) 
-       RETURNING id, username, role, is_active, created_at`,
-            [username, passwordHash, role]
+            `INSERT INTO users_auth (username, password, salesperson_id, created_at) 
+       VALUES ($1, $2, $3, NOW()) 
+       RETURNING id, username, created_at`,
+            [username, passwordHash, finalSalespersonId]
         );
+        
+        const newUser = result[0];
+        newUser.role = 'admin'; // Default to admin if created this way
+        newUser.is_active = 1;
 
-        res.status(201).json(result[0]);
+        res.status(201).json(newUser);
     } catch (error) {
         serverError(res, error, 'Error creando usuario');
     }

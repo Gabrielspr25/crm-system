@@ -12,46 +12,41 @@ export const login = async (req, res) => {
     }
 
     try {
-        const users = await query('SELECT * FROM users WHERE username = $1', [username]);
+        const users = await query('SELECT * FROM users_auth WHERE username = $1', [username]);
 
         if (users.length === 0) {
             return res.status(401).json({ error: 'Credenciales inválidas' });
         }
 
         const user = users[0];
-        const validPassword = await bcrypt.compare(password, user.password_hash);
+        const validPassword = await bcrypt.compare(password, user.password);
 
         if (!validPassword) {
             return res.status(401).json({ error: 'Credenciales inválidas' });
         }
 
         // Obtener salesperson_id si es vendedor
-        let salespersonId = null;
-        if (user.role === 'vendedor') {
-            const salesPeople = await query('SELECT id FROM salespeople WHERE user_id = $1', [user.id]);
-            if (salesPeople.length > 0) {
-                salespersonId = salesPeople[0].id;
-            }
-        }
+        let salespersonId = user.salesperson_id;
+        let role = salespersonId ? 'vendedor' : 'admin';
 
         const tokenPayload = {
             userId: user.id,
             username: user.username,
-            role: user.role,
+            role: role,
             salespersonId: salespersonId
         };
 
         const token = jwt.sign(tokenPayload, config.jwtSecret, { expiresIn: '8h' });
 
         // Registrar último login
-        await query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]);
+        await query('UPDATE users_auth SET last_login = NOW() WHERE id = $1', [user.id]);
 
         res.json({
             token,
             user: {
                 id: user.id,
                 username: user.username,
-                role: user.role,
+                role: role,
                 salespersonId: salespersonId
             }
         });

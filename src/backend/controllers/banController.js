@@ -22,20 +22,20 @@ export const getBans = async (req, res) => {
 export const createBan = async (req, res) => {
     const {
         client_id,
-        account_number,
+        ban_number,
         address = null,
         city = null,
         zip_code = null,
         vendor_id = null
     } = req.body;
 
-    if (!client_id || !account_number) {
+    if (!client_id || !ban_number) {
         return badRequest(res, 'Cliente y número de cuenta son obligatorios');
     }
 
     try {
         // Verificar si ya existe
-        const existing = await query('SELECT id FROM bans WHERE account_number = $1', [account_number]);
+        const existing = await query('SELECT id FROM bans WHERE ban_number = $1', [ban_number]);
         if (existing.length > 0) {
             return badRequest(res, 'El número de cuenta BAN ya existe');
         }
@@ -51,10 +51,10 @@ export const createBan = async (req, res) => {
 
         const result = await query(
             `INSERT INTO bans
-        (client_id, account_number, address, city, zip_code, vendor_id, is_active, created_at, updated_at)
+        (client_id, ban_number, address, city, zip_code, vendor_id, is_active, created_at, updated_at)
        VALUES ($1,$2,$3,$4,$5,$6,1,NOW(),NOW())
        RETURNING *`,
-            [client_id, account_number, address, city, zip_code, finalVendorId]
+            [client_id, ban_number, address, city, zip_code, finalVendorId]
         );
 
         res.status(201).json(result[0]);
@@ -66,7 +66,7 @@ export const createBan = async (req, res) => {
 export const updateBan = async (req, res) => {
     const { id } = req.params;
     const {
-        account_number,
+        ban_number,
         address,
         city,
         zip_code,
@@ -82,7 +82,7 @@ export const updateBan = async (req, res) => {
 
         const result = await query(
             `UPDATE bans
-          SET account_number = COALESCE($1, account_number),
+          SET ban_number = COALESCE($1, ban_number),
               address = COALESCE($2, address),
               city = COALESCE($3, city),
               zip_code = COALESCE($4, zip_code),
@@ -92,7 +92,7 @@ export const updateBan = async (req, res) => {
         WHERE id = $7
         RETURNING *`,
             [
-                account_number, address, city, zip_code, vendor_id,
+                ban_number, address, city, zip_code, vendor_id,
                 is_active !== undefined ? (is_active ? 1 : 0) : undefined, id
             ]
         );

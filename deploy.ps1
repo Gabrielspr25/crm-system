@@ -26,9 +26,9 @@ try {
     Write-Host "OK Backend`n" -ForegroundColor Green
 
     Write-Host "[3/4] Subiendo frontend..." -ForegroundColor Yellow
-    ssh ${ServerUser}@${ServerHost} "rm -rf /var/www/crmp/* && mkdir -p /var/www/crmp/referidos"
-    scp -r dist/client/* ${ServerUser}@${ServerHost}:/var/www/crmp/
-    scp -r referidos_app/dist/* ${ServerUser}@${ServerHost}:/var/www/crmp/referidos/
+    ssh ${ServerUser}@${ServerHost} "rm -rf /opt/crmp/dist/client/*"
+    scp -r dist/client/* ${ServerUser}@${ServerHost}:/opt/crmp/dist/client/
+    # scp -r referidos_app/dist/* ${ServerUser}@${ServerHost}:/var/www/crmp/referidos/ # Commented out as we are focusing on main app
     if ($LASTEXITCODE -ne 0) { throw "Error frontend" }
     Write-Host "OK Frontend`n" -ForegroundColor Green
 
@@ -37,7 +37,7 @@ try {
 server {
     listen 80;
     server_name crmp.ss-group.cloud;
-    root /var/www/crmp;
+    root /opt/crmp/dist/client;
     index index.html;
 
     location / {
@@ -71,7 +71,7 @@ server {
     Write-Host "OK Nginx`n" -ForegroundColor Green
 
     Write-Host "[4/4] Reiniciando..." -ForegroundColor Yellow
-    ssh ${ServerUser}@${ServerHost} 'cd /opt/crmp && npm install --production && (pm2 restart crmp-api || pm2 start server-FINAL.js --name crmp-api) && pm2 save && chown -R www-data:www-data /var/www/crmp && systemctl reload nginx'
+    ssh ${ServerUser}@${ServerHost} 'cd /opt/crmp && npm install --production --legacy-peer-deps && (pm2 restart crmp-api || pm2 start server-FINAL.js --name crmp-api) && pm2 save && chown -R www-data:www-data /opt/crmp && systemctl reload nginx'
     if ($LASTEXITCODE -ne 0) { throw "Error reinicio" }
     Write-Host "OK Reiniciado`n" -ForegroundColor Green
 

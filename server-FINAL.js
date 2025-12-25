@@ -11,6 +11,7 @@ import nodemailer from 'nodemailer';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { saveImportData } from './src/backend/controllers/importController.js';
+import { fullSystemCheck } from './src/backend/controllers/healthController.js';
 import referidosRoutes from './src/backend/routes/referidosRoutes.js';
 
 // ======================================================
@@ -20,6 +21,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
+app.set('trust proxy', 1);
 const PORT = Number(process.env.PORT || 3001);
 
 app.use(helmet({
@@ -62,6 +64,7 @@ const REFRESH_TOKEN_TTL = process.env.JWT_REFRESH_EXPIRES_IN || '7d';
 
 const PUBLIC_ROUTES = new Set([
   'GET /api/health',
+  'GET /api/health/full',
   'POST /api/login',
   'POST /api/token/refresh'
 ]);
@@ -1540,6 +1543,30 @@ app.get('/api/follow-up-prospects', authenticateRequest, async (req, res) => {
 });
 
 // ======================================================
+// Prospectos COMPLETADOS (Reportes)
+app.get('/api/completed-prospects', authenticateRequest, async (req, res) => {
+  try {
+    const sql = `
+      SELECT 
+        p.*,
+        c.name as client_name,
+        c.business_name as client_business_name,
+        v.name as vendor_name
+      FROM follow_up_prospects p
+      LEFT JOIN clients c ON p.client_id = c.id
+      LEFT JOIN vendors v ON p.vendor_id = v.id
+      WHERE p.is_completed = true
+      ORDER BY p.completed_date DESC
+    `;
+
+    const rows = await query(sql);
+    res.json(rows);
+  } catch (error) {
+    serverError(res, error, 'Error obteniendo prospectos completados');
+  }
+});
+
+// ======================================================
 // Búsqueda ligera de clientes (Autocomplete)
 app.get('/api/clients/search', authenticateRequest, async (req, res) => {
   const { q } = req.query;
@@ -1970,39 +1997,28 @@ app.get('/api/bans', authenticateRequest, async (req, res) => {
 app.post('/api/bans', authenticateRequest, async (req, res) => {
   const {
     client_id,
-    account_number,
-    address = null,
-    city = null,
-    zip_code = null,
-    vendor_id = null
+    ban_number,
+    description,
+    status
   } = req.body;
 
-  if (!client_id || !account_number) {
-    return res.status(400).json({ error: 'Cliente y número de cuenta son obligatorios' });
+  if (!client_id || !ban_number) {
+    return res.status(400).json({ error: 'Cliente y número de BAN son obligatorios' });
   }
 
   try {
     // Verificar si ya existe
-    const existing = await pool.query('SELECT id FROM bans WHERE account_number = $1', [account_number]);
+    const existing = await pool.query('SELECT id FROM bans WHERE ban_number = $1', [ban_number]);
     if (existing.rows.length > 0) {
-      return res.status(400).json({ error: 'El número de cuenta BAN ya existe' });
-    }
-
-    // Asignar vendedor si no viene
-    let finalVendorId = vendor_id;
-    if (!finalVendorId && req.user && req.user.salespersonId) {
-      const vendorRes = await pool.query('SELECT id FROM vendors WHERE salesperson_id = $1', [req.user.salespersonId]);
-      if (vendorRes.rows.length > 0) {
-        finalVendorId = vendorRes.rows[0].id;
-      }
+      return res.status(400).json({ error: 'El número de BAN ya existe' });
     }
 
     const result = await pool.query(
       `INSERT INTO bans
-      (client_id, account_number, address, city, zip_code, vendor_id, is_active, created_at, updated_at)
-      VALUES ($1,$2,$3,$4,$5,$6,1,NOW(),NOW())
+      (client_id, ban_number, description, status, is_active, created_at, updated_at)
+      VALUES ($1,$2,$3,$4,1,NOW(),NOW())
       RETURNING *`,
-      [client_id, account_number, address, city, zip_code, finalVendorId]
+      [client_id, ban_number, description, status || 'activo']
     );
 
     res.status(201).json(result.rows[0]);
@@ -2016,11 +2032,9 @@ app.post('/api/bans', authenticateRequest, async (req, res) => {
 app.put('/api/bans/:id', authenticateRequest, async (req, res) => {
   const { id } = req.params;
   const {
-    account_number,
-    address,
-    city,
-    zip_code,
-    vendor_id,
+    ban_number,
+    description,
+    status,
     is_active
   } = req.body;
 
@@ -2032,17 +2046,15 @@ app.put('/api/bans/:id', authenticateRequest, async (req, res) => {
 
     const result = await pool.query(
       `UPDATE bans
-      SET account_number = COALESCE($1, account_number),
-          address = COALESCE($2, address),
-          city = COALESCE($3, city),
-          zip_code = COALESCE($4, zip_code),
-          vendor_id = COALESCE($5, vendor_id),
-          is_active = COALESCE($6, is_active),
+      SET ban_number = COALESCE($1, ban_number),
+          description = COALESCE($2, description),
+          status = COALESCE($3, status),
+          is_active = COALESCE($4, is_active),
           updated_at = NOW()
-      WHERE id = $7
+      WHERE id = $5
       RETURNING *`,
       [
-        account_number, address, city, zip_code, vendor_id,
+        ban_number, description, status,
         is_active !== undefined ? (is_active ? 1 : 0) : undefined, id
       ]
     );
@@ -2229,6 +2241,11 @@ app.delete('/api/admin/clean-database', authenticateRequest, async (req, res) =>
     serverError(res, error, 'Error limpiando base de datos');
   }
 });
+
+// ======================================================
+// Endpoint de Diagnóstico (Health Check) - ANTES del Fallback
+// ======================================================
+app.get('/api/health/full', fullSystemCheck);
 
 // ======================================================
 // SPA Fallback

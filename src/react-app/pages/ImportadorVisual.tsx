@@ -1741,6 +1741,8 @@ export default function ImportadorVisual() {
                   <label className="block text-xs text-gray-400 mb-1">Fecha de Venta (Inicio)</label>
                   <input 
                     type="date"
+                    min="2020-01-01"
+                    max="2030-12-31"
                     value={activacionesMetadata.saleDate} 
                     onChange={e => handleSaleDateChange(e.target.value)}
                     className="w-full bg-neutral-900 border border-neutral-600 rounded px-3 py-2 text-white focus:border-blue-500 outline-none"

@@ -2580,39 +2580,17 @@ function ClientManagementModal({
 
       if (!response.ok) {
         const error = await response.json();
-        notify('error', error.error || "Error al actualizar el BAN");
+        setFormMessage({ type: 'error', text: error.error || "Error al actualizar el BAN" });
         throw new Error(error.error || "Error al actualizar el BAN");
       }
 
-      notify('success', `BAN ${data.ban_number} actualizado correctamente.`);
-      setShowBANModal(false);
+      setFormMessage({ type: 'success', text: `BAN ${data.ban_number} actualizado correctamente.` });
       setEditingBAN(null);
 
-      // Recargar BANs del cliente
-      if (selectedClientId) {
-        const bansResponse = await authFetch(`/api/bans?client_id=${selectedClientId}`);
-        if (bansResponse.ok) {
-          const fetchedBans: BAN[] = await bansResponse.json();
-
-          const bansWithSubscribers = await Promise.all(
-            fetchedBans.map(async (ban) => {
-              try {
-                const subscribersResponse = await authFetch(`/api/subscribers?ban_id=${ban.id}`);
-                if (subscribersResponse.ok) {
-                  const subscribers = await subscribersResponse.json();
-                  return { ...ban, subscribers };
-                }
-                return { ...ban, subscribers: [] };
-              } catch (error) {
-                return { ...ban, subscribers: [] };
-              }
-            })
-          );
-
-          setClientBANs(bansWithSubscribers);
-        }
+      // Recargar cliente
+      if (onRefreshClient) {
+        await onRefreshClient();
       }
-      refetchClients();
     } catch (error) {
       console.error("Error updating BAN:", error);
       throw error;
