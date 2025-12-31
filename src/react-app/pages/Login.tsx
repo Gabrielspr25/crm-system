@@ -1,10 +1,11 @@
 import { useState, useEffect } from "react";
-import { useNavigate, useLocation } from "react-router";
+import { useNavigate, useLocation, useSearchParams } from "react-router";
 import { login, getCurrentUser, setCurrentUser, logout } from "@/react-app/utils/auth";
 
 export default function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
   const redirectTo =
     (location.state as { from?: { pathname?: string } } | undefined)?.from?.pathname || "/";
 
@@ -12,13 +13,26 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sessionError, setSessionError] = useState<string | null>(null);
 
   useEffect(() => {
+    // Detectar si vino de un error de sesión
+    const reason = searchParams.get('reason');
+    if (reason) {
+      const messages: Record<string, string> = {
+        'session_expired': '⏰ Tu sesión expiró. Por favor, inicia sesión nuevamente.',
+        'token_invalid': '🔐 Tu token de autenticación no es válido. Por favor, inicia sesión nuevamente.',
+        'no_token': '⚠️ No hay sesión activa. Por favor, inicia sesión.',
+        'connection_error': '🌐 Hubo un problema de conexión. Por favor, intenta nuevamente.'
+      };
+      setSessionError(messages[reason] || 'Necesitas iniciar sesión nuevamente.');
+    }
+    
     const cachedUser = getCurrentUser();
-    if (cachedUser) {
+    if (cachedUser && !reason) {
       navigate(redirectTo, { replace: true });
     }
-  }, [navigate, redirectTo]);
+  }, [navigate, redirectTo, searchParams]);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -53,6 +67,13 @@ export default function LoginPage() {
             <h1 className="text-3xl font-bold text-white">VentasPro</h1>
             <p className="mt-2 text-sm text-slate-400">Ingresa tus credenciales para continuar</p>
           </div>
+
+          {/* Mostrar error de sesión expirada */}
+          {sessionError && (
+            <div className="mb-6 rounded-xl bg-orange-900/40 border border-orange-700 px-4 py-3 text-sm text-orange-200">
+              {sessionError}
+            </div>
+          )}
 
           <form onSubmit={handleSubmit} className="space-y-6">
             <div>

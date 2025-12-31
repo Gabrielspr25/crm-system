@@ -184,49 +184,61 @@ export const authFetch = async (
   }
 
   const url = endpoint.startsWith("http") ? endpoint : `${API_BASE_URL}${endpoint}`;
-  const requestInit: RequestInit = { ...restOptions, headers };
+  const requestInit: RequestInit = { ...restOptions, headers, timeout: 30000 };
 
   try {
     const response = await fetch(url, requestInit);
 
     if (response.status === 401) {
       if (token) {
-        // Intentar refrescar el token
+        // Intentar refrescar el token UNA SOLA VEZ
+        console.log("🔄 Token expirado, intentando refrescar...");
         const newToken = await refreshAuthToken();
         if (newToken) {
+          console.log("✅ Token refrescado exitosamente");
           const retryHeaders = new Headers(headers);
           retryHeaders.set("Authorization", `Bearer ${newToken}`);
           const retryResponse = await fetch(url, { ...requestInit, headers: retryHeaders });
-          // Si el retry también falla con 401, redirigir
+          
+          // Si el retry también falla con 401, logout definitivo
           if (retryResponse.status === 401) {
+            console.error("❌ La solicitud falló después de refrescar. Token inválido.");
             clearAuthToken();
             if (!window.location.pathname.includes('/login')) {
-              console.warn("⚠️ Token no pudo ser refrescado. Redirigiendo al login...");
-              window.location.href = '/login';
-              return retryResponse; // Retornar la respuesta pero la redirección ya está en curso
+              window.location.href = '/login?reason=token_invalid';
             }
+            return retryResponse;
           }
           return retryResponse;
-        }
-      }
-      // Si no hay token o no se pudo refrescar, limpiar y redirigir al login
-      clearAuthToken();
-      // Solo redirigir si no estamos ya en la página de login
-      if (!window.location.pathname.includes('/login')) {
-        console.warn("⚠️ Token inválido o expirado. No hay token en localStorage. Redirigiendo al login...");
-        // Mostrar mensaje más claro al usuario
-        if (typeof window !== 'undefined' && window.localStorage) {
-          const hadToken = !!localStorage.getItem('crm_token');
-          if (!hadToken) {
-            console.warn("💡 Solución: Inicia sesión nuevamente para obtener un nuevo token.");
+        } else {
+          console.warn("⚠️ No se pudo refrescar el token. Refresh token probablemente expirado.");
+          clearAuthToken();
+          if (!window.location.pathname.includes('/login')) {
+            // Mostrar error amigable
+            window.location.href = '/login?reason=session_expired';
           }
         }
-        window.location.href = '/login';
+      }
+      
+      // Sin token original
+      clearAuthToken();
+      if (!window.location.pathname.includes('/login')) {
+        console.warn("⚠️ No hay token. Redirigiendo al login...");
+        window.location.href = '/login?reason=no_token';
       }
     }
 
     return response;
   } catch (error) {
+    // Manejar errores de conexión/timeout
+    if (error instanceof TypeError) {
+      console.error("❌ Error de conexión:", error.message);
+      // Esto podría ser un timeout o desconexión de red
+      clearAuthToken();
+      if (!window.location.pathname.includes('/login')) {
+        window.location.href = '/login?reason=connection_error';
+      }
+    }
     console.error("Error en authFetch:", error);
     throw error;
   }
