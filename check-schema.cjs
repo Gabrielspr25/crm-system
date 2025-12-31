@@ -13,12 +13,23 @@ const pool = new Pool({
 async function checkSchema() {
   try {
     const client = await pool.connect();
-    const res = await client.query(`
-      SELECT column_name, is_nullable 
+    
+    const clients = await client.query(`
+      SELECT column_name 
       FROM information_schema.columns 
-      WHERE table_name = 'clients' AND column_name = 'name'
+      WHERE table_name = 'clients'
+      ORDER BY ordinal_position
     `);
-    console.log('Schema:', res.rows);
+    console.log('CLIENTS:', clients.rows.map(x => x.column_name).join(', '));
+    
+    const followup = await client.query(`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'follow_up_prospects'
+      ORDER BY ordinal_position
+    `);
+    console.log('FOLLOW_UP:', followup.rows.map(x => x.column_name).join(', '));
+    
     client.release();
   } catch (err) {
     console.error('Error:', err.message);

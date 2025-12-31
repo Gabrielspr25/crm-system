@@ -1,0 +1,84 @@
+-- Borrar planes existentes
+DELETE FROM plans;
+
+-- Insertar planes
+INSERT INTO plans (category_id, name, code, alpha_code, description, price, technology, installation_0m, installation_12m, installation_24m, activation_0m, activation_12m, activation_24m, penalty, is_active) 
+VALUES ((SELECT id FROM plan_categories WHERE code = '1PLAY'), 'BUS 500 MED BMS LP', 'A862', 'B500BMSLP', 'BUS 500 MED BMS LP', 19.99, 'COBRE', 120.0, 60.0, 0.0, 40.0, 20.0, 0.0, 200.0, true);
+INSERT INTO plans (category_id, name, code, alpha_code, description, price, technology, installation_0m, installation_12m, installation_24m, activation_0m, activation_12m, activation_24m, penalty, is_active) 
+VALUES ((SELECT id FROM plan_categories WHERE code = '1PLAY'), 'BUS 500 MED BMS LADD', 'A863', 'B500BMSAD', 'BUS 500 MED BMS LADD', 19.99, 'COBRE', 60.0, 30.0, 0.0, 40.0, 20.0, 0.0, 200.0, true);
+INSERT INTO plans (category_id, name, code, alpha_code, description, price, technology, installation_0m, installation_12m, installation_24m, activation_0m, activation_12m, activation_24m, penalty, is_active) 
+VALUES ((SELECT id FROM plan_categories WHERE code = '1PLAY'), 'BUS 500 MED BML LP', 'A864', 'B500BMLLP', 'BUS 500 MED BML LP', 19.99, 'COBRE', 130.0, 65.0, 0.0, 0, 0, 0, 200.0, true);
+INSERT INTO plans (category_id, name, code, alpha_code, description, price, technology, installation_0m, installation_12m, installation_24m, activation_0m, activation_12m, activation_24m, penalty, is_active) 
+VALUES ((SELECT id FROM plan_categories WHERE code = '1PLAY'), 'BUS 500 MED BML LADD', 'A865', 'B500BMLAD', 'BUS 500 MED BML LADD', 19.99, 'COBRE', 65.0, 32.5, 0.0, 0, 0, 0, 200.0, true);
+INSERT INTO plans (category_id, name, code, alpha_code, description, price, technology, installation_0m, installation_12m, installation_24m, activation_0m, activation_12m, activation_24m, penalty, is_active) 
+VALUES ((SELECT id FROM plan_categories WHERE code = '1PLAY'), 'GPON BUS 500 MED BMS LP', 'A866', 'GB500BMSLP', 'GPON BUS 500 MED BMS LP', 19.99, 'GPON', 120.0, 60.0, 0.0, 40.0, 20.0, 0.0, 200.0, true);
+INSERT INTO plans (category_id, name, code, alpha_code, description, price, technology, installation_0m, installation_12m, installation_24m, activation_0m, activation_12m, activation_24m, penalty, is_active) 
+VALUES ((SELECT id FROM plan_categories WHERE code = '1PLAY'), 'GPON BUS 500 MED BMS LADD', 'A867', 'GB500BMSAD', 'GPON BUS 500 MED BMS LADD', 19.99, 'GPON', 60.0, 30.0, 0.0, 40.0, 20.0, 0.0, 200.0, true);
+INSERT INTO plans (category_id, name, code, alpha_code, description, price, technology, installation_0m, installation_12m, installation_24m, activation_0m, activation_12m, activation_24m, penalty, is_active) 
+VALUES ((SELECT id FROM plan_categories WHERE code = '1PLAY'), 'GPON BUS 500 MED BML LP', 'A868', 'GB500BMLLP', 'GPON BUS 500 MED BML LP', 19.99, 'GPON', 130.0, 65.0, 0.0, 0, 0, 0, 200.0, true);
+INSERT INTO plans (category_id, name, code, alpha_code, description, price, technology, installation_0m, installation_12m, installation_24m, activation_0m, activation_12m, activation_24m, penalty, is_active) 
+VALUES ((SELECT id FROM plan_categories WHERE code = 'GENERAL'), 'Plan A869', 'A869', 'GB500BMLAD', '', 19.99, 'GPON', 65.0, 32.5, 0.0, 0, 0, 0, 200.0, true);
+INSERT INTO plans (category_id, name, code, alpha_code, description, price, technology, installation_0m, installation_12m, installation_24m, activation_0m, activation_12m, activation_24m, penalty, is_active) 
+VALUES ((SELECT id FROM plan_categories WHERE code = '1PLAY'), 'GPON BUS PR ILIM LP BMS', 'A147', 'G-BPRBMSLP', 'GPON BUS PR ILIM LP BMS', 29.99, 'GPON', 120.0, 60.0, 0.0, 40.0, 20.0, 0.0, 200.0, true);
+INSERT INTO plans (category_id, name, code, alpha_code, description, price, technology, installation_0m, installation_12m, installation_24m, activation_0m, activation_12m, activation_24m, penalty, is_active) 
+VALUES ((SELECT id FROM plan_categories WHERE code = '1PLAY'), 'GPON BUS PR ILIM LP BML', 'A148', 'G-BPRBMLLP', 'GPON BUS PR ILIM LP BML', 29.99, 'GPON', 130.0, 65.0, 0.0, 0.0, 0.0, 0.0, 200.0, true);
+INSERT INTO plans (category_id, name, code, alpha_code, description, price, technology, installation_0m, installation_12m, installation_24m, activation_0m, activation_12m, activation_24m, penalty, is_active) 
+VALUES ((SELECT id FROM plan_categories WHERE code = '1PLAY'), 'GPON BUS PR ILIM ADD BMS', 'A149', 'G-BPRADBMS', 'GPON BUS PR ILIM ADD BMS', 24.99, 'GPON', 60.0, 30.0, 0.0, 40.0, 20.0, 0.0, 200.0, true);
+INSERT INTO plans (category_id, name, code, alpha_code, description, price, technology, installation_0m, installation_12m, installation_24m, activation_0m, activation_12m, activation_24m, penalty, is_active) 
+VALUES ((SELECT id FROM plan_categories WHERE code = '1PLAY'), 'GPON BUS PR ILIM ADD BML', 'A150', 'G-BPRADBML', 'GPON BUS PR ILIM ADD BML', 24.99, 'GPON', 65.0, 32.5, 0.0, 0.0, 0.0, 0.0, 200.0, true);
+INSERT INTO plans (category_id, name, code, alpha_code, description, price, technology, installation_0m, installation_12m, installation_24m, activation_0m, activation_12m, activation_24m, penalty, is_active) 
+VALUES ((SELECT id FROM plan_categories WHERE code = '1PLAY'), 'GPON BUS LD US ILIMITADO (POR LíNEA)', 'A151', 'G-BLDUSUNL', 'GPON BUS LD US ILIMITADO (POR LíNEA)', 5.0, 'GPON', 0, 0, 0, 0, 0, 0, 0, true);
+INSERT INTO plans (category_id, name, code, alpha_code, description, price, technology, installation_0m, installation_12m, installation_24m, activation_0m, activation_12m, activation_24m, penalty, is_active) 
+VALUES ((SELECT id FROM plan_categories WHERE code = '1PLAY'), 'BUS TELE ENTRY SERV (BMS ONLY)', 'A801', 'BTENTRY', 'BUS TELE ENTRY SERV (BMS ONLY)', 19.99, 'COBRE', 120.0, 60.0, 0.0, 40.0, 20.0, 0.0, 200.0, true);
+INSERT INTO plans (category_id, name, code, alpha_code, description, price, technology, installation_0m, installation_12m, installation_24m, activation_0m, activation_12m, activation_24m, penalty, is_active) 
+VALUES ((SELECT id FROM plan_categories WHERE code = '1PLAY'), 'GPON BUS TELE ENTRY SERV (BMS ONLY)', 'A802', 'G-BTENTRY', 'GPON BUS TELE ENTRY SERV (BMS ONLY)', 19.99, 'GPON', 120.0, 60.0, 0.0, 40.0, 20.0, 0.0, 200.0, true);
+INSERT INTO plans (category_id, name, code, alpha_code, description, price, technology, installation_0m, installation_12m, installation_24m, activation_0m, activation_12m, activation_24m, penalty, is_active) 
+VALUES ((SELECT id FROM plan_categories WHERE code = '1PLAY'), 'BUS REMOTE CALL FWD PR NUM 6M (6 MESES)', 'A734', 'BRCFPR6', 'BUS REMOTE CALL FWD PR NUM 6M (6 MESES)', 24.99, 'COBRE', 0, 0, 0.0, 0, 0, 0, 50.0, true);
+INSERT INTO plans (category_id, name, code, alpha_code, description, price, technology, installation_0m, installation_12m, installation_24m, activation_0m, activation_12m, activation_24m, penalty, is_active) 
+VALUES ((SELECT id FROM plan_categories WHERE code = '1PLAY'), 'BUS REMOTE CALL FWD PR NUM 3M (3 MESES)', 'A735', 'BRCFPR3', 'BUS REMOTE CALL FWD PR NUM 3M (3 MESES)', 24.99, 'COBRE', 0, 25.0, 0, 0, 0, 0, 50.0, true);
+INSERT INTO plans (category_id, name, code, alpha_code, description, price, technology, installation_0m, installation_12m, installation_24m, activation_0m, activation_12m, activation_24m, penalty, is_active) 
+VALUES ((SELECT id FROM plan_categories WHERE code = '1PLAY'), 'BUS REMOTE CALL FWD PR NUM NC (0 MESES)', 'A736', 'BRCFPR0', 'BUS REMOTE CALL FWD PR NUM NC (0 MESES)', 24.99, 'COBRE', 50.0, 0, 0, 0, 0, 0, 50.0, true);
+INSERT INTO plans (category_id, name, code, alpha_code, description, price, technology, installation_0m, installation_12m, installation_24m, activation_0m, activation_12m, activation_24m, penalty, is_active) 
+VALUES ((SELECT id FROM plan_categories WHERE code = '1PLAY'), 'GPON BUS REMOTE CALL FWD PR NUM 6M (6 MESES)', 'A761', 'G-BRCFPR6', 'GPON BUS REMOTE CALL FWD PR NUM 6M (6 MESES)', 24.99, 'GPON', 0, 0, 0.0, 0, 0, 0, 50.0, true);
+INSERT INTO plans (category_id, name, code, alpha_code, description, price, technology, installation_0m, installation_12m, installation_24m, activation_0m, activation_12m, activation_24m, penalty, is_active) 
+VALUES ((SELECT id FROM plan_categories WHERE code = '1PLAY'), 'GPON BUS REMOTE CALL FWD PR NUM 3M (3 MESES)', 'A762', 'G-BRCFPR3', 'GPON BUS REMOTE CALL FWD PR NUM 3M (3 MESES)', 24.99, 'GPON', 0, 25.0, 0, 0, 0, 0, 50.0, true);
+INSERT INTO plans (category_id, name, code, alpha_code, description, price, technology, installation_0m, installation_12m, installation_24m, activation_0m, activation_12m, activation_24m, penalty, is_active) 
+VALUES ((SELECT id FROM plan_categories WHERE code = '1PLAY'), 'GPON BUS REMOTE CALL FWD PR NUM NC (0 MESES)', 'A763', 'G-BRCFPR0', 'GPON BUS REMOTE CALL FWD PR NUM NC (0 MESES)', 24.99, 'GPON', 50.0, 0, 0, 0, 0, 0, 50.0, true);
+INSERT INTO plans (category_id, name, code, alpha_code, description, price, technology, installation_0m, installation_12m, installation_24m, activation_0m, activation_12m, activation_24m, penalty, is_active) 
+VALUES ((SELECT id FROM plan_categories WHERE code = '1PLAY'), 'BUS REMOTE CALL FWD US NUM 6M (6 MESES)', 'A737', 'BRCFUS6', 'BUS REMOTE CALL FWD US NUM 6M (6 MESES)', 29.99, 'COBRE', 0, 0, 0.0, 0, 0, 0, 50.0, true);
+INSERT INTO plans (category_id, name, code, alpha_code, description, price, technology, installation_0m, installation_12m, installation_24m, activation_0m, activation_12m, activation_24m, penalty, is_active) 
+VALUES ((SELECT id FROM plan_categories WHERE code = '1PLAY'), 'BUS REMOTE CALL FWD US NUM 3M (3 MESES)', 'A738', 'BRCFUS3', 'BUS REMOTE CALL FWD US NUM 3M (3 MESES)', 29.99, 'COBRE', 0, 25.0, 0, 0, 0, 0, 50.0, true);
+INSERT INTO plans (category_id, name, code, alpha_code, description, price, technology, installation_0m, installation_12m, installation_24m, activation_0m, activation_12m, activation_24m, penalty, is_active) 
+VALUES ((SELECT id FROM plan_categories WHERE code = '1PLAY'), 'BUS REMOTE CALL FWD US NUM NC (0 MESES)', 'A739', 'BRCFUS0', 'BUS REMOTE CALL FWD US NUM NC (0 MESES)', 29.99, 'COBRE', 50.0, 0, 0, 0, 0, 0, 50.0, true);
+INSERT INTO plans (category_id, name, code, alpha_code, description, price, technology, installation_0m, installation_12m, installation_24m, activation_0m, activation_12m, activation_24m, penalty, is_active) 
+VALUES ((SELECT id FROM plan_categories WHERE code = '1PLAY'), 'GPON BUS REMOTE CALL FWD US NUM 6M (6 MESES)', 'A798', 'G-BRCFUS6', 'GPON BUS REMOTE CALL FWD US NUM 6M (6 MESES)', 29.99, 'GPON', 0, 0, 0.0, 0, 0, 0, 50.0, true);
+INSERT INTO plans (category_id, name, code, alpha_code, description, price, technology, installation_0m, installation_12m, installation_24m, activation_0m, activation_12m, activation_24m, penalty, is_active) 
+VALUES ((SELECT id FROM plan_categories WHERE code = '1PLAY'), 'GPON BUS REMOTE CALL FWD US NUM 3M (3 MESES)', 'A799', 'G-BRCFUS3', 'GPON BUS REMOTE CALL FWD US NUM 3M (3 MESES)', 29.99, 'GPON', 0, 25.0, 0, 0, 0, 0, 50.0, true);
+INSERT INTO plans (category_id, name, code, alpha_code, description, price, technology, installation_0m, installation_12m, installation_24m, activation_0m, activation_12m, activation_24m, penalty, is_active) 
+VALUES ((SELECT id FROM plan_categories WHERE code = '1PLAY'), 'GPON BUS REMOTE CALL FWD US NUM NC (0 MESES)', 'A800', 'G-BRCFUS0', 'GPON BUS REMOTE CALL FWD US NUM NC (0 MESES)', 29.99, 'GPON', 50.0, 0, 0, 0, 0, 0, 50.0, true);
+INSERT INTO plans (category_id, name, code, alpha_code, description, price, technology, installation_0m, installation_12m, installation_24m, activation_0m, activation_12m, activation_24m, penalty, is_active) 
+VALUES ((SELECT id FROM plan_categories WHERE code = 'TV'), '1er STB GRATIS CONTRATO 24 MESES', '40942H', '2YROFF', '1er STB GRATIS CONTRATO 24 MESES', 0.0, 'COBRE', 0, 0, 0, 0, 0, 0, 40.0, true);
+INSERT INTO plans (category_id, name, code, alpha_code, description, price, technology, installation_0m, installation_12m, installation_24m, activation_0m, activation_12m, activation_24m, penalty, is_active) 
+VALUES ((SELECT id FROM plan_categories WHERE code = 'TV'), '1er STB GRATIS CONTRATO 12 MESES', '40942H', '1YROFF', '1er STB GRATIS CONTRATO 12 MESES', 0.0, 'COBRE', 0, 0, 0, 0, 0, 0, 40.0, true);
+INSERT INTO plans (category_id, name, code, alpha_code, description, price, technology, installation_0m, installation_12m, installation_24m, activation_0m, activation_12m, activation_24m, penalty, is_active) 
+VALUES ((SELECT id FROM plan_categories WHERE code = 'TV'), '1er STB GRATIS SIN CONTRATO Y CON PENALIDAD', '40942H', 'STBOFF', '1er STB GRATIS SIN CONTRATO Y CON PENALIDAD', 40.0, 'COBRE', 0, 0, 0, 0, 0, 0, 40.0, true);
+INSERT INTO plans (category_id, name, code, alpha_code, description, price, technology, installation_0m, installation_12m, installation_24m, activation_0m, activation_12m, activation_24m, penalty, is_active) 
+VALUES ((SELECT id FROM plan_categories WHERE code = 'TV'), 'STB FULL PRICE CLIENTES CON CONTRATO', '40942H', 'CASH', 'STB FULL PRICE CLIENTES CON CONTRATO', 40.0, 'COBRE', 0, 0, 0, 0, 0, 0, 0, true);
+INSERT INTO plans (category_id, name, code, alpha_code, description, price, technology, installation_0m, installation_12m, installation_24m, activation_0m, activation_12m, activation_24m, penalty, is_active) 
+VALUES ((SELECT id FROM plan_categories WHERE code = 'TV'), 'STB FULL PRICE CLIENTES SIN CONTRATO', '40942H', 'NOCONT', 'STB FULL PRICE CLIENTES SIN CONTRATO', 40.0, 'COBRE', 0, 0, 0, 0, 0, 0, 0, true);
+INSERT INTO plans (category_id, name, code, alpha_code, description, price, technology, installation_0m, installation_12m, installation_24m, activation_0m, activation_12m, activation_24m, penalty, is_active) 
+VALUES ((SELECT id FROM plan_categories WHERE code = 'TV'), 'STB FINANCIADO 24 MESES CLIENTES CON CONTRATO', '40942H', 'FINA24', 'STB FINANCIADO 24 MESES CLIENTES CON CONTRATO', 40.0, 'COBRE', 0, 0, 0, 0, 0, 1.67, 0, true);
+INSERT INTO plans (category_id, name, code, alpha_code, description, price, technology, installation_0m, installation_12m, installation_24m, activation_0m, activation_12m, activation_24m, penalty, is_active) 
+VALUES ((SELECT id FROM plan_categories WHERE code = 'TV'), 'STB FINANCIADO 12 MESES CLIENTES CON CONTRATO', '40942H', 'FINA12', 'STB FINANCIADO 12 MESES CLIENTES CON CONTRATO', 40.0, 'COBRE', 0, 0, 0, 0, 3.33, 0, 0, true);
+INSERT INTO plans (category_id, name, code, alpha_code, description, price, technology, installation_0m, installation_12m, installation_24m, activation_0m, activation_12m, activation_24m, penalty, is_active) 
+VALUES ((SELECT id FROM plan_categories WHERE code = 'TV'), 'DONGLE 4K - FULL PRICE CLIENTES CON/SIN CONTRATO', '80105H', 'CASH', 'DONGLE 4K - FULL PRICE CLIENTES CON/SIN CONTRATO', 30.0, 'COBRE', 0, 0, 0, 0, 0, 0, 0, true);
+INSERT INTO plans (category_id, name, code, alpha_code, description, price, technology, installation_0m, installation_12m, installation_24m, activation_0m, activation_12m, activation_24m, penalty, is_active) 
+VALUES ((SELECT id FROM plan_categories WHERE code = 'TV'), 'DONGLE 4K - FINANCIADO 24M CLIENTES C/CONTRATO', '80105H', 'FINA24', 'DONGLE 4K - FINANCIADO 24M CLIENTES C/CONTRATO', 30.0, 'COBRE', 0, 0, 0, 0, 0, 1.25, 0, true);
+INSERT INTO plans (category_id, name, code, alpha_code, description, price, technology, installation_0m, installation_12m, installation_24m, activation_0m, activation_12m, activation_24m, penalty, is_active) 
+VALUES ((SELECT id FROM plan_categories WHERE code = 'TV'), 'DONGLE 4K - FINANCIADO 12M CLIENTES C/CONTRATO', '80105H', 'FINA12', 'DONGLE 4K - FINANCIADO 12M CLIENTES C/CONTRATO', 30.0, 'COBRE', 0, 0, 0, 0, 2.5, 0, 0, true);
+INSERT INTO plans (category_id, name, code, alpha_code, description, price, technology, installation_0m, installation_12m, installation_24m, activation_0m, activation_12m, activation_24m, penalty, is_active) 
+VALUES ((SELECT id FROM plan_categories WHERE code = 'GENERAL'), '1er CONTROL REMOTO GRATIS (o STB adicional)', '40941H', 'CERO', '1er CONTROL REMOTO GRATIS (o STB adicional)', 0.0, 'COBRE', 0, 0, 0, 0, 0, 0, 6.0, true);
+INSERT INTO plans (category_id, name, code, alpha_code, description, price, technology, installation_0m, installation_12m, installation_24m, activation_0m, activation_12m, activation_24m, penalty, is_active) 
+VALUES ((SELECT id FROM plan_categories WHERE code = 'GENERAL'), '2do CONTROL REMOTO EN ADELANTE (REEMPLAZO)', '40941H', 'CASH', '2do CONTROL REMOTO EN ADELANTE (REEMPLAZO)', 6.0, 'COBRE', 0, 0, 0, 0, 0, 0, 0, true);
+INSERT INTO plans (category_id, name, code, alpha_code, description, price, technology, installation_0m, installation_12m, installation_24m, activation_0m, activation_12m, activation_24m, penalty, is_active) 
+VALUES ((SELECT id FROM plan_categories WHERE code = 'GENERAL'), 'NO GUIA', 'A714', 'UNLISTIVP', 'NO GUIA', 3.5, 'COBRE', 0, 0, 0, 0, 0, 0, 0, true);

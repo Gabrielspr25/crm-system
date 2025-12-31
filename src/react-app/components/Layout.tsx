@@ -14,7 +14,8 @@ import {
   Moon,
   Upload,
   Target,
-  Mail
+  Mail,
+  Layers
 } from "lucide-react";
 import { useTheme } from "@/react-app/hooks/useTheme";
 import { getCurrentRole, getCurrentUser, clearAuthToken } from "@/react-app/utils/auth";
@@ -34,6 +35,7 @@ const navigation: NavItem[] = [
   { name: "Clientes", href: "/", icon: Users, roles: ["admin", "supervisor", "vendedor"] },
   { name: "Seguimiento", href: "/seguimiento", icon: PhoneCall, roles: ["admin", "supervisor", "vendedor"] },
   { name: "Reportes", href: "/reportes", icon: BarChart3, roles: ["admin", "supervisor", "vendedor"] },
+  { name: "Tarifas", href: "/tarifas", icon: Layers, roles: ["admin", "supervisor", "vendedor"] },
   { name: "Referidos", href: "/referidos", icon: Users, roles: ["admin", "supervisor", "vendedor"] },
   { name: "Correos", href: "/correos", icon: Mail, roles: ["admin", "supervisor", "vendedor"] },
   { name: "Vendedores", href: "/vendedores", icon: Building2, roles: ["admin", "supervisor"] },

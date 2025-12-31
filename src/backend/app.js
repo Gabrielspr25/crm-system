@@ -8,6 +8,7 @@ import authRoutes from './routes/authRoutes.js';
 import userRoutes from './routes/userRoutes.js';
 import clientRoutes from './routes/clientRoutes.js';
 import vendorRoutes from './routes/vendorRoutes.js';
+import categoryRoutes from './routes/categoryRoutes.js'; // New Import
 import banRoutes from './routes/banRoutes.js';
 import subscriberRoutes from './routes/subscriberRoutes.js';
 import followUpRoutes from './routes/followUpRoutes.js';
@@ -27,6 +28,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/clients', clientRoutes);
 app.use('/api/vendors', vendorRoutes);
+app.use('/api/categories', categoryRoutes); // New Route
 app.use('/api/bans', banRoutes);
 app.use('/api/subscribers', subscriberRoutes);
 app.use('/api/follow-up-prospects', followUpRoutes);

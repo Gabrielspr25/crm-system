@@ -1,2 +1,2 @@
-export const APP_VERSION = "v5.1.93-CORREOS-MODULO";
-export const BUILD_LABEL = "PRODUCTION FINAL";
+export const APP_VERSION = '2025-6';
+export const BUILD_LABEL = "v2025-6 - Tabs Configuration Fix";

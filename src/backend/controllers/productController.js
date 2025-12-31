@@ -3,10 +3,97 @@ import { serverError } from '../middlewares/errorHandler.js';
 
 export const getProducts = async (req, res) => {
     try {
-        const products = await query('SELECT * FROM products ORDER BY name ASC');
-        res.json(products);
+        const products = await query(`
+            SELECT p.*, c.name as category_name, c.color_hex as category_color 
+            FROM products p 
+            LEFT JOIN categories c ON p.category_id = c.id 
+            ORDER BY p.name ASC
+        `);
+        res.json(products.rows);
     } catch (error) {
         serverError(res, error, 'Error obteniendo productos');
+    }
+};
+
+export const createProduct = async (req, res) => {
+    const {
+        name, category_id, description, base_price,
+        commission_percentage, is_recurring, billing_cycle,
+        price, monthly_goal // Legacy fields support
+    } = req.body;
+
+    try {
+        // Use either base_price or price (legacy support)
+        const finalPrice = base_price !== undefined ? base_price : price;
+
+        const result = await query(
+            `INSERT INTO products (
+                name, category_id, description, 
+                base_price, commission_percentage, 
+                is_recurring, billing_cycle,
+                price, monthly_goal,
+                created_at, updated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW()) RETURNING *`,
+            [
+                name, category_id, description,
+                finalPrice, commission_percentage,
+                is_recurring ? 1 : 0, billing_cycle,
+                finalPrice, monthly_goal || 0
+            ]
+        );
+        res.status(201).json(result.rows[0]);
+    } catch (error) {
+        serverError(res, error, 'Error creando producto');
+    }
+};
+
+export const updateProduct = async (req, res) => {
+    const { id } = req.params;
+    const {
+        name, category_id, description, base_price,
+        commission_percentage, is_recurring, billing_cycle,
+        price, monthly_goal
+    } = req.body;
+
+    try {
+        const finalPrice = base_price !== undefined ? base_price : price;
+
+        const result = await query(
+            `UPDATE products SET 
+                name = $1, category_id = $2, description = $3, 
+                base_price = $4, commission_percentage = $5, 
+                is_recurring = $6, billing_cycle = $7,
+                price = $8, monthly_goal = $9,
+                updated_at = NOW() 
+            WHERE id = $10 RETURNING *`,
+            [
+                name, category_id, description,
+                finalPrice, commission_percentage,
+                is_recurring ? 1 : 0, billing_cycle,
+                finalPrice, monthly_goal || 0,
+                id
+            ]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Producto no encontrado' });
+        }
+        res.json(result.rows[0]);
+    } catch (error) {
+        serverError(res, error, 'Error actualizando producto');
+    }
+};
+
+export const deleteProduct = async (req, res) => {
+    const { id } = req.params;
+    try {
+        const result = await query('DELETE FROM products WHERE id = $1 RETURNING id', [id]);
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Producto no encontrado' });
+        }
+        res.json({ message: 'Producto eliminado correctamente' });
+    } catch (error) {
+        serverError(res, error, 'Error eliminando producto');
     }
 };
 

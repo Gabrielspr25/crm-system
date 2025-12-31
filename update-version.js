@@ -9,9 +9,9 @@ const versionFilePath = path.join(__dirname, 'src', 'version.ts');
 
 try {
     let content = fs.readFileSync(versionFilePath, 'utf8');
-    
-    // Regex to find the version string: export const APP_VERSION = "v5.1.68-NO-REFERIDO";
-    const versionRegex = /export const APP_VERSION = "v(\d+)\.(\d+)\.(\d+)(.*)";/;
+
+    // Regex to find the version string: export const APP_VERSION = 'v5.1.68-NO-REFERIDO';
+    const versionRegex = /export const APP_VERSION = ["']v(\d+)\.(\d+)\.(\d+)(.*)["'];/;
     const match = content.match(versionRegex);
 
     if (match) {
@@ -24,7 +24,9 @@ try {
         patch++;
 
         const newVersion = `v${major}.${minor}.${patch}${suffix}`;
-        const newContent = content.replace(versionRegex, `export const APP_VERSION = "${newVersion}";`);
+        // Detect used quote
+        const quote = content.match(versionRegex)[0].includes("'") ? "'" : '"';
+        const newContent = content.replace(versionRegex, `export const APP_VERSION = ${quote}${newVersion}${quote};`);
 
         fs.writeFileSync(versionFilePath, newContent, 'utf8');
         console.log(`✅ Versión actualizada en src/version.ts: ${match[0]} -> ${newVersion}`);

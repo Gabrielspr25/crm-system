@@ -1,5 +1,5 @@
 // Service Worker para forzar actualizaciones
-const CACHE_VERSION = 'v5.1.13';
+const CACHE_NAME = 'crm-pro-v5.2.7';
 
 self.addEventListener('install', (event) => {
   // Forzar activación inmediata

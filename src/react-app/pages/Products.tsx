@@ -50,7 +50,7 @@ export default function Products() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     try {
       const payload = {
         ...formData,
@@ -140,7 +140,7 @@ export default function Products() {
   if (productsLoading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="text-lg text-gray-600">Cargando productos...</div>
+        <div className="text-lg text-gray-600 dark:text-gray-300">Cargando productos...</div>
       </div>
     );
   }
@@ -150,8 +150,8 @@ export default function Products() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Productos</h1>
-          <p className="text-gray-600 mt-1">Gestiona tu catálogo de productos</p>
+          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Productos</h1>
+          <p className="text-gray-600 dark:text-gray-400 mt-1">Gestiona tu catálogo de productos</p>
         </div>
         <button
           onClick={() => {
@@ -174,32 +174,32 @@ export default function Products() {
           placeholder="Buscar productos..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
-          className="w-full pl-10 pr-4 py-2 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-800 text-gray-100"
+          className="w-full pl-10 pr-4 py-2 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-slate-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-300"
         />
       </div>
 
       {/* Products Grid */}
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
         {filteredProducts.map((product) => (
-          <div key={product.id} className="bg-gray-100 rounded-xl shadow-lg border border-gray-200 hover:shadow-xl transition-shadow duration-200">
+          <div key={product.id} className="bg-white dark:bg-slate-800 rounded-xl shadow-lg border border-gray-200 dark:border-slate-700 hover:shadow-xl transition-shadow duration-200">
             <div className="p-6">
               <div className="flex items-start justify-between mb-4">
                 <div className="flex items-center">
-                  <div 
+                  <div
                     className="p-2 rounded-lg"
-                    style={{ 
+                    style={{
                       backgroundColor: product.category_color ? `${product.category_color}20` : "#3B82F620"
                     }}
                   >
-                    <Package 
-                      className="w-5 h-5" 
+                    <Package
+                      className="w-5 h-5"
                       style={{ color: product.category_color || "#3B82F6" }}
                     />
                   </div>
                   <div className="ml-3">
-                    <h3 className="text-lg font-semibold text-gray-900">{product.name}</h3>
+                    <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{product.name}</h3>
                     {product.category_name && (
-                      <span 
+                      <span
                         className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium text-white mt-1"
                         style={{ backgroundColor: product.category_color || "#3B82F6" }}
                       >
@@ -211,13 +211,13 @@ export default function Products() {
                 <div className="flex space-x-1">
                   <button
                     onClick={() => handleEdit(product)}
-                    className="p-2 text-gray-400 hover:text-blue-600 transition-colors"
+                    className="p-2 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
                   >
                     <Edit className="w-4 h-4" />
                   </button>
                   <button
                     onClick={() => handleDelete(product)}
-                    className="p-2 text-gray-400 hover:text-red-600 transition-colors"
+                    className="p-2 text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
@@ -226,11 +226,11 @@ export default function Products() {
 
               <div className="space-y-2">
                 {product.description && (
-                  <p className="text-sm text-gray-600">{product.description}</p>
+                  <p className="text-sm text-gray-600 dark:text-gray-300">{product.description}</p>
                 )}
-                
+
                 {product.base_price && (
-                  <div className="flex items-center text-sm text-gray-600">
+                  <div className="flex items-center text-sm text-gray-600 dark:text-gray-300">
                     <DollarSign className="w-4 h-4 mr-1" />
                     <span className="font-medium">Precio base:</span>
                     <span className="ml-1">${product.base_price.toLocaleString()}</span>
@@ -238,23 +238,23 @@ export default function Products() {
                 )}
 
                 {product.commission_percentage && (
-                  <div className="text-sm text-gray-600">
+                  <div className="text-sm text-gray-600 dark:text-gray-300">
                     <span className="font-medium">Comisión:</span> {product.commission_percentage}%
                   </div>
                 )}
 
                 {product.is_recurring && (
-                  <div className="text-sm text-green-600">
+                  <div className="text-sm text-green-600 dark:text-green-400">
                     <span className="font-medium">Facturación:</span> {
                       product.billing_cycle === "monthly" ? "Mensual" :
-                      product.billing_cycle === "quarterly" ? "Trimestral" :
-                      product.billing_cycle === "yearly" ? "Anual" : "Recurrente"
+                        product.billing_cycle === "quarterly" ? "Trimestral" :
+                          product.billing_cycle === "yearly" ? "Anual" : "Recurrente"
                     }
                   </div>
                 )}
               </div>
 
-              <div className="mt-4 text-xs text-gray-500">
+              <div className="mt-4 text-xs text-gray-500 dark:text-gray-400">
                 Creado: {new Date(product.created_at).toLocaleDateString('es-ES')}
               </div>
             </div>
@@ -265,8 +265,8 @@ export default function Products() {
       {filteredProducts.length === 0 && (
         <div className="text-center py-12">
           <Package className="mx-auto h-12 w-12 text-gray-400" />
-          <h3 className="mt-2 text-sm font-medium text-gray-900">No hay productos</h3>
-          <p className="mt-1 text-sm text-gray-500">
+          <h3 className="mt-2 text-sm font-medium text-gray-900 dark:text-white">No hay productos</h3>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
             {searchTerm ? "No se encontraron productos con ese criterio" : "Comienza agregando un nuevo producto"}
           </p>
         </div>
@@ -275,14 +275,14 @@ export default function Products() {
       {/* Modal */}
       {showModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-gray-100 rounded-xl shadow-2xl p-6 w-full max-w-md mx-4 max-h-[90vh] overflow-y-auto">
-            <h2 className="text-xl font-bold text-gray-900 mb-4">
+          <div className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl p-6 w-full max-w-md mx-4 max-h-[90vh] overflow-y-auto">
+            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">
               {editingProduct ? "Editar Producto" : "Nuevo Producto"}
             </h2>
-            
+
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                   Nombre *
                 </label>
                 <input
@@ -290,18 +290,18 @@ export default function Products() {
                   required
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-800 text-gray-100"
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                   Categoría
                 </label>
                 <select
                   value={formData.category_id}
                   onChange={(e) => setFormData({ ...formData, category_id: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-800 text-gray-100"
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
                 >
                   <option value="">Seleccionar categoría</option>
                   {(categories || []).map((category) => (
@@ -313,19 +313,19 @@ export default function Products() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                   Descripción
                 </label>
                 <textarea
                   value={formData.description}
                   onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                   rows={3}
-                  className="w-full px-3 py-2 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-800 text-gray-100"
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                   Precio Base
                 </label>
                 <input
@@ -333,12 +333,12 @@ export default function Products() {
                   step="0.01"
                   value={formData.base_price}
                   onChange={(e) => setFormData({ ...formData, base_price: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-800 text-gray-100"
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                   Porcentaje de Comisión
                 </label>
                 <input
@@ -348,7 +348,7 @@ export default function Products() {
                   max="100"
                   value={formData.commission_percentage}
                   onChange={(e) => setFormData({ ...formData, commission_percentage: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-800 text-gray-100"
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
                 />
               </div>
 
@@ -358,22 +358,22 @@ export default function Products() {
                   id="is_recurring"
                   checked={formData.is_recurring}
                   onChange={(e) => setFormData({ ...formData, is_recurring: e.target.checked })}
-                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 dark:border-slate-600 rounded bg-white dark:bg-slate-700"
                 />
-                <label htmlFor="is_recurring" className="ml-2 block text-sm text-gray-700">
+                <label htmlFor="is_recurring" className="ml-2 block text-sm text-gray-700 dark:text-gray-300">
                   Facturación recurrente
                 </label>
               </div>
 
               {formData.is_recurring && (
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                     Ciclo de Facturación
                   </label>
                   <select
                     value={formData.billing_cycle}
                     onChange={(e) => setFormData({ ...formData, billing_cycle: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-800 text-gray-100"
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
                   >
                     <option value="monthly">Mensual</option>
                     <option value="quarterly">Trimestral</option>
@@ -390,7 +390,7 @@ export default function Products() {
                     setEditingProduct(null);
                     resetForm();
                   }}
-                  className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+                  className="px-4 py-2 text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-slate-700 rounded-lg hover:bg-gray-200 dark:hover:bg-slate-600 transition-colors"
                 >
                   Cancelar
                 </button>

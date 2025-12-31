@@ -9,7 +9,11 @@ import {
   Save,
   Trash2,
   Edit2,
-  Mail
+  Mail,
+  Bell,
+  Calendar,
+  Phone,
+  X
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -26,9 +30,12 @@ export default function ReferidosPage() {
   const [data, setData] = useState(initialData);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isStatusModalOpen, setIsStatusModalOpen] = useState(false);
+  const [isCalendarOpen, setIsCalendarOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('Todos');
+  const [todayAlerts, setTodayAlerts] = useState<any[]>([]);
+  const [showAlerts, setShowAlerts] = useState(false);
 
   // Status Management State
   const [statuses, setStatuses] = useState([
@@ -57,6 +64,24 @@ export default function ReferidosPage() {
     loadReferidos();
   }, []);
 
+  // Verificar alertas del día cuando cambia la data
+  useEffect(() => {
+    checkTodayAlerts();
+  }, [data]);
+
+  const checkTodayAlerts = () => {
+    const today = new Date().toISOString().split('T')[0];
+    const alertsForToday = data.filter(item => {
+      if (!item.fecha) return false;
+      const itemDate = new Date(item.fecha).toISOString().split('T')[0];
+      return itemDate === today && item.estado !== 'Completado';
+    });
+    setTodayAlerts(alertsForToday);
+    if (alertsForToday.length > 0) {
+      setShowAlerts(true);
+    }
+  };
+
   const loadReferidos = async () => {
     try {
       const res = await authFetch('/api/referidos');
@@ -72,7 +97,7 @@ export default function ReferidosPage() {
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value, type } = e.target;
     const checked = (e.target as HTMLInputElement).checked;
-    
+
     setFormData(prev => ({
       ...prev,
       [name]: type === 'checkbox' ? checked : value
@@ -82,29 +107,29 @@ export default function ReferidosPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-        if (editingId) {
-            const res = await authFetch(`/api/referidos/${editingId}`, {
-                method: 'PUT',
-                body: JSON.stringify(formData)
-            });
-            if (res.ok) {
-                const updated = await res.json();
-                setData(prev => prev.map(item => item.id === editingId ? updated : item));
-                closeModal();
-            }
-        } else {
-            const res = await authFetch('/api/referidos', {
-                method: 'POST',
-                body: JSON.stringify(formData)
-            });
-            if (res.ok) {
-                const created = await res.json();
-                setData(prev => [created, ...prev]);
-                closeModal();
-            }
+      if (editingId) {
+        const res = await authFetch(`/api/referidos/${editingId}`, {
+          method: 'PUT',
+          body: JSON.stringify(formData)
+        });
+        if (res.ok) {
+          const updated = await res.json();
+          setData(prev => prev.map(item => item.id === editingId ? updated : item));
+          closeModal();
         }
+      } else {
+        const res = await authFetch('/api/referidos', {
+          method: 'POST',
+          body: JSON.stringify(formData)
+        });
+        if (res.ok) {
+          const created = await res.json();
+          setData(prev => [created, ...prev]);
+          closeModal();
+        }
+      }
     } catch (error) {
-        console.error("Error saving", error);
+      console.error("Error saving", error);
     }
   };
 
@@ -155,12 +180,12 @@ export default function ReferidosPage() {
   const handleDelete = async (id: number) => {
     if (confirm('¿Estás seguro de eliminar este registro?')) {
       try {
-          const res = await authFetch(`/api/referidos/${id}`, { method: 'DELETE' });
-          if (res.ok) {
-              setData(prev => prev.filter(item => item.id !== id));
-          }
+        const res = await authFetch(`/api/referidos/${id}`, { method: 'DELETE' });
+        if (res.ok) {
+          setData(prev => prev.filter(item => item.id !== id));
+        }
       } catch (error) {
-          console.error("Error deleting", error);
+        console.error("Error deleting", error);
       }
     }
   };
@@ -183,35 +208,133 @@ export default function ReferidosPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-200 font-sans transition-colors duration-200">
-      {/* Header - Removed as it is now part of Layout */}
-      <div className="bg-white dark:bg-slate-900 shadow-sm rounded-lg mb-6 p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <div className="bg-indigo-600 p-2 rounded-lg">
-              <User className="w-5 h-5 text-white" />
-            </div>
-            <h1 className="text-xl font-bold text-slate-900 dark:text-white">Gestión de Referidos</h1>
-          </div>
 
-          <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+      {/* Alerta de Recordatorios del Día */}
+      {showAlerts && todayAlerts.length > 0 && (
+        <div className="fixed top-4 right-4 z-50 w-96 bg-amber-50 dark:bg-amber-900/90 border border-amber-200 dark:border-amber-700 rounded-xl shadow-2xl overflow-hidden animate-pulse">
+          <div className="bg-amber-500 dark:bg-amber-600 px-4 py-3 flex items-center justify-between">
+            <div className="flex items-center gap-2 text-white font-bold">
+              <Bell className="w-5 h-5 animate-bounce" />
+              <span>🔔 Llamados de Hoy ({todayAlerts.length})</span>
+            </div>
             <button
-              onClick={() => setIsStatusModalOpen(true)}
-              className="hidden sm:flex px-4 py-2 text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
+              onClick={() => setShowAlerts(false)}
+              className="text-white/80 hover:text-white transition-colors"
             >
-              Gestionar Estados
-            </button>
-            <button
-              onClick={() => openModal()}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors shadow-sm hover:shadow-md active:scale-95 duration-150"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Nuevo Registro</span>
+              <X className="w-5 h-5" />
             </button>
           </div>
+          <div className="max-h-80 overflow-y-auto">
+            {todayAlerts.map((item, idx) => (
+              <div
+                key={item.id}
+                className={cn(
+                  "px-4 py-3 flex items-center justify-between hover:bg-amber-100 dark:hover:bg-amber-800/50 transition-colors cursor-pointer",
+                  idx !== todayAlerts.length - 1 && "border-b border-amber-200 dark:border-amber-700"
+                )}
+                onClick={() => {
+                  openModal(item);
+                  setShowAlerts(false);
+                }}
+              >
+                <div className="flex-1">
+                  <div className="font-semibold text-amber-900 dark:text-amber-100">{item.nombre}</div>
+                  <div className="text-xs text-amber-700 dark:text-amber-300 flex items-center gap-2 mt-1">
+                    <Phone className="w-3 h-3" />
+                    <span>{item.tipo} - {item.modelo || 'Sin producto'}</span>
+                  </div>
+                  {item.notas && (
+                    <div className="text-xs text-amber-600 dark:text-amber-400 mt-1 truncate max-w-[250px]">
+                      📝 {item.notas}
+                    </div>
+                  )}
+                </div>
+                <div className="flex flex-col items-end gap-1">
+                  <span className={cn(
+                    "px-2 py-0.5 rounded text-[10px] font-bold",
+                    getStatusColor(item.estado)
+                  )}>
+                    {item.estado}
+                  </span>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openModal(item);
+                      setShowAlerts(false);
+                    }}
+                    className="text-xs text-amber-600 dark:text-amber-300 hover:underline flex items-center gap-1"
+                  >
+                    <Edit2 className="w-3 h-3" /> Gestionar
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="px-4 py-2 bg-amber-100 dark:bg-amber-800/50 text-xs text-amber-700 dark:text-amber-300 text-center">
+            <Calendar className="w-3 h-3 inline mr-1" />
+            {new Date().toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+          </div>
+        </div>
+      )}
+
+      {/* Header */}
+      <div className="bg-white dark:bg-slate-900 shadow-sm rounded-lg mb-6 p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-2">
+          <div className="bg-indigo-600 p-2 rounded-lg">
+            <User className="w-5 h-5 text-white" />
+          </div>
+          <h1 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
+            Gestión de Referidos
+            <span className="text-[10px] bg-slate-200 dark:bg-slate-700 px-2 py-0.5 rounded-full text-slate-600 dark:text-slate-300 font-normal">v2.1-CALENDAR</span>
+          </h1>
+        </div>
+
+        <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+          {/* Botón de Alertas */}
+          <button
+            onClick={() => setShowAlerts(!showAlerts)}
+            className={cn(
+              "relative px-3 py-2 rounded-lg flex items-center gap-2 transition-colors",
+              todayAlerts.length > 0
+                ? "bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-900/50 dark:text-amber-300 dark:hover:bg-amber-900/70"
+                : "text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
+            )}
+            title="Llamados del día"
+          >
+            <Bell className={cn("w-5 h-5", todayAlerts.length > 0 && "animate-bounce")} />
+            {todayAlerts.length > 0 && (
+              <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center">
+                {todayAlerts.length}
+              </span>
+            )}
+          </button>
+
+          <button
+            onClick={() => setIsCalendarOpen(true)}
+            className="p-2 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-600 transition-colors"
+            title="Calendario"
+          >
+            <Calendar className="w-5 h-5" />
+          </button>
+
+          <button
+            onClick={() => setIsStatusModalOpen(true)}
+            className="hidden sm:flex px-4 py-2 text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
+          >
+            Gestionar Estados
+          </button>
+          <button
+            onClick={() => openModal()}
+            className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors shadow-sm hover:shadow-md active:scale-95 duration-150"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Nuevo Registro</span>
+          </button>
+        </div>
       </div>
 
       {/* Main Content */}
-      <div className="max-w-7xl mx-auto">
-
+      <div className="w-full">
         {/* Search and Filter Bar */}
         <div className="mb-6 flex flex-col sm:flex-row gap-4 justify-between items-center">
           <div className="flex flex-1 gap-4 w-full">
@@ -257,13 +380,13 @@ export default function ReferidosPage() {
                 <tr>
                   <th className="px-6 py-4 font-semibold">Cliente</th>
                   <th className="px-6 py-4 font-semibold">Segm.</th>
-                  <th className="px-6 py-4 font-semibold">Notas</th>
+                  <th className="px-6 py-4 font-semibold">Fecha</th>
                   <th className="px-6 py-4 font-semibold">Producto</th>
                   <th className="px-6 py-4 font-semibold">Vendedor</th>
                   <th className="px-6 py-4 font-semibold">Estado</th>
                   <th className="px-6 py-4 font-semibold">IMEI</th>
                   <th className="px-6 py-4 font-semibold">Suscriptor</th>
-                  <th className="px-6 py-4 font-semibold">Fecha</th>
+                  <th className="px-6 py-4 font-semibold">Notas</th>
                   <th className="px-6 py-4 font-semibold text-right">Acciones</th>
                 </tr>
               </thead>
@@ -287,15 +410,16 @@ export default function ReferidosPage() {
                           {item.tipo || 'Masivo'}
                         </span>
                       </td>
-                      <td className="px-6 py-4 max-w-xs">
-                        {item.notas ? (
-                          <div className="flex items-start gap-1.5" title={item.notas}>
-                            <FileText className="w-3 h-3 mt-0.5 text-slate-400 shrink-0" />
-                            <p className="text-xs text-slate-600 dark:text-slate-300 truncate">{item.notas}</p>
-                          </div>
-                        ) : (
-                          <span className="text-xs text-slate-400 italic">Sin notas</span>
-                        )}
+                      <td className="px-6 py-4 text-slate-500 dark:text-slate-400">
+                        <div className="flex items-center gap-2">
+                          {item.fecha ? new Date(item.fecha).toLocaleDateString() : '-'}
+                          {item.fecha && new Date(item.fecha).toISOString().split('T')[0] === new Date().toISOString().split('T')[0] && (
+                            <span className="bg-red-100 text-red-600 text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1 animate-pulse">
+                              <div className="w-1.5 h-1.5 bg-red-500 rounded-full"></div>
+                              HOY
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-6 py-4">
                         <div className="font-medium text-slate-900 dark:text-white">{item.modelo}</div>
@@ -326,8 +450,15 @@ export default function ReferidosPage() {
                       <td className="px-6 py-4">
                         <span className="text-slate-600 dark:text-slate-300 text-xs">{item.suscriptor || '-'}</span>
                       </td>
-                      <td className="px-6 py-4 text-slate-500 dark:text-slate-400">
-                        {item.fecha ? new Date(item.fecha).toLocaleDateString() : ''}
+                      <td className="px-6 py-4 min-w-[250px]">
+                        {item.notas ? (
+                          <div className="flex items-start gap-1.5" title={item.notas}>
+                            <FileText className="w-3 h-3 mt-0.5 text-slate-400 shrink-0" />
+                            <p className="text-xs text-slate-600 dark:text-slate-300 whitespace-normal break-words leading-relaxed">{item.notas}</p>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-slate-400 italic">Sin notas</span>
+                        )}
                       </td>
                       <td className="px-6 py-4 text-right">
                         <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -583,6 +714,95 @@ export default function ReferidosPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Calendar Modal */}
+      {isCalendarOpen && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={() => setIsCalendarOpen(false)}></div>
+          <div className="relative bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto border border-slate-200 dark:border-slate-800 flex flex-col">
+            <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-white/80 dark:bg-slate-900/80 backdrop-blur-md sticky top-0 z-10">
+              <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Calendar className="w-6 h-6 text-indigo-600" /> Calendario de Llamadas
+              </h2>
+              <button onClick={() => setIsCalendarOpen(false)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-slate-500 transition-colors">
+                <XCircle className="w-6 h-6" />
+              </button>
+            </div>
+
+            <div className="p-6 flex-1 overflow-y-auto">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {(() => {
+                  const today = new Date();
+                  const currentMonth = today.getMonth();
+                  const currentYear = today.getFullYear();
+                  const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+
+                  return Array.from({ length: daysInMonth }, (_, i) => {
+                    const day = i + 1;
+                    const dateStr = new Date(currentYear, currentMonth, day).toISOString().split('T')[0];
+                    const callsForDay = data.filter(item =>
+                      item.fecha &&
+                      item.fecha.startsWith(dateStr) &&
+                      item.estado !== 'Completado' &&
+                      item.estado !== 'Cancelado'
+                    );
+
+                    const isToday = dateStr === today.toISOString().split('T')[0];
+
+                    if (callsForDay.length === 0 && !isToday) return null; // Only show days with activity or today
+
+                    return (
+                      <div key={day} className={cn(
+                        "border rounded-xl p-4 transition-all hover:shadow-md",
+                        isToday ? "border-indigo-500 bg-indigo-50/50 dark:bg-indigo-900/20 ring-1 ring-indigo-500" : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950"
+                      )}>
+                        <div className="flex justify-between items-center mb-3">
+                          <span className={cn(
+                            "text-sm font-bold px-2 py-0.5 rounded",
+                            isToday ? "bg-indigo-100 text-indigo-700 dark:bg-indigo-500/30 dark:text-indigo-300" : "text-slate-500 dark:text-slate-400"
+                          )}>
+                            {new Date(dateStr).toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric' })}
+                          </span>
+                          <span className="text-xs font-medium text-slate-400">{callsForDay.length} pendientes</span>
+                        </div>
+
+                        <div className="space-y-2">
+                          {callsForDay.length > 0 ? (
+                            callsForDay.map((client: any) => (
+                              <div
+                                key={client.id}
+                                onClick={() => { setIsCalendarOpen(false); openModal(client); }}
+                                className="flex items-center justify-between p-2 rounded-lg bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 hover:border-indigo-300 dark:hover:border-indigo-500 cursor-pointer shadow-sm text-sm"
+                              >
+                                <div className="truncate flex-1">
+                                  <div className="font-medium text-slate-700 dark:text-slate-300 truncate">{client.nombre}</div>
+                                  <div className="text-[10px] text-slate-500 truncate">{client.modelo || 'Sin modelo'}</div>
+                                </div>
+                                <div className={`w-2 h-2 rounded-full ${getStatusColor(client.estado).split(' ')[0]}`}></div>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="text-center py-4 text-slate-400 text-xs italic">
+                              No hay llamadas programadas
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  }).filter(Boolean); // Filter nulls
+                })()}
+                {/* Fallback if no days shown */}
+                {data.filter(i => i.estado !== 'Completado' && i.estado !== 'Cancelado').length === 0 && (
+                  <div className="col-span-full text-center py-12 text-slate-500">
+                    <CheckCircle2 className="w-12 h-12 mx-auto mb-2 text-slate-300" />
+                    <p>¡Todo al día! No hay llamadas pendientes este mes.</p>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}

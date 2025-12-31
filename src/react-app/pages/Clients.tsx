@@ -196,20 +196,20 @@ const computeSubscriberTiming = (contractEndDate: string | null) => {
   if (!contractEndDate) {
     return { status: 'overdue' as ClientStatus, days: -999 };
   }
-  
+
   // Parsear manualmente YYYY-MM-DD para asegurar fecha local (evitar UTC offset)
   const parts = contractEndDate.split('-');
   let endDate: Date;
-  
+
   if (parts.length === 3) {
-      const year = parseInt(parts[0], 10);
-      const month = parseInt(parts[1], 10) - 1; // Meses 0-11
-      const day = parseInt(parts[2], 10);
-      endDate = new Date(year, month, day);
+    const year = parseInt(parts[0], 10);
+    const month = parseInt(parts[1], 10) - 1; // Meses 0-11
+    const day = parseInt(parts[2], 10);
+    endDate = new Date(year, month, day);
   } else {
-      // Fallback por si el formato no es YYYY-MM-DD
-      endDate = new Date(contractEndDate);
-      endDate.setHours(0, 0, 0, 0);
+    // Fallback por si el formato no es YYYY-MM-DD
+    endDate = new Date(contractEndDate);
+    endDate.setHours(0, 0, 0, 0);
   }
 
   const today = new Date();
@@ -264,18 +264,17 @@ const getStatusBadge = (status: ClientStatus, days: number, createdAt?: string |
   }
 };
 
-// V3.4 FINAL FIX - 2025-01-15 - statusPriority indentación corregida
+// V3.5 FINAL FIX - 2025-01-15 - Tab configuration and version display
 export default function Clients() {
-  const BUILD_TIMESTAMP = "2025-12-21T16:30:00-PRODUCTION";
-  const UNIQUE_BUILD_ID = "BUILD_PROD_FINAL_v5.1.52";
-  
+  const UNIQUE_BUILD_ID = APP_VERSION;
+
   console.log("🚀🚀🚀 ============================================");
-  console.log("🚀 Clients V5.1.52 - PRODUCTION FINAL - 2025-12-21");
-  console.log("🚀 Build Timestamp:", BUILD_TIMESTAMP);
+  console.log("🚀 Clients Tab Configuration Fix", UNIQUE_BUILD_ID);
+  console.log("🚀 Build Label:", BUILD_LABEL);
   console.log("🚀 Unique Build ID:", UNIQUE_BUILD_ID);
   console.log("🚀 Runtime:", new Date().toISOString());
   console.log("🚀🚀🚀 ============================================");
-  
+
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedMonth, setSelectedMonth] = useState<string>(""); // Nuevo: filtro de mes
@@ -301,7 +300,7 @@ export default function Clients() {
   const [offerGeneratorClientName, setOfferGeneratorClientName] = useState('');
 
   const [clientItems, setClientItems] = useState<ClientItem[]>([]);
-  const [activeTab, setActiveTab] = useState<'available' | 'following' | 'completed' | 'cancelled' | 'incomplete'>('available');
+  const [activeTab, setActiveTab] = useState<'all' | 'active' | 'cancelled' | 'unnamed' | 'available' | 'following' | 'completed' | 'incomplete'>('active');
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [notification, setNotification] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const [pendingBanClientId, setPendingBanClientId] = useState<number | null>(null);
@@ -313,9 +312,9 @@ export default function Clients() {
   const [mergeTargetId, setMergeTargetId] = useState<number | null>(null);
   const [isMerging, setIsMerging] = useState(false);
 
-  const { data: clients, loading: clientsLoading, error: clientsError, refetch: refetchClients } = useApi<Client[]>("/api/clients");
-    const { data: vendors } = useApi<Vendor[]>("/api/vendors");
-    const { data: prospects, refetch: refetchProspects } = useApi<FollowUpProspect[]>("/api/follow-up-prospects?include_completed=true");  const notify = (type: 'success' | 'error' | 'info', text: string) => {
+  const { data: clients, loading: clientsLoading, error: clientsError, refetch: refetchClients } = useApi<Client[]>(`/api/clients?tab=${activeTab}`);
+  const { data: vendors } = useApi<Vendor[]>("/api/vendors");
+  const { data: prospects, refetch: refetchProspects } = useApi<FollowUpProspect[]>("/api/follow-up-prospects?include_completed=true"); const notify = (type: 'success' | 'error' | 'info', text: string) => {
     setNotification({ type, text });
   };
 
@@ -855,11 +854,11 @@ export default function Clients() {
     return true;
   });
 
-  const incompleteClients = filteredClients.filter(item => item.isIncomplete && !item.hasCancelledBans);
+  // unused incompleteClients removed
   const availableClients = filteredClients.filter(item => !item.isBeingFollowed && !item.wasCompleted && !item.hasCancelledBans && !item.isIncomplete);
   const followingClients = filteredClients.filter(item => item.isBeingFollowed && !item.wasCompleted && !item.hasCancelledBans && !item.isIncomplete);
   const completedClients = filteredClients.filter(item => item.wasCompleted && !item.hasCancelledBans && !item.isIncomplete);
-  const cancelledClients = filteredClients.filter(item => item.hasCancelledBans);
+  // unused cancelledClients removed
 
   // Debug: mostrar conteo y verificar lógica
   const totalIncompletos = filteredClients.filter(item => item.isIncomplete).length;
@@ -868,23 +867,15 @@ export default function Clients() {
 
   console.log('🔍 ===== ESTADÍSTICAS CLIENTES =====');
   console.log('📊 Total filteredClients:', filteredClients.length);
-  console.log('📊 Clientes INCOMPLETOS:', totalIncompletos);
+  // debug log removed
   console.log('📊 Clientes DISPONIBLES (según nueva lógica):', totalDisponibles);
   console.log('📊 Clientes COMPLETOS:', totalCompletos);
   console.log('📊 Clientes en Disponibles (pestaña):', availableClients.length);
   console.log('🔍 ===== FIN ESTADÍSTICAS =====');
 
-  const clientsForTab = searchTerm
-    ? filteredClients
-    : activeTab === 'incomplete'
-      ? incompleteClients
-      : activeTab === 'available'
-        ? availableClients
-        : activeTab === 'following'
-          ? followingClients
-          : activeTab === 'completed'
-            ? completedClients
-            : cancelledClients;
+  // Al usar backend filtering, filteredClients ya contiene solo lo que queremos
+  // Sin embargo, mantenemos la lógica de búsqueda sobre los resultados retornados
+  const clientsForTab = filteredClients;
 
   // Paginación
   const totalPages = Math.ceil(clientsForTab.length / itemsPerPage);
@@ -960,40 +951,40 @@ export default function Clients() {
 
   const handleMergeClients = async () => {
     if (!mergeSourceId || !mergeTargetId) {
-        notify('error', 'Selecciona ambos clientes para fusionar.');
-        return;
+      notify('error', 'Selecciona ambos clientes para fusionar.');
+      return;
     }
     if (mergeSourceId === mergeTargetId) {
-        notify('error', 'No puedes fusionar el mismo cliente.');
-        return;
+      notify('error', 'No puedes fusionar el mismo cliente.');
+      return;
     }
 
     if (!window.confirm("¿Estás seguro de fusionar estos clientes? Esta acción NO se puede deshacer. El cliente 'Origen' será eliminado y sus datos pasarán al 'Destino'.")) {
-        return;
+      return;
     }
 
     setIsMerging(true);
     try {
-        const res = await authFetch('/api/clients/merge', {
-            method: 'POST',
-            json: { sourceId: mergeSourceId, targetId: mergeTargetId }
-        });
+      const res = await authFetch('/api/clients/merge', {
+        method: 'POST',
+        json: { sourceId: mergeSourceId, targetId: mergeTargetId }
+      });
 
-        if (res.ok) {
-            notify('success', 'Clientes fusionados correctamente.');
-            setShowMergeModal(false);
-            setMergeSourceId(null);
-            setMergeTargetId(null);
-            refetchClients();
-        } else {
-            const err = await res.json();
-            notify('error', err.error || 'Error al fusionar clientes.');
-        }
+      if (res.ok) {
+        notify('success', 'Clientes fusionados correctamente.');
+        setShowMergeModal(false);
+        setMergeSourceId(null);
+        setMergeTargetId(null);
+        refetchClients();
+      } else {
+        const err = await res.json();
+        notify('error', err.error || 'Error al fusionar clientes.');
+      }
     } catch (error) {
-        console.error("Error merging clients:", error);
-        notify('error', 'Error de conexión al fusionar.');
+      console.error("Error merging clients:", error);
+      notify('error', 'Error de conexión al fusionar.');
     } finally {
-        setIsMerging(false);
+      setIsMerging(false);
     }
   };
 
@@ -1486,20 +1477,23 @@ export default function Clients() {
   const totalClients = clientItems.length;
 
   // Total BANs: Sumar ban_count del backend (conteo real por cliente)
+  // PG devuelve counts como string cuando son BIGINT; forzamos a Number para evitar concatenaciones
+  const toNum = (value: any) => Number(value || 0);
+
   const totalBans = clients ? clients.reduce((sum, client) => {
-    return sum + (client.ban_count || 0);
+    return sum + toNum(client.ban_count);
   }, 0) : clientSummaries.reduce((sum, item) => sum + item.totalBans, 0);
 
-  const activeBans = clients ? clients.reduce((sum, client) => sum + (client.active_ban_count || 0), 0) : 0;
-  const cancelledBans = clients ? clients.reduce((sum, client) => sum + (client.cancelled_ban_count || 0), 0) : 0;
+  const activeBans = clients ? clients.reduce((sum, client) => sum + toNum(client.active_ban_count), 0) : 0;
+  const cancelledBans = clients ? clients.reduce((sum, client) => sum + toNum(client.cancelled_ban_count), 0) : 0;
 
   // Total Suscriptores: Sumar subscriber_count del backend (conteo real por cliente)
   const totalSubscribers = clients ? clients.reduce((sum, client) => {
-    return sum + (client.subscriber_count || 0);
+    return sum + toNum(client.subscriber_count);
   }, 0) : clientSummaries.reduce((sum, item) => sum + item.totalSubscribers, 0);
 
-  const activeSubscribers = clients ? clients.reduce((sum, client) => sum + (client.active_subscriber_count || 0), 0) : 0;
-  const cancelledSubscribers = clients ? clients.reduce((sum, client) => sum + (client.cancelled_subscriber_count || 0), 0) : 0;
+  const activeSubscribers = clients ? clients.reduce((sum, client) => sum + toNum(client.active_subscriber_count), 0) : 0;
+  const cancelledSubscribers = clients ? clients.reduce((sum, client) => sum + toNum(client.cancelled_subscriber_count), 0) : 0;
 
   // Suscriptores en Oportunidad: Ya viene del backend
   const subscribersInOpportunity = clients ? clients.reduce((sum, client) => {
@@ -1607,7 +1601,7 @@ export default function Clients() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-white">
-            Clientes 
+            Clientes
             <span className="text-xs text-gray-500 ml-2 font-mono">
               {UNIQUE_BUILD_ID}
             </span>
@@ -1617,8 +1611,8 @@ export default function Clients() {
         <div className="flex gap-3">
           <button
             onClick={() => {
-                setOfferGeneratorClientName('');
-                setShowOfferGenerator(true);
+              setOfferGeneratorClientName('');
+              setShowOfferGenerator(true);
             }}
             className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-all shadow-lg shadow-purple-500/20"
           >
@@ -1821,58 +1815,15 @@ export default function Clients() {
         </div>
       )}
 
-      {/* Tabs - V2.0 con Incompletos */}
       <div className="flex items-center gap-2 mb-4 flex-wrap border-b border-gray-700 pb-2">
-        {(() => {
-          const currentUser = JSON.parse(localStorage.getItem('crm_user') || '{}');
-          const isVendor = currentUser?.role?.toLowerCase() === 'vendedor';
-
-          // Mostrar pestaña Incompletos solo para administradores
-          if (!isVendor) {
-            return (
-              <button
-                key="incomplete-tab"
-                className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${activeTab === 'incomplete'
-                  ? 'bg-orange-600 text-white shadow-lg border-2 border-orange-400'
-                  : 'bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700'
-                  }`}
-                onClick={() => {
-                  console.log('🔘 Click en pestaña Incompletos - V2.0');
-                  setActiveTab('incomplete');
-                }}
-              >
-                ⚠️ Incompletos ({incompleteClients.length})
-              </button>
-            );
-          }
-          return null;
-        })()}
         <button
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'available'
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'active'
             ? 'bg-blue-600 text-white shadow-lg'
             : 'bg-gray-800 text-gray-400 hover:text-white'
             }`}
-          onClick={() => setActiveTab('available')}
+          onClick={() => setActiveTab('active')}
         >
-          Disponibles ({availableClients.length})
-        </button>
-        <button
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'following'
-            ? 'bg-green-600 text-white shadow-lg'
-            : 'bg-gray-800 text-gray-400 hover:text-white'
-            }`}
-          onClick={() => setActiveTab('following')}
-        >
-          En seguimiento ({followingClients.length})
-        </button>
-        <button
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'completed'
-            ? 'bg-purple-600 text-white shadow-lg'
-            : 'bg-gray-800 text-gray-400 hover:text-white'
-            }`}
-          onClick={() => setActiveTab('completed')}
-        >
-          Completados ({completedClients.length})
+          Activos
         </button>
         <button
           className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'cancelled'
@@ -1881,7 +1832,52 @@ export default function Clients() {
             }`}
           onClick={() => setActiveTab('cancelled')}
         >
-          Cancelados ({cancelledClients.length})
+          Cancelados
+        </button>
+        <button
+          className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${activeTab === 'unnamed'
+            ? 'bg-orange-600 text-white shadow-lg border-2 border-orange-400'
+            : 'bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700'
+            }`}
+          onClick={() => setActiveTab('unnamed')}
+        >
+          Sin Nombre (Revisar)
+        </button>
+        <button
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'available'
+            ? 'bg-green-600 text-white shadow-lg'
+            : 'bg-gray-800 text-gray-400 hover:text-white'
+            }`}
+          onClick={() => setActiveTab('available')}
+        >
+          Disponibles
+        </button>
+        <button
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'following'
+            ? 'bg-purple-600 text-white shadow-lg'
+            : 'bg-gray-800 text-gray-400 hover:text-white'
+            }`}
+          onClick={() => setActiveTab('following')}
+        >
+          Seguimiento
+        </button>
+        <button
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'completed'
+            ? 'bg-indigo-600 text-white shadow-lg'
+            : 'bg-gray-800 text-gray-400 hover:text-white'
+            }`}
+          onClick={() => setActiveTab('completed')}
+        >
+          Completadas
+        </button>
+        <button
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'incomplete'
+            ? 'bg-yellow-600 text-white shadow-lg'
+            : 'bg-gray-800 text-gray-400 hover:text-white'
+            }`}
+          onClick={() => setActiveTab('incomplete')}
+        >
+          Incompletos
         </button>
       </div>
 
@@ -2113,33 +2109,33 @@ export default function Clients() {
                         </div>
                       ) : (
                         <div className="flex items-center justify-center gap-2">
-                            <button
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                console.log('🟡 CLICK DETECTADO en botón A Seguimiento - clientId:', item.clientId);
-                                handleSendToFollowUp(item.clientId);
-                              }}
-                              className="px-3 py-1 rounded text-xs transition-colors flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white"
-                              title="Enviar a seguimiento"
-                            >
-                              <UserPlus className="w-3 h-3" />
-                              A Seguimiento
-                            </button>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                console.log('🟣 CLICK FUSIONAR - ID:', item.clientId);
-                                setMergeSourceId(item.clientId);
-                                setShowMergeModal(true);
-                              }}
-                              className="p-1 text-purple-400 hover:text-purple-300 transition-colors z-10 relative"
-                              title="Fusionar Cliente (Este será el Origen/Eliminado)"
-                            >
-                              <Merge size={16} />
-                            </button>
+                          <button
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              console.log('🟡 CLICK DETECTADO en botón A Seguimiento - clientId:', item.clientId);
+                              handleSendToFollowUp(item.clientId);
+                            }}
+                            className="px-3 py-1 rounded text-xs transition-colors flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white"
+                            title="Enviar a seguimiento"
+                          >
+                            <UserPlus className="w-3 h-3" />
+                            A Seguimiento
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              console.log('🟣 CLICK FUSIONAR - ID:', item.clientId);
+                              setMergeSourceId(item.clientId);
+                              setShowMergeModal(true);
+                            }}
+                            className="p-1 text-purple-400 hover:text-purple-300 transition-colors z-10 relative"
+                            title="Fusionar Cliente (Este será el Origen/Eliminado)"
+                          >
+                            <Merge size={16} />
+                          </button>
                         </div>
                       )}
                     </td>
@@ -2157,15 +2153,11 @@ export default function Clients() {
             <p className="mt-1 text-sm text-gray-500">
               {searchTerm
                 ? "No se encontraron clientes con ese criterio de búsqueda"
-                : activeTab === 'incomplete'
-                  ? "No hay clientes incompletos"
-                  : activeTab === 'available'
-                    ? "No hay clientes disponibles en el pool"
-                    : activeTab === 'following'
-                      ? "No hay clientes actualmente en seguimiento"
-                      : activeTab === 'completed'
-                        ? "No hay clientes completados"
-                        : "No hay clientes cancelados"}
+                : activeTab === 'unnamed'
+                  ? "No hay clientes sin nombre"
+                  : activeTab === 'active'
+                    ? "No hay clientes activos disponibles"
+                    : "No hay clientes cancelados"}
             </p>
           </div>
         )}
@@ -2346,8 +2338,8 @@ export default function Clients() {
       {/* Offer Generator */}
       {showOfferGenerator && (
         <OfferGenerator
-            clientName={offerGeneratorClientName || "Cliente Nuevo"}
-            onClose={() => setShowOfferGenerator(false)}
+          clientName={offerGeneratorClientName || "Cliente Nuevo"}
+          onClose={() => setShowOfferGenerator(false)}
         />
       )}
 
@@ -2362,42 +2354,42 @@ export default function Clients() {
             <p className="text-gray-300 mb-4">
               Estás a punto de fusionar el cliente <span className="text-red-400 font-bold">Origen (Se eliminará)</span> con un cliente <span className="text-green-400 font-bold">Destino (Recibirá los datos)</span>.
             </p>
-            
+
             <div className="mb-4">
               <label className="block text-sm text-gray-400 mb-1">Cliente Origen (ID: {mergeSourceId})</label>
               <div className="p-2 bg-red-900/20 border border-red-500/30 rounded text-red-200">
-                 {clients?.find(c => c.id === mergeSourceId)?.business_name || clients?.find(c => c.id === mergeSourceId)?.name || 'Desconocido'}
+                {clients?.find(c => c.id === mergeSourceId)?.business_name || clients?.find(c => c.id === mergeSourceId)?.name || 'Desconocido'}
               </div>
             </div>
 
             <div className="mb-6">
               <label className="block text-sm text-gray-400 mb-1">Selecciona Cliente Destino</label>
-              <select 
+              <select
                 className="w-full bg-gray-800 border border-gray-600 rounded p-2 text-white focus:border-purple-500 outline-none"
                 onChange={(e) => setMergeTargetId(Number(e.target.value))}
                 value={mergeTargetId || ''}
               >
                 <option value="">-- Seleccionar Destino --</option>
                 {clients?.filter(c => c.id !== mergeSourceId).map(c => (
-                    <option key={c.id} value={c.id}>
-                        {c.business_name || c.name} (ID: {c.id})
-                    </option>
+                  <option key={c.id} value={c.id}>
+                    {c.business_name || c.name} (ID: {c.id})
+                  </option>
                 ))}
               </select>
             </div>
 
             <div className="flex justify-end gap-3">
-              <button 
+              <button
                 onClick={() => {
-                    setShowMergeModal(false);
-                    setMergeSourceId(null);
-                    setMergeTargetId(null);
+                  setShowMergeModal(false);
+                  setMergeSourceId(null);
+                  setMergeTargetId(null);
                 }}
                 className="px-4 py-2 rounded bg-gray-700 hover:bg-gray-600 text-white"
               >
                 Cancelar
               </button>
-              <button 
+              <button
                 onClick={handleMergeClients}
                 disabled={!mergeTargetId || isMerging}
                 className="px-4 py-2 rounded bg-purple-600 hover:bg-purple-500 text-white font-bold disabled:opacity-50 disabled:cursor-not-allowed"

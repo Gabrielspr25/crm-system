@@ -2,11 +2,12 @@ import path from "path";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { cloudflare } from "@cloudflare/vite-plugin";
+import injectVersion from "./vite-plugin-version.js";
 
 const timestamp = Date.now();
 
 export default defineConfig({
-  plugins: [react(), cloudflare()],
+  plugins: [react(), cloudflare(), injectVersion()],
   server: {
     port: 5173,
     strictPort: true,

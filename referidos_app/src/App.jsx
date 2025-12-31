@@ -9,7 +9,8 @@ import {
   Save,
   Trash2,
   Edit2,
-  Mail
+  Mail,
+  Calendar
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -28,7 +29,7 @@ const authFetch = async (url, options = {}) => {
     'Content-Type': 'application/json',
     ...options.headers,
   };
-  
+
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }
@@ -44,6 +45,7 @@ function App() {
   const [data, setData] = useState(initialData);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isStatusModalOpen, setIsStatusModalOpen] = useState(false);
+  const [isCalendarOpen, setIsCalendarOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('Todos');
@@ -112,29 +114,29 @@ function App() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-        if (editingId) {
-            const res = await authFetch(`/api/referidos/${editingId}`, {
-                method: 'PUT',
-                body: JSON.stringify(formData)
-            });
-            if (res.ok) {
-                const updated = await res.json();
-                setData(prev => prev.map(item => item.id === editingId ? updated : item));
-                closeModal();
-            }
-        } else {
-            const res = await authFetch('/api/referidos', {
-                method: 'POST',
-                body: JSON.stringify(formData)
-            });
-            if (res.ok) {
-                const created = await res.json();
-                setData(prev => [created, ...prev]);
-                closeModal();
-            }
+      if (editingId) {
+        const res = await authFetch(`/api/referidos/${editingId}`, {
+          method: 'PUT',
+          body: JSON.stringify(formData)
+        });
+        if (res.ok) {
+          const updated = await res.json();
+          setData(prev => prev.map(item => item.id === editingId ? updated : item));
+          closeModal();
         }
+      } else {
+        const res = await authFetch('/api/referidos', {
+          method: 'POST',
+          body: JSON.stringify(formData)
+        });
+        if (res.ok) {
+          const created = await res.json();
+          setData(prev => [created, ...prev]);
+          closeModal();
+        }
+      }
     } catch (error) {
-        console.error("Error saving", error);
+      console.error("Error saving", error);
     }
   };
 
@@ -184,12 +186,12 @@ function App() {
   const handleDelete = async (id) => {
     if (confirm('¿Estás seguro de eliminar este registro?')) {
       try {
-          const res = await authFetch(`/api/referidos/${id}`, { method: 'DELETE' });
-          if (res.ok) {
-              setData(prev => prev.filter(item => item.id !== id));
-          }
+        const res = await authFetch(`/api/referidos/${id}`, { method: 'DELETE' });
+        if (res.ok) {
+          setData(prev => prev.filter(item => item.id !== id));
+        }
       } catch (error) {
-          console.error("Error deleting", error);
+        console.error("Error deleting", error);
       }
     }
   };
@@ -214,20 +216,28 @@ function App() {
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-200 font-sans transition-colors duration-200">
       {/* Header */}
       <header className="bg-white dark:bg-slate-900 shadow-sm sticky top-0 z-10 transition-colors duration-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+        <div className="w-full px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="bg-indigo-600 p-2 rounded-lg">
               <User className="w-5 h-5 text-white" />
             </div>
-            <h1 className="text-xl font-bold text-slate-900 dark:text-white">Gestión de Referidos</h1>
+            <h1 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
+              Gestión de Referidos
+              <span className="text-[10px] bg-slate-200 dark:bg-slate-700 px-2 py-0.5 rounded-full text-slate-600 dark:text-slate-300 font-normal">v2.1-CALENDAR</span>
+            </h1>
           </div>
           <div className="flex items-center gap-3">
             <button
-              onClick={toggleTheme}
-              className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors"
               title="Cambiar Tema"
             >
               {theme === 'light' ? '🌙' : '☀️'}
+            </button>
+            <button
+              onClick={() => setIsCalendarOpen(true)}
+              className="p-2 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-600 transition-colors"
+              title="Calendario"
+            >
+              <Calendar className="w-5 h-5" />
             </button>
             <button
               onClick={() => setIsStatusModalOpen(true)}
@@ -247,7 +257,7 @@ function App() {
       </header>
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="w-full px-4 sm:px-6 lg:px-8 py-8">
 
         {/* Search and Filter Bar */}
         <div className="mb-6 flex flex-col sm:flex-row gap-4 justify-between items-center">
@@ -294,12 +304,14 @@ function App() {
                 <tr>
                   <th className="px-6 py-4 font-semibold">Cliente</th>
                   <th className="px-6 py-4 font-semibold">Segm.</th>
-                  <th className="px-6 py-4 font-semibold">Notas</th>
+                  <th className="px-6 py-4 font-semibold">Fecha</th>
                   <th className="px-6 py-4 font-semibold">Producto</th>
                   <th className="px-6 py-4 font-semibold">Vendedor</th>
                   <th className="px-6 py-4 font-semibold">Estado</th>
                   <th className="px-6 py-4 font-semibold">Reservado</th>
-                  <th className="px-6 py-4 font-semibold">Fecha</th>
+                  <th className="px-6 py-4 font-semibold">IMEI</th>
+                  <th className="px-6 py-4 font-semibold">Suscriptor</th>
+                  <th className="px-6 py-4 font-semibold">Notas</th>
                   <th className="px-6 py-4 font-semibold text-right">Acciones</th>
                 </tr>
               </thead>
@@ -323,15 +335,16 @@ function App() {
                           {item.tipo || 'Masivo'}
                         </span>
                       </td>
-                      <td className="px-6 py-4 max-w-xs">
-                        {item.notas ? (
-                          <div className="flex items-start gap-1.5" title={item.notas}>
-                            <FileText className="w-3 h-3 mt-0.5 text-slate-400 shrink-0" />
-                            <p className="text-xs text-slate-600 dark:text-slate-300 truncate">{item.notas}</p>
-                          </div>
-                        ) : (
-                          <span className="text-xs text-slate-400 italic">Sin notas</span>
-                        )}
+                      <td className="px-6 py-4 text-slate-500 dark:text-slate-400">
+                        <div className="flex items-center gap-2">
+                          {item.fecha}
+                          {new Date(item.fecha).toISOString().split('T')[0] === new Date().toISOString().split('T')[0] && (
+                            <span className="bg-red-100 text-red-600 text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1 animate-pulse">
+                              <div className="w-1.5 h-1.5 bg-red-500 rounded-full"></div>
+                              HOY
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-6 py-4">
                         <div className="font-medium text-slate-900 dark:text-white">{item.modelo}</div>
@@ -369,8 +382,21 @@ function App() {
                           </div>
                         )}
                       </td>
-                      <td className="px-6 py-4 text-slate-500 dark:text-slate-400">
-                        {item.fecha}
+                      <td className="px-6 py-4 text-slate-500 dark:text-slate-400 text-xs text-center">
+                        {item.imei || '-'}
+                      </td>
+                      <td className="px-6 py-4 text-slate-500 dark:text-slate-400 text-xs">
+                        {item.suscriptor || '-'}
+                      </td>
+                      <td className="px-6 py-4 min-w-[250px]">
+                        {item.notas ? (
+                          <div className="flex items-start gap-1.5" title={item.notas}>
+                            <FileText className="w-3 h-3 mt-0.5 text-slate-400 shrink-0" />
+                            <p className="text-xs text-slate-600 dark:text-slate-300 whitespace-normal break-words leading-relaxed">{item.notas}</p>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-slate-400 italic">Sin notas</span>
+                        )}
                       </td>
                       <td className="px-6 py-4 text-right">
                         <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -614,6 +640,95 @@ function App() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Calendar Modal */}
+      {isCalendarOpen && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={() => setIsCalendarOpen(false)}></div>
+          <div className="relative bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto border border-slate-200 dark:border-slate-800 flex flex-col">
+            <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-white/80 dark:bg-slate-900/80 backdrop-blur-md sticky top-0 z-10">
+              <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Calendar className="w-6 h-6 text-indigo-600" /> Calendario de Llamadas
+              </h2>
+              <button onClick={() => setIsCalendarOpen(false)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-slate-500 transition-colors">
+                <XCircle className="w-6 h-6" />
+              </button>
+            </div>
+
+            <div className="p-6 flex-1 overflow-y-auto">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {(() => {
+                  const today = new Date();
+                  const currentMonth = today.getMonth();
+                  const currentYear = today.getFullYear();
+                  const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+
+                  return Array.from({ length: daysInMonth }, (_, i) => {
+                    const day = i + 1;
+                    const dateStr = new Date(currentYear, currentMonth, day).toISOString().split('T')[0];
+                    const callsForDay = data.filter(item =>
+                      item.fecha &&
+                      item.fecha.startsWith(dateStr) &&
+                      item.estado !== 'Completado' &&
+                      item.estado !== 'Cancelado'
+                    );
+
+                    const isToday = dateStr === today.toISOString().split('T')[0];
+
+                    if (callsForDay.length === 0 && !isToday) return null; // Only show days with activity or today
+
+                    return (
+                      <div key={day} className={cn(
+                        "border rounded-xl p-4 transition-all hover:shadow-md",
+                        isToday ? "border-indigo-500 bg-indigo-50/50 dark:bg-indigo-900/20 ring-1 ring-indigo-500" : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950"
+                      )}>
+                        <div className="flex justify-between items-center mb-3">
+                          <span className={cn(
+                            "text-sm font-bold px-2 py-0.5 rounded",
+                            isToday ? "bg-indigo-100 text-indigo-700 dark:bg-indigo-500/30 dark:text-indigo-300" : "text-slate-500 dark:text-slate-400"
+                          )}>
+                            {new Date(dateStr).toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric' })}
+                          </span>
+                          <span className="text-xs font-medium text-slate-400">{callsForDay.length} pendientes</span>
+                        </div>
+
+                        <div className="space-y-2">
+                          {callsForDay.length > 0 ? (
+                            callsForDay.map(client => (
+                              <div
+                                key={client.id}
+                                onClick={() => { setIsCalendarOpen(false); openModal(client); }}
+                                className="flex items-center justify-between p-2 rounded-lg bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 hover:border-indigo-300 dark:hover:border-indigo-500 cursor-pointer shadow-sm text-sm"
+                              >
+                                <div className="truncate flex-1">
+                                  <div className="font-medium text-slate-700 dark:text-slate-300 truncate">{client.nombre}</div>
+                                  <div className="text-[10px] text-slate-500 truncate">{client.modelo || 'Sin modelo'}</div>
+                                </div>
+                                <div className={`w-2 h-2 rounded-full ${getStatusColor(client.estado).split(' ')[0]}`}></div>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="text-center py-4 text-slate-400 text-xs italic">
+                              No hay llamadas programadas
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  }).filter(Boolean); // Filter nulls
+                })()}
+                {/* Fallback if no days shown */}
+                {data.filter(i => i.estado !== 'Completado' && i.estado !== 'Cancelado').length === 0 && (
+                  <div className="col-span-full text-center py-12 text-slate-500">
+                    <CheckCircle2 className="w-12 h-12 mx-auto mb-2 text-slate-300" />
+                    <p>¡Todo al día! No hay llamadas pendientes este mes.</p>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}

@@ -28,13 +28,13 @@ export const mergeClients = async (req, res) => {
         // Verificar si existe la tabla follow_ups o similar
         // Asumimos que existe y tiene client_id
         try {
-             await query('UPDATE follow_ups SET client_id = $1 WHERE client_id = $2', [targetId, sourceId]);
+            await query('UPDATE follow_ups SET client_id = $1 WHERE client_id = $2', [targetId, sourceId]);
         } catch (e) {
             console.warn("No se pudo actualizar follow_ups (quizás no existe la tabla o columna)", e.message);
         }
 
         // 4. Mover Contactos (si hubiera tabla separada, pero parece que están en clients)
-        
+
         // 5. Eliminar Cliente Origen
         await query('DELETE FROM clients WHERE id = $1', [sourceId]);
 
@@ -71,11 +71,52 @@ export const searchClients = async (req, res) => {
 
 export const getClients = async (req, res) => {
     try {
+        const { tab } = req.query;
+        let whereClause = '';
+        const params = [];
+
+        if (tab === 'cancelled') {
+            whereClause = 'WHERE c.is_active = 0';
+        } else if (tab === 'unnamed') {
+            whereClause = "WHERE (c.name IS NULL OR c.name = '' OR c.name = 'NULL')";
+        } else if (tab === 'active') {
+            whereClause = "WHERE c.is_active = 1 AND (c.name IS NOT NULL AND c.name != '' AND c.name != 'NULL')";
+        } else if (tab === 'available') {
+            // Disponibles: Activos + con BAN + con suscriptor + sin seguimiento activo
+            whereClause = `WHERE c.is_active = 1 
+                           AND (c.name IS NOT NULL AND c.name != '' AND c.name != 'NULL')
+                           AND EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id AND b.is_active = 1)
+                           AND EXISTS (SELECT 1 FROM subscribers s JOIN bans b ON s.ban_id = b.id WHERE b.client_id = c.id AND s.is_active = 1)
+                           AND NOT EXISTS (SELECT 1 FROM follow_up_prospects f WHERE f.client_id = c.id AND f.is_active = 1 AND (f.is_completed IS NULL OR f.is_completed = 0))`;
+        } else if (tab === 'following') {
+            // Siguiendo: En seguimiento activo (no completado)
+            whereClause = `WHERE EXISTS (SELECT 1 FROM follow_up_prospects f WHERE f.client_id = c.id AND f.is_active = 1 AND (f.is_completed IS NULL OR f.is_completed = 0))`;
+        } else if (tab === 'completed') {
+            // Completadas: Con seguimiento completado
+            whereClause = `WHERE EXISTS (SELECT 1 FROM follow_up_prospects f WHERE f.client_id = c.id AND f.is_completed = 1)
+                           AND NOT EXISTS (SELECT 1 FROM follow_up_prospects f WHERE f.client_id = c.id AND f.is_active = 1 AND (f.is_completed IS NULL OR f.is_completed = 0))`;
+        } else if (tab === 'incomplete') {
+            // Incompletos: Sin BAN O sin suscriptor O sin nombre
+            whereClause = `WHERE c.is_active = 1
+                           AND (
+                               (c.name IS NULL OR c.name = '' OR c.name = 'NULL')
+                               OR NOT EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id AND b.is_active = 1)
+                               OR NOT EXISTS (SELECT 1 FROM subscribers s JOIN bans b ON s.ban_id = b.id WHERE b.client_id = c.id AND s.is_active = 1)
+                           )`;
+        }
+
         const clients = await query(
-            `SELECT c.*, v.name as vendor_name 
+            `SELECT c.*,
+            (SELECT COUNT(*) FROM bans b WHERE b.client_id = c.id AND b.is_active = 1) as active_ban_count,
+            (SELECT COUNT(*) FROM bans b WHERE b.client_id = c.id AND b.is_active = 0) as cancelled_ban_count,
+            (SELECT COUNT(*) FROM bans b WHERE b.client_id = c.id) as ban_count,
+            (SELECT COUNT(*) FROM subscribers s JOIN bans b ON s.ban_id = b.id WHERE b.client_id = c.id AND s.is_active = 1) as active_subscriber_count,
+            (SELECT COUNT(*) FROM subscribers s JOIN bans b ON s.ban_id = b.id WHERE b.client_id = c.id) as subscriber_count,
+            (SELECT string_agg(b.ban_number, ', ') FROM bans b WHERE b.client_id = c.id) as ban_numbers
        FROM clients c 
-       LEFT JOIN vendors v ON c.vendor_id = v.id 
-       ORDER BY c.created_at DESC`
+       ${whereClause}
+       ORDER BY c.created_at DESC`,
+            params
         );
         res.json(clients);
     } catch (error) {

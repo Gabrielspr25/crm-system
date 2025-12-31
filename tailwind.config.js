@@ -4,9 +4,19 @@ export default {
   content: [
     "./index.html",
     "./src/react-app/**/*.{js,ts,jsx,tsx}",
+    "./Constructor Tarifas/**/*.{js,ts,jsx,tsx}",
   ],
   theme: {
-    extend: {},
+    extend: {
+      colors: {
+        claro: {
+          red: '#da291c',
+          dark: '#b01b12',
+          black: '#000000',
+          gray: '#333333'
+        }
+      }
+    },
   },
   plugins: [],
 };

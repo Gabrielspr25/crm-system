@@ -1,0 +1,10 @@
+﻿const PUBLIC_ROUTES = new Set([
+  'GET /api/health',
+  'GET /api/health/full',
+  'POST /api/login',
+  'POST /api/token/refresh',
+  'POST /api/tarifas/parse-document',
+  'GET /api/tarifas/plans',
+  'GET /api/tarifas/categories',
+  'POST /api/tarifas/plans'
+]);

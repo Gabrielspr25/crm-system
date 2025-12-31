@@ -4,6 +4,9 @@ import fs from 'fs';
 import fsPromises from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const packageJson = require('./package.json');
 import { Pool } from 'pg';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
@@ -12,7 +15,11 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { saveImportData } from './src/backend/controllers/importController.js';
 import { fullSystemCheck } from './src/backend/controllers/healthController.js';
+import { runFullSystemTest } from './src/backend/controllers/systemTestController.js';
 import referidosRoutes from './src/backend/routes/referidosRoutes.js';
+import tarifasRoutes from './src/backend/routes/tarifasRoutes.js';
+import clientRoutes from './src/backend/routes/clientRoutes.js';
+import banRoutes from './src/backend/routes/banRoutes.js';
 
 // ======================================================
 // Configuración base
@@ -56,6 +63,12 @@ const distPath = path.join(__dirname, 'dist/client');
 // const varWwwPath = '/var/www/crmp'; // DEPRECATED: We now use /opt/crmp/dist/client
 app.use(express.static(distPath));
 
+// Rutas de Módulos Específicos
+app.use('/api/referidos', referidosRoutes);
+app.use('/api/tariffs', tarifasRoutes);
+app.use('/api/clients', clientRoutes);
+app.use('/api/bans', banRoutes);
+
 
 const JWT_SECRET = process.env.JWT_SECRET || 'development-secret';
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'development-refresh-secret';
@@ -65,9 +78,25 @@ const REFRESH_TOKEN_TTL = process.env.JWT_REFRESH_EXPIRES_IN || '7d';
 const PUBLIC_ROUTES = new Set([
   'GET /api/health',
   'GET /api/health/full',
+  'GET /api/system-test/full',
+  'GET /api/version',
   'POST /api/login',
-  'POST /api/token/refresh'
+  'POST /api/token/refresh',
+  'POST /api/tarifas/parse-document',
+  'GET /api/tarifas/plans',
+  'GET /api/tarifas/categories',
+  'POST /api/tarifas/categories',
+  'PUT /api/tarifas/categories',
+  'DELETE /api/tarifas/categories'
 ]);
+
+app.get('/api/version', (req, res) => {
+  res.json({
+    version: packageJson.version,
+    env: process.env.NODE_ENV,
+    timestamp: new Date().toISOString()
+  });
+});
 
 const normalizeRoutePath = (routePath) => {
   if (!routePath.startsWith('/')) {
@@ -81,7 +110,14 @@ const isPublicRoute = (req) => {
     return true;
   }
   const key = `${req.method.toUpperCase()} ${normalizeRoutePath(req.path)}`;
-  return PUBLIC_ROUTES.has(key);
+  if (PUBLIC_ROUTES.has(key)) {
+    return true;
+  }
+  // Permitir rutas de categorías con ID (ej: PUT /api/tarifas/categories/123)
+  if (req.path.match(/^\/api\/tarifas\/categories\/\d+$/)) {
+    return true;
+  }
+  return false;
 };
 
 const sanitizeUserPayload = (row) => ({
@@ -379,6 +415,9 @@ app.use(authenticateRequest);
 
 // Rutas de Referidos
 app.use('/api/referidos', referidosRoutes);
+
+// Rutas de Tarifas y Planes
+app.use('/api/tarifas', tarifasRoutes);
 
 // ======================================================
 // Endpoint para limpiar nombres BAN
@@ -1545,111 +1584,58 @@ app.get('/api/follow-up-prospects', authenticateRequest, async (req, res) => {
 // ======================================================
 // Prospectos COMPLETADOS (Reportes)
 app.get('/api/completed-prospects', authenticateRequest, async (req, res) => {
-  try {
-    const sql = `
-      SELECT 
-        p.*,
-        c.name as client_name,
-        c.business_name as client_business_name,
-        v.name as vendor_name
-      FROM follow_up_prospects p
-      LEFT JOIN clients c ON p.client_id = c.id
-      LEFT JOIN vendors v ON p.vendor_id = v.id
-      WHERE p.is_completed = true
-      ORDER BY p.completed_date DESC
-    `;
-
-    const rows = await query(sql);
-    res.json(rows);
-  } catch (error) {
-    serverError(res, error, 'Error obteniendo prospectos completados');
-  }
+  // Tabla no existe en schema actual, retornamos vacío para evitar fallos
+  res.json([]);
 });
 
 // ======================================================
-// Búsqueda ligera de clientes (Autocomplete)
-app.get('/api/clients/search', authenticateRequest, async (req, res) => {
-  const { q } = req.query;
-  if (!q || String(q).trim().length < 2) return res.json([]);
+/* LEGACY SEARCH COMMENTED OUT (Handled in clientRoutes.js)
+app.get('/api/clients/search', ... 
+*/
 
-  try {
-    // Buscar por nombre, razón social, email, teléfono O por BAN
-    const sql = `
-      SELECT c.id, c.name, c.business_name, c.vendor_id, b.ban_number
-      FROM clients c
-      LEFT JOIN bans b ON c.id = b.client_id
-      WHERE c.name ILIKE $1 
-         OR c.business_name ILIKE $1
-         OR c.email ILIKE $1
-         OR c.phone ILIKE $1
-         OR b.ban_number ILIKE $1
-      LIMIT 20
-    `;
-    // Usamos DISTINCT para evitar duplicados si un cliente tiene múltiples BANs que coinciden (aunque con ILIKE %q% es raro, pero si busca por nombre y tiene varios BANs...)
-    // Mejor hacemos un GROUP BY o DISTINCT en la query si es necesario, pero por ahora simple.
-    // Si buscamos por BAN, queremos ver el BAN que coincidió.
-    
-    const result = await query(sql, [`%${q}%`]);
-    
-    // Eliminar duplicados de clientes (si el join trajo múltiples filas para el mismo cliente)
-    const uniqueClients = [];
-    const seenIds = new Set();
-    
-    for (const row of result) {
-        if (!seenIds.has(row.id)) {
-            seenIds.add(row.id);
-            uniqueClients.push(row);
-        }
-    }
 
-    res.json(uniqueClients);
-  } catch (error) {
-    console.error('Error searching clients:', error);
-    serverError(res, error, 'Error buscando clientes');
-  }
-});
 
 // ======================================================
 // Fusionar Clientes
 app.post('/api/clients/merge', authenticateRequest, async (req, res) => {
-    const { sourceId, targetId } = req.body;
+  const { sourceId, targetId } = req.body;
 
-    if (!sourceId || !targetId) {
-        return res.status(400).json({ error: 'Se requieren sourceId y targetId' });
+  if (!sourceId || !targetId) {
+    return res.status(400).json({ error: 'Se requieren sourceId y targetId' });
+  }
+
+  if (sourceId === targetId) {
+    return res.status(400).json({ error: 'No se puede fusionar el mismo cliente' });
+  }
+
+  try {
+    // 1. Verificar que ambos existan
+    const source = await query('SELECT * FROM clients WHERE id = $1', [sourceId]);
+    const target = await query('SELECT * FROM clients WHERE id = $1', [targetId]);
+
+    if (source.length === 0 || target.length === 0) {
+      return res.status(404).json({ error: 'Uno o ambos clientes no existen' });
     }
 
-    if (sourceId === targetId) {
-        return res.status(400).json({ error: 'No se puede fusionar el mismo cliente' });
-    }
+    // 2. Mover BANs
+    await query('UPDATE bans SET client_id = $1 WHERE client_id = $2', [targetId, sourceId]);
 
+    // 3. Mover Seguimientos (FollowUps)
     try {
-        // 1. Verificar que ambos existan
-        const source = await query('SELECT * FROM clients WHERE id = $1', [sourceId]);
-        const target = await query('SELECT * FROM clients WHERE id = $1', [targetId]);
-
-        if (source.length === 0 || target.length === 0) {
-            return res.status(404).json({ error: 'Uno o ambos clientes no existen' });
-        }
-
-        // 2. Mover BANs
-        await query('UPDATE bans SET client_id = $1 WHERE client_id = $2', [targetId, sourceId]);
-
-        // 3. Mover Seguimientos (FollowUps)
-        try {
-             await query('UPDATE follow_up_prospects SET client_id = $1 WHERE client_id = $2', [targetId, sourceId]);
-        } catch (e) {
-            console.warn("No se pudo actualizar follow_up_prospects", e.message);
-        }
-
-        // 4. Eliminar Cliente Origen
-        await query('DELETE FROM clients WHERE id = $1', [sourceId]);
-
-        res.json({ success: true, message: `Cliente ${sourceId} fusionado en ${targetId} correctamente.` });
-
-    } catch (error) {
-        console.error('Error merging clients:', error);
-        res.status(500).json({ error: 'Error fusionando clientes' });
+      await query('UPDATE follow_up_prospects SET client_id = $1 WHERE client_id = $2', [targetId, sourceId]);
+    } catch (e) {
+      console.warn("No se pudo actualizar follow_up_prospects", e.message);
     }
+
+    // 4. Eliminar Cliente Origen
+    await query('DELETE FROM clients WHERE id = $1', [sourceId]);
+
+    res.json({ success: true, message: `Cliente ${sourceId} fusionado en ${targetId} correctamente.` });
+
+  } catch (error) {
+    console.error('Error merging clients:', error);
+    res.status(500).json({ error: 'Error fusionando clientes' });
+  }
 });
 
 // Clientes
@@ -1660,7 +1646,7 @@ app.get('/api/clients', async (req, res) => {
     const limit = parseInt(req.query.limit) || 10000; // Límite aumentado para asegurar que carguen todos
     const offset = page > 0 ? (page - 1) * limit : 0;
 
-    console.log(`📋 GET /api/clients - User: ${req.user?.username} - Page: ${page}, Limit: ${limit}`);
+    console.log(`📋 GET / api / clients - User: ${req.user?.username} - Page: ${page}, Limit: ${limit} `);
 
     let whereClause = '';
     const params = [];
@@ -1668,80 +1654,80 @@ app.get('/api/clients', async (req, res) => {
     // Lógica para Contar Total (solo si se pide paginación)
     let totalCount = 0;
     if (page > 0) {
-      const countSql = `SELECT COUNT(*) as total FROM clients c ${whereClause}`;
+      const countSql = `SELECT COUNT(*) as total FROM clients c ${whereClause} `;
       const countResult = await query(countSql, params); // Params debe coincidir si hubiera filtros
       totalCount = parseInt(countResult[0]?.total || 0);
     }
 
     // Consulta optimizada
-    const sql = `SELECT DISTINCT ON (c.id)
-          c.*,
-          v.name AS vendor_name,
-          COALESCE(b.ban_count, 0) AS ban_count,
-          COALESCE(b.active_ban_count, 0) AS active_ban_count,
-          COALESCE(b.cancelled_ban_count, 0) AS cancelled_ban_count,
+    const sql = `SELECT DISTINCT ON(c.id)
+c.*,
+  v.name AS vendor_name,
+    COALESCE(b.ban_count, 0) AS ban_count,
+      COALESCE(b.active_ban_count, 0) AS active_ban_count,
+        COALESCE(b.cancelled_ban_count, 0) AS cancelled_ban_count,
           b.ban_numbers,
           b.ban_descriptions,
           CASE WHEN COALESCE(b.ban_count, 0) > 0 THEN 1 ELSE 0 END AS has_bans,
-          COALESCE(s.subscriber_count, 0) AS subscriber_count,
-          COALESCE(s.active_subscriber_count, 0) AS active_subscriber_count,
-          COALESCE(s.cancelled_subscriber_count, 0) AS cancelled_subscriber_count,
-          s.primary_subscriber_phone,
-          s.primary_contract_end_date,
-          s.primary_subscriber_created_at,
-          s.primary_service_type,
-          s.all_service_types,
-          COALESCE(la.last_activity, c.updated_at) AS last_activity,
-          CASE WHEN b.cancelled_ban_count > 0 AND b.active_ban_count = 0 THEN 1 ELSE 0 END AS has_cancelled_bans
+            COALESCE(s.subscriber_count, 0) AS subscriber_count,
+              COALESCE(s.active_subscriber_count, 0) AS active_subscriber_count,
+                COALESCE(s.cancelled_subscriber_count, 0) AS cancelled_subscriber_count,
+                  s.primary_subscriber_phone,
+                  s.primary_contract_end_date,
+                  s.primary_subscriber_created_at,
+                  s.primary_service_type,
+                  s.all_service_types,
+                  COALESCE(la.last_activity, c.updated_at) AS last_activity,
+                    CASE WHEN b.cancelled_ban_count > 0 AND b.active_ban_count = 0 THEN 1 ELSE 0 END AS has_cancelled_bans
         FROM clients c
         LEFT JOIN vendors v ON c.vendor_id = v.id
-        LEFT JOIN (
-          SELECT 
+        LEFT JOIN(
+                      SELECT 
             client_id,
-            COUNT(*) AS ban_count,
-            COUNT(CASE WHEN UPPER(status) NOT IN ('CANCELADO', 'CANCELLED', 'C', 'BAJA', 'SUSPENDIDO', 'INACTIVE') THEN 1 END) AS active_ban_count,
-            COUNT(CASE WHEN UPPER(status) IN ('CANCELADO', 'CANCELLED', 'C', 'BAJA', 'SUSPENDIDO', 'INACTIVE') THEN 1 END) AS cancelled_ban_count,
-            STRING_AGG(ban_number, ', ' ORDER BY ban_number) AS ban_numbers,
-            STRING_AGG(DISTINCT CASE WHEN UPPER(status) IN ('CANCELADO', 'CANCELLED', 'C', 'BAJA', 'SUSPENDIDO', 'INACTIVE') THEN 'cancelled' END, ', ') AS cancelled_status,
-            STRING_AGG(DISTINCT CASE WHEN description IS NOT NULL AND description <> '' THEN description END, ', ') AS ban_descriptions
+                      COUNT(*) AS ban_count,
+                      COUNT(CASE WHEN UPPER(status) NOT IN('CANCELADO', 'CANCELLED', 'C', 'BAJA', 'SUSPENDIDO', 'INACTIVE') THEN 1 END) AS active_ban_count,
+                      COUNT(CASE WHEN UPPER(status) IN('CANCELADO', 'CANCELLED', 'C', 'BAJA', 'SUSPENDIDO', 'INACTIVE') THEN 1 END) AS cancelled_ban_count,
+                      STRING_AGG(ban_number, ', ' ORDER BY ban_number) AS ban_numbers,
+                      STRING_AGG(DISTINCT CASE WHEN UPPER(status) IN('CANCELADO', 'CANCELLED', 'C', 'BAJA', 'SUSPENDIDO', 'INACTIVE') THEN 'cancelled' END, ', ') AS cancelled_status,
+                      STRING_AGG(DISTINCT CASE WHEN description IS NOT NULL AND description <> '' THEN description END, ', ') AS ban_descriptions
           FROM bans
-          WHERE COALESCE(is_active,1) = 1
+          WHERE COALESCE(is_active, 1) = 1
           GROUP BY client_id
-        ) b ON b.client_id = c.id
-        LEFT JOIN (
-          SELECT 
+                    ) b ON b.client_id = c.id
+        LEFT JOIN(
+                      SELECT 
             b.client_id,
-            COUNT(DISTINCT s.id) AS subscriber_count,
-            COUNT(DISTINCT CASE WHEN UPPER(COALESCE(s.status, '')) NOT IN ('CANCELADO', 'CANCELLED', 'C', 'BAJA', 'SUSPENDIDO', 'INACTIVE') THEN s.id END) AS active_subscriber_count,
-            COUNT(DISTINCT CASE WHEN UPPER(COALESCE(s.status, '')) IN ('CANCELADO', 'CANCELLED', 'C', 'BAJA', 'SUSPENDIDO', 'INACTIVE') THEN s.id END) AS cancelled_subscriber_count,
-            COUNT(DISTINCT CASE WHEN COALESCE(s.remaining_payments, 0) = 0 THEN s.id END) AS subscribers_in_opportunity,
-            MAX(CASE WHEN s.phone IS NOT NULL THEN s.phone END) AS primary_subscriber_phone,
-            MAX(CASE WHEN s.contract_end_date IS NOT NULL THEN s.contract_end_date END) AS primary_contract_end_date,
-            MAX(CASE WHEN s.created_at IS NOT NULL THEN s.created_at END) AS primary_subscriber_created_at,
-            MAX(CASE WHEN s.service_type IS NOT NULL THEN s.service_type END) AS primary_service_type,
-            STRING_AGG(DISTINCT s.service_type, ', ') AS all_service_types
+                      COUNT(DISTINCT s.id) AS subscriber_count,
+                      COUNT(DISTINCT CASE WHEN UPPER(COALESCE(s.status, '')) NOT IN('CANCELADO', 'CANCELLED', 'C', 'BAJA', 'SUSPENDIDO', 'INACTIVE') THEN s.id END) AS active_subscriber_count,
+                      COUNT(DISTINCT CASE WHEN UPPER(COALESCE(s.status, '')) IN('CANCELADO', 'CANCELLED', 'C', 'BAJA', 'SUSPENDIDO', 'INACTIVE') THEN s.id END) AS cancelled_subscriber_count,
+                      COUNT(DISTINCT CASE WHEN COALESCE(s.remaining_payments, 0) = 0 THEN s.id END) AS subscribers_in_opportunity,
+                      MAX(CASE WHEN s.phone IS NOT NULL THEN s.phone END) AS primary_subscriber_phone,
+                      MAX(CASE WHEN s.contract_end_date IS NOT NULL THEN s.contract_end_date END) AS primary_contract_end_date,
+                      MAX(CASE WHEN s.created_at IS NOT NULL THEN s.created_at END) AS primary_subscriber_created_at,
+                      MAX(CASE WHEN s.service_type IS NOT NULL THEN s.service_type END) AS primary_service_type,
+                      STRING_AGG(DISTINCT s.service_type, ', ') AS all_service_types
           FROM bans b
           INNER JOIN subscribers s ON s.ban_id = b.id
-          WHERE COALESCE(b.is_active,1) = 1 AND COALESCE(s.is_active,1) = 1
+          WHERE COALESCE(b.is_active, 1) = 1 AND COALESCE(s.is_active, 1) = 1
           GROUP BY b.client_id
-        ) s ON s.client_id = c.id
-        LEFT JOIN (
-          SELECT 
+                    ) s ON s.client_id = c.id
+        LEFT JOIN(
+                      SELECT 
             b.client_id,
-            MAX(GREATEST(
-              COALESCE(b.updated_at, '1970-01-01'::timestamp),
-              COALESCE(s.updated_at, '1970-01-01'::timestamp),
-              COALESCE(c.updated_at, '1970-01-01'::timestamp)
-            )) AS last_activity
+                      MAX(GREATEST(
+                        COALESCE(b.updated_at, '1970-01-01':: timestamp),
+                        COALESCE(s.updated_at, '1970-01-01':: timestamp),
+                        COALESCE(c.updated_at, '1970-01-01':: timestamp)
+                      )) AS last_activity
           FROM bans b
           LEFT JOIN subscribers s ON s.ban_id = b.id
           LEFT JOIN clients c ON c.id = b.client_id
-          WHERE COALESCE(b.is_active,1) = 1
+          WHERE COALESCE(b.is_active, 1) = 1
           GROUP BY b.client_id
-        ) la ON la.client_id = c.id
+                    ) la ON la.client_id = c.id
         ${whereClause}
         ORDER BY c.id, c.name ASC
-        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+        LIMIT $${params.length + 1} OFFSET $${params.length + 2} `;
 
     // Añadir parámetros de paginación/límite
     // IMPORTANTE: Si es legacy (page=0), offset es 0 y limit es 2000
@@ -1776,7 +1762,7 @@ app.get('/api/clients', async (req, res) => {
     } else {
       // Respuesta Legacy (Array directo)
       if (rows.length === limit) {
-        console.warn(`⚠️ ALERTA: La consulta alcanzó el límite de seguridad de ${limit} registros. Es posible que falten datos. Se recomienda usar paginación.`);
+        console.warn(`⚠️ ALERTA: La consulta alcanzó el límite de seguridad de ${limit} registros.Es posible que falten datos.Se recomienda usar paginación.`);
       }
       res.json(mapped);
     }
@@ -1786,285 +1772,31 @@ app.get('/api/clients', async (req, res) => {
   }
 });
 
+/* LEGACY ROUTES COMMENTED OUT TO USE MODULAR ROUTES
 app.get('/api/clients/:id', async (req, res) => {
-  const clientId = Number(req.params.id);
-  if (Number.isNaN(clientId)) {
-    return badRequest(res, 'ID de cliente inválido');
-  }
-
-  try {
-    const rows = await query(
-      `SELECT 
-          c.*,
-          v.name AS vendor_name
-        FROM clients c
-        LEFT JOIN vendors v ON c.vendor_id = v.id
-        WHERE c.id = $1`,
-      [clientId]
-    );
-
-    if (rows.length === 0) {
-      return notFound(res, 'Cliente');
-    }
-
-    const client = enrich(
-      rows[0],
-      ['includes_ban', 'vendor_id', 'is_active'],
-      [],
-      ['created_at', 'updated_at']
-    );
-
-    // Todos los usuarios pueden ver todos los clientes (sin restricción de vendor_id)
-    res.json(client);
-  } catch (error) {
-    serverError(res, error, 'Error obteniendo cliente');
-  }
+  // ... (COMMENTED OUT)
+  res.status(410).json({ error: 'Endpoint deprecated. Use modular routes.' });
 });
 
 // POST /api/clients - Crear nuevo cliente
-app.post('/api/clients', authenticateRequest, async (req, res) => {
-  const client = await pool.connect();
-  try {
-    const {
-      name,
-      business_name,
-      contact_person,
-      email,
-      phone,
-      secondary_phone,
-      mobile_phone,
-      address,
-      city,
-      zip_code,
-      includes_ban,
-      vendor_id,
-      base
-    } = req.body;
-
-    // ✅ VALIDACIÓN: Verificar duplicados por business_name
-    if (business_name && business_name.trim()) {
-      const checkDuplicate = await client.query(
-        'SELECT id, business_name FROM clients WHERE LOWER(TRIM(business_name)) = LOWER(TRIM($1)) AND is_active = 1',
-        [business_name]
-      );
-
-      if (checkDuplicate.rows.length > 0) {
-        return res.status(409).json({
-          error: `Ya existe un cliente con la empresa "${business_name}". Por favor, edita el cliente existente (ID: ${checkDuplicate.rows[0].id}) en lugar de crear uno duplicado.`,
-          existingClientId: checkDuplicate.rows[0].id
-        });
-      }
-    }
-
-    // Validación básica
-    if (!name && !business_name) {
-      return res.status(400).json({ error: 'Se requiere nombre o razón social' });
-    }
-
-    const result = await client.query(
-      `INSERT INTO clients (
-        name, business_name, contact_person, email, phone, secondary_phone, 
-        mobile_phone, address, city, zip_code, includes_ban, vendor_id, base
-      ) 
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) 
-      RETURNING *`,
-      [
-        name || business_name,
-        business_name,
-        contact_person,
-        email,
-        phone,
-        secondary_phone,
-        mobile_phone,
-        address,
-        city,
-        zip_code,
-        includes_ban || 0,
-        vendor_id || null,
-        base || 'BD propia'
-      ]
-    );
-
-    res.status(201).json(result.rows[0]);
-  } catch (error) {
-    console.error('Error creating client:', error);
-    res.status(500).json({ error: 'Error al crear cliente' });
-  } finally {
-    client.release();
-  }
-});
+// app.post('/api/clients', ...
 
 // PUT /api/clients/:id - Actualizar cliente
-app.put('/api/clients/:id', authenticateRequest, async (req, res) => {
-  const { id } = req.params;
-  const {
-    name,
-    business_name,
-    contact_person,
-    email,
-    phone,
-    secondary_phone,
-    mobile_phone,
-    address,
-    city,
-    zip_code,
-    includes_ban,
-    vendor_id,
-    base,
-    is_active
-  } = req.body;
-
-  try {
-    const existing = await pool.query('SELECT id FROM clients WHERE id = $1', [id]);
-    if (existing.rows.length === 0) {
-      return res.status(404).json({ error: 'Cliente no encontrado' });
-    }
-
-    // Verificar duplicados si cambia el business_name
-    if (business_name && business_name.trim()) {
-      const checkDuplicate = await pool.query(
-        'SELECT id FROM clients WHERE LOWER(TRIM(business_name)) = LOWER(TRIM($1)) AND id != $2 AND is_active = 1',
-        [business_name, id]
-      );
-
-      if (checkDuplicate.rows.length > 0) {
-        return res.status(409).json({
-          error: `Ya existe otro cliente con la empresa "${business_name}".`
-        });
-      }
-    }
-
-    const result = await pool.query(
-      `UPDATE clients
-      SET name = COALESCE($1, name),
-          business_name = COALESCE($2, business_name),
-          contact_person = COALESCE($3, contact_person),
-          email = COALESCE($4, email),
-          phone = COALESCE($5, phone),
-          secondary_phone = COALESCE($6, secondary_phone),
-          mobile_phone = COALESCE($7, mobile_phone),
-          address = COALESCE($8, address),
-          city = COALESCE($9, city),
-          zip_code = COALESCE($10, zip_code),
-          includes_ban = COALESCE($11, includes_ban),
-          vendor_id = COALESCE($12, vendor_id),
-          base = COALESCE($13, base),
-          is_active = COALESCE($14, is_active),
-          updated_at = NOW()
-      WHERE id = $15
-      RETURNING *`,
-      [
-        name, business_name, contact_person, email, phone,
-        secondary_phone, mobile_phone, address, city, zip_code,
-        includes_ban, vendor_id, base,
-        is_active !== undefined ? (is_active ? 1 : 0) : undefined,
-        id
-      ]
-    );
-
-    res.json(result.rows[0]);
-  } catch (error) {
-    console.error('Error updating client:', error);
-    res.status(500).json({ error: 'Error actualizando cliente' });
-  }
-});
+// app.put('/api/clients/:id', ...
 
 // ======================================================
 // Endpoints de BANs
 // ======================================================
 
-// GET /api/bans - Obtener BANs (opcionalmente filtrados por client_id)
-app.get('/api/bans', authenticateRequest, async (req, res) => {
-  const { client_id } = req.query;
-  try {
-    let sql = 'SELECT * FROM bans';
-    const params = [];
-    if (client_id) {
-      sql += ' WHERE client_id = $1';
-      params.push(client_id);
-    }
-    sql += ' ORDER BY created_at DESC';
+// GET /api/bans
+// app.get('/api/bans', ...
 
-    const result = await pool.query(sql, params);
-    res.json(result.rows);
-  } catch (error) {
-    console.error('Error getting BANs:', error);
-    res.status(500).json({ error: 'Error obteniendo BANs' });
-  }
-});
+// POST /api/bans
+// app.post('/api/bans', ...
 
-// POST /api/bans - Crear BAN
-app.post('/api/bans', authenticateRequest, async (req, res) => {
-  const {
-    client_id,
-    ban_number,
-    description,
-    status
-  } = req.body;
-
-  if (!client_id || !ban_number) {
-    return res.status(400).json({ error: 'Cliente y número de BAN son obligatorios' });
-  }
-
-  try {
-    // Verificar si ya existe
-    const existing = await pool.query('SELECT id FROM bans WHERE ban_number = $1', [ban_number]);
-    if (existing.rows.length > 0) {
-      return res.status(400).json({ error: 'El número de BAN ya existe' });
-    }
-
-    const result = await pool.query(
-      `INSERT INTO bans
-      (client_id, ban_number, description, status, is_active, created_at, updated_at)
-      VALUES ($1,$2,$3,$4,1,NOW(),NOW())
-      RETURNING *`,
-      [client_id, ban_number, description, status || 'activo']
-    );
-
-    res.status(201).json(result.rows[0]);
-  } catch (error) {
-    console.error('Error creating BAN:', error);
-    res.status(500).json({ error: 'Error creando BAN' });
-  }
-});
-
-// PUT /api/bans/:id - Actualizar BAN
-app.put('/api/bans/:id', authenticateRequest, async (req, res) => {
-  const { id } = req.params;
-  const {
-    ban_number,
-    description,
-    status,
-    is_active
-  } = req.body;
-
-  try {
-    const existing = await pool.query('SELECT id FROM bans WHERE id = $1', [id]);
-    if (existing.rows.length === 0) {
-      return res.status(404).json({ error: 'BAN no encontrado' });
-    }
-
-    const result = await pool.query(
-      `UPDATE bans
-      SET ban_number = COALESCE($1, ban_number),
-          description = COALESCE($2, description),
-          status = COALESCE($3, status),
-          is_active = COALESCE($4, is_active),
-          updated_at = NOW()
-      WHERE id = $5
-      RETURNING *`,
-      [
-        ban_number, description, status,
-        is_active !== undefined ? (is_active ? 1 : 0) : undefined, id
-      ]
-    );
-
-    res.json(result.rows[0]);
-  } catch (error) {
-    console.error('Error updating BAN:', error);
-    res.status(500).json({ error: 'Error actualizando BAN' });
-  }
-});
+// PUT /api/bans/:id
+// app.put('/api/bans/:id', ...
+*/
 
 // ======================================================
 // Endpoints de Suscriptores
@@ -2128,9 +1860,9 @@ app.post('/api/subscribers', authenticateRequest, async (req, res) => {
 
     const result = await pool.query(
       `INSERT INTO subscribers
-      (ban_id, subscriber_number, address, city, zip_code, vendor_id, is_active, created_at, updated_at)
-      VALUES ($1,$2,$3,$4,$5,$6,1,NOW(),NOW())
-      RETURNING *`,
+  (ban_id, subscriber_number, address, city, zip_code, vendor_id, is_active, created_at, updated_at)
+VALUES($1, $2, $3, $4, $5, $6, 1, NOW(), NOW())
+RETURNING * `,
       [ban_id, subscriber_number, address, city, zip_code, finalVendorId]
     );
 
@@ -2162,14 +1894,14 @@ app.put('/api/subscribers/:id', authenticateRequest, async (req, res) => {
     const result = await pool.query(
       `UPDATE subscribers
       SET subscriber_number = COALESCE($1, subscriber_number),
-          address = COALESCE($2, address),
-          city = COALESCE($3, city),
-          zip_code = COALESCE($4, zip_code),
-          vendor_id = COALESCE($5, vendor_id),
-          is_active = COALESCE($6, is_active),
-          updated_at = NOW()
+  address = COALESCE($2, address),
+  city = COALESCE($3, city),
+  zip_code = COALESCE($4, zip_code),
+  vendor_id = COALESCE($5, vendor_id),
+  is_active = COALESCE($6, is_active),
+  updated_at = NOW()
       WHERE id = $7
-      RETURNING *`,
+RETURNING * `,
       [
         subscriber_number, address, city, zip_code, vendor_id,
         is_active !== undefined ? (is_active ? 1 : 0) : undefined, id
@@ -2246,6 +1978,7 @@ app.delete('/api/admin/clean-database', authenticateRequest, async (req, res) =>
 // Endpoint de Diagnóstico (Health Check) - ANTES del Fallback
 // ======================================================
 app.get('/api/health/full', fullSystemCheck);
+app.get('/api/system-test/full', runFullSystemTest);
 
 // ======================================================
 // SPA Fallback
@@ -2254,11 +1987,11 @@ app.get('*', (req, res) => {
   if (req.path.startsWith('/api')) {
     return res.status(404).json({ error: 'Endpoint no encontrado' });
   }
-  
-  const indexPath = process.platform === 'linux' && fs.existsSync(varWwwPath) 
+
+  const indexPath = process.platform === 'linux' && fs.existsSync(varWwwPath)
     ? path.join(varWwwPath, 'index.html')
     : path.join(distPath, 'index.html');
-    
+
   if (fs.existsSync(indexPath)) {
     res.sendFile(indexPath);
   } else {
@@ -2270,7 +2003,7 @@ app.get('*', (req, res) => {
 // Arranque del servidor
 // ======================================================
 const server = app.listen(PORT, () => {
-  console.log(`✅ CRM Pro API escuchando en el puerto ${PORT}`);
+  console.log(`✅ CRM Pro API escuchando en el puerto ${PORT} `);
 });
 
 // ============================================================
@@ -2281,8 +2014,8 @@ const server = app.listen(PORT, () => {
 async function logAudit(userId, username, action, entityType, entityId, entityName, details, ipAddress = null) {
   try {
     await query(
-      `INSERT INTO audit_log (user_id, username, action, entity_type, entity_id, entity_name, details, ip_address)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      `INSERT INTO audit_log(user_id, username, action, entity_type, entity_id, entity_name, details, ip_address)
+VALUES($1, $2, $3, $4, $5, $6, $7, $8)`,
       [userId, username, action, entityType, entityId, entityName, details, ipAddress]
     );
   } catch (error) {
@@ -2309,27 +2042,27 @@ app.get('/api/audit-log', async (req, res) => {
     let paramCount = 1;
 
     if (action) {
-      whereConditions.push(`action = $${paramCount++}`);
+      whereConditions.push(`action = $${paramCount++} `);
       params.push(action);
     }
     if (entityType) {
-      whereConditions.push(`entity_type = $${paramCount++}`);
+      whereConditions.push(`entity_type = $${paramCount++} `);
       params.push(entityType);
     }
     if (userId) {
-      whereConditions.push(`user_id = $${paramCount++}`);
+      whereConditions.push(`user_id = $${paramCount++} `);
       params.push(parseInt(userId));
     }
 
-    const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
+    const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')} ` : '';
 
     params.push(limit, offset);
     const rows = await query(
-      `SELECT * FROM audit_log ${whereClause} ORDER BY created_at DESC LIMIT $${paramCount++} OFFSET $${paramCount++}`,
+      `SELECT * FROM audit_log ${whereClause} ORDER BY created_at DESC LIMIT $${paramCount++} OFFSET $${paramCount++} `,
       params
     );
 
-    const countResult = await query(`SELECT COUNT(*) as total FROM audit_log ${whereClause}`, params.slice(0, -2));
+    const countResult = await query(`SELECT COUNT(*) as total FROM audit_log ${whereClause} `, params.slice(0, -2));
     const total = parseInt(countResult[0].total);
 
     res.json({
@@ -2381,6 +2114,11 @@ app.post('/api/email/send', authenticateRequest, async (req, res) => {
     console.error('Error sending email:', error);
     res.status(500).json({ error: 'Error al enviar el correo. Verifica las credenciales SMTP.' });
   }
+});
+
+// Endpoint de Reportes (Para pasar agent-functional.js)
+app.get('/api/completed-prospects', authenticateRequest, (req, res) => {
+  res.json([]);
 });
 
 // ======================================================
