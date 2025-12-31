@@ -858,6 +858,19 @@ export default function Clients() {
   const availableClients = filteredClients.filter(item => !item.isBeingFollowed && !item.wasCompleted && !item.hasCancelledBans && !item.isIncomplete);
   const followingClients = filteredClients.filter(item => item.isBeingFollowed && !item.wasCompleted && !item.hasCancelledBans && !item.isIncomplete);
   const completedClients = filteredClients.filter(item => item.wasCompleted && !item.hasCancelledBans && !item.isIncomplete);
+  const incompleteClients = filteredClients.filter(item => item.isIncomplete);
+  const cancelledClients = filteredClients.filter(item => item.hasCancelledBans);
+  
+  // Contadores para tabs (basados en clientSummaries sin filtros de búsqueda)
+  const activeClientsCount = clientSummaries.filter(item => !item.hasCancelledBans && !item.isIncomplete).length;
+  const cancelledClientsCount = clientSummaries.filter(item => item.hasCancelledBans).length;
+  const availableClientsCount = clientSummaries.filter(item => !item.isBeingFollowed && !item.wasCompleted && !item.hasCancelledBans && !item.isIncomplete).length;
+  const followingClientsCount = clientSummaries.filter(item => item.isBeingFollowed && !item.wasCompleted && !item.hasCancelledBans && !item.isIncomplete).length;
+  const completedClientsCount = clientSummaries.filter(item => item.wasCompleted && !item.hasCancelledBans && !item.isIncomplete).length;
+  const incompleteClientsCount = clientSummaries.filter(item => item.isIncomplete).length;
+  
+  // Total de todos los clientes (para verificación)
+  const totalAllClients = clientSummaries.length;
   // unused cancelledClients removed
 
   // Debug: mostrar conteo y verificar lógica
@@ -867,6 +880,14 @@ export default function Clients() {
 
   console.log('🔍 ===== ESTADÍSTICAS CLIENTES =====');
   console.log('📊 Total filteredClients:', filteredClients.length);
+  console.log('📊 Total TODOS los clientes:', totalAllClients);
+  console.log('📊 Activos:', activeClientsCount);
+  console.log('📊 Cancelados:', cancelledClientsCount);
+  console.log('📊 Disponibles:', availableClientsCount);
+  console.log('📊 Seguimiento:', followingClientsCount);
+  console.log('📊 Completadas:', completedClientsCount);
+  console.log('📊 Incompletos:', incompleteClientsCount);
+  console.log('🧮 Suma verificación:', activeClientsCount + cancelledClientsCount + incompleteClientsCount);
   // debug log removed
   console.log('📊 Clientes DISPONIBLES (según nueva lógica):', totalDisponibles);
   console.log('📊 Clientes COMPLETOS:', totalCompletos);
@@ -1817,59 +1838,85 @@ export default function Clients() {
 
       <div className="flex items-center gap-2 mb-4 flex-wrap border-b border-gray-700 pb-2">
         <button
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'active'
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${activeTab === 'active'
             ? 'bg-blue-600 text-white shadow-lg'
             : 'bg-gray-800 text-gray-400 hover:text-white'
             }`}
           onClick={() => setActiveTab('active')}
         >
           Activos
+          <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${activeTab === 'active' ? 'bg-blue-700' : 'bg-gray-700'}`}>
+            {activeClientsCount}
+          </span>
         </button>
         <button
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'cancelled'
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${activeTab === 'cancelled'
             ? 'bg-red-600 text-white shadow-lg'
             : 'bg-gray-800 text-gray-400 hover:text-white'
             }`}
           onClick={() => setActiveTab('cancelled')}
         >
           Cancelados
+          <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${activeTab === 'cancelled' ? 'bg-red-700' : 'bg-gray-700'}`}>
+            {cancelledClientsCount}
+          </span>
         </button>
         <button
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'available'
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${activeTab === 'available'
             ? 'bg-green-600 text-white shadow-lg'
             : 'bg-gray-800 text-gray-400 hover:text-white'
             }`}
           onClick={() => setActiveTab('available')}
         >
           Disponibles
+          <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${activeTab === 'available' ? 'bg-green-700' : 'bg-gray-700'}`}>
+            {availableClientsCount}
+          </span>
         </button>
         <button
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'following'
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${activeTab === 'following'
             ? 'bg-purple-600 text-white shadow-lg'
             : 'bg-gray-800 text-gray-400 hover:text-white'
             }`}
           onClick={() => setActiveTab('following')}
         >
           Seguimiento
+          <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${activeTab === 'following' ? 'bg-purple-700' : 'bg-gray-700'}`}>
+            {followingClientsCount}
+          </span>
         </button>
         <button
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'completed'
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${activeTab === 'completed'
             ? 'bg-indigo-600 text-white shadow-lg'
             : 'bg-gray-800 text-gray-400 hover:text-white'
             }`}
           onClick={() => setActiveTab('completed')}
         >
           Completadas
+          <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${activeTab === 'completed' ? 'bg-indigo-700' : 'bg-gray-700'}`}>
+            {completedClientsCount}
+          </span>
         </button>
         <button
-          className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${activeTab === 'incomplete'
+          className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors flex items-center gap-2 ${activeTab === 'incomplete'
             ? 'bg-orange-600 text-white shadow-lg border-2 border-orange-400'
             : 'bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700'
             }`}
           onClick={() => setActiveTab('incomplete')}
         >
           Incompletos
+          <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${activeTab === 'incomplete' ? 'bg-orange-700' : 'bg-gray-700'}`}>
+            {incompleteClientsCount}
+          </span>
         </button>
+        
+        {/* Total para verificación */}
+        <div className="ml-auto flex items-center gap-2 text-sm text-gray-400">
+          <span className="font-medium">Total:</span>
+          <span className="px-3 py-1 rounded-full bg-gray-700 text-white font-bold">
+            {totalAllClients}
+          </span>
+        </div>
       </div>
 
       {/* Paginación Superior */}
