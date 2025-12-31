@@ -77,8 +77,6 @@ export const getClients = async (req, res) => {
 
         if (tab === 'cancelled') {
             whereClause = 'WHERE c.is_active = 0';
-        } else if (tab === 'unnamed') {
-            whereClause = "WHERE (c.name IS NULL OR c.name = '' OR c.name = 'NULL')";
         } else if (tab === 'active') {
             whereClause = "WHERE c.is_active = 1 AND (c.name IS NOT NULL AND c.name != '' AND c.name != 'NULL')";
         } else if (tab === 'available') {

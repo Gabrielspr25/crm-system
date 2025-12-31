@@ -300,7 +300,7 @@ export default function Clients() {
   const [offerGeneratorClientName, setOfferGeneratorClientName] = useState('');
 
   const [clientItems, setClientItems] = useState<ClientItem[]>([]);
-  const [activeTab, setActiveTab] = useState<'all' | 'active' | 'cancelled' | 'unnamed' | 'available' | 'following' | 'completed' | 'incomplete'>('active');
+  const [activeTab, setActiveTab] = useState<'all' | 'active' | 'cancelled' | 'available' | 'following' | 'completed' | 'incomplete'>('active');
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [notification, setNotification] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const [pendingBanClientId, setPendingBanClientId] = useState<number | null>(null);
@@ -1835,15 +1835,6 @@ export default function Clients() {
           Cancelados
         </button>
         <button
-          className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${activeTab === 'unnamed'
-            ? 'bg-orange-600 text-white shadow-lg border-2 border-orange-400'
-            : 'bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700'
-            }`}
-          onClick={() => setActiveTab('unnamed')}
-        >
-          Sin Nombre (Revisar)
-        </button>
-        <button
           className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'available'
             ? 'bg-green-600 text-white shadow-lg'
             : 'bg-gray-800 text-gray-400 hover:text-white'
@@ -1871,9 +1862,9 @@ export default function Clients() {
           Completadas
         </button>
         <button
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'incomplete'
-            ? 'bg-yellow-600 text-white shadow-lg'
-            : 'bg-gray-800 text-gray-400 hover:text-white'
+          className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${activeTab === 'incomplete'
+            ? 'bg-orange-600 text-white shadow-lg border-2 border-orange-400'
+            : 'bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700'
             }`}
           onClick={() => setActiveTab('incomplete')}
         >
