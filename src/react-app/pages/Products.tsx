@@ -4,25 +4,21 @@ import { useApi } from "../hooks/useApi";
 import { authFetch } from "@/react-app/utils/auth";
 
 interface Product {
-  id: number;
+  id: string; // UUID
   name: string;
-  category_id: number | null;
+  category_id: string | null; // UUID
   category_name: string | null;
-  category_color: string | null;
   description: string | null;
-  base_price: number | null;
-  commission_percentage: number | null;
-  is_recurring: number;
-  billing_cycle: string | null;
-  is_active: number;
+  price: number | null;
+  monthly_goal: number;
   created_at: string;
-  updated_at: string;
 }
 
 interface Category {
-  id: number;
+  id: string; // UUID
   name: string;
-  color_hex: string | null;
+  description: string | null;
+  created_at: string;
 }
 
 export default function Products() {
@@ -33,10 +29,8 @@ export default function Products() {
     name: "",
     category_id: "",
     description: "",
-    base_price: "",
-    commission_percentage: "",
-    is_recurring: false,
-    billing_cycle: "monthly",
+    price: "",
+    monthly_goal: "",
   });
 
   const { data: products, loading: productsLoading, refetch: refetchProducts } = useApi<Product[]>("/api/products");
@@ -54,9 +48,9 @@ export default function Products() {
     try {
       const payload = {
         ...formData,
-        category_id: formData.category_id ? parseInt(formData.category_id) : null,
-        base_price: formData.base_price ? parseFloat(formData.base_price) : null,
-        commission_percentage: formData.commission_percentage ? parseFloat(formData.commission_percentage) : null,
+        category_id: formData.category_id || null,
+        price: formData.price ? parseFloat(formData.price) : null,
+        monthly_goal: formData.monthly_goal ? parseInt(formData.monthly_goal) : 0,
       };
 
       if (editingProduct) {
@@ -86,12 +80,10 @@ export default function Products() {
     setEditingProduct(product);
     setFormData({
       name: product.name,
-      category_id: product.category_id ? product.category_id.toString() : "",
+      category_id: product.category_id || "",
       description: product.description || "",
-      base_price: product.base_price ? product.base_price.toString() : "",
-      commission_percentage: product.commission_percentage ? product.commission_percentage.toString() : "",
-      is_recurring: Boolean(product.is_recurring),
-      billing_cycle: product.billing_cycle || "monthly",
+      price: product.price ? product.price.toString() : "",
+      monthly_goal: product.monthly_goal ? product.monthly_goal.toString() : "0",
     });
     setShowModal(true);
   };
@@ -116,10 +108,8 @@ export default function Products() {
       name: "",
       category_id: "",
       description: "",
-      base_price: "",
-      commission_percentage: "",
-      is_recurring: false,
-      billing_cycle: "monthly",
+      price: "",
+      monthly_goal: "0",
     });
   };
 
@@ -186,22 +176,17 @@ export default function Products() {
               <div className="flex items-start justify-between mb-4">
                 <div className="flex items-center">
                   <div
-                    className="p-2 rounded-lg"
-                    style={{
-                      backgroundColor: product.category_color ? `${product.category_color}20` : "#3B82F620"
-                    }}
+                    className="p-2 rounded-lg bg-blue-50 dark:bg-blue-900/20"
                   >
                     <Package
-                      className="w-5 h-5"
-                      style={{ color: product.category_color || "#3B82F6" }}
+                      className="w-5 h-5 text-blue-600 dark:text-blue-400"
                     />
                   </div>
                   <div className="ml-3">
                     <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{product.name}</h3>
                     {product.category_name && (
                       <span
-                        className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium text-white mt-1"
-                        style={{ backgroundColor: product.category_color || "#3B82F6" }}
+                        className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-600 text-white mt-1"
                       >
                         {product.category_name}
                       </span>
@@ -229,27 +214,17 @@ export default function Products() {
                   <p className="text-sm text-gray-600 dark:text-gray-300">{product.description}</p>
                 )}
 
-                {product.base_price && (
+                {product.price !== null && product.price !== undefined && (
                   <div className="flex items-center text-sm text-gray-600 dark:text-gray-300">
                     <DollarSign className="w-4 h-4 mr-1" />
-                    <span className="font-medium">Precio base:</span>
-                    <span className="ml-1">${product.base_price.toLocaleString()}</span>
+                    <span className="font-medium">Precio:</span>
+                    <span className="ml-1">${product.price.toLocaleString()}</span>
                   </div>
                 )}
 
-                {product.commission_percentage && (
+                {product.monthly_goal > 0 && (
                   <div className="text-sm text-gray-600 dark:text-gray-300">
-                    <span className="font-medium">Comisión:</span> {product.commission_percentage}%
-                  </div>
-                )}
-
-                {product.is_recurring && (
-                  <div className="text-sm text-green-600 dark:text-green-400">
-                    <span className="font-medium">Facturación:</span> {
-                      product.billing_cycle === "monthly" ? "Mensual" :
-                        product.billing_cycle === "quarterly" ? "Trimestral" :
-                          product.billing_cycle === "yearly" ? "Anual" : "Recurrente"
-                    }
+                    <span className="font-medium">Meta mensual:</span> {product.monthly_goal} unidades
                   </div>
                 )}
               </div>
@@ -326,61 +301,32 @@ export default function Products() {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Precio Base
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={formData.base_price}
-                  onChange={(e) => setFormData({ ...formData, base_price: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Porcentaje de Comisión
+                  Precio
                 </label>
                 <input
                   type="number"
                   step="0.01"
                   min="0"
-                  max="100"
-                  value={formData.commission_percentage}
-                  onChange={(e) => setFormData({ ...formData, commission_percentage: e.target.value })}
+                  value={formData.price}
+                  onChange={(e) => setFormData({ ...formData, price: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
+                  placeholder="0.00"
                 />
               </div>
 
-              <div className="flex items-center">
-                <input
-                  type="checkbox"
-                  id="is_recurring"
-                  checked={formData.is_recurring}
-                  onChange={(e) => setFormData({ ...formData, is_recurring: e.target.checked })}
-                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 dark:border-slate-600 rounded bg-white dark:bg-slate-700"
-                />
-                <label htmlFor="is_recurring" className="ml-2 block text-sm text-gray-700 dark:text-gray-300">
-                  Facturación recurrente
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Meta Mensual (unidades)
                 </label>
+                <input
+                  type="number"
+                  min="0"
+                  value={formData.monthly_goal}
+                  onChange={(e) => setFormData({ ...formData, monthly_goal: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
+                  placeholder="0"
+                />
               </div>
-
-              {formData.is_recurring && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    Ciclo de Facturación
-                  </label>
-                  <select
-                    value={formData.billing_cycle}
-                    onChange={(e) => setFormData({ ...formData, billing_cycle: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
-                  >
-                    <option value="monthly">Mensual</option>
-                    <option value="quarterly">Trimestral</option>
-                    <option value="yearly">Anual</option>
-                  </select>
-                </div>
-              )}
 
               <div className="flex justify-end space-x-3 mt-6">
                 <button

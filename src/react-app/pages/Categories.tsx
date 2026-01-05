@@ -4,13 +4,10 @@ import { useApi } from "../hooks/useApi";
 import { authFetch } from "@/react-app/utils/auth";
 
 interface Category {
-  id: number;
+  id: string; // UUID
   name: string;
   description: string | null;
-  color_hex: string | null;
-  is_active: number;
   created_at: string;
-  updated_at: string;
 }
 
 export default function Categories() {
@@ -20,7 +17,6 @@ export default function Categories() {
   const [formData, setFormData] = useState({
     name: "",
     description: "",
-    color_hex: "#3B82F6",
   });
 
   const { data: categories, loading: categoriesLoading, refetch: refetchCategories } = useApi<Category[]>("/api/categories");
@@ -62,7 +58,6 @@ export default function Categories() {
     setFormData({
       name: category.name,
       description: category.description || "",
-      color_hex: category.color_hex || "#3B82F6",
     });
     setShowModal(true);
   };
@@ -94,7 +89,6 @@ export default function Categories() {
     setFormData({
       name: "",
       description: "",
-      color_hex: "#3B82F6",
     });
   };
 
@@ -147,12 +141,10 @@ export default function Categories() {
               <div className="flex items-start justify-between mb-4">
                 <div className="flex items-center">
                   <div
-                    className="p-2 rounded-lg"
-                    style={{ backgroundColor: `${category.color_hex}20` }}
+                    className="p-2 rounded-lg bg-purple-50 dark:bg-purple-900/20"
                   >
                     <Folder
-                      className="w-5 h-5"
-                      style={{ color: category.color_hex || "#3B82F6" }}
+                      className="w-5 h-5 text-purple-600 dark:text-purple-400"
                     />
                   </div>
                   <div className="ml-3">
@@ -178,17 +170,8 @@ export default function Categories() {
                 </div>
               </div>
 
-              <div className="flex items-center justify-between">
-                <div className="flex items-center">
-                  <div
-                    className="w-4 h-4 rounded-full mr-2"
-                    style={{ backgroundColor: category.color_hex || "#3B82F6" }}
-                  />
-                  <span className="text-xs text-gray-500 dark:text-gray-400">Color de categoría</span>
-                </div>
-                <span className="text-xs text-gray-500 dark:text-gray-400">
-                  {new Date(category.created_at).toLocaleDateString('es-ES')}
-                </span>
+              <div className="mt-4 text-xs text-gray-500 dark:text-gray-400">
+                Creado: {new Date(category.created_at).toLocaleDateString('es-ES')}
               </div>
             </div>
           </div>
@@ -236,28 +219,8 @@ export default function Categories() {
                   onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                   rows={3}
                   className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
+                  placeholder="Descripción de la categoría"
                 />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Color
-                </label>
-                <div className="flex items-center space-x-3">
-                  <input
-                    type="color"
-                    value={formData.color_hex}
-                    onChange={(e) => setFormData({ ...formData, color_hex: e.target.value })}
-                    className="w-12 h-8 border border-gray-300 dark:border-slate-600 rounded cursor-pointer"
-                  />
-                  <input
-                    type="text"
-                    value={formData.color_hex}
-                    onChange={(e) => setFormData({ ...formData, color_hex: e.target.value })}
-                    className="flex-1 px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
-                    placeholder="#3B82F6"
-                  />
-                </div>
               </div>
 
               <div className="flex justify-end space-x-3 mt-6">
