@@ -1,0 +1,19 @@
+{
+  "data": [
+    {
+      "Clientes": {"name": "Test Cliente"},
+      "BANs": {"ban_number": "123456", "status": "A"},
+      "Suscriptores": {"phone": "7871234567"}
+    },
+    {
+      "Clientes": {"name": ""},
+      "BANs": {"ban_number": "789012", "status": "A"},
+      "Suscriptores": {"phone": "7879876543"}
+    },
+    {
+      "Clientes": {"name": "Cancelado SA"},
+      "BANs": {"ban_number": "345678", "status": "C"},
+      "Suscriptores": {"phone": "7875555555"}
+    }
+  ]
+}

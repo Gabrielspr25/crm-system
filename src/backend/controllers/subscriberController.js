@@ -22,39 +22,31 @@ export const getSubscribers = async (req, res) => {
 export const createSubscriber = async (req, res) => {
     const {
         ban_id,
-        subscriber_number,
-        address = null,
-        city = null,
-        zip_code = null,
-        vendor_id = null
+        phone,
+        plan,
+        monthly_value,
+        remaining_payments = null,
+        contract_term = null,
+        contract_end_date = null
     } = req.body;
 
-    if (!ban_id || !subscriber_number) {
-        return badRequest(res, 'BAN y número de suscriptor son obligatorios');
+    if (!ban_id || !phone) {
+        return badRequest(res, 'BAN y número de teléfono son obligatorios');
     }
 
     try {
         // Verificar si ya existe
-        const existing = await query('SELECT id FROM subscribers WHERE subscriber_number = $1', [subscriber_number]);
+        const existing = await query('SELECT id FROM subscribers WHERE phone = $1', [phone]);
         if (existing.length > 0) {
-            return badRequest(res, 'El número de suscriptor ya existe');
-        }
-
-        // Asignar vendedor
-        let finalVendorId = vendor_id;
-        if (!finalVendorId && req.user && req.user.salespersonId) {
-            const vendorRes = await query('SELECT id FROM vendors WHERE salesperson_id = $1', [req.user.salespersonId]);
-            if (vendorRes.length > 0) {
-                finalVendorId = vendorRes[0].id;
-            }
+            return badRequest(res, 'El número de teléfono ya existe');
         }
 
         const result = await query(
             `INSERT INTO subscribers
-        (ban_id, subscriber_number, address, city, zip_code, vendor_id, is_active, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,1,NOW(),NOW())
+        (ban_id, phone, plan, monthly_value, remaining_payments, contract_term, contract_end_date, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),NOW())
        RETURNING *`,
-            [ban_id, subscriber_number, address, city, zip_code, finalVendorId]
+            [ban_id, phone, plan, monthly_value, remaining_payments, contract_term, contract_end_date]
         );
 
         res.status(201).json(result[0]);
@@ -66,12 +58,12 @@ export const createSubscriber = async (req, res) => {
 export const updateSubscriber = async (req, res) => {
     const { id } = req.params;
     const {
-        subscriber_number,
-        address,
-        city,
-        zip_code,
-        vendor_id,
-        is_active
+        phone,
+        plan,
+        monthly_value,
+        remaining_payments,
+        contract_term,
+        contract_end_date
     } = req.body;
 
     try {
@@ -82,18 +74,17 @@ export const updateSubscriber = async (req, res) => {
 
         const result = await query(
             `UPDATE subscribers
-          SET subscriber_number = COALESCE($1, subscriber_number),
-              address = COALESCE($2, address),
-              city = COALESCE($3, city),
-              zip_code = COALESCE($4, zip_code),
-              vendor_id = COALESCE($5, vendor_id),
-              is_active = COALESCE($6, is_active),
+          SET phone = COALESCE($1, phone),
+              plan = COALESCE($2, plan),
+              monthly_value = COALESCE($3, monthly_value),
+              remaining_payments = COALESCE($4, remaining_payments),
+              contract_term = COALESCE($5, contract_term),
+              contract_end_date = COALESCE($6, contract_end_date),
               updated_at = NOW()
         WHERE id = $7
         RETURNING *`,
             [
-                subscriber_number, address, city, zip_code, vendor_id,
-                is_active !== undefined ? (is_active ? 1 : 0) : undefined, id
+                phone, plan, monthly_value, remaining_payments, contract_term, contract_end_date, id
             ]
         );
 

@@ -1,10 +1,22 @@
 import { query, getClient } from '../database/db.js';
 import { serverError, badRequest } from '../middlewares/errorHandler.js';
+import * as XLSX from 'xlsx';
+import * as path from 'path';
+import * as fs from 'fs';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 export const saveImportData = async (req, res) => {
-    const { data } = req.body || {};
+    const data = req.body?.data || [];
 
-    if (!data || !Array.isArray(data) || data.length === 0) {
+    console.log(`[SAVE] Recibidas ${data.length} filas para importar`);
+    if (data.length > 0 && data.length <= 3) {
+        console.log('[SAVE] Muestra de datos:', JSON.stringify(data, null, 2));
+    }
+
+    if (!Array.isArray(data) || data.length === 0) {
         return badRequest(res, 'No hay datos para importar');
     }
 
@@ -12,10 +24,9 @@ export const saveImportData = async (req, res) => {
     let created = 0;
     let updated = 0;
     let errors = [];
-    let createdClients = []; // Lista de clientes creados para retorno
-    
-    // Mapa para rastrear ventas por cliente en este lote
-    // Key: client_id, Value: { vendor_id, new_lines, renewed_lines, total_amount, company_name }
+    let omitted = 0;
+    let omittedReasons = [];
+    let createdClients = [];
     let clientSalesStats = new Map();
 
     const client = await getClient();
@@ -26,163 +37,240 @@ export const saveImportData = async (req, res) => {
         for (const row of data) {
             processed++;
             try {
-                // 1. Procesar Cliente
                 const clientData = row.Clientes || {};
+                const banData = row.BANs || {};
+                const subData = row.Suscriptores || {};
+                
+                const clientName = String(clientData.name || '').trim();
+                const ownerName = String(clientData.owner_name || '').trim();
+                const contactPerson = String(clientData.contact_person || '').trim();
+                const vendorName = String(clientData.vendor_id || '').trim();
+                const banNumber = String(banData.ban_number || '').trim();
+                const accountType = String(banData.account_type || '').trim();
+                const phone = String(subData.phone || '').trim();
+                const banStatusValue = String(banData.status || '').trim().toUpperCase();
+                
+                if (!banNumber) {
+                    omitted++;
+                    omittedReasons.push(`Fila ${processed}: Falta número BAN`);
+                    continue;
+                }
+                
+                if (!phone) {
+                    omitted++;
+                    omittedReasons.push(`Fila ${processed}: Falta teléfono del suscriptor`);
+                    continue;
+                }
+
+                const banIsActive = banStatusValue === 'C' ? 0 : 1;
+                
                 let clientId = null;
                 let finalVendorId = null;
-                
-                // Normalizar nombre para búsqueda
-                const clientName = (clientData.name || clientData.business_name || '').trim();
-                const vendorName = (clientData.vendor_id || '').trim(); // El frontend envía el nombre del vendedor aquí
 
-                if (clientName) {
-                    // Buscar vendedor por nombre si viene
+                const existingBan = await client.query(
+                    'SELECT id, client_id FROM bans WHERE ban_number = $1',
+                    [banNumber]
+                );
+
+                if (existingBan.rows.length > 0) {
+                    const banId = existingBan.rows[0].id;
+                    clientId = existingBan.rows[0].client_id;
+                    
                     if (vendorName) {
                         const vendorRes = await client.query('SELECT id FROM vendors WHERE name ILIKE $1', [vendorName]);
                         if (vendorRes.rows.length > 0) {
                             finalVendorId = vendorRes.rows[0].id;
                         }
                     }
-
-                    // Buscar cliente existente
-                    const existingClient = await client.query(
-                        'SELECT id, vendor_id FROM clients WHERE LOWER(TRIM(business_name)) = LOWER(TRIM($1)) OR LOWER(TRIM(name)) = LOWER(TRIM($1))',
-                        [clientName]
+                    
+                    const updateFields = [];
+                    const updateValues = [];
+                    let paramCount = 1;
+                    
+                    if (clientName) {
+                        updateFields.push(`name = $${paramCount++}`);
+                        updateValues.push(clientName);
+                    }
+                    if (ownerName) {
+                        updateFields.push(`owner_name = $${paramCount++}`);
+                        updateValues.push(ownerName);
+                    }
+                    if (contactPerson) {
+                        updateFields.push(`contact_person = $${paramCount++}`);
+                        updateValues.push(contactPerson);
+                    }
+                    if (clientData.email) {
+                        updateFields.push(`email = $${paramCount++}`);
+                        updateValues.push(clientData.email);
+                    }
+                    if (clientData.phone) {
+                        updateFields.push(`phone = $${paramCount++}`);
+                        updateValues.push(clientData.phone);
+                    }
+                    if (clientData.additional_phone) {
+                        updateFields.push(`additional_phone = $${paramCount++}`);
+                        updateValues.push(clientData.additional_phone);
+                    }
+                    if (clientData.cellular) {
+                        updateFields.push(`cellular = $${paramCount++}`);
+                        updateValues.push(clientData.cellular);
+                    }
+                    if (clientData.address) {
+                        updateFields.push(`address = $${paramCount++}`);
+                        updateValues.push(clientData.address);
+                    }
+                    if (clientData.city) {
+                        updateFields.push(`city = $${paramCount++}`);
+                        updateValues.push(clientData.city);
+                    }
+                    if (clientData.zip_code) {
+                        updateFields.push(`zip_code = $${paramCount++}`);
+                        updateValues.push(clientData.zip_code);
+                    }
+                    if (clientData.city) {
+                        updateFields.push(`city = $${paramCount++}`);
+                        updateValues.push(clientData.city);
+                    }
+                    if (clientData.phone) {
+                        updateFields.push(`phone = $${paramCount++}`);
+                        updateValues.push(clientData.phone);
+                    }
+                    if (finalVendorId) {
+                        updateFields.push(`vendor_id = $${paramCount++}`);
+                        updateValues.push(finalVendorId);
+                    }
+                    
+                    if (updateFields.length > 0) {
+                        updateFields.push(`updated_at = NOW()`);
+                        updateValues.push(clientId);
+                        await client.query(
+                            `UPDATE clients SET ${updateFields.join(', ')} WHERE id = $${paramCount}`,
+                            updateValues
+                        );
+                    }
+                    
+                    await client.query(
+                        'UPDATE bans SET is_active = $1, updated_at = NOW() WHERE id = $2',
+                        [banIsActive, banId]
                     );
-
-                    if (existingClient.rows.length > 0) {
-                        clientId = existingClient.rows[0].id;
-                        const existingVendorId = existingClient.rows[0].vendor_id;
-
-                        // Si no viene vendedor en el Excel, usamos el que ya tiene el cliente
-                        if (!finalVendorId && existingVendorId) {
-                            finalVendorId = existingVendorId;
+                    
+                    updated++;
+                } else {
+                    if (vendorName) {
+                        const vendorRes = await client.query('SELECT id FROM vendors WHERE name ILIKE $1', [vendorName]);
+                        if (vendorRes.rows.length > 0) {
+                            finalVendorId = vendorRes.rows[0].id;
                         }
-
-                        // Actualizar vendedor si no tiene (y viene uno nuevo)
-                        if (finalVendorId && finalVendorId !== existingVendorId) {
-                            await client.query('UPDATE clients SET vendor_id = COALESCE(vendor_id, $1) WHERE id = $2', [finalVendorId, clientId]);
+                    }
+                    
+                    if (clientName) {
+                        const existingClient = await client.query(
+                            'SELECT id FROM clients WHERE LOWER(TRIM(name)) = LOWER(TRIM($1))',
+                            [clientName]
+                        );
+                        
+                        if (existingClient.rows.length > 0) {
+                            clientId = existingClient.rows[0].id;
+                        } else {
+                            const newClient = await client.query(
+                                `INSERT INTO clients (name, owner_name, contact_person, email, phone, additional_phone, cellular, address, city, zip_code, salesperson_id, created_at, updated_at)
+                                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
+                                 RETURNING id, name`,
+                                [
+                                    clientName, 
+                                    ownerName || null, 
+                                    contactPerson || null,
+                                    clientData.email || null, 
+                                    clientData.phone || null,
+                                    clientData.additional_phone || null,
+                                    clientData.cellular || null,
+                                    clientData.address || null, 
+                                    clientData.city || null,
+                                    clientData.zip_code || null,
+                                    finalVendorId
+                                ]
+                            );
+                            clientId = newClient.rows[0].id;
+                            createdClients.push({
+                                id: clientId,
+                                name: newClient.rows[0].name,
+                                vendor_id: finalVendorId
+                            });
+                            created++;
                         }
-                        updated++;
                     } else {
-                        // CORRECCIÓN: Asegurar que se crea el cliente si no existe
-                        console.log(`Creando nuevo cliente desde importación: ${clientName}`);
                         const newClient = await client.query(
-                            `INSERT INTO clients (name, business_name, vendor_id, is_active, base, created_at, updated_at)
-                             VALUES ($1, $1, $2, 1, 'BD propia', NOW(), NOW())
-                             RETURNING id, name, business_name`,
-                            [clientName, finalVendorId]
+                            `INSERT INTO clients (name, vendor_id, is_active, base, created_at, updated_at)
+                             VALUES ('SIN NOMBRE', $1, 1, 'BD propia', NOW(), NOW())
+                             RETURNING id`,
+                            [finalVendorId]
                         );
                         clientId = newClient.rows[0].id;
-                        createdClients.push({
-                            id: clientId,
-                            name: newClient.rows[0].name,
-                            business_name: newClient.rows[0].business_name,
-                            vendor_id: finalVendorId
-                        });
                         created++;
                     }
+                    
+                    const newBan = await client.query(
+                        `INSERT INTO bans (ban_number, client_id, account_type, status, created_at, updated_at)
+                         VALUES ($1, $2, $3, $4, NOW(), NOW())
+                         RETURNING id`,
+                        [banNumber, clientId, accountType || null, banStatusValue || null]
+                    );
                 }
 
-                // 2. Procesar BAN
-                const banData = row.BANs || {};
-                const banNumber = (banData.ban_number || '').trim();
-                const banStatus = (banData.status || 'activo').toLowerCase();
-                const banIsActive = banStatus === 'activo' || banStatus === 'active' || banStatus === '1' ? 1 : 0;
-                let banId = null;
-
-                if (banNumber && clientId) {
-                    const existingBan = await client.query('SELECT id FROM bans WHERE ban_number = $1', [banNumber]);
+                if (clientId) {
+                    const existingBanQuery = await client.query('SELECT id FROM bans WHERE ban_number = $1', [banNumber]);
+                    const banId = existingBanQuery.rows[0]?.id;
                     
-                    if (existingBan.rows.length > 0) {
-                        banId = existingBan.rows[0].id;
-                        // Asegurar que el BAN pertenezca al cliente correcto (o actualizarlo)
-                        await client.query('UPDATE bans SET client_id = $1, is_active = $3, updated_at = NOW() WHERE id = $2', [clientId, banId, banIsActive]);
-                    } else {
-                        const newBan = await client.query(
-                            `INSERT INTO bans (ban_number, client_id, is_active, created_at, updated_at)
-                             VALUES ($1, $2, $3, NOW(), NOW())
-                             RETURNING id`,
-                            [banNumber, clientId, banIsActive]
-                        );
-                        banId = newBan.rows[0].id;
-                    }
-                }
-
-                // 3. Procesar Suscriptor
-                const subData = row.Suscriptores || {};
-                const phone = (subData.phone || subData.subscriber_number || '').trim();
-
-                if (phone && banId) {
-                    // CORRECCIÓN: Usar 'phone' en lugar de 'subscriber_number'
-                    const existingSub = await client.query('SELECT id FROM subscribers WHERE phone = $1', [phone]);
+                    if (banId) {
+                        const existingSub = await client.query('SELECT id FROM subscribers WHERE phone = $1', [phone]);
                     
-                    const serviceType = subData.service_type || null;
-                    // Validación robusta de números
-                    const monthlyValue = subData.monthly_value ? (parseFloat(String(subData.monthly_value).replace(/[^0-9.]/g, '')) || 0) : 0;
-                    const months = subData.months ? (parseInt(String(subData.months).replace(/[^0-9]/g, '')) || 0) : 0;
-                    const remainingPayments = subData.remaining_payments ? (parseInt(String(subData.remaining_payments).replace(/[^0-9]/g, '')) || 0) : 0;
-                    
-                    const notes = subData.notes || null;
-                    const status = (subData.status || 'activo').toLowerCase();
-                    const isActive = status === 'activo' || status === 'active' || status === '1' ? 1 : 0;
-                    const equipment = subData.equipment || null;
-                    const city = subData.city || null;
-                    
-                    // Fechas
-                    const contractStartDate = subData.contract_start_date || null;
-                    const contractEndDate = subData.contract_end_date || null;
+                        const plan = subData.plan || null;
+                        const monthlyValue = subData.monthly_value ? Math.abs(parseFloat(String(subData.monthly_value).replace(/[^0-9.]/g, ''))) : null;
+                        const contractTerm = subData.contract_term ? parseInt(String(subData.contract_term).replace(/[^0-9]/g, '')) : null;
+                        const remainingPayments = subData.remaining_payments ? parseInt(String(subData.remaining_payments).replace(/[^0-9]/g, '')) : null;
+                        const contractEndDate = subData.contract_end_date || null;
 
-                    // Inicializar estadísticas del cliente si no existen
-                    if (clientId && !clientSalesStats.has(clientId)) {
-                        clientSalesStats.set(clientId, {
-                            vendor_id: finalVendorId,
-                            company_name: clientName,
-                            new_lines: 0,
-                            renewed_lines: 0,
-                            total_amount: 0
-                        });
-                    }
-                    const stats = clientSalesStats.get(clientId);
-
-                    if (existingSub.rows.length > 0) {
-                        // CORRECCIÓN: Nombres de columnas (monthly_value, phone)
-                        await client.query(
-                            `UPDATE subscribers 
-                             SET ban_id = $1, 
-                                 service_type = COALESCE($2, service_type),
-                                 monthly_value = COALESCE($3, monthly_value),
-                                 remaining_payments = COALESCE($4, remaining_payments),
-                                 notes = COALESCE($5, notes),
-                                 is_active = $6,
-                                 equipment = COALESCE($7, equipment),
-                                 city = COALESCE($8, city),
-                                 contract_start_date = COALESCE($9, contract_start_date),
-                                 contract_end_date = COALESCE($10, contract_end_date),
-                                 updated_at = NOW()
-                             WHERE id = $11`,
-                            [banId, serviceType, monthlyValue, remainingPayments, notes, isActive, equipment, city, contractStartDate, contractEndDate, existingSub.rows[0].id]
-                        );
-                        // Contar como renovación/actualización
-                        if (stats) {
-                            stats.renewed_lines++;
-                            stats.total_amount += monthlyValue;
+                        if (clientId && !clientSalesStats.has(clientId)) {
+                            clientSalesStats.set(clientId, {
+                                vendor_id: finalVendorId,
+                                company_name: clientName,
+                                new_lines: 0,
+                                renewed_lines: 0,
+                                total_amount: 0
+                            });
                         }
-                    } else {
-                        // CORRECCIÓN: Nombres de columnas
-                        await client.query(
-                            `INSERT INTO subscribers (
-                                ban_id, phone, service_type, monthly_value, 
-                                remaining_payments, months, notes, is_active, 
-                                equipment, city, contract_start_date, contract_end_date,
-                                created_at, updated_at
-                             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())`,
-                            [banId, phone, serviceType, monthlyValue, remainingPayments, months, notes, isActive, equipment, city, contractStartDate, contractEndDate]
-                        );
-                        // Contar como línea nueva
-                        if (stats) {
-                            stats.new_lines++;
-                            stats.total_amount += monthlyValue;
+                        const stats = clientSalesStats.get(clientId);
+
+                        if (existingSub.rows.length > 0) {
+                            await client.query(
+                                `UPDATE subscribers 
+                                 SET ban_id = $1, 
+                                     plan = COALESCE($2, plan),
+                                     monthly_value = COALESCE($3, monthly_value),
+                                     remaining_payments = COALESCE($4, remaining_payments),
+                                     contract_term = COALESCE($5, contract_term),
+                                     contract_end_date = COALESCE($6, contract_end_date),
+                                     updated_at = NOW()
+                                 WHERE id = $7`,
+                                [banId, plan, monthlyValue, remainingPayments, contractTerm, contractEndDate, existingSub.rows[0].id]
+                            );
+                            if (stats) {
+                                stats.renewed_lines++;
+                                stats.total_amount += monthlyValue;
+                            }
+                        } else {
+                            await client.query(
+                                `INSERT INTO subscribers (
+                                    ban_id, phone, plan, monthly_value, 
+                                    remaining_payments, contract_term, contract_end_date,
+                                    created_at, updated_at
+                                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())`,
+                                [banId, phone, plan, monthlyValue, remainingPayments, contractTerm, contractEndDate]
+                            );
+                            if (stats) {
+                                stats.new_lines++;
+                                stats.total_amount += monthlyValue;
+                            }
                         }
                     }
                 }
@@ -193,10 +281,8 @@ export const saveImportData = async (req, res) => {
             }
         }
 
-        // 4. Generar/Actualizar Registros de Ventas (Follow Up Prospects)
         for (const [clientId, stats] of clientSalesStats) {
             if (stats.new_lines > 0 || stats.renewed_lines > 0) {
-                // Buscar si ya existe una venta completada HOY para este cliente
                 const existingSale = await client.query(
                     `SELECT id, movil_nueva, movil_renovacion, total_amount 
                      FROM follow_up_prospects 
@@ -205,7 +291,6 @@ export const saveImportData = async (req, res) => {
                 );
 
                 if (existingSale.rows.length > 0) {
-                    // Actualizar venta existente sumando cantidades
                     await client.query(
                         `UPDATE follow_up_prospects 
                          SET movil_nueva = movil_nueva + $1,
@@ -216,7 +301,6 @@ export const saveImportData = async (req, res) => {
                         [stats.new_lines, stats.renewed_lines, stats.total_amount, existingSale.rows[0].id]
                     );
                 } else {
-                    // Crear nueva venta completada
                     await client.query(
                         `INSERT INTO follow_up_prospects (
                             company_name, client_id, vendor_id, 
@@ -230,7 +314,6 @@ export const saveImportData = async (req, res) => {
                     );
                 }
 
-                // Desasignar vendedor del cliente al completar la venta (Liberar cliente)
                 await client.query('UPDATE clients SET vendor_id = NULL WHERE id = $1', [clientId]);
             }
         }
@@ -244,10 +327,15 @@ export const saveImportData = async (req, res) => {
                 processed,
                 created,
                 updated,
+                omitted,
+                omittedReasons: omittedReasons.slice(0, 20),
                 errors: errors.length,
-                errorList: errors.slice(0, 10), // Devolver solo los primeros 10 errores
-                createdClients // Devolver lista de clientes nuevos
-            }
+                errorList: errors.slice(0, 10),
+                createdClients
+            },
+            created,
+            updated,
+            errors: errors
         });
 
     } catch (error) {
@@ -259,111 +347,52 @@ export const saveImportData = async (req, res) => {
 };
 
 export const simulateImportData = async (req, res) => {
-    const { data } = req.body || {};
+    const data = req.body?.data || [];
 
-    if (!data || !Array.isArray(data) || data.length === 0) {
+    console.log(`[SIMULATE] Recibidas ${data.length} filas`);
+    if (data.length > 0) {
+        console.log('[SIMULATE] ESTRUCTURA fila 0:', JSON.stringify(data[0], null, 2));
+        console.log('[SIMULATE] KEYS fila 0:', Object.keys(data[0]));
+    }
+
+    if (!Array.isArray(data) || data.length === 0) {
+        console.log('[SIMULATE] ERROR: No hay datos o no es array');
         return badRequest(res, 'No hay datos para simular');
     }
 
-    let newClients = 0;
-    let updatedClients = 0;
-    let newBans = 0;
-    let updatedBans = 0;
-    let newSubscribers = 0;
-    let updatedSubscribers = 0;
-    
-    // Detalles fila por fila para el reporte
-    let rowDetails = [];
+    let disponibles = 0;
+    let incompletos = 0;
+    let cancelados = 0;
 
     const client = await getClient();
 
     try {
-        // Optimización: Cargar todos los clientes, BANs y suscriptores existentes en memoria para comparación rápida
-        // (Para volúmenes muy grandes esto debería ser paginado o por lotes, pero para <5000 filas está bien)
-        
-        // Obtener listas de claves existentes
-        const existingClientsRes = await client.query('SELECT LOWER(TRIM(name)) as name, id FROM clients');
-        const existingClients = new Set(existingClientsRes.rows.map(r => r.name));
-        
-        const existingBansRes = await client.query('SELECT ban_number FROM bans');
-        const existingBans = new Set(existingBansRes.rows.map(r => r.ban_number));
-
-        // CORRECCIÓN: Usar 'phone' en lugar de 'subscriber_number'
-        const existingSubsRes = await client.query('SELECT phone FROM subscribers');
-        const existingSubs = new Set(existingSubsRes.rows.map(r => r.phone));
-
         for (const row of data) {
             const clientData = row.Clientes || {};
             const banData = row.BANs || {};
             const subData = row.Suscriptores || {};
 
-            const clientName = (clientData.name || clientData.business_name || '').trim().toLowerCase();
-            const banNumber = (banData.ban_number || '').trim();
-            const phone = (subData.phone || subData.subscriber_number || '').trim();
+            const clientName = String(clientData.name || '').trim();
+            const banStatusValue = String(banData.status || '').trim().toUpperCase();
 
-            let clientStatus = 'Nuevo';
-            let banStatus = 'Nuevo';
-            let subStatus = 'Nuevo';
-
-            if (clientName) {
-                if (existingClients.has(clientName)) {
-                    updatedClients++;
-                    clientStatus = 'Existente';
-                } else {
-                    newClients++;
-                    // Agregar al set temporal para no contar duplicados en el mismo archivo como nuevos múltiples veces
-                    existingClients.add(clientName);
-                }
+            if (banStatusValue === 'C') {
+                cancelados++;
             } else {
-                clientStatus = '-';
-            }
-
-            if (banNumber) {
-                if (existingBans.has(banNumber)) {
-                    updatedBans++;
-                    banStatus = 'Existente';
+                if (clientName) {
+                    disponibles++;
                 } else {
-                    newBans++;
-                    existingBans.add(banNumber);
+                    incompletos++;
                 }
-            } else {
-                banStatus = '-';
             }
-
-            if (phone) {
-                if (existingSubs.has(phone)) {
-                    updatedSubscribers++;
-                    subStatus = 'Existente';
-                } else {
-                    newSubscribers++;
-                    existingSubs.add(phone);
-                }
-            } else {
-                subStatus = '-';
-            }
-
-            rowDetails.push({
-                client: clientData.name || '',
-                clientStatus,
-                ban: banNumber,
-                banStatus,
-                phone,
-                subStatus,
-                plan: subData.service_type || '',
-                price: subData.monthly_value || ''
-            });
         }
 
         res.json({
             success: true,
             report: {
-                newClients,
-                updatedClients,
-                newBans,
-                updatedBans,
-                newSubscribers,
-                updatedSubscribers,
-                details: rowDetails
+                disponibles,
+                incompletos,
+                cancelados,
+                total: disponibles + incompletos + cancelados
             }
         });
 
@@ -371,5 +400,52 @@ export const simulateImportData = async (req, res) => {
         serverError(res, error, 'Error en simulación');
     } finally {
         client.release();
+    }
+};
+
+export const getExcelColumns = async (req, res) => {
+    try {
+        const excelsDir = path.join(__dirname, '../../..', 'elementos_extra', 'excels');
+        const defaultFile = 'final UNIFICADO_CLIENTES_HERNAN.xlsx';
+
+        let excelPath = path.join(excelsDir, defaultFile);
+        if (!fs.existsSync(excelPath)) {
+            const files = fs.readdirSync(excelsDir).filter(f => f.toLowerCase().endsWith('.xlsx'));
+            if (files.length === 0) {
+                return res.status(404).json({
+                    error: 'No se encontró ningún Excel en la carpeta',
+                    path: excelsDir
+                });
+            }
+            excelPath = path.join(excelsDir, files[0]);
+        }
+
+        const fileName = path.basename(excelPath);
+        const workbook = XLSX.readFile(excelPath);
+        const firstSheetName = workbook.SheetNames[0];
+        const sheet = workbook.Sheets[firstSheetName];
+
+        const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
+        const headers = (jsonData[0] || []);
+
+        const sampleRows = jsonData.slice(1, 6).map(row => {
+            const obj = {};
+            headers.forEach((header, idx) => {
+                obj[header] = row[idx] ?? '';
+            });
+            return obj;
+        });
+
+        res.json({
+            success: true,
+            fileName,
+            columns: headers,
+            totalColumns: headers.length,
+            sampleRows,
+            totalRows: Math.max(jsonData.length - 1, 0)
+        });
+    } catch (error) {
+        console.error('Error leyendo Excel:', error);
+        serverError(res, error, 'Error al leer el archivo Excel');
     }
 };

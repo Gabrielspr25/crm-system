@@ -2,17 +2,31 @@ import path from "path";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { cloudflare } from "@cloudflare/vite-plugin";
-import injectVersion from "./vite-plugin-version.js";
+import { readFileSync } from "fs";
 
 const timestamp = Date.now();
+const packageJson = JSON.parse(readFileSync('./package.json', 'utf-8'));
+const version = packageJson.version;
+
+// Plugin para reemplazar __VERSION__ en HTML
+const replaceVersionPlugin = () => {
+  return {
+    name: 'replace-version',
+    transformIndexHtml(html: string) {
+      return html
+        .replace(/__VERSION__/g, version)
+        .replace(/__BUILD_TIME__/g, timestamp.toString());
+    }
+  };
+};
 
 export default defineConfig({
-  plugins: [react(), cloudflare(), injectVersion()],
+  plugins: [react(), cloudflare(), replaceVersionPlugin()],
   server: {
     port: 5173,
     strictPort: true,
     host: true,
-    hmr: {
+    hmr: {                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        
       overlay: true,
       protocol: 'ws',
       host: 'localhost',

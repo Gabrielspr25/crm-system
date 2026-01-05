@@ -125,13 +125,11 @@ export default function SubscriberModal({ banId, subscriber, onSave, onClose }: 
       const cleanData: any = {
         phone: formData.phone.trim(),
         ban_id: formData.ban_id,
-        service_type: formData.service_type.trim(),
+        plan: formData.service_type.trim(),
         monthly_value: Number(formData.monthly_value),
-        months: Number(formData.months || 0),
+        contract_term: Number(formData.months || 0),
         remaining_payments: Number(formData.remaining_payments || 0),
         contract_end_date: contractEndDate,
-        status: formData.status,
-        cancel_reason: formData.status === 'cancelado' ? formData.cancel_reason : undefined,
       };
 
       // If editing, include the subscriber ID

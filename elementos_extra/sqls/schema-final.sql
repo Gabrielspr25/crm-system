@@ -83,17 +83,17 @@ CREATE TABLE pipeline_statuses (
 -- ===============================================
 CREATE TABLE clients (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    owner_name VARCHAR(255),
     name VARCHAR(255) NOT NULL,
-    company VARCHAR(255),
+    contact_person VARCHAR(255),
     email VARCHAR(255),
     phone VARCHAR(20),
-    mobile VARCHAR(20),
+    additional_phone VARCHAR(20),
+    cellular VARCHAR(20),
     address TEXT,
     city VARCHAR(100),
     zip_code VARCHAR(20),
     salesperson_id UUID REFERENCES salespeople(id) ON DELETE SET NULL,
-    pipeline_status_id UUID REFERENCES pipeline_statuses(id) ON DELETE SET NULL,
-    notes TEXT,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
@@ -104,10 +104,11 @@ CREATE TABLE clients (
 CREATE TABLE bans (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     client_id UUID NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
-    number VARCHAR(9) NOT NULL UNIQUE CHECK (number ~ '^[0-9]{9}$'),
-    status VARCHAR(20) DEFAULT 'activo' CHECK (status IN ('activo', 'inactivo', 'suspendido')),
-    last_updated TIMESTAMP DEFAULT NOW(),
-    created_at TIMESTAMP DEFAULT NOW()
+    ban_number VARCHAR(9) NOT NULL UNIQUE CHECK (ban_number ~ '^[0-9]{9}$'),
+    account_type VARCHAR(50),
+    status VARCHAR(1) CHECK (status IN ('C', 'A')),
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
 );
 
 -- ===============================================
@@ -116,16 +117,12 @@ CREATE TABLE bans (
 CREATE TABLE subscribers (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     ban_id UUID NOT NULL REFERENCES bans(id) ON DELETE CASCADE,
-    phone_number VARCHAR(10) NOT NULL CHECK (phone_number ~ '^[0-9]{10}$'),
-    status VARCHAR(20) DEFAULT 'activo' CHECK (status IN ('activo', 'cancelado', 'suspendido')),
-    product_id UUID REFERENCES products(id) ON DELETE SET NULL,
-    category_id UUID REFERENCES categories(id) ON DELETE SET NULL,
+    phone VARCHAR(10) NOT NULL CHECK (phone ~ '^[0-9]{10}$'),
+    plan VARCHAR(255),
+    monthly_value DECIMAL(10,2),
+    remaining_payments INTEGER,
+    contract_term INTEGER,
     contract_end_date DATE,
-    equipment VARCHAR(255),
-    city VARCHAR(100),
-    months_sold INTEGER DEFAULT 0,
-    payments_made INTEGER DEFAULT 0,
-    notes TEXT,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
@@ -193,17 +190,15 @@ CREATE TABLE metas (
 -- Clientes
 CREATE INDEX idx_clients_salesperson ON clients(salesperson_id);
 CREATE INDEX idx_clients_name ON clients(name);
-CREATE INDEX idx_clients_company ON clients(company);
 
 -- BANs
 CREATE INDEX idx_bans_client ON bans(client_id);
-CREATE INDEX idx_bans_number ON bans(number);
+CREATE INDEX idx_bans_number ON bans(ban_number);
 CREATE INDEX idx_bans_status ON bans(status);
 
 -- Suscriptores
 CREATE INDEX idx_subscribers_ban ON subscribers(ban_id);
-CREATE INDEX idx_subscribers_phone ON subscribers(phone_number);
-CREATE INDEX idx_subscribers_status ON subscribers(status);
+CREATE INDEX idx_subscribers_phone ON subscribers(phone);
 CREATE INDEX idx_subscribers_contract_date ON subscribers(contract_end_date);
 
 -- Productos y categorías
@@ -286,89 +281,86 @@ INSERT INTO pipeline_statuses (name, color, order_position) VALUES
 -- DATOS DE PRUEBA PARA LÓGICA CLIENTE → BAN → SUSCRIPTOR
 -- ===============================================
 
--- Cliente de prueba
-INSERT INTO clients (name, company, email, phone, mobile, address, city, zip_code, salesperson_id, pipeline_status_id, notes) VALUES
-('Dr. Olga Rodríguez', 'Clínica Rodríguez', 'olga@clinica.com', '7871234567', '7879876543', 'Calle Salud 123', 'Ponce', '00731', 
- (SELECT id FROM salespeople WHERE email = 'maria@crm.com'), 
- (SELECT id FROM pipeline_statuses WHERE name = 'Ganado'),
- 'Cliente VIP - Clínica médica con múltiples líneas');
+-- Cliente de prueba (DESHABILITADO - columnas viejas)
+-- INSERT INTO clients (name, company, email, phone, mobile, address, city, zip_code, salesperson_id, pipeline_status_id, notes) VALUES
+-- ('Dr. Olga Rodríguez', 'Clínica Rodríguez', 'olga@clinica.com', '7871234567', '7879876543', 'Calle Salud 123', 'Ponce', '00731', 
+--  (SELECT id FROM salespeople WHERE email = 'maria@crm.com'), 
+--  (SELECT id FROM pipeline_statuses WHERE name = 'Ganado'),
+--  'Cliente VIP - Clínica médica con múltiples líneas');
 
--- BANs para el cliente
-INSERT INTO bans (client_id, number, status) VALUES
-((SELECT id FROM clients WHERE email = 'olga@clinica.com'), '123456789', 'activo'),
-((SELECT id FROM clients WHERE email = 'olga@clinica.com'), '987654321', 'activo');
+-- BANs para el cliente (DESHABILITADO - columnas viejas)
+-- INSERT INTO bans (client_id, number, status) VALUES
+-- ((SELECT id FROM clients WHERE email = 'olga@clinica.com'), '123456789', 'activo'),
+-- ((SELECT id FROM clients WHERE email = 'olga@clinica.com'), '987654321', 'activo');
 
--- Suscriptores con fechas de vencimiento para testing
-INSERT INTO subscribers (ban_id, phone_number, status, product_id, category_id, contract_end_date, equipment, city, months_sold, payments_made, notes) VALUES
+-- Suscriptores con fechas de vencimiento para testing (DESHABILITADO - columnas viejas)
+-- INSERT INTO subscribers (ban_id, phone_number, status, product_id, category_id, contract_end_date, equipment, city, months_sold, payments_made, notes) VALUES
+
+-- INSERT INTO subscribers (ban_id, phone_number, status, product_id, category_id, contract_end_date, equipment, city, months_sold, payments_made, notes) VALUES
 
 -- BAN 123456789 - Suscriptores con diferentes estados de vencimiento
-((SELECT id FROM bans WHERE number = '123456789'), '7871234567', 'activo', 
- (SELECT id FROM products WHERE name = 'Plan Móvil Premium'), 
- (SELECT id FROM categories WHERE name = 'Móvil'), 
- '2024-10-15',  -- VENCIDO (para testing de alertas)
- 'iPhone 14', 'San Juan', 12, 8, 'Línea principal - VENCIDA'),
+-- ((SELECT id FROM bans WHERE number = '123456789'), '7871234567', 'activo', 
+--  (SELECT id FROM products WHERE name = 'Plan Móvil Premium'), 
+--  (SELECT id FROM categories WHERE name = 'Móvil'), 
+--  '2024-10-15',  -- VENCIDO (para testing de alertas)
+--  'iPhone 14', 'San Juan', 12, 8, 'Línea principal - VENCIDA'),
 
-((SELECT id FROM bans WHERE number = '123456789'), '7879876543', 'activo', 
- (SELECT id FROM products WHERE name = 'Plan Móvil Básico'), 
- (SELECT id FROM categories WHERE name = 'Móvil'), 
- '2025-01-25',  -- URGENTE (vence en pocos días)
- 'Samsung S23', 'Bayamón', 6, 4, 'Línea secundaria - URGENTE'),
+-- ((SELECT id FROM bans WHERE number = '123456789'), '7879876543', 'activo', 
+--  (SELECT id FROM products WHERE name = 'Plan Móvil Básico'), 
+--  (SELECT id FROM categories WHERE name = 'Móvil'), 
+--  '2025-01-25',  -- URGENTE (vence en pocos días)
+--  'Samsung S23', 'Bayamón', 6, 4, 'Línea secundaria - URGENTE'),
 
-((SELECT id FROM bans WHERE number = '123456789'), '7875551234', 'activo', 
- (SELECT id FROM products WHERE name = 'Internet 100MB'), 
- (SELECT id FROM categories WHERE name = 'Internet'), 
- '2025-07-15',  -- NORMAL (vence en el futuro)
- 'Modem WiFi', 'Caguas', 12, 2, 'Internet clínica - NORMAL'),
+-- ((SELECT id FROM bans WHERE number = '123456789'), '7875551234', 'activo', 
+--  (SELECT id FROM products WHERE name = 'Internet 100MB'), 
+--  (SELECT id FROM categories WHERE name = 'Internet'), 
+--  '2025-07-15',  -- NORMAL (vence en el futuro)
+--  'Modem WiFi', 'Caguas', 12, 2, 'Internet clínica - NORMAL'),
 
 -- BAN 987654321 - Más suscriptores
-((SELECT id FROM bans WHERE number = '987654321'), '7872223333', 'activo', 
- (SELECT id FROM products WHERE name = 'TV Básica'), 
- (SELECT id FROM categories WHERE name = 'TV'), 
- '2025-03-10',  -- ADVERTENCIA (30 días)
- 'Decodificador HD', 'Ponce', 24, 18, 'TV sala de espera'),
+-- ((SELECT id FROM bans WHERE number = '987654321'), '7872223333', 'activo', 
+--  (SELECT id FROM products WHERE name = 'TV Básica'), 
+--  (SELECT id FROM categories WHERE name = 'TV'), 
+--  '2025-03-10',  -- ADVERTENCIA (30 días)
+--  'Decodificador HD', 'Ponce', 24, 18, 'TV sala de espera'),
 
-((SELECT id FROM bans WHERE number = '987654321'), '7874445555', 'cancelado', 
- (SELECT id FROM products WHERE name = 'Plan Móvil Básico'), 
- (SELECT id FROM categories WHERE name = 'Móvil'), 
- '2024-12-01', 
- 'iPhone 12', 'Ponce', 12, 12, 'Línea cancelada por cliente');
+-- ((SELECT id FROM bans WHERE number = '987654321'), '7874445555', 'cancelado', 
+--  (SELECT id FROM products WHERE name = 'Plan Móvil Básico'), 
+--  (SELECT id FROM categories WHERE name = 'Móvil'), 
+--  '2024-12-01', 
+--  'iPhone 12', 'Ponce', 12, 12, 'Línea cancelada por cliente');
 
 -- ===============================================
 -- VISTA PARA ALERTAS DE VENCIMIENTO
 -- ===============================================
-CREATE OR REPLACE VIEW subscriber_alerts AS
-SELECT 
-    s.id as subscriber_id,
-    s.phone_number,
-    s.contract_end_date,
-    s.status,
-    s.equipment,
-    s.city,
-    b.id as ban_id,
-    b.number as ban_number,
-    c.id as client_id,
-    c.name as client_name,
-    c.company as client_company,
-    sp.name as salesperson_name,
-    p.name as product_name,
-    cat.name as category_name,
-    -- Cálculo de días hasta vencimiento
-    (s.contract_end_date - CURRENT_DATE) as days_to_expiry,
-    -- Nivel de urgencia
-    CASE 
-        WHEN s.contract_end_date < CURRENT_DATE THEN 'VENCIDO'
-        WHEN s.contract_end_date <= CURRENT_DATE + INTERVAL '7 days' THEN 'URGENTE'
-        WHEN s.contract_end_date <= CURRENT_DATE + INTERVAL '30 days' THEN 'ADVERTENCIA'
-        ELSE 'NORMAL'
-    END as urgency_level
-FROM subscribers s
-JOIN bans b ON s.ban_id = b.id
-JOIN clients c ON b.client_id = c.id
-LEFT JOIN salespeople sp ON c.salesperson_id = sp.id
-LEFT JOIN products p ON s.product_id = p.id
-LEFT JOIN categories cat ON s.category_id = cat.id
-WHERE s.status = 'activo'
-ORDER BY s.contract_end_date ASC;
+-- VISTA PARA ALERTAS DE VENCIMIENTO (DESHABILITADA - columnas viejas)
+-- ===============================================
+-- CREATE OR REPLACE VIEW subscriber_alerts AS
+-- SELECT 
+--     s.id as subscriber_id,
+--     s.phone,
+--     s.contract_end_date,
+--     b.id as ban_id,
+--     b.ban_number as ban_number,
+--     c.id as client_id,
+--     c.name as client_name,
+--     sp.name as salesperson_name,
+--     p.name as product_name,
+--     cat.name as category_name,
+--     (s.contract_end_date - CURRENT_DATE) as days_to_expiry,
+--     CASE 
+--         WHEN s.contract_end_date < CURRENT_DATE THEN 'VENCIDO'
+--         WHEN s.contract_end_date <= CURRENT_DATE + INTERVAL '7 days' THEN 'URGENTE'
+--         WHEN s.contract_end_date <= CURRENT_DATE + INTERVAL '30 days' THEN 'ADVERTENCIA'
+--         ELSE 'NORMAL'
+--     END as urgency_level
+-- FROM subscribers s
+-- JOIN bans b ON s.ban_id = b.id
+-- JOIN clients c ON b.client_id = c.id
+-- LEFT JOIN salespeople sp ON c.salesperson_id = sp.id
+-- LEFT JOIN products p ON s.product_id = p.id
+-- LEFT JOIN categories cat ON s.category_id = cat.id
+-- ORDER BY s.contract_end_date ASC;
 
 -- ===============================================
 -- FUNCIÓN PARA OBTENER RESUMEN DE CLIENTE
@@ -410,11 +402,11 @@ COMMENT ON TABLE clients IS 'Entidad principal - Empresas o personas que contrat
 COMMENT ON TABLE bans IS 'Cuentas de facturación de 9 dígitos - Una por cliente, puede tener múltiples suscriptores';
 COMMENT ON TABLE subscribers IS 'Líneas de servicio de 10 dígitos - Cada una asociada a un BAN';
 
-COMMENT ON COLUMN bans.number IS 'Número único de 9 dígitos para facturación';
-COMMENT ON COLUMN subscribers.phone_number IS 'Número de teléfono/línea de 10 dígitos';
+COMMENT ON COLUMN bans.ban_number IS 'Número único de 9 dígitos para facturación';
+COMMENT ON COLUMN subscribers.phone IS 'Número de teléfono/línea de 10 dígitos';
 COMMENT ON COLUMN subscribers.contract_end_date IS 'Fecha de vencimiento del contrato - Crítica para alertas';
-COMMENT ON COLUMN subscribers.months_sold IS 'Meses vendidos originalmente';
-COMMENT ON COLUMN subscribers.payments_made IS 'Pagos realizados hasta la fecha';
+COMMENT ON COLUMN subscribers.contract_term IS 'Meses del contrato';
+COMMENT ON COLUMN subscribers.remaining_payments IS 'Pagos pendientes';
 
 -- ===============================================
 -- VERIFICACIÓN FINAL

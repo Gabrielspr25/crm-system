@@ -11,24 +11,26 @@ const TEST_PREFIX = '__SYSTEM_TEST__';
 const TEST_DATA = {
     client: {
         name: `${TEST_PREFIX}_Cliente_Prueba`,
-        company: `${TEST_PREFIX}_Empresa_SA`,
+        owner_name: `${TEST_PREFIX}_Dueño_SA`,
+        contact_person: 'Juan Pérez',
         email: 'test@sistematest.com',
         phone: '809-555-0001',
-        mobile: '809-555-0002',
+        cellular: '809-555-0002',
+        additional_phone: '809-555-0003',
         address: 'Calle Prueba #123',
         city: 'Santo Domingo',
-        zip_code: '10101',
-        notes: 'Cliente creado por agente de pruebas'
+        zip_code: '10101'
     },
     ban: {
-        number: `${TEST_PREFIX}_BAN_999888777`,
-        status: 'activo'
+        number: `999888777`,
+        status: 'A'
     },
     subscriber: {
-        phone: `${TEST_PREFIX}_8095551234`,
-        address: 'Av. Suscriptor #456',
-        city: 'Santiago',
-        zip_code: '20202'
+        phone: `8095551234`,
+        plan: 'BREDE3',
+        monthly_value: 43.33,
+        remaining_payments: 24,
+        contract_term: 30
     },
     followUp: {
         company_name: `${TEST_PREFIX}_Prospecto_Corp`,
@@ -81,8 +83,8 @@ export const runFullSystemTest = async (req, res) => {
         // ========================================
         addTest('SETUP', 'Limpieza previa', 'pass', 'Iniciando limpieza de datos de prueba anteriores');
         
-        await client.query(`DELETE FROM subscribers WHERE phone LIKE '${TEST_PREFIX}%'`);
-        await client.query(`DELETE FROM bans WHERE number LIKE '${TEST_PREFIX}%'`);
+        await client.query(`DELETE FROM subscribers WHERE phone = '8095551234'`);
+        await client.query(`DELETE FROM bans WHERE ban_number = '999888777'`);
         await client.query(`DELETE FROM follow_up_prospects WHERE company_name LIKE '${TEST_PREFIX}%'`);
         await client.query(`DELETE FROM clients WHERE name LIKE '${TEST_PREFIX}%'`);
 
@@ -93,15 +95,17 @@ export const runFullSystemTest = async (req, res) => {
         try {
             const clientResult = await client.query(
                 `INSERT INTO clients 
-                 (name, company, email, phone, mobile_phone, address, city, zip_code, created_at, updated_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+                 (name, owner_name, contact_person, email, phone, cellular, additional_phone, address, city, zip_code, created_at, updated_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
                  RETURNING *`,
                 [
                     TEST_DATA.client.name,
-                    TEST_DATA.client.company,
+                    TEST_DATA.client.owner_name,
+                    TEST_DATA.client.contact_person,
                     TEST_DATA.client.email,
                     TEST_DATA.client.phone,
-                    TEST_DATA.client.mobile,
+                    TEST_DATA.client.cellular,
+                    TEST_DATA.client.additional_phone,
                     TEST_DATA.client.address,
                     TEST_DATA.client.city,
                     TEST_DATA.client.zip_code
@@ -118,10 +122,11 @@ export const runFullSystemTest = async (req, res) => {
                 const fieldsFail = [];
                 
                 if (savedClient.name === TEST_DATA.client.name) fieldsOk.push('name'); else fieldsFail.push('name');
-                if (savedClient.company === TEST_DATA.client.company) fieldsOk.push('company'); else fieldsFail.push('company');
+                if (savedClient.owner_name === TEST_DATA.client.owner_name) fieldsOk.push('owner_name'); else fieldsFail.push('owner_name');
+                if (savedClient.contact_person === TEST_DATA.client.contact_person) fieldsOk.push('contact_person'); else fieldsFail.push('contact_person');
                 if (savedClient.email === TEST_DATA.client.email) fieldsOk.push('email'); else fieldsFail.push('email');
                 if (savedClient.phone === TEST_DATA.client.phone) fieldsOk.push('phone'); else fieldsFail.push('phone');
-                if (savedClient.mobile_phone === TEST_DATA.client.mobile) fieldsOk.push('mobile_phone'); else fieldsFail.push('mobile_phone');
+                if (savedClient.cellular === TEST_DATA.client.cellular) fieldsOk.push('cellular'); else fieldsFail.push('cellular');
                 if (savedClient.address === TEST_DATA.client.address) fieldsOk.push('address'); else fieldsFail.push('address');
                 if (savedClient.city === TEST_DATA.client.city) fieldsOk.push('city'); else fieldsFail.push('city');
                 if (savedClient.zip_code === TEST_DATA.client.zip_code) fieldsOk.push('zip_code'); else fieldsFail.push('zip_code');
@@ -176,7 +181,7 @@ export const runFullSystemTest = async (req, res) => {
         if (clientId) {
             try {
                 const banResult = await client.query(
-                    `INSERT INTO bans (client_id, number, status, created_at, last_updated)
+                    `INSERT INTO bans (client_id, ban_number, status, created_at, updated_at)
                      VALUES ($1, $2, $3, NOW(), NOW())
                      RETURNING *`,
                     [clientId, TEST_DATA.ban.number, TEST_DATA.ban.status]
@@ -207,10 +212,10 @@ export const runFullSystemTest = async (req, res) => {
         // ========================================
         if (banId) {
             try {
-                const newStatus = 'inactivo';
+                const newStatus = 'C';
                 
                 await client.query(
-                    `UPDATE bans SET status = $1, last_updated = NOW() WHERE id = $2`,
+                    `UPDATE bans SET status = $1, updated_at = NOW() WHERE id = $2`,
                     [newStatus, banId]
                 );
                 
@@ -219,7 +224,7 @@ export const runFullSystemTest = async (req, res) => {
                 if (verifyBan.rows[0].status === newStatus) {
                     addTest('BANS', 'Editar BAN y guardar', 'pass', 
                         'Status de BAN actualizado correctamente',
-                        { before: 'activo', after: newStatus });
+                        { before: 'A', after: newStatus });
                 } else {
                     addTest('BANS', 'Editar BAN', 'fail', 'El cambio de status no se guardó');
                 }
@@ -236,15 +241,16 @@ export const runFullSystemTest = async (req, res) => {
             try {
                 const subResult = await client.query(
                     `INSERT INTO subscribers 
-                     (ban_id, phone, address, city, zip_code, is_active, created_at, updated_at)
-                     VALUES ($1, $2, $3, $4, $5, 1, NOW(), NOW())
+                     (ban_id, phone, plan, monthly_value, remaining_payments, contract_term, created_at, updated_at)
+                     VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
                      RETURNING *`,
                     [
                         banId,
                         TEST_DATA.subscriber.phone,
-                        TEST_DATA.subscriber.address,
-                        TEST_DATA.subscriber.city,
-                        TEST_DATA.subscriber.zip_code
+                        TEST_DATA.subscriber.plan,
+                        TEST_DATA.subscriber.monthly_value,
+                        TEST_DATA.subscriber.remaining_payments,
+                        TEST_DATA.subscriber.contract_term
                     ]
                 );
                 
@@ -258,8 +264,9 @@ export const runFullSystemTest = async (req, res) => {
                     
                     if (savedSub.ban_id === banId) fieldsOk.push('ban_id'); else fieldsFail.push('ban_id');
                     if (savedSub.phone === TEST_DATA.subscriber.phone) fieldsOk.push('phone'); else fieldsFail.push('phone');
-                    if (savedSub.address === TEST_DATA.subscriber.address) fieldsOk.push('address'); else fieldsFail.push('address');
-                    if (savedSub.city === TEST_DATA.subscriber.city) fieldsOk.push('city'); else fieldsFail.push('city');
+                    if (savedSub.plan === TEST_DATA.subscriber.plan) fieldsOk.push('plan'); else fieldsFail.push('plan');
+                    if (Number(savedSub.monthly_value) === TEST_DATA.subscriber.monthly_value) fieldsOk.push('monthly_value'); else fieldsFail.push('monthly_value');
+                    if (savedSub.remaining_payments === TEST_DATA.subscriber.remaining_payments) fieldsOk.push('remaining_payments'); else fieldsFail.push('remaining_payments');
                     
                     if (fieldsFail.length === 0) {
                         addTest('SUSCRIPTORES', 'Crear suscriptor (todos los campos)', 'pass',
@@ -283,19 +290,19 @@ export const runFullSystemTest = async (req, res) => {
         // ========================================
         if (subscriberId) {
             try {
-                const newAddress = 'Av. Editada #789';
+                const newPlan = 'BREDE5';
                 
                 await client.query(
-                    `UPDATE subscribers SET address = $1, updated_at = NOW() WHERE id = $2`,
-                    [newAddress, subscriberId]
+                    `UPDATE subscribers SET plan = $1, updated_at = NOW() WHERE id = $2`,
+                    [newPlan, subscriberId]
                 );
                 
-                const verifySub = await client.query('SELECT address FROM subscribers WHERE id = $1', [subscriberId]);
+                const verifySub = await client.query('SELECT plan FROM subscribers WHERE id = $1', [subscriberId]);
                 
-                if (verifySub.rows[0].address === newAddress) {
+                if (verifySub.rows[0].plan === newPlan) {
                     addTest('SUSCRIPTORES', 'Editar suscriptor y guardar', 'pass',
-                        'Dirección de suscriptor actualizada',
-                        { before: TEST_DATA.subscriber.address, after: newAddress });
+                        'Plan de suscriptor actualizado',
+                        { before: TEST_DATA.subscriber.plan, after: newPlan });
                 } else {
                     addTest('SUSCRIPTORES', 'Editar suscriptor', 'fail', 'El cambio no se guardó');
                 }
@@ -311,14 +318,13 @@ export const runFullSystemTest = async (req, res) => {
         try {
             const fpResult = await client.query(
                 `INSERT INTO follow_up_prospects
-                 (company_name, client_id, fijo_ren, fijo_new, movil_nueva, movil_renovacion, 
+                 (company_name, fijo_ren, fijo_new, movil_nueva, movil_renovacion, 
                   claro_tv, cloud, mpls, notes, contact_phone, contact_email, total_amount,
                   is_completed, is_active, created_at, updated_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, false, true, NOW(), NOW())
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, false, true, NOW(), NOW())
                  RETURNING *`,
                 [
                     TEST_DATA.followUp.company_name,
-                    clientId,
                     TEST_DATA.followUp.fijo_ren,
                     TEST_DATA.followUp.fijo_new,
                     TEST_DATA.followUp.movil_nueva,
@@ -407,7 +413,7 @@ export const runFullSystemTest = async (req, res) => {
                 const integrityCheck = await client.query(`
                     SELECT 
                         c.id as client_id, c.name as client_name,
-                        b.id as ban_id, b.number as ban_number,
+                        b.id as ban_id, b.ban_number as ban_number,
                         s.id as subscriber_id, s.phone as subscriber_phone
                     FROM clients c
                     JOIN bans b ON b.client_id = c.id

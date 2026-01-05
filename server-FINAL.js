@@ -20,6 +20,7 @@ import referidosRoutes from './src/backend/routes/referidosRoutes.js';
 import tarifasRoutes from './src/backend/routes/tarifasRoutes.js';
 import clientRoutes from './src/backend/routes/clientRoutes.js';
 import banRoutes from './src/backend/routes/banRoutes.js';
+import importRoutes from './src/backend/routes/importRoutes.js';
 
 // ======================================================
 // Configuración base
@@ -68,6 +69,7 @@ app.use('/api/referidos', referidosRoutes);
 app.use('/api/tariffs', tarifasRoutes);
 app.use('/api/clients', clientRoutes);
 app.use('/api/bans', banRoutes);
+app.use('/api/importador', importRoutes);
 
 
 const JWT_SECRET = process.env.JWT_SECRET || 'development-secret';
@@ -1831,39 +1833,31 @@ app.get('/api/subscribers', authenticateRequest, async (req, res) => {
 app.post('/api/subscribers', authenticateRequest, async (req, res) => {
   const {
     ban_id,
-    subscriber_number,
-    address = null,
-    city = null,
-    zip_code = null,
-    vendor_id = null
+    phone,
+    plan,
+    monthly_value,
+    remaining_payments = null,
+    contract_term = null,
+    contract_end_date = null
   } = req.body;
 
-  if (!ban_id || !subscriber_number) {
-    return res.status(400).json({ error: 'BAN y número de suscriptor son obligatorios' });
+  if (!ban_id || !phone) {
+    return res.status(400).json({ error: 'BAN y número de teléfono son obligatorios' });
   }
 
   try {
     // Verificar si ya existe
-    const existing = await pool.query('SELECT id FROM subscribers WHERE subscriber_number = $1', [subscriber_number]);
+    const existing = await pool.query('SELECT id FROM subscribers WHERE phone = $1', [phone]);
     if (existing.rows.length > 0) {
-      return res.status(400).json({ error: 'El número de suscriptor ya existe' });
-    }
-
-    // Asignar vendedor
-    let finalVendorId = vendor_id;
-    if (!finalVendorId && req.user && req.user.salespersonId) {
-      const vendorRes = await pool.query('SELECT id FROM vendors WHERE salesperson_id = $1', [req.user.salespersonId]);
-      if (vendorRes.rows.length > 0) {
-        finalVendorId = vendorRes.rows[0].id;
-      }
+      return res.status(400).json({ error: 'El número de teléfono ya existe' });
     }
 
     const result = await pool.query(
       `INSERT INTO subscribers
-  (ban_id, subscriber_number, address, city, zip_code, vendor_id, is_active, created_at, updated_at)
-VALUES($1, $2, $3, $4, $5, $6, 1, NOW(), NOW())
+  (ban_id, phone, plan, monthly_value, remaining_payments, contract_term, contract_end_date, created_at, updated_at)
+VALUES($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
 RETURNING * `,
-      [ban_id, subscriber_number, address, city, zip_code, finalVendorId]
+      [ban_id, phone, plan, monthly_value, remaining_payments, contract_term, contract_end_date]
     );
 
     res.status(201).json(result.rows[0]);
@@ -1877,12 +1871,12 @@ RETURNING * `,
 app.put('/api/subscribers/:id', authenticateRequest, async (req, res) => {
   const { id } = req.params;
   const {
-    subscriber_number,
-    address,
-    city,
-    zip_code,
-    vendor_id,
-    is_active
+    phone,
+    plan,
+    monthly_value,
+    remaining_payments,
+    contract_term,
+    contract_end_date
   } = req.body;
 
   try {
@@ -1893,18 +1887,17 @@ app.put('/api/subscribers/:id', authenticateRequest, async (req, res) => {
 
     const result = await pool.query(
       `UPDATE subscribers
-      SET subscriber_number = COALESCE($1, subscriber_number),
-  address = COALESCE($2, address),
-  city = COALESCE($3, city),
-  zip_code = COALESCE($4, zip_code),
-  vendor_id = COALESCE($5, vendor_id),
-  is_active = COALESCE($6, is_active),
+      SET phone = COALESCE($1, phone),
+  plan = COALESCE($2, plan),
+  monthly_value = COALESCE($3, monthly_value),
+  remaining_payments = COALESCE($4, remaining_payments),
+  contract_term = COALESCE($5, contract_term),
+  contract_end_date = COALESCE($6, contract_end_date),
   updated_at = NOW()
       WHERE id = $7
 RETURNING * `,
       [
-        subscriber_number, address, city, zip_code, vendor_id,
-        is_active !== undefined ? (is_active ? 1 : 0) : undefined, id
+        phone, plan, monthly_value, remaining_payments, contract_term, contract_end_date, id
       ]
     );
 

@@ -59,17 +59,16 @@ export default function ClientModal({
   banRequirementPending
 }: ClientModalProps) {
   const [formData, setFormData] = useState<CreateClient>({
+    owner_name: '',
     name: '',
-    business_name: '',
     contact_person: '',
     email: '',
     phone: '',
-    secondary_phone: '',
-    mobile_phone: '',
+    additional_phone: '',
+    cellular: '',
     address: '',
     city: '',
     zip_code: '',
-    base: '',
     includes_ban: false,
     vendor_id: undefined,
   });
@@ -130,23 +129,23 @@ export default function ClientModal({
   useEffect(() => {
     if (client) {
       setFormData({
+        owner_name: (client as any).owner_name ?? '',
         name: client.name || '',
-        business_name: client.business_name ?? '',
         contact_person: client.contact_person ?? '',
         email: client.email ?? '',
         phone: client.phone ?? '',
-        secondary_phone: (client as any).secondary_phone ?? '',
-        mobile_phone: (client as any).mobile_phone ?? '',
+        additional_phone: (client as any).additional_phone ?? '',
+        cellular: (client as any).cellular ?? '',
         address: client.address ?? '',
         city: (client as any).city ?? '',
         zip_code: (client as any).zip_code ?? '',
-        base: (client as any).base ?? 'BD propia',
         includes_ban: Boolean(client.includes_ban),
         vendor_id: client.vendor_id ?? undefined,
       });
     } else {
       // Reset form when creating new client
       setFormData({
+        owner_name: '',
         name: '',
         business_name: '',
         contact_person: '',
@@ -239,87 +238,47 @@ export default function ClientModal({
               )}
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* Campo EMPRESA - Razón Social */}
+                {/* Nombre y Apellido Dueño */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Nombre y Apellido Dueño
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.owner_name || ''}
+                    onChange={(e) => setFormData({ ...formData, owner_name: e.target.value })}
+                    className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="Ej: Juan Pérez"
+                  />
+                </div>
+
+                {/* Empresa / Razón Social */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Empresa / Razón Social *
                   </label>
                   <input
                     type="text"
-                    value={formData.business_name || ''}
-                    onChange={(e) => setFormData({ ...formData, business_name: e.target.value })}
+                    value={formData.name || ''}
+                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                     className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     placeholder="Ej: SAN GERMAN GLASS CORP"
                     required
                   />
-                  <p className="text-xs text-gray-400 mt-1">
-                    Nombre legal de la empresa
-                  </p>
                 </div>
 
-                {/* Campo NOMBRE DEL DUEÑO - Persona de Contacto */}
+                {/* Persona de Contacto */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Nombre del Dueño/Contacto Principal
+                    Persona de Contacto
                   </label>
                   <input
                     type="text"
                     value={formData.contact_person || ''}
                     onChange={(e) => setFormData({ ...formData, contact_person: e.target.value })}
                     className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    placeholder="Ej: Juan Pérez, María González"
+                    placeholder="Ej: María González"
                   />
-                  <p className="text-xs text-gray-400 mt-1">
-                    Nombre completo del dueño o gerente de la empresa
-                  </p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* Name - Required */}
-                <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Nombre del Cliente
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.name}
-                    onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-700 text-white placeholder-gray-400"
-                    placeholder="Ingrese el nombre del cliente"
-                  />
-                </div>
-
-                {/* Business Name */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Empresa *
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.business_name}
-                    onChange={(e) => setFormData(prev => ({ ...prev, business_name: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-700 text-white placeholder-gray-400"
-                    placeholder="Razón social de la empresa"
-                    required
-                  />
-                </div>
-
-                {/* Campo "Nombre del Contacto" (dueño/gerente) */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Nombre del Contacto
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.contact_person}
-                    onChange={(e) => setFormData(prev => ({ ...prev, contact_person: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-700 text-white placeholder-gray-400"
-                    placeholder="Nombre del dueño, gerente o persona de contacto"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Nombre del dueño o persona de contacto principal
-                  </p>
                 </div>
 
                 {/* Email */}
@@ -328,72 +287,72 @@ export default function ClientModal({
                     Email
                   </label>
                   <input
-                    type="text"
-                    value={formData.email}
-                    onChange={(e) => setFormData(prev => ({ ...prev, email: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-700 text-white placeholder-gray-400"
+                    type="email"
+                    value={formData.email || ''}
+                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                    className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     placeholder="correo@ejemplo.com"
                     autoComplete="off"
                   />
                 </div>
 
-                {/* Phone */}
+                {/* Teléfono */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Teléfono
                   </label>
                   <input
                     type="tel"
-                    value={formData.phone}
-                    onChange={(e) => setFormData(prev => ({ ...prev, phone: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-700 text-white placeholder-gray-400"
+                    value={formData.phone || ''}
+                    onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                    className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     placeholder="+1 234 567 8900"
                   />
                 </div>
 
-                {/* Secondary Phone */}
+                {/* Teléfono Adicional */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Teléfono Adicional
                   </label>
                   <input
                     type="tel"
-                    value={formData.secondary_phone || ''}
-                    onChange={(e) => setFormData(prev => ({ ...prev, secondary_phone: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-700 text-white placeholder-gray-400"
+                    value={formData.additional_phone || ''}
+                    onChange={(e) => setFormData({ ...formData, additional_phone: e.target.value })}
+                    className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     placeholder="Teléfono adicional"
                   />
                 </div>
 
-                {/* Mobile Phone */}
+                {/* Celular */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Celular
                   </label>
                   <input
                     type="tel"
-                    value={formData.mobile_phone || ''}
-                    onChange={(e) => setFormData(prev => ({ ...prev, mobile_phone: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-700 text-white placeholder-gray-400"
+                    value={formData.cellular || ''}
+                    onChange={(e) => setFormData({ ...formData, cellular: e.target.value })}
+                    className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     placeholder="Número de celular"
                   />
                 </div>
 
-                {/* Address */}
+                {/* Dirección */}
                 <div className="md:col-span-2">
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Dirección
                   </label>
                   <textarea
-                    value={formData.address}
-                    onChange={(e) => setFormData(prev => ({ ...prev, address: e.target.value }))}
+                    value={formData.address || ''}
+                    onChange={(e) => setFormData({ ...formData, address: e.target.value })}
                     rows={3}
-                    className="w-full px-3 py-2 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-700 text-white placeholder-gray-400"
+                    className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     placeholder="Dirección completa del cliente"
                   />
                 </div>
 
-                {/* City */}
+                {/* Ciudad */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Ciudad
@@ -401,13 +360,13 @@ export default function ClientModal({
                   <input
                     type="text"
                     value={formData.city || ''}
-                    onChange={(e) => setFormData(prev => ({ ...prev, city: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-700 text-white placeholder-gray-400"
+                    onChange={(e) => setFormData({ ...formData, city: e.target.value })}
+                    className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     placeholder="Ciudad del cliente"
                   />
                 </div>
 
-                {/* Zip Code */}
+                {/* Código Postal */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Código Postal
@@ -415,23 +374,9 @@ export default function ClientModal({
                   <input
                     type="text"
                     value={formData.zip_code || ''}
-                    onChange={(e) => setFormData(prev => ({ ...prev, zip_code: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-700 text-white placeholder-gray-400"
+                    onChange={(e) => setFormData({ ...formData, zip_code: e.target.value })}
+                    className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     placeholder="Código postal"
-                  />
-                </div>
-
-                {/* Base */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Base de Datos
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.base || ''}
-                    onChange={(e) => setFormData(prev => ({ ...prev, base: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-700 text-white placeholder-gray-400"
-                    placeholder="BD propia"
                   />
                 </div>
 

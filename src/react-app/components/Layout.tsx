@@ -159,7 +159,7 @@ export default function Layout({ children }: LayoutProps) {
 
   // Verificación de versión - CON IMPORTADOR VISUAL
   useEffect(() => {
-    console.log('✅ LAYOUT VERSION: (v5.0 DEBUG)');
+    console.log(`✅ LAYOUT VERSION: ${APP_VERSION}`);
     console.log('✅ Navigation items:', navigation.map(n => n.name).join(', '));
   }, []);
 
@@ -337,9 +337,6 @@ export default function Layout({ children }: LayoutProps) {
             >
               Cerrar sesión
             </button>
-            <div className="text-center pt-1">
-              <p className="text-xs font-bold text-green-400 mt-1">{APP_VERSION}</p>
-            </div>
           </div>
 
         </div>

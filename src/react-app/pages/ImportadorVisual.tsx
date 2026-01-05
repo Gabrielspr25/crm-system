@@ -32,6 +32,9 @@ export default function ImportadorVisual() {
   const [columns, setColumns] = useState<string[]>([]);
   const [preview, setPreview] = useState<any[][]>([]);
   const [assigned, setAssigned] = useState<Record<string, string>>({});
+  const [unmappedColumns, setUnmappedColumns] = useState<string[]>([]);
+  const [excelColumnsInfo, setExcelColumnsInfo] = useState<{ columns: string[]; totalColumns: number; fileName: string; sampleRows?: any[]; totalRows?: number } | null>(null);
+  const [isLoadingExcelColumns, setIsLoadingExcelColumns] = useState(false);
   const [isValidating, setIsValidating] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [validationResult, setValidationResult] = useState<{ valid: boolean; errors: string[] } | null>(null);
@@ -50,6 +53,7 @@ export default function ImportadorVisual() {
   const [showClientSuggestions, setShowClientSuggestions] = useState(false);
   const [isSearchingClients, setIsSearchingClients] = useState(false);
   const [isChecking, setIsChecking] = useState(false);
+  const [activacionesErrors, setActivacionesErrors] = useState<string[]>([]);
 
   const dragRef = useRef<string | null>(null);
 
@@ -94,44 +98,41 @@ export default function ImportadorVisual() {
           .catch(err => console.error("Error cargando vendedores:", err));
   }, []);
 
+  useEffect(() => {
+    if (!excelColumnsInfo) return;
+    const assignedColumns = Object.values(assigned);
+    const unmapped = excelColumnsInfo.columns.filter((col) => !assignedColumns.includes(col));
+    setUnmappedColumns(unmapped);
+  }, [assigned, excelColumnsInfo]);
+
   // Función para obtener la etiqueta del frontend según tabla y columna
   const getFieldLabel = (table: string, col: string): string => {
     // Mapeo específico por tabla
     const labels: Record<string, Record<string, string>> = {
       "Clientes": {
-        "name": "Nombre del Cliente",
-        "business_name": "Empresa",
+        "owner_name": "Nombre y Apellido Dueño",
+        "name": "Empresa",
         "contact_person": "Persona de Contacto",
         "email": "Email",
         "phone": "Teléfono",
-        "secondary_phone": "Teléfono Adicional",
-        "mobile_phone": "Celular",
+        "additional_phone": "Teléfono Adicional",
+        "cellular": "Celular",
         "address": "Dirección",
         "city": "Ciudad",
         "zip_code": "Código Postal",
-        "base": "Base",
-        "vendor_id": "Vendedor",
       },
       "BANs": {
         "ban_number": "Número BAN",
-        "description": "Tipo de Cuenta (Móvil/Fijo/Convergente)",
+        "account_type": "Tipo de Cuenta",
         "status": "Estado",
-        "address": "Dirección",
-        "city": "Ciudad",
-        "zip_code": "Código Postal",
       },
       "Suscriptores": {
         "phone": "Número de Teléfono",
-        "service_type": "Plan / Descripción",
+        "plan": "Plan",
         "monthly_value": "Valor Mensual",
-        "months": "Duración del Contrato (meses)",
         "remaining_payments": "Plazos Faltantes",
-        "contract_start_date": "Fecha Inicio Contrato",
+        "contract_term": "Meses Vendidos",
         "contract_end_date": "Fecha Fin Contrato",
-        "status": "Estado (activo/cancelado)",
-        "equipment": "Equipo",
-        "city": "Ciudad",
-        "notes": "Notas",
       },
     };
     return labels[table]?.[col] || col;
@@ -141,42 +142,35 @@ export default function ImportadorVisual() {
     {
       table: "Clientes",
       columns: [
+        "owner_name",
         "name",
-        "business_name",
-        "base",
         "contact_person",
         "email",
         "phone",
-        "secondary_phone",
-        "mobile_phone",
-        "vendor_id"
-      ]
-    },
-    {
-      table: "BANs",
-      columns: [
-        "ban_number",
-        "description",
-        "status",
+        "additional_phone",
+        "cellular",
         "address",
         "city",
         "zip_code"
       ]
     },
     {
+      table: "BANs",
+      columns: [
+        "ban_number",
+        "account_type",
+        "status"
+      ]
+    },
+    {
       table: "Suscriptores",
       columns: [
         "phone",
-        "service_type",
+        "plan",
         "monthly_value",
-        "months",
         "remaining_payments",
-        "contract_start_date",
-        "contract_end_date",
-        "status",
-        "equipment",
-        "city",
-        "notes"
+        "contract_term",
+        "contract_end_date"
       ]
     },
   ]);
@@ -206,6 +200,27 @@ export default function ImportadorVisual() {
       return new Set<string>();
     } finally {
       setIsChecking(false);
+    }
+  };
+
+  const loadExcelColumns = async () => {
+    setIsLoadingExcelColumns(true);
+    try {
+      const res = await authFetch('/api/importador/excel-columns');
+      const data = await res.json();
+      if (res.ok) {
+        setExcelColumnsInfo(data);
+        const assignedColumns = Object.values(assigned);
+        const unmapped = (data.columns || []).filter((col: string) => !assignedColumns.includes(col));
+        setUnmappedColumns(unmapped);
+      } else {
+        alert(`Error: ${data.error || 'No se pudo cargar el archivo Excel'}`);
+      }
+    } catch (error: any) {
+      console.error('Error cargando columnas del Excel:', error);
+      alert(`Error: ${error?.message || 'Error al cargar el archivo Excel'}`);
+    } finally {
+      setIsLoadingExcelColumns(false);
     }
   };
 
@@ -263,6 +278,7 @@ export default function ImportadorVisual() {
     const selectedFile = e.target.files?.[0];
     if (!selectedFile) return;
     setFile(selectedFile);
+    setActivacionesErrors([]);
     try {
       const reader = new FileReader();
       reader.onload = (event) => {
@@ -516,30 +532,18 @@ export default function ImportadorVisual() {
       }
 
       // --- VALIDACIÓN DE DATOS FALTANTES ---
-      // (Validación de Plazos Faltantes ACTIVADA)
+      // (Validación de Plazos Faltantes DESACTIVADA - Se asigna automáticamente 0)
       const remainingPaymentsCol = assigned["Suscriptores.remaining_payments"];
       if (remainingPaymentsCol) {
         const colIdx = headers.indexOf(remainingPaymentsCol);
         if (colIdx !== -1) {
-          const missingRows: number[] = [];
+          // Auto-asignar 0 a campos vacíos sin mostrar modal
           rows.forEach((row, idx) => {
             const val = row[colIdx];
             if (val === undefined || val === null || String(val).trim() === "") {
-              missingRows.push(idx);
+              row[colIdx] = 0;
             }
           });
-
-          if (missingRows.length > 0) {
-            setMissingDataState({
-              isOpen: true,
-              field: 'Suscriptores.remaining_payments',
-              label: 'Plazos Faltantes',
-              rows: missingRows,
-              data: rows,
-              headers: headers
-            });
-            return; // Detener generación de preview
-          }
         }
       }
 
@@ -1048,6 +1052,32 @@ export default function ImportadorVisual() {
 
   const saveActivaciones = async () => {
     if (!activacionesRows.length) return;
+    const validationErrors: string[] = [];
+
+    if (!activacionesMetadata.saleDate) validationErrors.push("La fecha de venta es obligatoria.");
+    if (!activacionesMetadata.ban.trim()) validationErrors.push("Número BAN requerido.");
+    if (!activacionesMetadata.business_name.trim()) validationErrors.push("Empresa/cliente es obligatorio.");
+    if (!activacionesMetadata.vendor.trim()) validationErrors.push("Selecciona un vendedor.");
+
+    if (activacionesMetadata.vendor && !vendors.some(v => v.name === activacionesMetadata.vendor)) {
+      validationErrors.push("El vendedor seleccionado no existe en el catálogo.");
+    }
+
+    activacionesRows.forEach((row, idx) => {
+      const cleanPhone = String(row.phone || '').replace(/[^0-9]/g, '');
+      if (!cleanPhone || cleanPhone.length < 8) validationErrors.push(`Fila ${idx + 1}: teléfono inválido (mínimo 8 dígitos).`);
+      if (!row.plan || !String(row.plan).trim()) validationErrors.push(`Fila ${idx + 1}: plan requerido.`);
+      if (row.monthly_value === undefined || row.monthly_value === null || String(row.monthly_value).toString().trim() === "") {
+        validationErrors.push(`Fila ${idx + 1}: valor mensual requerido.`);
+      }
+    });
+
+    if (validationErrors.length > 0) {
+      setActivacionesErrors(validationErrors);
+      return;
+    }
+
+    setActivacionesErrors([]);
     setIsSaving(true);
     try {
         // Construir payload compatible con el backend
@@ -1067,6 +1097,7 @@ export default function ImportadorVisual() {
                 "monthly_value": row.monthly_value,
                 "months": row.months,
                 "notes": row.notes,
+              "contract_start_date": activacionesMetadata.saleDate,
                 "contract_end_date": row.contract_end_date,
                 "status": "activo"
             }
@@ -1293,6 +1324,14 @@ export default function ImportadorVisual() {
         </div>
         <div className="flex items-center gap-2">
           <button 
+            onClick={loadExcelColumns}
+            disabled={isLoadingExcelColumns}
+            className="bg-purple-600 hover:bg-purple-500 disabled:bg-purple-800 disabled:cursor-not-allowed text-xs text-white py-1 px-2 rounded border border-purple-500"
+            title="Cargar columnas desde el Excel base"
+          >
+            {isLoadingExcelColumns ? "⏳ Cargando..." : "📊 Ver Columnas Excel"}
+          </button>
+          <button 
             onClick={() => window.location.reload()}
             className="bg-neutral-700 hover:bg-neutral-600 text-xs text-gray-300 py-1 px-2 rounded border border-neutral-600"
             title="Recargar página para borrar caché"
@@ -1302,6 +1341,97 @@ export default function ImportadorVisual() {
           {file && <p className="text-sm text-amber-300 font-medium truncate max-w-[150px]">📄 {file?.name}</p>}
         </div>
       </div>
+
+      {excelColumnsInfo && unmappedColumns && unmappedColumns.length > 0 && (
+        <div className="bg-red-950/60 border-4 border-red-600 rounded-lg p-6 mb-6 shadow-2xl">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-2xl font-black text-red-300 flex items-center gap-2">
+              ⚠️ {unmappedColumns.length} COLUMNAS NO MAPEADAS
+            </h3>
+            <button
+              onClick={() => setExcelColumnsInfo(null)}
+              className="text-red-400 hover:text-red-200 text-sm font-bold bg-red-900/50 px-3 py-1 rounded border border-red-600"
+            >
+              ✕ Cerrar
+            </button>
+          </div>
+          <p className="text-red-200 text-sm mb-4">
+            Archivo: <span className="font-bold">{excelColumnsInfo.fileName}</span> | 
+            Total columnas: <span className="font-bold">{excelColumnsInfo.totalColumns}</span> | 
+            Mapeadas: <span className="font-bold text-green-400">{excelColumnsInfo.totalColumns - unmappedColumns.length}</span> | 
+            Sin mapear: <span className="font-bold text-red-400">{unmappedColumns.length}</span>
+          </p>
+          <div className="mb-4">
+            <h4 className="text-red-300 font-bold mb-3 text-lg">📋 Arrastra estas columnas a los campos de la derecha:</h4>
+            <div className="flex flex-wrap gap-2">
+              {unmappedColumns.map((col, idx) => (
+                <motion.span
+                  key={idx}
+                  draggable
+                  onDragStart={() => handleDragStart(col)}
+                  whileHover={{ scale: 1.1 }}
+                  className="px-4 py-2 rounded-lg text-sm font-bold bg-red-800 text-red-100 border-2 border-red-500 cursor-grab active:cursor-grabbing hover:bg-red-700 shadow-lg"
+                >
+                  {col}
+                </motion.span>
+              ))}
+            </div>
+          </div>
+          {excelColumnsInfo.sampleRows && excelColumnsInfo.sampleRows.length > 0 && (
+            <div className="mt-4">
+              <h4 className="text-red-300 font-semibold mb-2">📊 Vista previa de datos (primeras 5 filas):</h4>
+              <div className="overflow-x-auto border-2 border-red-600 rounded-lg">
+                <table className="min-w-full text-sm text-gray-200 border-collapse">
+                  <thead className="bg-red-900">
+                    <tr>
+                      {unmappedColumns.map((col, idx) => (
+                        <th
+                          key={idx}
+                          className="px-4 py-3 text-left border border-red-700 text-red-100 font-bold"
+                        >
+                          <motion.div
+                            draggable
+                            onDragStart={() => handleDragStart(col)}
+                            whileHover={{ scale: 1.05 }}
+                            className="flex items-center justify-between cursor-grab active:cursor-grabbing"
+                          >
+                            {col}
+                            <span className="text-xs bg-red-700 px-2 py-1 rounded ml-2">⇅ Arrastrar</span>
+                          </motion.div>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {excelColumnsInfo.sampleRows.map((row: any, rowIdx: number) => (
+                      <tr key={rowIdx} className="hover:bg-red-900/30 border-b border-red-800">
+                        {unmappedColumns.map((col, colIdx) => (
+                          <td key={colIdx} className="px-4 py-2 border border-red-800 text-gray-100">
+                            {row[col] !== undefined && row[col] !== null ? String(row[col]) : ''}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {excelColumnsInfo && unmappedColumns && unmappedColumns.length === 0 && (
+        <div className="bg-green-900/60 border-4 border-green-500 rounded-lg p-6 mb-6 text-center">
+          <p className="text-green-200 font-bold text-xl">✅ Todas las columnas están mapeadas</p>
+          <p className="text-green-100 text-sm mt-2">Puedes proceder a verificar y guardar los datos</p>
+          <button
+            onClick={() => setExcelColumnsInfo(null)}
+            className="mt-4 text-green-400 hover:text-green-200 text-sm font-bold bg-green-800/50 px-3 py-1 rounded border border-green-600"
+          >
+            ✕ Cerrar
+          </button>
+        </div>
+      )}
 
       <div className="grid grid-cols-3 gap-4 mb-4">
         {fields.map((table) => (
@@ -1514,27 +1644,18 @@ export default function ImportadorVisual() {
                   </div>
                   
                   <div className="bg-neutral-900/50 p-4 rounded-lg border border-neutral-800 text-center">
-                    <div className="flex justify-center gap-4 mb-1">
-                        <span className="text-green-400 font-bold text-2xl" title="Nuevos">+{previewData.simulation?.newClients || 0}</span>
-                        <span className="text-amber-400 font-bold text-2xl" title="Existentes">~{previewData.simulation?.updatedClients || 0}</span>
-                    </div>
-                    <div className="text-sm text-gray-400 font-medium">Clientes (Nuevos / Existentes)</div>
+                    <div className="text-2xl font-bold text-green-400 mb-1">{previewData.simulation?.disponibles || 0}</div>
+                    <div className="text-sm text-gray-400 font-medium">Disponibles (con empresa)</div>
                   </div>
 
                   <div className="bg-neutral-900/50 p-4 rounded-lg border border-neutral-800 text-center">
-                    <div className="flex justify-center gap-4 mb-1">
-                        <span className="text-green-400 font-bold text-2xl" title="Nuevos">+{previewData.simulation?.newBans || 0}</span>
-                        <span className="text-amber-400 font-bold text-2xl" title="Existentes">~{previewData.simulation?.updatedBans || 0}</span>
-                    </div>
-                    <div className="text-sm text-gray-400 font-medium">BANs (Nuevos / Existentes)</div>
+                    <div className="text-2xl font-bold text-amber-400 mb-1">{previewData.simulation?.incompletos || 0}</div>
+                    <div className="text-sm text-gray-400 font-medium">Incompletos (sin empresa)</div>
                   </div>
 
                   <div className="bg-neutral-900/50 p-4 rounded-lg border border-neutral-800 text-center">
-                    <div className="flex justify-center gap-4 mb-1">
-                        <span className="text-green-400 font-bold text-2xl" title="Nuevos">+{previewData.simulation?.newSubscribers || 0}</span>
-                        <span className="text-amber-400 font-bold text-2xl" title="Existentes">~{previewData.simulation?.updatedSubscribers || 0}</span>
-                    </div>
-                    <div className="text-sm text-gray-400 font-medium">Suscriptores (Nuevos / Existentes)</div>
+                    <div className="text-2xl font-bold text-red-400 mb-1">{previewData.simulation?.cancelados || 0}</div>
+                    <div className="text-sm text-gray-400 font-medium">Cancelados (STATUS=C)</div>
                   </div>
                 </div>
               </div>
@@ -1734,6 +1855,17 @@ export default function ImportadorVisual() {
 
             {/* Body Modal */}
             <div className="flex-1 overflow-y-auto p-6 space-y-6">
+
+              {activacionesErrors.length > 0 && (
+                <div className="bg-red-900/40 border border-red-600 text-red-100 rounded-lg p-4">
+                  <p className="font-semibold text-red-200">Corrige antes de guardar:</p>
+                  <ul className="mt-2 space-y-1 text-sm list-disc list-inside">
+                    {activacionesErrors.map((err, idx) => (
+                      <li key={idx}>{err}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               
               {/* 1. Metadatos Editables */}
               <div className="grid grid-cols-4 gap-4 bg-neutral-800 p-4 rounded-lg border border-neutral-700">
