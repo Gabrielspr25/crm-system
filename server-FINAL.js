@@ -554,10 +554,10 @@ app.get('/api/vendors', async (_req, res) => {
 app.get('/api/categories', async (_req, res) => {
   try {
     const rows = await query(
-      `SELECT * FROM categories WHERE COALESCE(is_active,1) = 1 ORDER BY name ASC`
+      `SELECT * FROM categories ORDER BY name ASC`
     );
     const mapped = rows.map((row) =>
-      enrich(row, [], ['is_active'], ['created_at', 'updated_at'])
+      enrich(row, [], [], ['created_at', 'updated_at'])
     );
     res.json(mapped);
   } catch (error) {
@@ -681,7 +681,6 @@ app.get('/api/products', async (_req, res) => {
       `SELECT p.*, c.name AS category_name
          FROM products p
          LEFT JOIN categories c ON p.category_id = c.id
-         WHERE COALESCE(p.is_active,1) = 1
          ORDER BY p.name ASC`
     );
     const mapped = rows.map((row) =>
