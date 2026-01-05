@@ -566,32 +566,28 @@ app.get('/api/categories', async (_req, res) => {
 });
 
 app.post('/api/categories', async (req, res) => {
-  const { name, description, color_hex } = req.body || {};
+  const { name, description } = req.body || {};
   if (!name || typeof name !== 'string' || name.trim() === '') {
     return badRequest(res, 'El nombre de la categoría es obligatorio');
   }
 
   try {
     const result = await query(
-      `INSERT INTO categories (name, description, color_hex, is_active, created_at, updated_at)
-       VALUES ($1, $2, $3, 1, NOW(), NOW())
+      `INSERT INTO categories (name, description)
+       VALUES ($1, $2)
        RETURNING *`,
-      [name.trim(), description?.trim() || null, color_hex || null]
+      [name.trim(), description?.trim() || null]
     );
-    const mapped = enrich(result[0], [], ['is_active'], ['created_at', 'updated_at']);
-    res.status(201).json(mapped);
+    res.status(201).json(result[0]);
   } catch (error) {
     serverError(res, error, 'Error creando categoría');
   }
 });
 
 app.put('/api/categories/:id', async (req, res) => {
-  const categoryId = parseInt(req.params.id, 10);
-  if (!Number.isFinite(categoryId) || categoryId <= 0) {
-    return badRequest(res, 'ID de categoría inválido');
-  }
+  const categoryId = req.params.id; // UUID
 
-  const { name, description, color_hex, is_active } = req.body || {};
+  const { name, description } = req.body || {};
   if (name !== undefined && (typeof name !== 'string' || name.trim() === '')) {
     return badRequest(res, 'El nombre de la categoría no puede estar vacío');
   }
@@ -609,20 +605,11 @@ app.put('/api/categories/:id', async (req, res) => {
       updates.push(`description = $${paramIndex++}`);
       values.push(description?.trim() || null);
     }
-    if (color_hex !== undefined) {
-      updates.push(`color_hex = $${paramIndex++}`);
-      values.push(color_hex || null);
-    }
-    if (is_active !== undefined) {
-      updates.push(`is_active = $${paramIndex++}`);
-      values.push(is_active ? 1 : 0);
-    }
 
     if (updates.length === 0) {
       return badRequest(res, 'No hay campos para actualizar');
     }
 
-    updates.push(`updated_at = NOW()`);
     values.push(categoryId);
 
     const result = await query(
@@ -634,18 +621,14 @@ app.put('/api/categories/:id', async (req, res) => {
       return res.status(404).json({ error: 'Categoría no encontrada' });
     }
 
-    const mapped = enrich(result[0], [], ['is_active'], ['created_at', 'updated_at']);
-    res.json(mapped);
+    res.json(result[0]);
   } catch (error) {
     serverError(res, error, 'Error actualizando categoría');
   }
 });
 
 app.delete('/api/categories/:id', async (req, res) => {
-  const categoryId = parseInt(req.params.id, 10);
-  if (!Number.isFinite(categoryId) || categoryId <= 0) {
-    return badRequest(res, 'ID de categoría inválido');
-  }
+  const categoryId = req.params.id; // UUID
 
   try {
     // Verificar si hay productos usando esta categoría
@@ -726,91 +709,57 @@ app.post('/api/products', async (req, res) => {
     name,
     category_id: categoryId,
     description,
-    base_price: basePrice,
-    commission_percentage: commissionPercentage,
-    is_recurring: isRecurring,
-    billing_cycle: billingCycle
+    price,
+    monthly_goal: monthlyGoal
   } = req.body || {};
 
   if (!name || typeof name !== 'string' || name.trim() === '') {
     return badRequest(res, 'El nombre del producto es obligatorio');
   }
 
-  const normalizedCategoryId = normalizeNullableInteger(categoryId);
-  if (Number.isNaN(normalizedCategoryId)) {
-    return badRequest(res, 'Categoría inválida');
-  }
-
-  const normalizedBasePrice = normalizeNullableNumber(basePrice);
-  if (Number.isNaN(normalizedBasePrice)) {
-    return badRequest(res, 'Precio base inválido');
+  // category_id es UUID nullable
+  const normalizedPrice = normalizeNullableNumber(price);
+  if (Number.isNaN(normalizedPrice)) {
+    return badRequest(res, 'Precio inválido');
   }
   if (
-    normalizedBasePrice !== null &&
-    (normalizedBasePrice < 0 || normalizedBasePrice > 1_000_000_000)
+    normalizedPrice !== null &&
+    (normalizedPrice < 0 || normalizedPrice > 1_000_000_000)
   ) {
-    return badRequest(res, 'El precio base debe ser mayor o igual a 0');
+    return badRequest(res, 'El precio debe ser mayor o igual a 0');
   }
 
-  const normalizedCommission = normalizeNullableNumber(commissionPercentage);
-  if (Number.isNaN(normalizedCommission)) {
-    return badRequest(res, 'Porcentaje de comisión inválido');
-  }
-  if (
-    normalizedCommission !== null &&
-    (normalizedCommission < 0 || normalizedCommission > 100)
-  ) {
-    return badRequest(res, 'El porcentaje de comisión debe estar entre 0 y 100');
-  }
-
-  const normalizedIsRecurring = isRecurring ? 1 : 0;
-  const normalizedBillingCycle = normalizedIsRecurring
-    ? normalizeBillingCycle(billingCycle) || 'monthly'
-    : null;
+  const normalizedMonthlyGoal = normalizeNullableInteger(monthlyGoal) || 0;
 
   try {
     const rows = await query(
       `INSERT INTO products
-        (name, category_id, description, base_price, commission_percentage, is_recurring, billing_cycle, is_active, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 1, NOW(), NOW())
+        (name, category_id, description, price, monthly_goal)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING *`,
       [
         name.trim(),
-        normalizedCategoryId,
+        categoryId || null,
         description?.trim() || null,
-        normalizedBasePrice,
-        normalizedCommission,
-        normalizedIsRecurring,
-        normalizedBillingCycle
+        normalizedPrice || 0,
+        normalizedMonthlyGoal
       ]
     );
-    const mapped = enrich(
-      rows[0],
-      ['base_price', 'commission_percentage'],
-      ['is_active', 'is_recurring'],
-      ['created_at', 'updated_at']
-    );
-    res.status(201).json(mapped);
+    res.status(201).json(rows[0]);
   } catch (error) {
     serverError(res, error, 'Error creando producto');
   }
 });
 
 app.put('/api/products/:id', async (req, res) => {
-  const productId = Number(req.params.id);
-  if (!Number.isInteger(productId) || productId <= 0) {
-    return badRequest(res, 'ID de producto inválido');
-  }
-
+  const productId = req.params.id; // UUID
+  
   const {
     name,
     category_id: categoryId,
     description,
-    base_price: basePrice,
-    commission_percentage: commissionPercentage,
-    is_recurring: isRecurring,
-    billing_cycle: billingCycle,
-    is_active: isActive
+    price,
+    monthly_goal: monthlyGoal
   } = req.body || {};
 
   const updates = [];
@@ -826,12 +775,8 @@ app.put('/api/products/:id', async (req, res) => {
   }
 
   if (categoryId !== undefined) {
-    const normalizedCategoryId = normalizeNullableInteger(categoryId);
-    if (Number.isNaN(normalizedCategoryId)) {
-      return badRequest(res, 'Categoría inválida');
-    }
     updates.push(`category_id = $${paramIndex++}`);
-    values.push(normalizedCategoryId);
+    values.push(categoryId || null);
   }
 
   if (description !== undefined) {
@@ -839,64 +784,31 @@ app.put('/api/products/:id', async (req, res) => {
     values.push(description?.trim() || null);
   }
 
-  if (basePrice !== undefined) {
-    const normalizedBasePrice = normalizeNullableNumber(basePrice);
-    if (Number.isNaN(normalizedBasePrice)) {
-      return badRequest(res, 'Precio base inválido');
+  if (price !== undefined) {
+    const normalizedPrice = normalizeNullableNumber(price);
+    if (Number.isNaN(normalizedPrice)) {
+      return badRequest(res, 'Precio inválido');
     }
     if (
-      normalizedBasePrice !== null &&
-      (normalizedBasePrice < 0 || normalizedBasePrice > 1_000_000_000)
+      normalizedPrice !== null &&
+      (normalizedPrice < 0 || normalizedPrice > 1_000_000_000)
     ) {
-      return badRequest(res, 'El precio base debe ser mayor o igual a 0');
+      return badRequest(res, 'El precio debe ser mayor o igual a 0');
     }
-    updates.push(`base_price = $${paramIndex++}`);
-    values.push(normalizedBasePrice);
+    updates.push(`price = $${paramIndex++}`);
+    values.push(normalizedPrice);
   }
 
-  if (commissionPercentage !== undefined) {
-    const normalizedCommission = normalizeNullableNumber(commissionPercentage);
-    if (Number.isNaN(normalizedCommission)) {
-      return badRequest(res, 'Porcentaje de comisión inválido');
-    }
-    if (
-      normalizedCommission !== null &&
-      (normalizedCommission < 0 || normalizedCommission > 100)
-    ) {
-      return badRequest(res, 'El porcentaje de comisión debe estar entre 0 y 100');
-    }
-    updates.push(`commission_percentage = $${paramIndex++}`);
-    values.push(normalizedCommission);
-  }
-
-  if (isRecurring !== undefined) {
-    const normalizedIsRecurring = isRecurring ? 1 : 0;
-    updates.push(`is_recurring = $${paramIndex++}`);
-    values.push(normalizedIsRecurring);
-
-    if (!normalizedIsRecurring) {
-      updates.push(`billing_cycle = NULL`);
-    } else if (billingCycle !== undefined) {
-      const normalizedBillingCycle = normalizeBillingCycle(billingCycle) || 'monthly';
-      updates.push(`billing_cycle = $${paramIndex++}`);
-      values.push(normalizedBillingCycle);
-    }
-  } else if (billingCycle !== undefined) {
-    const normalizedBillingCycle = normalizeBillingCycle(billingCycle) || 'monthly';
-    updates.push(`billing_cycle = $${paramIndex++}`);
-    values.push(normalizedBillingCycle);
-  }
-
-  if (isActive !== undefined) {
-    updates.push(`is_active = $${paramIndex++}`);
-    values.push(isActive ? 1 : 0);
+  if (monthlyGoal !== undefined) {
+    const normalizedGoal = normalizeNullableInteger(monthlyGoal) || 0;
+    updates.push(`monthly_goal = $${paramIndex++}`);
+    values.push(normalizedGoal);
   }
 
   if (updates.length === 0) {
     return badRequest(res, 'No hay campos para actualizar');
   }
 
-  updates.push(`updated_at = NOW()`);
   values.push(productId);
 
   try {
@@ -909,27 +821,18 @@ app.put('/api/products/:id', async (req, res) => {
       return res.status(404).json({ error: 'Producto no encontrado' });
     }
 
-    const mapped = enrich(
-      rows[0],
-      ['base_price', 'commission_percentage'],
-      ['is_active', 'is_recurring'],
-      ['created_at', 'updated_at']
-    );
-    res.json(mapped);
+    res.json(rows[0]);
   } catch (error) {
     serverError(res, error, 'Error actualizando producto');
   }
 });
 
 app.delete('/api/products/:id', async (req, res) => {
-  const productId = Number(req.params.id);
-  if (!Number.isInteger(productId) || productId <= 0) {
-    return badRequest(res, 'ID de producto inválido');
-  }
+  const productId = req.params.id; // UUID
 
   try {
     const rows = await query(
-      `UPDATE products SET is_active = 0, updated_at = NOW() WHERE id = $1 RETURNING *`,
+      `DELETE FROM products WHERE id = $1 RETURNING *`,
       [productId]
     );
 
