@@ -22,6 +22,7 @@ import clientRoutes from './src/backend/routes/clientRoutes.js';
 import banRoutes from './src/backend/routes/banRoutes.js';
 import importRoutes from './src/backend/routes/importRoutes.js';
 import vendorRoutes from './src/backend/routes/vendorRoutes.js';
+import systemRoutes from './src/backend/routes/systemRoutes.js';
 
 // ======================================================
 // Configuración base
@@ -72,6 +73,7 @@ app.use('/api/clients', clientRoutes);
 app.use('/api/bans', banRoutes);
 app.use('/api/importador', importRoutes);
 app.use('/api/vendors', vendorRoutes);
+app.use('/api/system', systemRoutes);
 
 
 const JWT_SECRET = process.env.JWT_SECRET || 'development-secret';

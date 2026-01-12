@@ -21,6 +21,7 @@ import ReferidosPage from "@/react-app/pages/Referidos";
 import CorreosPage from "@/react-app/pages/Correos";
 import TarifasPage from "@/react-app/pages/Tarifas";
 import SystemHealthButton from "@/react-app/components/SystemHealthButton";
+import SystemStatus from "@/react-app/pages/SystemStatus";
 
 // Inicializar MSAL fuera del componente
 const msalInstance = new PublicClientApplication(msalConfig);
@@ -44,6 +45,7 @@ function ProtectedRoutes() {
         <Route path="/perfil" element={<ProfilePage />} />
         <Route path="/importador" element={<ImportadorVisual />} />
         <Route path="/historial" element={<AuditLogPage />} />
+        <Route path="/system-status" element={<SystemStatus />} />
       </Routes>
     </ProtectedLayout>
   );

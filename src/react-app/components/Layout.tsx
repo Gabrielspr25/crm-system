@@ -15,7 +15,8 @@ import {
   Upload,
   Target,
   Mail,
-  Layers
+  Layers,
+  Activity
 } from "lucide-react";
 import { useTheme } from "@/react-app/hooks/useTheme";
 import { getCurrentRole, getCurrentUser, clearAuthToken } from "@/react-app/utils/auth";
@@ -330,6 +331,14 @@ export default function Layout({ children }: LayoutProps) {
                   Modo Oscuro
                 </>
               )}
+            </button>
+            <button
+              onClick={() => navigate('/system-status')}
+              className="w-full flex items-center justify-center px-3 py-2 text-sm font-medium text-blue-300 hover:text-white bg-blue-900/30 hover:bg-blue-700/70 rounded-lg transition-all duration-200 mb-2"
+              title="Diagnóstico completo del sistema"
+            >
+              <Activity className="h-5 w-5 mr-2" />
+              Estado del Sistema
             </button>
             <button
               onClick={handleLogout}
