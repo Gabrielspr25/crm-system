@@ -67,9 +67,9 @@ export default function SubscriberModal({ banId, subscriber, onSave, onClose }: 
       setFormData({
         phone: subscriber.phone || '',
         ban_id: subscriber.ban_id || banId,
-        service_type: subscriber.service_type || '',
+        service_type: subscriber.plan || subscriber.service_type || '',
         monthly_value: subscriber.monthly_value || 0,
-        months: subscriber.months || 12,
+        months: subscriber.contract_term || subscriber.months || 12,
         remaining_payments: subscriber.remaining_payments || 0,
         status: (subscriber.status || 'activo') as 'activo' | 'cancelado' | 'suspendido',
         cancel_reason: '',

@@ -2,14 +2,15 @@
 import { X } from "lucide-react";
 
 interface BANModalProps {
-  onSave: (data: { ban_number: string; description?: string; status?: string; cancel_reason?: string }) => Promise<boolean | { error?: boolean; message?: string } | void>;
+  onSave: (data: { ban_number: string; account_type?: string; description?: string; status?: string; cancel_reason?: string }) => Promise<boolean | { error?: boolean; message?: string } | void>;
   onClose: () => void;
-  ban?: { id: number; ban_number: string; description?: string | null; status?: string };
+  ban?: { id: number; ban_number: string; account_type?: string | null; description?: string | null; status?: string };
 }
 
 export default function BANModal({ onSave, onClose, ban }: BANModalProps) {
   const [formData, setFormData] = useState({
     ban_number: ban?.ban_number || '',
+    account_type: ban?.account_type || '',
     description: ban?.description || '',
     status: (ban?.status || 'active') as 'active' | 'cancelled',
     cancel_reason: '',
@@ -24,6 +25,7 @@ export default function BANModal({ onSave, onClose, ban }: BANModalProps) {
       console.log('📝 BANModal - Editando BAN:', ban);
       setFormData({
         ban_number: ban.ban_number || '',
+        account_type: ban.account_type ?? '',
         description: ban.description ?? '',
         status: (ban.status || 'active') as 'active' | 'cancelled',
         cancel_reason: '',
@@ -31,6 +33,7 @@ export default function BANModal({ onSave, onClose, ban }: BANModalProps) {
     } else {
       setFormData({
         ban_number: '',
+        account_type: '',
         description: '',
         status: 'active',
         cancel_reason: '',
@@ -60,6 +63,7 @@ export default function BANModal({ onSave, onClose, ban }: BANModalProps) {
     try {
       const result = await onSave({
         ban_number: formData.ban_number,
+        account_type: formData.account_type.trim() || undefined,
         description: formData.description.trim() || undefined,
         status: formData.status,
         cancel_reason: formData.status === 'cancelled' ? formData.cancel_reason : undefined,
@@ -82,7 +86,7 @@ export default function BANModal({ onSave, onClose, ban }: BANModalProps) {
       
       // Si llegamos aquí, el BAN se creó exitosamente - resetear y cerrar
       setIsSubmitting(false);
-      setFormData({ ban_number: '', description: '', status: 'active', cancel_reason: '' });
+      setFormData({ ban_number: '', account_type: '', description: '', status: 'active', cancel_reason: '' });
       
       // Cerrar el modal inmediatamente
       onClose();
@@ -94,7 +98,7 @@ export default function BANModal({ onSave, onClose, ban }: BANModalProps) {
   };
 
   const handleClose = () => {
-    setFormData({ ban_number: '', description: '', status: 'active', cancel_reason: '' });
+    setFormData({ ban_number: '', account_type: '', description: '', status: 'active', cancel_reason: '' });
     setIsSubmitting(false);
     setErrorMessage(null);
     onClose();
@@ -148,14 +152,14 @@ export default function BANModal({ onSave, onClose, ban }: BANModalProps) {
             </p>
           </div>
 
-          {/* Description */}
+          {/* Account Type */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
               Tipo de Cuenta (Móvil, Fijo, Convergente)
             </label>
             <select
-              value={formData.description}
-              onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
+              value={formData.account_type}
+              onChange={(e) => setFormData(prev => ({ ...prev, account_type: e.target.value }))}
               className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-800 dark:bg-gray-800 text-gray-100 dark:text-gray-100"
             >
               <option value="">Seleccionar tipo...</option>

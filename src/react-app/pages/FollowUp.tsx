@@ -27,7 +27,7 @@ interface FollowUpStep {
 interface FollowUpProspect {
   id: number;
   company_name: string;
-  client_id: number | null;
+  client_id: string | null;
   priority_id: number | null;
   vendor_id: number | null;
   step_id: number | null;
@@ -48,6 +48,7 @@ interface FollowUpProspect {
   contact_phone: string | null;
   contact_email: string | null;
   base: string | null;
+  updated_at: string | null;
   is_active?: boolean | number | null;
   priority_name?: string;
   priority_color?: string;
@@ -69,7 +70,7 @@ interface CallLog {
 }
 
 interface Client {
-  id: number;
+  id: string;
   name: string;
   business_name: string | null;
   is_active: number;
@@ -93,38 +94,40 @@ export default function FollowUp() {
   const { data: steps, refetch: refetchSteps } = useApi<FollowUpStep[]>("/api/follow-up-steps");
   const { data: clients } = useApi<Client[]>("/api/clients");
 
+  // Detectar client_id en URL y abrir modal automáticamente
+  useEffect(() => {
+    const clientId = searchParams.get('client_id');
+    if (clientId && prospects && prospects.length > 0) {
+      const prospect = prospects.find(p => p.client_id === clientId);
+      if (prospect) {
+        setSelectedProspect(prospect);
+        setShowModal(true);
+      }
+    }
+  }, [searchParams, prospects]);
+
   const uniqueProspects = useMemo(() => {
-    const seen = new Map<number, FollowUpProspect>();
-    const activeClientIds = new Set((clients || []).filter(c => c.is_active === 1).map(c => c.id));
+    const seen = new Map<string, FollowUpProspect>();
     
     (prospects || []).forEach((prospect) => {
-      const key = prospect.client_id ?? prospect.id;
+      // Si tiene client_id, usar como key para deduplicar
+      // Si NO tiene client_id, usar id único (no deduplicar)
+      const key = prospect.client_id ? `client-${prospect.client_id}` : `prospect-${prospect.id}`;
       if (!seen.has(key)) {
         seen.set(key, prospect);
       }
     });
     
-    return Array.from(seen.values()).filter(
-      (prospect) => {
-        // Debe estar activo (incluye completados)
-        const isActive = Boolean(prospect.is_active ?? true);
-        
-        // Si tiene client_id, el cliente debe existir y estar activo
-        const hasValidClient = prospect.client_id 
-          ? activeClientIds.has(prospect.client_id)
-          : true; // Si no tiene client_id, permitir (por compatibilidad)
-        
-        return isActive && hasValidClient;
-      }
-    );
+    // NO filtrar por is_active - el filtro de showCompleted ya maneja seguimiento/completados
+    return Array.from(seen.values());
   }, [prospects, clients]);
 
   // Abrir automáticamente el cliente si viene client_id en la URL
   useEffect(() => {
     const clientIdParam = searchParams.get('client_id');
     if (clientIdParam && uniqueProspects.length > 0) {
-      const clientId = Number(clientIdParam);
-      const prospect = uniqueProspects.find(p => p.client_id === clientId);
+      // No convertir a número - client_id es UUID (string)
+      const prospect = uniqueProspects.find(p => p.client_id === clientIdParam);
       if (prospect && !selectedProspect) {
         setSelectedProspect(prospect);
         setShowModal(true);
@@ -132,17 +135,26 @@ export default function FollowUp() {
     }
   }, [searchParams, uniqueProspects, selectedProspect]);
 
-  const filteredProspects = uniqueProspects.filter(prospect => {
-    // Filtro por búsqueda
-    const matchesSearch = prospect.company_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (prospect.vendor_name && prospect.vendor_name.toLowerCase().includes(searchTerm.toLowerCase()));
-    
-    // Filtro por estado completado/activo
-    const isCompleted = Boolean(prospect.is_completed);
-    const matchesStatus = showCompleted ? isCompleted : !isCompleted;
-    
-    return matchesSearch && matchesStatus;
-  });
+  // Filtrar por cliente si viene en URL (para contadores)
+  const clientIdParam = searchParams.get('client_id');
+  const clientFilteredProspects = useMemo(() => {
+    if (!clientIdParam) return uniqueProspects;
+    return uniqueProspects.filter(p => p.client_id === clientIdParam);
+  }, [clientIdParam, uniqueProspects]);
+
+  const filteredProspects = useMemo(() => {
+    return clientFilteredProspects.filter(prospect => {
+      // Filtro por búsqueda
+      const matchesSearch = prospect.company_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (prospect.vendor_name && prospect.vendor_name.toLowerCase().includes(searchTerm.toLowerCase()));
+      
+      // Filtro por estado completado/seguimiento
+      const isCompleted = prospect.completed_date != null;
+      const matchesStatus = showCompleted ? isCompleted : !isCompleted;
+      
+      return matchesSearch && matchesStatus;
+    });
+  }, [clientFilteredProspects, searchTerm, showCompleted]);
 
   const authUser = getCurrentUser();
   const isVendorUser = authUser?.role === "vendedor";
@@ -159,6 +171,7 @@ export default function FollowUp() {
   }, [vendors, isVendorUser, vendorIdString]);
 
   const handleEdit = (prospect: FollowUpProspect) => {
+    console.log('🔵 handleEdit called:', prospect);
     setSelectedProspect(prospect);
     setShowModal(true);
   };
@@ -171,15 +184,11 @@ export default function FollowUp() {
     if (editId && prospects) {
       const prospectToEdit = prospects.find(p => p.id === Number(editId));
       if (prospectToEdit) {
-        // Si viene de un completado, mostrar la vista de completados
-        if (isCompleted) {
-          setShowCompleted(true);
-        }
         // Abrir el modal automáticamente
         handleEdit(prospectToEdit);
         
         // Limpiar los parámetros de la URL para evitar que se abra de nuevo
-        window.history.replaceState({}, '', '/follow-up');
+        window.history.replaceState({}, '', '/seguimiento');
       }
     }
   }, [searchParams, prospects]);
@@ -189,22 +198,25 @@ export default function FollowUp() {
     try {
       const response = await authFetch(`/api/call-logs/${selectedProspect.id}`);
       const logs = await response.json();
-      setCallLogs(logs);
+      setCallLogs(Array.isArray(logs) ? logs : []);
     } catch (error) {
       console.error("Error refreshing logs:", error);
+      setCallLogs([]);
     }
   };
 
   const handleCall = async (prospect: FollowUpProspect) => {
+    console.log('🟢 handleCall called:', prospect);
     setSelectedProspect(prospect);
 
     // Fetch call logs for this prospect
     try {
       const response = await authFetch(`/api/call-logs/${prospect.id}`);
       const logs = await response.json();
-      setCallLogs(logs);
+      setCallLogs(Array.isArray(logs) ? logs : []);
     } catch (error) {
       console.error("Error fetching call logs:", error);
+      setCallLogs([]);
     }
 
     setShowCallModal(true);
@@ -219,6 +231,13 @@ export default function FollowUp() {
         ...data,
         vendor_id: isVendorUser && vendorIdNumber !== undefined ? vendorIdNumber : data.vendor_id,
         completed_date: data.is_completed ? new Date().toISOString() : null,
+        fijo_ren: data.fijo_ren || 0,
+        fijo_new: data.fijo_new || 0,
+        movil_nueva: data.movil_nueva || 0,
+        movil_renovacion: data.movil_renovacion || 0,
+        claro_tv: data.claro_tv || 0,
+        cloud: data.cloud || 0,
+        mpls: data.mpls || 0,
       };
 
       await authFetch(url, {
@@ -241,6 +260,7 @@ export default function FollowUp() {
     step_completed: boolean;
   }) => {
     try {
+      console.log('[FollowUp] Guardando llamada:', { follow_up_id: selectedProspect?.id, ...callData });
       const response = await authFetch('/api/call-logs', {
         method: 'POST',
         json: {
@@ -258,6 +278,8 @@ export default function FollowUp() {
         throw new Error('Error al guardar la llamada');
       }
 
+      console.log('[FollowUp] Llamada guardada exitosamente');
+      await refreshLogs(); // Refrescar logs antes de cerrar modal
       refetchProspects();
       setShowCallModal(false);
       setSelectedProspect(null);
@@ -268,19 +290,28 @@ export default function FollowUp() {
   };
 
   const handleReturnToBD = async (prospect: FollowUpProspect) => {
+    console.log('🟠 handleReturnToBD called:', prospect);
+    
     if (!confirm(`¿Devolver "${prospect.company_name}" a la base de datos disponibles?`)) {
+      console.log('🟠 User cancelled return');
       return;
     }
 
     try {
+      console.log('🟠 Deleting prospect:', prospect.id);
       // Eliminar el registro de follow_up_prospects para que vuelva a disponibles
-      await authFetch(`/api/follow-up-prospects/${prospect.id}`, {
+      const response = await authFetch(`/api/follow-up-prospects/${prospect.id}`, {
         method: 'DELETE'
       });
 
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+      }
+
+      console.log('🟠 Prospect deleted successfully');
       refetchProspects();
     } catch (error) {
-      console.error("Error returning prospect to BD:", error);
+      console.error("🔴 Error returning prospect to BD:", error);
       alert('Error al devolver el prospecto a la base de datos.');
     }
   };
@@ -336,7 +367,7 @@ export default function FollowUp() {
           />
         </div>
         
-        {/* Toggle Activos/Completados */}
+        {/* Toggle Seguimiento/Completados */}
         <div className="flex bg-gray-800 border border-gray-700 rounded-lg p-1">
           <button
             onClick={() => setShowCompleted(false)}
@@ -346,7 +377,7 @@ export default function FollowUp() {
                 : 'text-gray-400 hover:text-white'
             }`}
           >
-            Activos ({uniqueProspects.filter(p => !p.is_completed).length})
+            Seguimiento ({clientFilteredProspects.filter(p => p.completed_date == null).length})
           </button>
           <button
             onClick={() => setShowCompleted(true)}
@@ -356,7 +387,7 @@ export default function FollowUp() {
                 : 'text-gray-400 hover:text-white'
             }`}
           >
-            Completados ({uniqueProspects.filter(p => p.is_completed).length})
+            Completados ({clientFilteredProspects.filter(p => p.completed_date != null).length})
           </button>
         </div>
 
@@ -417,13 +448,16 @@ export default function FollowUp() {
                   <th className="px-4 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">Cloud</th>
                   <th className="px-4 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">MPLS</th>
                   <th className="px-4 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">Base</th>
-                  <th className="px-4 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">Fecha Update</th>
                   <th className="px-4 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">Acciones</th>
                 </tr>
               </thead>
               <tbody className="bg-gray-900 divide-y divide-gray-800">
-                {filteredProspects.map((prospect) => (
-                  <tr key={prospect.id} className="hover:bg-gray-800 transition-colors">
+                {filteredProspects.map((prospect) => {
+                  return (
+                  <tr 
+                    key={prospect.id} 
+                    className="hover:bg-gray-800 transition-colors"
+                  >
                     <td className="px-4 py-4 whitespace-nowrap">
                       <div className="text-sm font-medium text-gray-200">{prospect.company_name}</div>
                       {prospect.client_name && (
@@ -449,25 +483,25 @@ export default function FollowUp() {
                     <td className="px-4 py-4 whitespace-nowrap">
                       <span className="text-sm text-gray-300">{prospect.step_name || '-'}</span>
                     </td>
-                    <td className="px-4 py-4 whitespace-nowrap text-center">
+                    <td className={`px-4 py-4 whitespace-nowrap text-center ${(prospect.fijo_ren && parseFloat(prospect.fijo_ren.toString()) > 0) ? 'border-2 border-green-500 bg-green-900/20' : ''}`}>
                       <span className="text-sm text-gray-300">{prospect.fijo_ren || 0}</span>
                     </td>
-                    <td className="px-4 py-4 whitespace-nowrap text-center">
+                    <td className={`px-4 py-4 whitespace-nowrap text-center ${(prospect.fijo_new && parseFloat(prospect.fijo_new.toString()) > 0) ? 'border-2 border-green-500 bg-green-900/20' : ''}`}>
                       <span className="text-sm text-gray-300">{prospect.fijo_new || 0}</span>
                     </td>
-                    <td className="px-4 py-4 whitespace-nowrap text-center">
+                    <td className={`px-4 py-4 whitespace-nowrap text-center ${(prospect.movil_nueva && parseFloat(prospect.movil_nueva.toString()) > 0) ? 'border-2 border-green-500 bg-green-900/20' : ''}`}>
                       <span className="text-sm text-gray-300">{prospect.movil_nueva || 0}</span>
                     </td>
-                    <td className="px-4 py-4 whitespace-nowrap text-center">
+                    <td className={`px-4 py-4 whitespace-nowrap text-center ${(prospect.movil_renovacion && parseFloat(prospect.movil_renovacion.toString()) > 0) ? 'border-2 border-green-500 bg-green-900/20' : ''}`}>
                       <span className="text-sm text-gray-300">{prospect.movil_renovacion || 0}</span>
                     </td>
-                    <td className="px-4 py-4 whitespace-nowrap text-center">
+                    <td className={`px-4 py-4 whitespace-nowrap text-center ${(prospect.claro_tv && parseFloat(prospect.claro_tv.toString()) > 0) ? 'border-2 border-green-500 bg-green-900/20' : ''}`}>
                       <span className="text-sm text-gray-300">{prospect.claro_tv || 0}</span>
                     </td>
-                    <td className="px-4 py-4 whitespace-nowrap text-center">
+                    <td className={`px-4 py-4 whitespace-nowrap text-center ${(prospect.cloud && parseFloat(prospect.cloud.toString()) > 0) ? 'border-2 border-green-500 bg-green-900/20' : ''}`}>
                       <span className="text-sm text-gray-300">{prospect.cloud || 0}</span>
                     </td>
-                    <td className="px-4 py-4 whitespace-nowrap text-center">
+                    <td className={`px-4 py-4 whitespace-nowrap text-center ${(prospect.mpls && parseFloat(prospect.mpls.toString()) > 0) ? 'border-2 border-green-500 bg-green-900/20' : ''}`}>
                       <span className="text-sm text-gray-300">{prospect.mpls || 0}</span>
                     </td>
                     <td className="px-4 py-4 whitespace-nowrap text-center">
@@ -508,7 +542,8 @@ export default function FollowUp() {
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -539,7 +574,7 @@ export default function FollowUp() {
           priorities={priorities || []}
           vendors={visibleVendors}
           steps={steps || []}
-          clients={clients || []}
+          clients={Array.isArray(clients) ? clients : (clients as any)?.data || []}
           onSave={handleSaveProspect}
           onClose={() => {
             setShowModal(false);
@@ -622,7 +657,7 @@ function ProspectModal({
     contact_email: prospect?.contact_email || '',
     notes: prospect?.notes || '',
     base: prospect?.base || '',
-    is_completed: prospect?.is_completed || false
+    is_completed: prospect?.completed_date != null
   });
 
   useEffect(() => {
@@ -643,7 +678,7 @@ function ProspectModal({
       contact_email: prospect?.contact_email || '',
       notes: prospect?.notes || '',
       base: prospect?.base || '',
-      is_completed: prospect?.is_completed || false
+      is_completed: prospect?.completed_date != null
     });
   }, [prospect, enforcedVendorId]);
 
@@ -662,13 +697,14 @@ function ProspectModal({
 
       const data = {
         ...formData,
-        client_id: formData.client_id ? parseInt(formData.client_id.toString(), 10) : null,
+        client_id: formData.client_id || null,
         priority_id: formData.priority_id ? parseInt(formData.priority_id.toString(), 10) : null,
         vendor_id: resolvedVendorId,
-        step_id: formData.step_id ? parseInt(formData.step_id.toString(), 10) : null,
       };
 
+      console.log('[FollowUp] Guardando prospecto:', data);
       await onSave(data);
+      console.log('[FollowUp] Prospecto guardado exitosamente');
       // Cerrar modal después de guardar exitosamente
       onClose();
     } catch (error) {
@@ -700,24 +736,6 @@ function ProspectModal({
                   onChange={(e) => setFormData({ ...formData, company_name: e.target.value })}
                   className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-white"
                 />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Cliente Existente
-                </label>
-                <select
-                  value={formData.client_id}
-                  onChange={(e) => setFormData({ ...formData, client_id: e.target.value })}
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-white"
-                >
-                  <option value="">Nuevo prospecto (no cliente existente)</option>
-                  {clients.map(client => (
-                    <option key={client.id} value={client.id}>
-                      {client.business_name || client.name}
-                    </option>
-                  ))}
-                </select>
               </div>
 
               <div>
@@ -759,61 +777,6 @@ function ProspectModal({
                 {(disableVendorSelect || vendors.length === 1) && (
                   <p className="mt-2 text-xs text-gray-400">Asignado automáticamente a tu usuario.</p>
                 )}
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Paso
-                </label>
-                <select
-                  value={formData.step_id}
-                  onChange={(e) => setFormData({ ...formData, step_id: e.target.value })}
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-white"
-                >
-                  <option value="">Seleccionar paso</option>
-                  {steps.map(step => (
-                    <option key={step.id} value={step.id}>
-                      {step.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Teléfono
-                </label>
-                <input
-                  type="text"
-                  value={formData.contact_phone}
-                  onChange={(e) => setFormData({ ...formData, contact_phone: e.target.value })}
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-white"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Email
-                </label>
-                <input
-                  type="email"
-                  value={formData.contact_email}
-                  onChange={(e) => setFormData({ ...formData, contact_email: e.target.value })}
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-white"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Base de Datos
-                </label>
-                <input
-                  type="text"
-                  value={formData.base}
-                  onChange={(e) => setFormData({ ...formData, base: e.target.value })}
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-white"
-                  placeholder="BD propia"
-                />
               </div>
             </div>
 
@@ -1156,15 +1119,17 @@ function CallModal({
   // Calcular historial de fechas de completado basado en logs
   const stepCompletionDates = useMemo(() => {
     const dates: Record<number, string> = {};
-    callLogs.forEach(log => {
-      if (log.step_completed && log.step_id) {
-        // Si hay múltiples logs para el mismo paso, tomamos el más reciente (asumiendo que callLogs viene ordenado o lo ordenamos)
-        // Pero callLogs suele venir ordenado por fecha desc.
-        if (!dates[log.step_id]) {
-           dates[log.step_id] = log.call_date;
+    if (Array.isArray(callLogs)) {
+      callLogs.forEach(log => {
+        if (log.step_completed && log.step_id) {
+          // Si hay múltiples logs para el mismo paso, tomamos el más reciente (asumiendo que callLogs viene ordenado o lo ordenamos)
+          // Pero callLogs suele venir ordenado por fecha desc.
+          if (!dates[log.step_id]) {
+             dates[log.step_id] = log.call_date;
+          }
         }
-      }
-    });
+      });
+    }
     return dates;
   }, [callLogs]);
 
@@ -1204,7 +1169,7 @@ function CallModal({
 
   return (
     <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-gray-900 rounded-xl shadow-2xl border border-gray-800 w-full max-w-6xl h-[85vh] flex flex-col overflow-hidden">
+      <div className="bg-gray-900 rounded-xl shadow-2xl border border-gray-800 w-full max-w-7xl h-[90vh] flex flex-col overflow-hidden">
         
         {/* Header */}
         <div className="flex justify-between items-center px-6 py-4 border-b border-gray-800 bg-gray-900/50 shrink-0">
@@ -1342,13 +1307,13 @@ function CallModal({
               {/* Formulario (Parte Superior) */}
               <div className="p-6 border-b border-gray-800 bg-gray-800/10">
                 <form onSubmit={handleSubmit}>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
                     <div>
-                      <label className="block text-xs font-medium text-gray-400 mb-1.5 uppercase">Resultado de la llamada</label>
+                      <label className="block text-xs font-medium text-gray-400 mb-1 uppercase">Resultado de la llamada</label>
                       <select
                         value={formData.outcome}
                         onChange={(e) => setFormData(prev => ({ ...prev, outcome: e.target.value }))}
-                        className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                        className="w-full px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                       >
                         <option value="completed">Completada (Hablé con el cliente)</option>
                         <option value="pending">Pendiente (Llamar más tarde)</option>
@@ -1359,7 +1324,7 @@ function CallModal({
                     </div>
 
                     <div>
-                      <label className="block text-xs font-medium text-gray-400 mb-1.5 uppercase">Próximo Seguimiento</label>
+                      <label className="block text-xs font-medium text-gray-400 mb-1 uppercase">Próximo Seguimiento</label>
                       <div className="relative">
                         <input
                           type="date"
@@ -1367,20 +1332,20 @@ function CallModal({
                           max="2030-12-31"
                           value={formData.next_call_date}
                           onChange={(e) => setFormData(prev => ({ ...prev, next_call_date: e.target.value }))}
-                          className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all pl-10"
+                          className="w-full px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all pl-10"
                         />
-                        <CalendarIcon className="w-4 h-4 text-gray-500 absolute left-3 top-2.5" />
+                        <CalendarIcon className="w-4 h-4 text-gray-500 absolute left-3 top-2" />
                       </div>
                     </div>
                   </div>
 
-                  <div className="mb-4">
-                    <label className="block text-xs font-medium text-gray-400 mb-1.5 uppercase">Notas de la conversación</label>
+                  <div className="mb-3">
+                    <label className="block text-xs font-medium text-gray-400 mb-1 uppercase">Notas de la conversación</label>
                     <textarea
                       value={formData.notes}
                       onChange={(e) => setFormData(prev => ({ ...prev, notes: e.target.value }))}
-                      rows={3}
-                      className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all resize-none"
+                      rows={2}
+                      className="w-full px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all resize-none"
                       placeholder="Escribe aquí los detalles importantes..."
                       required
                     />
@@ -1434,10 +1399,10 @@ function CallModal({
                     </div>
                   ) : (
                     callLogs.map((log) => (
-                      <div key={log.id} className="relative pl-6 pb-6 last:pb-0 border-l border-gray-800 last:border-0">
+                      <div key={log.id} className="relative pl-6 pb-3 last:pb-0 border-l border-gray-800 last:border-0">
                         <div className="absolute left-[-5px] top-0 w-2.5 h-2.5 rounded-full bg-gray-700 border-2 border-gray-900"></div>
-                        <div className="bg-gray-800/50 rounded-lg p-3 border border-gray-800 hover:border-gray-700 transition-colors">
-                          <div className="flex justify-between items-start mb-2">
+                        <div className="bg-gray-800/50 rounded-lg p-2.5 border border-gray-800 hover:border-gray-700 transition-colors">
+                          <div className="flex justify-between items-start mb-1.5">
                             <div className="flex items-center gap-2">
                               <span className="text-xs font-medium text-gray-300">
                                 {new Date(log.call_date).toLocaleDateString()} 

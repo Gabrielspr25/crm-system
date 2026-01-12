@@ -21,6 +21,7 @@ import tarifasRoutes from './src/backend/routes/tarifasRoutes.js';
 import clientRoutes from './src/backend/routes/clientRoutes.js';
 import banRoutes from './src/backend/routes/banRoutes.js';
 import importRoutes from './src/backend/routes/importRoutes.js';
+import vendorRoutes from './src/backend/routes/vendorRoutes.js';
 
 // ======================================================
 // Configuración base
@@ -70,6 +71,7 @@ app.use('/api/tariffs', tarifasRoutes);
 app.use('/api/clients', clientRoutes);
 app.use('/api/bans', banRoutes);
 app.use('/api/importador', importRoutes);
+app.use('/api/vendors', vendorRoutes);
 
 
 const JWT_SECRET = process.env.JWT_SECRET || 'development-secret';
@@ -537,19 +539,20 @@ app.put('/api/me/password', async (req, res) => {
 // ======================================================
 // Vendedores, categorías y productos
 // ======================================================
-app.get('/api/vendors', async (_req, res) => {
-  try {
-    const rows = await query(
-      `SELECT * FROM vendors WHERE COALESCE(is_active,1) = 1 ORDER BY name ASC`
-    );
-    const mapped = rows.map((row) =>
-      enrich(row, [], ['is_active'], ['created_at', 'updated_at'])
-    );
-    res.json(mapped);
-  } catch (error) {
-    serverError(res, error, 'Error obteniendo vendedores');
-  }
-});
+// LEGACY: Endpoint movido a src/backend/routes/vendorRoutes.js (línea 76)
+// app.get('/api/vendors', async (_req, res) => {
+//   try {
+//     const rows = await query(
+//       `SELECT * FROM vendors WHERE COALESCE(is_active,1) = 1 ORDER BY name ASC`
+//     );
+//     const mapped = rows.map((row) =>
+//       enrich(row, [], ['is_active'], ['created_at', 'updated_at'])
+//     );
+//     res.json(mapped);
+//   } catch (error) {
+//     serverError(res, error, 'Error obteniendo vendedores');
+//   }
+// });
 
 app.get('/api/categories', async (_req, res) => {
   try {
@@ -710,7 +713,7 @@ app.post('/api/products', async (req, res) => {
     category_id: categoryId,
     description,
     price,
-    monthly_goal: monthlyGoal
+    commission_percentage: commissionPercentage
   } = req.body || {};
 
   if (!name || typeof name !== 'string' || name.trim() === '') {
@@ -729,12 +732,16 @@ app.post('/api/products', async (req, res) => {
     return badRequest(res, 'El precio debe ser mayor o igual a 0');
   }
 
-  const normalizedMonthlyGoal = normalizeNullableInteger(monthlyGoal) || 0;
+  const normalizedCommission = normalizeNullableNumber(commissionPercentage);
+  if (Number.isNaN(normalizedCommission)) {
+    return badRequest(res, 'Porcentaje de comisión inválido');
+  }
+  const finalCommission = normalizedCommission !== null ? normalizedCommission : 10.00;
 
   try {
     const rows = await query(
       `INSERT INTO products
-        (name, category_id, description, price, monthly_goal)
+        (name, category_id, description, price, commission_percentage)
        VALUES ($1, $2, $3, $4, $5)
        RETURNING *`,
       [
@@ -742,7 +749,7 @@ app.post('/api/products', async (req, res) => {
         categoryId || null,
         description?.trim() || null,
         normalizedPrice || 0,
-        normalizedMonthlyGoal
+        finalCommission
       ]
     );
     res.status(201).json(rows[0]);
@@ -759,7 +766,7 @@ app.put('/api/products/:id', async (req, res) => {
     category_id: categoryId,
     description,
     price,
-    monthly_goal: monthlyGoal
+    commission_percentage: commissionPercentage
   } = req.body || {};
 
   const updates = [];
@@ -799,10 +806,13 @@ app.put('/api/products/:id', async (req, res) => {
     values.push(normalizedPrice);
   }
 
-  if (monthlyGoal !== undefined) {
-    const normalizedGoal = normalizeNullableInteger(monthlyGoal) || 0;
-    updates.push(`monthly_goal = $${paramIndex++}`);
-    values.push(normalizedGoal);
+  if (commissionPercentage !== undefined) {
+    const normalizedCommission = normalizeNullableNumber(commissionPercentage);
+    if (Number.isNaN(normalizedCommission)) {
+      return badRequest(res, 'Porcentaje de comisión inválido');
+    }
+    updates.push(`commission_percentage = $${paramIndex++}`);
+    values.push(normalizedCommission !== null ? normalizedCommission : 10.00);
   }
 
   if (updates.length === 0) {
@@ -1455,20 +1465,25 @@ app.get('/api/follow-up-prospects', authenticateRequest, async (req, res) => {
   try {
     const { include_completed } = req.query;
 
-    let whereClause = 'WHERE COALESCE(p.is_active, true) = true';
+    // NO filtrar por is_active - el frontend maneja el filtro de completados
+    let whereClause = '';
     if (include_completed !== 'true') {
-      whereClause += ' AND COALESCE(p.is_completed, false) = false';
+      whereClause = 'WHERE p.completed_date IS NULL';
     }
 
     const sql = `
       SELECT 
         p.*,
         c.name as client_name,
-        c.business_name,
-        v.name as vendor_name
+        pr.name as priority_name,
+        pr.color_hex as priority_color,
+        v.name as vendor_name,
+        s.name as step_name
       FROM follow_up_prospects p
-      JOIN clients c ON p.client_id = c.id
+      LEFT JOIN clients c ON p.client_id = c.id
+      LEFT JOIN priorities pr ON p.priority_id = pr.id
       LEFT JOIN vendors v ON p.vendor_id = v.id
+      LEFT JOIN follow_up_steps s ON p.step_id = s.id
       ${whereClause}
       ORDER BY p.created_at DESC
     `;
@@ -1485,11 +1500,263 @@ app.get('/api/follow-up-prospects', authenticateRequest, async (req, res) => {
   }
 });
 
+// POST: Crear prospecto de seguimiento
+app.post('/api/follow-up-prospects', authenticateRequest, async (req, res) => {
+  try {
+    const { client_id } = req.body;
+    
+    if (!client_id) {
+      return res.status(400).json({ error: 'client_id es obligatorio' });
+    }
+
+    // Verificar que el cliente existe y obtener su nombre
+    const clientData = await query('SELECT id, name FROM clients WHERE id = $1', [client_id]);
+    if (clientData.length === 0) {
+      return res.status(404).json({ error: 'Cliente no encontrado' });
+    }
+    
+    const companyName = clientData[0].name || 'Sin nombre';
+
+    // Verificar si ya existe un seguimiento activo
+    const existingActive = await query(
+      'SELECT id FROM follow_up_prospects WHERE client_id = $1 AND is_active = true AND (is_completed IS NULL OR is_completed = false)',
+      [client_id]
+    );
+    
+    if (existingActive.length > 0) {
+      return res.status(400).json({ error: 'Este cliente ya tiene un seguimiento activo' });
+    }
+
+    const result = await query(
+      `INSERT INTO follow_up_prospects 
+       (client_id, company_name, is_active, is_completed, created_at, updated_at)
+       VALUES ($1::uuid, $2, true, false, NOW(), NOW())
+       RETURNING *`,
+      [client_id, companyName]
+    );
+
+    res.status(201).json(result[0]);
+  } catch (error) {
+    console.error('Error creando prospecto:', error);
+    res.status(500).json({ error: 'Error creando prospecto de seguimiento' });
+  }
+});
+
+// PUT: Completar prospecto
+app.put('/api/follow-up-prospects/:id/complete', authenticateRequest, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const result = await query(
+      `UPDATE follow_up_prospects 
+       SET is_completed = true, completed_date = NOW(), is_active = false, updated_at = NOW()
+       WHERE id = $1
+       RETURNING *`,
+      [id]
+    );
+
+    if (result.length === 0) {
+      return res.status(404).json({ error: 'Prospecto no encontrado' });
+    }
+
+    res.json({ success: true, prospect: result[0] });
+  } catch (error) {
+    console.error('Error completando prospecto:', error);
+    res.status(500).json({ error: 'Error completando prospecto' });
+  }
+});
+
+// DELETE: Devolver prospecto a base disponible (elimina de follow_up_prospects)
+app.delete('/api/follow-up-prospects/:id', authenticateRequest, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const result = await query(
+      'DELETE FROM follow_up_prospects WHERE id = $1 RETURNING *',
+      [id]
+    );
+
+    if (result.length === 0) {
+      return res.status(404).json({ error: 'Prospecto no encontrado' });
+    }
+
+    res.json({ success: true, message: 'Prospecto devuelto a base disponible' });
+  } catch (error) {
+    console.error('Error eliminando prospecto:', error);
+    res.status(500).json({ error: 'Error devolviendo prospecto a disponibles' });
+  }
+});
+
+// GET /api/priorities - Obtener prioridades
+app.get('/api/priorities', authenticateRequest, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM priorities ORDER BY order_index ASC');
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error getting priorities:', error);
+    res.status(500).json({ error: 'Error obteniendo prioridades' });
+  }
+});
+
+// GET /api/follow-up-steps - Obtener pasos de seguimiento
+app.get('/api/follow-up-steps', authenticateRequest, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM follow_up_steps ORDER BY order_index ASC');
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error getting follow-up steps:', error);
+    res.status(500).json({ error: 'Error obteniendo pasos de seguimiento' });
+  }
+});
+
+// PUT: Actualizar prospecto (general)
+app.put('/api/follow-up-prospects/:id', authenticateRequest, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { 
+      client_id, priority_id, vendor_id, completed_date,
+      fijo_ren, fijo_new, movil_nueva, movil_renovacion, 
+      claro_tv, cloud, mpls, notes 
+    } = req.body;
+    
+    const result = await query(
+      `UPDATE follow_up_prospects 
+       SET client_id = $1, priority_id = $2, vendor_id = $3, 
+           completed_date = $4, fijo_ren = $5, fijo_new = $6,
+           movil_nueva = $7, movil_renovacion = $8, claro_tv = $9,
+           cloud = $10, mpls = $11, notes = $12, updated_at = NOW()
+       WHERE id = $13
+       RETURNING *`,
+      [client_id, priority_id, vendor_id, completed_date,
+       fijo_ren || 0, fijo_new || 0, movil_nueva || 0, movil_renovacion || 0,
+       claro_tv || 0, cloud || 0, mpls || 0, notes, id]
+    );
+
+    if (result.length === 0) {
+      return res.status(404).json({ error: 'Prospecto no encontrado' });
+    }
+
+    res.json({ success: true, prospect: result[0] });
+  } catch (error) {
+    console.error('Error actualizando prospecto:', error);
+    res.status(500).json({ error: 'Error actualizando prospecto' });
+  }
+});
+
+// PUT: Devolver prospecto (marcar como inactivo)
+app.put('/api/follow-up-prospects/:id/return', authenticateRequest, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const result = await query(
+      `UPDATE follow_up_prospects 
+       SET is_active = false, updated_at = NOW()
+       WHERE id = $1
+       RETURNING *`,
+      [id]
+    );
+
+    if (result.length === 0) {
+      return res.status(404).json({ error: 'Prospecto no encontrado' });
+    }
+
+    res.json({ success: true, prospect: result[0] });
+  } catch (error) {
+    console.error('Error devolviendo prospecto:', error);
+    res.status(500).json({ error: 'Error devolviendo prospecto' });
+  }
+});
+
+// ======================================================
+// CALL LOGS (Llamadas de seguimiento)
+// ======================================================
+
+// GET: Obtener logs de un prospecto
+app.get('/api/call-logs/:prospect_id', authenticateRequest, async (req, res) => {
+  try {
+    const { prospect_id } = req.params;
+    
+    const logs = await query(
+      `SELECT cl.*, s.name as step_name
+       FROM call_logs cl
+       LEFT JOIN follow_up_steps s ON cl.step_id = s.id
+       WHERE cl.follow_up_id = $1
+       ORDER BY cl.call_date DESC`,
+      [prospect_id]
+    );
+
+    res.json(logs || []);
+  } catch (error) {
+    console.error('Error obteniendo call logs:', error);
+    res.status(500).json({ error: 'Error obteniendo historial de llamadas' });
+  }
+});
+
+// POST: Crear nuevo call log
+app.post('/api/call-logs', authenticateRequest, async (req, res) => {
+  try {
+    const { follow_up_id, call_date, notes, outcome, next_call_date, step_completed, step_id } = req.body;
+    
+    // Guardar call log
+    const result = await query(
+      `INSERT INTO call_logs (follow_up_id, call_date, notes, outcome, next_call_date, step_completed, step_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING *`,
+      [follow_up_id, call_date, notes, outcome, next_call_date, step_completed || false, step_id]
+    );
+
+    // Si se completó el paso, avanzar al siguiente
+    if (step_completed && step_id) {
+      // Obtener siguiente paso
+      const nextSteps = await query(
+        `SELECT id FROM follow_up_steps 
+         WHERE order_index > (SELECT order_index FROM follow_up_steps WHERE id = $1)
+         ORDER BY order_index ASC LIMIT 1`,
+        [step_id]
+      );
+
+      const next_step_id = nextSteps.length > 0 ? nextSteps[0].id : null;
+
+      // Actualizar prospecto con siguiente paso
+      await query(
+        `UPDATE follow_up_prospects 
+         SET step_id = $1, updated_at = NOW()
+         WHERE id = $2`,
+        [next_step_id, follow_up_id]
+      );
+    }
+
+    res.json({ success: true, log: result[0] });
+  } catch (error) {
+    console.error('Error creando call log:', error);
+    res.status(500).json({ error: 'Error guardando llamada' });
+  }
+});
+
 // ======================================================
 // Prospectos COMPLETADOS (Reportes)
 app.get('/api/completed-prospects', authenticateRequest, async (req, res) => {
-  // Tabla no existe en schema actual, retornamos vacío para evitar fallos
-  res.json([]);
+  try {
+    const rows = await query(`
+      SELECT 
+        fup.*,
+        c.name as client_name,
+        c.city,
+        c.address,
+        v.name as vendor_name,
+        v.id as vendor_id
+      FROM follow_up_prospects fup
+      LEFT JOIN clients c ON fup.client_id = c.id
+      LEFT JOIN vendors v ON fup.vendor_id = v.id
+      WHERE fup.completed_date IS NOT NULL 
+        AND fup.vendor_id IS NOT NULL
+      ORDER BY fup.completed_date DESC
+    `);
+    res.json(rows);
+  } catch (error) {
+    console.error('Error fetching completed prospects:', error);
+    res.json([]);
+  }
 });
 
 // ======================================================
@@ -1501,182 +1768,58 @@ app.get('/api/clients/search', ...
 
 // ======================================================
 // Fusionar Clientes
-app.post('/api/clients/merge', authenticateRequest, async (req, res) => {
-  const { sourceId, targetId } = req.body;
-
-  if (!sourceId || !targetId) {
-    return res.status(400).json({ error: 'Se requieren sourceId y targetId' });
-  }
-
-  if (sourceId === targetId) {
-    return res.status(400).json({ error: 'No se puede fusionar el mismo cliente' });
-  }
-
-  try {
-    // 1. Verificar que ambos existan
-    const source = await query('SELECT * FROM clients WHERE id = $1', [sourceId]);
-    const target = await query('SELECT * FROM clients WHERE id = $1', [targetId]);
-
-    if (source.length === 0 || target.length === 0) {
-      return res.status(404).json({ error: 'Uno o ambos clientes no existen' });
-    }
-
-    // 2. Mover BANs
-    await query('UPDATE bans SET client_id = $1 WHERE client_id = $2', [targetId, sourceId]);
-
-    // 3. Mover Seguimientos (FollowUps)
-    try {
-      await query('UPDATE follow_up_prospects SET client_id = $1 WHERE client_id = $2', [targetId, sourceId]);
-    } catch (e) {
-      console.warn("No se pudo actualizar follow_up_prospects", e.message);
-    }
-
-    // 4. Eliminar Cliente Origen
-    await query('DELETE FROM clients WHERE id = $1', [sourceId]);
-
-    res.json({ success: true, message: `Cliente ${sourceId} fusionado en ${targetId} correctamente.` });
-
-  } catch (error) {
-    console.error('Error merging clients:', error);
-    res.status(500).json({ error: 'Error fusionando clientes' });
-  }
-});
+// LEGACY: Endpoint movido a src/backend/routes/clientRoutes.js (POST /merge)
+// app.post('/api/clients/merge', authenticateRequest, async (req, res) => {
+//   const { sourceId, targetId } = req.body;
+//
+//   if (!sourceId || !targetId) {
+//     return res.status(400).json({ error: 'Se requieren sourceId y targetId' });
+//   }
+//
+//   if (sourceId === targetId) {
+//     return res.status(400).json({ error: 'No se puede fusionar el mismo cliente' });
+//   }
+//
+//   try {
+//     // 1. Verificar que ambos existan
+//     const source = await query('SELECT * FROM clients WHERE id = $1', [sourceId]);
+//     const target = await query('SELECT * FROM clients WHERE id = $1', [targetId]);
+//
+//     if (source.length === 0 || target.length === 0) {
+//       return res.status(404).json({ error: 'Uno o ambos clientes no existen' });
+//     }
+//
+//     // 2. Mover BANs
+//     await query('UPDATE bans SET client_id = $1 WHERE client_id = $2', [targetId, sourceId]);
+//
+//     // 3. Mover Seguimientos (FollowUps)
+//     try {
+//       await query('UPDATE follow_up_prospects SET client_id = $1 WHERE client_id = $2', [targetId, sourceId]);
+//     } catch (e) {
+//       console.warn("No se pudo actualizar follow_up_prospects", e.message);
+//     }
+//
+//     // 4. Eliminar Cliente Origen
+//     await query('DELETE FROM clients WHERE id = $1', [sourceId]);
+//
+//     res.json({ success: true, message: `Cliente ${sourceId} fusionado en ${targetId} correctamente.` });
+//
+//   } catch (error) {
+//     console.error('Error merging clients:', error);
+//     res.status(500).json({ error: 'Error fusionando clientes' });
+//   }
+// });
 
 // Clientes
 // ======================================================
+/* LEGACY ENDPOINT COMMENTED OUT - NOW USING clientRoutes.js (MODULAR)
 app.get('/api/clients', async (req, res) => {
-  try {
-    const page = parseInt(req.query.page) || 0;
-    const limit = parseInt(req.query.limit) || 10000; // Límite aumentado para asegurar que carguen todos
-    const offset = page > 0 ? (page - 1) * limit : 0;
-
-    console.log(`📋 GET / api / clients - User: ${req.user?.username} - Page: ${page}, Limit: ${limit} `);
-
-    let whereClause = '';
-    const params = [];
-
-    // Lógica para Contar Total (solo si se pide paginación)
-    let totalCount = 0;
-    if (page > 0) {
-      const countSql = `SELECT COUNT(*) as total FROM clients c ${whereClause} `;
-      const countResult = await query(countSql, params); // Params debe coincidir si hubiera filtros
-      totalCount = parseInt(countResult[0]?.total || 0);
-    }
-
-    // Consulta optimizada
-    const sql = `SELECT DISTINCT ON(c.id)
-c.*,
-  v.name AS vendor_name,
-    COALESCE(b.ban_count, 0) AS ban_count,
-      COALESCE(b.active_ban_count, 0) AS active_ban_count,
-        COALESCE(b.cancelled_ban_count, 0) AS cancelled_ban_count,
-          b.ban_numbers,
-          b.ban_descriptions,
-          CASE WHEN COALESCE(b.ban_count, 0) > 0 THEN 1 ELSE 0 END AS has_bans,
-            COALESCE(s.subscriber_count, 0) AS subscriber_count,
-              COALESCE(s.active_subscriber_count, 0) AS active_subscriber_count,
-                COALESCE(s.cancelled_subscriber_count, 0) AS cancelled_subscriber_count,
-                  s.primary_subscriber_phone,
-                  s.primary_contract_end_date,
-                  s.primary_subscriber_created_at,
-                  s.primary_service_type,
-                  s.all_service_types,
-                  COALESCE(la.last_activity, c.updated_at) AS last_activity,
-                    CASE WHEN b.cancelled_ban_count > 0 AND b.active_ban_count = 0 THEN 1 ELSE 0 END AS has_cancelled_bans
-        FROM clients c
-        LEFT JOIN vendors v ON c.vendor_id = v.id
-        LEFT JOIN(
-                      SELECT 
-            client_id,
-                      COUNT(*) AS ban_count,
-                      COUNT(CASE WHEN UPPER(status) NOT IN('CANCELADO', 'CANCELLED', 'C', 'BAJA', 'SUSPENDIDO', 'INACTIVE') THEN 1 END) AS active_ban_count,
-                      COUNT(CASE WHEN UPPER(status) IN('CANCELADO', 'CANCELLED', 'C', 'BAJA', 'SUSPENDIDO', 'INACTIVE') THEN 1 END) AS cancelled_ban_count,
-                      STRING_AGG(ban_number, ', ' ORDER BY ban_number) AS ban_numbers,
-                      STRING_AGG(DISTINCT CASE WHEN UPPER(status) IN('CANCELADO', 'CANCELLED', 'C', 'BAJA', 'SUSPENDIDO', 'INACTIVE') THEN 'cancelled' END, ', ') AS cancelled_status,
-                      STRING_AGG(DISTINCT CASE WHEN description IS NOT NULL AND description <> '' THEN description END, ', ') AS ban_descriptions
-          FROM bans
-          WHERE COALESCE(is_active, 1) = 1
-          GROUP BY client_id
-                    ) b ON b.client_id = c.id
-        LEFT JOIN(
-                      SELECT 
-            b.client_id,
-                      COUNT(DISTINCT s.id) AS subscriber_count,
-                      COUNT(DISTINCT CASE WHEN UPPER(COALESCE(s.status, '')) NOT IN('CANCELADO', 'CANCELLED', 'C', 'BAJA', 'SUSPENDIDO', 'INACTIVE') THEN s.id END) AS active_subscriber_count,
-                      COUNT(DISTINCT CASE WHEN UPPER(COALESCE(s.status, '')) IN('CANCELADO', 'CANCELLED', 'C', 'BAJA', 'SUSPENDIDO', 'INACTIVE') THEN s.id END) AS cancelled_subscriber_count,
-                      COUNT(DISTINCT CASE WHEN COALESCE(s.remaining_payments, 0) = 0 THEN s.id END) AS subscribers_in_opportunity,
-                      MAX(CASE WHEN s.phone IS NOT NULL THEN s.phone END) AS primary_subscriber_phone,
-                      MAX(CASE WHEN s.contract_end_date IS NOT NULL THEN s.contract_end_date END) AS primary_contract_end_date,
-                      MAX(CASE WHEN s.created_at IS NOT NULL THEN s.created_at END) AS primary_subscriber_created_at,
-                      MAX(CASE WHEN s.service_type IS NOT NULL THEN s.service_type END) AS primary_service_type,
-                      STRING_AGG(DISTINCT s.service_type, ', ') AS all_service_types
-          FROM bans b
-          INNER JOIN subscribers s ON s.ban_id = b.id
-          WHERE COALESCE(b.is_active, 1) = 1 AND COALESCE(s.is_active, 1) = 1
-          GROUP BY b.client_id
-                    ) s ON s.client_id = c.id
-        LEFT JOIN(
-                      SELECT 
-            b.client_id,
-                      MAX(GREATEST(
-                        COALESCE(b.updated_at, '1970-01-01':: timestamp),
-                        COALESCE(s.updated_at, '1970-01-01':: timestamp),
-                        COALESCE(c.updated_at, '1970-01-01':: timestamp)
-                      )) AS last_activity
-          FROM bans b
-          LEFT JOIN subscribers s ON s.ban_id = b.id
-          LEFT JOIN clients c ON c.id = b.client_id
-          WHERE COALESCE(b.is_active, 1) = 1
-          GROUP BY b.client_id
-                    ) la ON la.client_id = c.id
-        ${whereClause}
-        ORDER BY c.id, c.name ASC
-        LIMIT $${params.length + 1} OFFSET $${params.length + 2} `;
-
-    // Añadir parámetros de paginación/límite
-    // IMPORTANTE: Si es legacy (page=0), offset es 0 y limit es 2000
-    params.push(limit, offset);
-
-    console.log('📋 Ejecutando consulta SQL...');
-    const startTime = Date.now();
-    const rows = await query(sql, params);
-    const duration = Date.now() - startTime;
-    console.log(`✅ Clientes encontrados: ${rows.length} (en ${duration}ms)`);
-
-    const mapped = rows.map((row) =>
-      enrich(
-        row,
-        ['includes_ban', 'vendor_id', 'ban_count', 'active_ban_count', 'cancelled_ban_count', 'is_active', 'subscriber_count', 'active_subscriber_count', 'cancelled_subscriber_count', 'subscribers_in_opportunity', 'has_cancelled_bans', 'base'],
-        ['has_bans'],
-        ['created_at', 'updated_at', 'primary_contract_end_date', 'primary_subscriber_created_at', 'last_activity']
-      )
-    );
-
-    if (page > 0) {
-      // Respuesta con paginación
-      res.json({
-        data: mapped,
-        pagination: {
-          total: totalCount,
-          page: page,
-          limit: limit,
-          totalPages: Math.ceil(totalCount / limit)
-        }
-      });
-    } else {
-      // Respuesta Legacy (Array directo)
-      if (rows.length === limit) {
-        console.warn(`⚠️ ALERTA: La consulta alcanzó el límite de seguridad de ${limit} registros.Es posible que falten datos.Se recomienda usar paginación.`);
-      }
-      res.json(mapped);
-    }
-  } catch (error) {
-    console.error('❌ Error en GET /api/clients:', error);
-    serverError(res, error, 'Error obteniendo clientes');
-  }
+  // This endpoint is deprecated and replaced by clientRoutes.js
+  // which includes proper stats calculation
+  res.status(410).json({ error: 'Use modular clientRoutes' });
 });
+*/
 
-/* LEGACY ROUTES COMMENTED OUT TO USE MODULAR ROUTES
 app.get('/api/clients/:id', async (req, res) => {
   // ... (COMMENTED OUT)
   res.status(410).json({ error: 'Endpoint deprecated. Use modular routes.' });
@@ -1700,7 +1843,6 @@ app.get('/api/clients/:id', async (req, res) => {
 
 // PUT /api/bans/:id
 // app.put('/api/bans/:id', ...
-*/
 
 // ======================================================
 // Endpoints de Suscriptores
@@ -2012,14 +2154,17 @@ app.post('/api/email/send', authenticateRequest, async (req, res) => {
 });
 
 // Endpoint de Reportes (Para pasar agent-functional.js)
+/* LEGACY COMPLETED-PROSPECTS COMMENTED OUT (Already handled at line 1599)
 app.get('/api/completed-prospects', authenticateRequest, (req, res) => {
   res.json([]);
 });
+*/
 
 // ======================================================
 // Endpoint de Importación (Refactorizado)
 // ======================================================
-app.post('/api/importador/save', authenticateRequest, saveImportData);
+// LEGACY: Endpoint movido a src/backend/routes/importRoutes.js (POST /save)
+// app.post('/api/importador/save', authenticateRequest, saveImportData);
 
 // Configurar timeouts del servidor para importaciones grandes (1 hora)
 server.timeout = 3600000;

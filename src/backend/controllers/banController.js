@@ -40,21 +40,12 @@ export const createBan = async (req, res) => {
             return badRequest(res, 'El número de cuenta BAN ya existe');
         }
 
-        // Asignar vendedor si no viene (similar a clientes)
-        let finalVendorId = vendor_id;
-        if (!finalVendorId && req.user && req.user.salespersonId) {
-            const vendorRes = await query('SELECT id FROM vendors WHERE salesperson_id = $1', [req.user.salespersonId]);
-            if (vendorRes.length > 0) {
-                finalVendorId = vendorRes[0].id;
-            }
-        }
-
         const result = await query(
             `INSERT INTO bans
-        (client_id, ban_number, address, city, zip_code, vendor_id, is_active, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,1,NOW(),NOW())
+        (client_id, ban_number, account_type, status, created_at, updated_at)
+       VALUES ($1,$2,$3,'A',NOW(),NOW())
        RETURNING *`,
-            [client_id, ban_number, address, city, zip_code, finalVendorId]
+            [client_id, ban_number, req.body.account_type || null]
         );
 
         res.status(201).json(result[0]);
@@ -67,11 +58,8 @@ export const updateBan = async (req, res) => {
     const { id } = req.params;
     const {
         ban_number,
-        address,
-        city,
-        zip_code,
-        vendor_id,
-        is_active
+        account_type,
+        status
     } = req.body;
 
     try {
@@ -80,20 +68,23 @@ export const updateBan = async (req, res) => {
             return notFound(res, 'BAN');
         }
 
+        // Convertir strings vacíos a undefined para que COALESCE funcione correctamente
+        const cleanAccountType = account_type?.trim() || undefined;
+        const cleanStatus = status?.trim() || undefined;
+
         const result = await query(
             `UPDATE bans
           SET ban_number = COALESCE($1, ban_number),
-              address = COALESCE($2, address),
-              city = COALESCE($3, city),
-              zip_code = COALESCE($4, zip_code),
-              vendor_id = COALESCE($5, vendor_id),
-              is_active = COALESCE($6, is_active),
+              account_type = COALESCE($2, account_type),
+              status = COALESCE($3, status),
               updated_at = NOW()
-        WHERE id = $7
+        WHERE id = $4
         RETURNING *`,
             [
-                ban_number, address, city, zip_code, vendor_id,
-                is_active !== undefined ? (is_active ? 1 : 0) : undefined, id
+                ban_number, 
+                cleanAccountType, 
+                cleanStatus, 
+                id
             ]
         );
 

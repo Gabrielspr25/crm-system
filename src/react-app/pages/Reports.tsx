@@ -64,7 +64,8 @@ interface PaymentRecord {
 export default function Reports() {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedVendor, setSelectedVendor] = useState<number | null>(null);
-  const [selectedMonth, setSelectedMonth] = useState<string>(""); // Nuevo: filtro de mes
+  // Inicializar con mes corriente (YYYY-MM)
+  const [selectedMonth, setSelectedMonth] = useState<string>(new Date().toISOString().slice(0, 7));
   const [movilNuevaManual, setMovilNuevaManual] = useState<Record<number, number>>({});
   const [movilRenManual, setMovilRenManual] = useState<Record<number, number>>({});
   const [notes, setNotes] = useState<Record<number, string>>({});
@@ -131,12 +132,12 @@ export default function Reports() {
       
       // TODOS los productos para calcular comisión automáticamente
       const productFields = [
-        { field: 'fijo_ren', productName: 'Fijo Renovación' },
-        { field: 'fijo_new', productName: 'Fijo Nueva' },
-        { field: 'movil_nueva', productName: 'Móvil Nueva' },
-        { field: 'movil_renovacion', productName: 'Móvil Renovación' },
-        { field: 'claro_tv', productName: 'Claro TV Nueva' },
-        { field: 'cloud', productName: 'Cloud Nueva' },
+        { field: 'fijo_ren', productName: 'Fijo Ren' },
+        { field: 'fijo_new', productName: 'Fijo New' },
+        { field: 'movil_nueva', productName: 'Movil New' },
+        { field: 'movil_renovacion', productName: 'Movil Ren' },
+        { field: 'claro_tv', productName: 'Claro TV' },
+        { field: 'cloud', productName: 'Cloud' },
         { field: 'mpls', productName: 'MPLS' }
       ];
 
@@ -151,40 +152,23 @@ export default function Reports() {
         return numVal > 0;
       });
 
-      // Si hay un solo producto activo, usar el total_amount completo
-      if (activeProducts.length === 1 && totalAmount > 0) {
-        const { productName } = activeProducts[0];
-        const product = products?.find(p => p.name.toLowerCase() === productName.toLowerCase());
+      // SIEMPRE calcular por campo individual (no usar total_amount)
+      productFields.forEach(({ field, productName }) => {
+        const val = prospect[field as keyof typeof prospect];
+        const numVal = typeof val === 'string' ? parseFloat(val) : (val || 0);
         
-        if (product && product.commission_percentage) {
-          const commPercent = typeof product.commission_percentage === 'string' 
-            ? parseFloat(product.commission_percentage) 
-            : (product.commission_percentage || 0);
-          totalCommission = (totalAmount * commPercent) / 100;
-        }
-      } else {
-        // Múltiples productos o total = 0: calcular por campo
-        productFields.forEach(({ field, productName }) => {
-          const val = prospect[field as keyof typeof prospect];
-          const numVal = typeof val === 'string' ? parseFloat(val) : (val || 0);
+        if (numVal > 0) {
+          const product = products?.find(p => p.name.toLowerCase() === productName.toLowerCase());
           
-          if (numVal > 0) {
-            const product = products?.find(p => p.name.toLowerCase() === productName.toLowerCase());
-            
-            if (product && product.commission_percentage) {
-              const commPercent = typeof product.commission_percentage === 'string' 
-                ? parseFloat(product.commission_percentage) 
-                : (product.commission_percentage || 0);
-              const commission = (numVal * commPercent) / 100;
-              totalCommission += commission;
+          if (product && product.commission_percentage) {
+            const commPercent = typeof product.commission_percentage === 'string' 
+              ? parseFloat(product.commission_percentage) 
+              : (product.commission_percentage || 0);
+            const commission = (numVal * commPercent) / 100;
+            totalCommission += commission;
             }
           }
-        });
-      }
-
-      const avgPercentage = totalCommission > 0 && totalAmount > 0
-        ? (totalCommission / totalAmount) * 100
-        : 0;
+      });
       
       const rowId = prospect.id;
       const movilNueva = movilNuevaManual[rowId] || 0;
@@ -199,8 +183,19 @@ export default function Reports() {
         ? parseFloat(prospect.movil_renovacion) 
         : (prospect.movil_renovacion || 0);
       
-      // El total es el monto de la venta (total_amount), NO la comisión
-      const total = totalAmount;
+      // CALCULAR VALORES EN DÓLARES para móvil (cantidad × valor por línea)
+      // Móvil: cantidad de líneas, necesitamos calcular el valor total
+      // Por ahora usamos los valores de los campos de la BD directamente
+      const fijoRenValue = Number(prospect.fijo_ren) || 0;
+      const fijoNewValue = Number(prospect.fijo_new) || 0;
+      const movilNuevaValue = movilNuevaDB; // Este es el valor calculado en BD
+      const movilRenValue = movilRenDB; // Este es el valor calculado en BD
+      const claroTvValue = Number(prospect.claro_tv) || 0;
+      const cloudValue = Number(prospect.cloud) || 0;
+      const mplsValue = Number(prospect.mpls) || 0;
+      
+      // El total es la SUMA de todos los campos (no usar total_amount de BD)
+      const total = fijoRenValue + fijoNewValue + movilNuevaValue + movilRenValue + claroTvValue + cloudValue + mplsValue;
       
       rows.push({
         id: rowId,
@@ -209,15 +204,14 @@ export default function Reports() {
         clientId: clientId,
         vendor_id: prospect.vendor_id,
         vendor_name: prospect.vendor_name || null,
-        fijo_ren: Number(prospect.fijo_ren) || 0,
-        fijo_new: Number(prospect.fijo_new) || 0,
-        movil_nueva_manual: movilNuevaDB, // Mostrar valor de BD
-        movil_renovacion_manual: movilRenDB, // Mostrar valor de BD
-        claro_tv: Number(prospect.claro_tv) || 0,
-        cloud: Number(prospect.cloud) || 0,
-        mpls: Number(prospect.mpls) || 0,
+        fijo_ren: fijoRenValue,
+        fijo_new: fijoNewValue,
+        movil_nueva_manual: movilNuevaValue,
+        movil_renovacion_manual: movilRenValue,
+        claro_tv: claroTvValue,
+        cloud: cloudValue,
+        mpls: mplsValue,
         commission: totalCommission,
-        percentage: avgPercentage,
         mobile: 0, // Removido - no se usa
         notes: rowNotes,
         total
@@ -436,6 +430,18 @@ export default function Reports() {
               className="w-full px-4 py-2.5 bg-gray-900 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
             >
               <option value="">Todos los meses</option>
+              <option value="2026-01">Enero 2026</option>
+              <option value="2026-02">Febrero 2026</option>
+              <option value="2026-03">Marzo 2026</option>
+              <option value="2026-04">Abril 2026</option>
+              <option value="2026-05">Mayo 2026</option>
+              <option value="2026-06">Junio 2026</option>
+              <option value="2026-07">Julio 2026</option>
+              <option value="2026-08">Agosto 2026</option>
+              <option value="2026-09">Septiembre 2026</option>
+              <option value="2026-10">Octubre 2026</option>
+              <option value="2026-11">Noviembre 2026</option>
+              <option value="2026-12">Diciembre 2026</option>
               <option value="2025-01">Enero 2025</option>
               <option value="2025-02">Febrero 2025</option>
               <option value="2025-03">Marzo 2025</option>
@@ -508,7 +514,6 @@ export default function Reports() {
                 <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider whitespace-nowrap">CLOUD</th>
                 <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider whitespace-nowrap">MPLS</th>
                 <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider whitespace-nowrap">Comisión</th>
-                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider whitespace-nowrap">%</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider whitespace-nowrap">Notas</th>
                 <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider whitespace-nowrap">Total</th>
               </tr>
@@ -541,18 +546,15 @@ export default function Reports() {
                         </td>
                         <td className="px-4 py-3 text-sm text-white">{row.client}</td>
                         <td className="px-4 py-3 text-sm text-gray-300">{row.vendor_name || '-'}</td>
-                        <td className="px-4 py-3 text-sm text-right text-gray-300">{row.fijo_ren}</td>
-                        <td className="px-4 py-3 text-sm text-right text-gray-300">{row.fijo_new}</td>
-                        <td className="px-4 py-3 text-sm text-right text-gray-300">{row.movil_nueva_manual}</td>
-                        <td className="px-4 py-3 text-sm text-right text-gray-300">{row.movil_renovacion_manual}</td>
-                        <td className="px-4 py-3 text-sm text-right text-gray-300">{row.claro_tv}</td>
-                        <td className="px-4 py-3 text-sm text-right text-gray-300">{row.cloud}</td>
-                        <td className="px-4 py-3 text-sm text-right text-gray-300">{row.mpls}</td>
+                        <td className={`px-4 py-3 text-sm text-right text-gray-300 ${(Number(row.fijo_ren) > 0 && !isPaid) ? 'border-2 border-green-500 bg-green-900/20' : ''}`}>{row.fijo_ren}</td>
+                        <td className={`px-4 py-3 text-sm text-right text-gray-300 ${(Number(row.fijo_new) > 0 && !isPaid) ? 'border-2 border-green-500 bg-green-900/20' : ''}`}>{row.fijo_new}</td>
+                        <td className={`px-4 py-3 text-sm text-right text-gray-300 ${(Number(row.movil_nueva_manual) > 0 && !isPaid) ? 'border-2 border-green-500 bg-green-900/20' : ''}`}>{row.movil_nueva_manual}</td>
+                        <td className={`px-4 py-3 text-sm text-right text-gray-300 ${(Number(row.movil_renovacion_manual) > 0 && !isPaid) ? 'border-2 border-green-500 bg-green-900/20' : ''}`}>{row.movil_renovacion_manual}</td>
+                        <td className={`px-4 py-3 text-sm text-right text-gray-300 ${(Number(row.claro_tv) > 0 && !isPaid) ? 'border-2 border-green-500 bg-green-900/20' : ''}`}>{row.claro_tv}</td>
+                        <td className={`px-4 py-3 text-sm text-right text-gray-300 ${(Number(row.cloud) > 0 && !isPaid) ? 'border-2 border-green-500 bg-green-900/20' : ''}`}>{row.cloud}</td>
+                        <td className={`px-4 py-3 text-sm text-right text-gray-300 ${(Number(row.mpls) > 0 && !isPaid) ? 'border-2 border-green-500 bg-green-900/20' : ''}`}>{row.mpls}</td>
                         <td className="px-4 py-3 text-sm text-right text-gray-300">
                           ${row.commission.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-right text-gray-300">
-                          {row.percentage.toFixed(1)}%
                         </td>
                         <td className="px-4 py-3">
                           <input
@@ -599,7 +601,6 @@ export default function Reports() {
                       ${totals.commission.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </td>
                     <td className="px-4 py-3 text-sm text-right text-gray-300">-</td>
-                    <td className="px-4 py-3 text-sm text-right text-gray-300">-</td>
                     <td className="px-4 py-3 text-sm text-right text-green-400">
                       ${totals.total.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </td>
@@ -618,7 +619,7 @@ export default function Reports() {
             <DollarSign className="w-6 h-6 text-green-400" />
             <h3 className="text-lg font-semibold text-white">Resumen de Pagos</h3>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <p className="text-sm text-gray-300">Total Comisiones</p>
               <p className="text-2xl font-bold text-white">
@@ -626,21 +627,9 @@ export default function Reports() {
               </p>
             </div>
             <div>
-              <p className="text-sm text-gray-300">Móvil Nueva</p>
-              <p className="text-2xl font-bold text-white">
-                ${totals.movilNueva.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </p>
-            </div>
-            <div>
-              <p className="text-sm text-gray-300">Móvil Renovación</p>
-              <p className="text-2xl font-bold text-white">
-                ${totals.movilRen.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </p>
-            </div>
-            <div>
               <p className="text-sm text-gray-300">Total a Pagar</p>
               <p className="text-2xl font-bold text-green-400">
-                ${totals.total.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                ${totals.commission.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </p>
             </div>
           </div>

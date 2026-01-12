@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Forzar Actualización - VentasPro</title>
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <style>
+    body { font-family: sans-serif; max-width: 600px; margin: 100px auto; text-align: center; }
+    button { background: #4CAF50; color: white; border: none; padding: 15px 30px; font-size: 18px; cursor: pointer; border-radius: 5px; }
+    button:hover { background: #45a049; }
+    .status { margin-top: 20px; padding: 10px; background: #f0f0f0; border-radius: 5px; }
+  </style>
+</head>
+<body>
+  <h1>🔄 Forzar Actualización</h1>
+  <p>Si sigues viendo una versión vieja, haz clic aquí:</p>
+  <button onclick="forceUpdate()">LIMPIAR CACHE Y ACTUALIZAR</button>
+  <div class="status" id="status"></div>
+  
+  <script>
+    async function forceUpdate() {
+      const status = document.getElementById('status');
+      status.innerHTML = 'Limpiando Service Workers...';
+      
+      // 1. Matar Service Workers
+      if ('serviceWorker' in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        for (let reg of regs) {
+          await reg.unregister();
+        }
+        status.innerHTML += '<br>✅ Service Workers eliminados';
+      }
+      
+      // 2. Limpiar todos los caches
+      if ('caches' in window) {
+        const names = await caches.keys();
+        for (let name of names) {
+          await caches.delete(name);
+        }
+        status.innerHTML += '<br>✅ Caches eliminados';
+      }
+      
+      // 3. Limpiar localStorage
+      localStorage.clear();
+      status.innerHTML += '<br>✅ localStorage limpiado';
+      
+      // 4. Redirigir
+      status.innerHTML += '<br><br><strong>🔄 Redirigiendo a la aplicación...</strong>';
+      setTimeout(() => {
+        window.location.href = '/';
+      }, 2000);
+    }
+  </script>
+</body>
+</html>

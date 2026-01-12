@@ -20,6 +20,10 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "❌ Error subiendo archivos" -ForegroundColor Red
     exit 1
 }
+
+# 2.1. SUBIR PACKAGE.JSON (para versión en backend)
+Write-Host "📤 Subiendo package.json..." -ForegroundColor Yellow
+scp package.json root@143.244.191.139:/opt/crmp/
 Write-Host "✅ Archivos subidos" -ForegroundColor Green
 
 # 3. PERMISOS
@@ -33,7 +37,10 @@ Write-Host "✅ Permisos configurados" -ForegroundColor Green
 
 # 4. VERIFICAR
 Write-Host "`n🔍 Paso 4/4: Verificando deploy..." -ForegroundColor Yellow
+ssh root@143.244.191.139 "pm2 restart crmp-api --silent"
+Start-Sleep -Seconds 2
 $version = (Get-Content package.json | ConvertFrom-Json).version
-Write-Host "✅ Deploy completado - Versión: v$version" -ForegroundColor Green
+$apiVersion = ssh root@143.244.191.139 "curl -s http://localhost:3001/api/version" | ConvertFrom-Json
+Write-Host "✅ Deploy completado - Versión Frontend: v$version | Backend: v$($apiVersion.version)" -ForegroundColor Green
 Write-Host "`n🌐 Accede a: https://crmp.ss-group.cloud" -ForegroundColor Cyan
 Write-Host "💡 Presiona Ctrl+Shift+R para forzar recarga en el navegador" -ForegroundColor Yellow

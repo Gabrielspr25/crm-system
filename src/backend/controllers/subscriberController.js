@@ -72,19 +72,32 @@ export const updateSubscriber = async (req, res) => {
             return notFound(res, 'Suscriptor');
         }
 
+        // Convertir strings vacíos a null para permitir actualizaciones
+        const cleanPlan = plan?.trim() || null;
+        const cleanContractTerm = contract_term !== undefined && contract_term !== '' ? contract_term : null;
+        const cleanRemainingPayments = remaining_payments !== undefined && remaining_payments !== '' ? remaining_payments : null;
+        const cleanMonthlyValue = monthly_value !== undefined && monthly_value !== '' ? monthly_value : null;
+        const cleanContractEndDate = contract_end_date || null;
+
         const result = await query(
             `UPDATE subscribers
           SET phone = COALESCE($1, phone),
-              plan = COALESCE($2, plan),
-              monthly_value = COALESCE($3, monthly_value),
-              remaining_payments = COALESCE($4, remaining_payments),
-              contract_term = COALESCE($5, contract_term),
-              contract_end_date = COALESCE($6, contract_end_date),
+              plan = $2,
+              monthly_value = $3,
+              remaining_payments = $4,
+              contract_term = $5,
+              contract_end_date = $6,
               updated_at = NOW()
         WHERE id = $7
         RETURNING *`,
             [
-                phone, plan, monthly_value, remaining_payments, contract_term, contract_end_date, id
+                phone, 
+                cleanPlan, 
+                cleanMonthlyValue, 
+                cleanRemainingPayments, 
+                cleanContractTerm, 
+                cleanContractEndDate, 
+                id
             ]
         );
 

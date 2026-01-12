@@ -1,0 +1,1 @@
+SELECT username, email, first_name, last_name FROM salespeople WHERE username='admin';

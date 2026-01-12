@@ -32,16 +32,16 @@ export const fullSystemCheck = async (req, res) => {
         try {
             await client.query('BEGIN');
             const testClient = await client.query(
-                `INSERT INTO clients (name, business_name, is_active, created_at, updated_at) 
-                 VALUES ('__HEALTH_CHECK__', '__HEALTH_CHECK__', 0, NOW(), NOW()) 
+                `INSERT INTO clients (name, created_at, updated_at) 
+                 VALUES ('__HEALTH_CHECK__', NOW(), NOW()) 
                  RETURNING id`
             );
             const clientId = testClient.rows[0].id;
 
             // Probar inserción de BAN
             const testBan = await client.query(
-                `INSERT INTO bans (ban_number, client_id, is_active, created_at, updated_at)
-                 VALUES ('999999999', $1, 0, NOW(), NOW())
+                `INSERT INTO bans (ban_number, client_id, status, created_at, updated_at)
+                 VALUES ('999999999', $1, 'A', NOW(), NOW())
                  RETURNING id`,
                 [clientId]
             );
@@ -49,7 +49,7 @@ export const fullSystemCheck = async (req, res) => {
 
             // Probar EDICIÓN de BAN (Update)
             const updateBan = await client.query(
-                `UPDATE bans SET is_active = 1 WHERE id = $1`,
+                `UPDATE bans SET status = 'C' WHERE id = $1`,
                 [banId]
             );
 

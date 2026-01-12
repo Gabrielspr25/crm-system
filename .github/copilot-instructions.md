@@ -1,5 +1,180 @@
 # VentasPro CRM - AI Agent Instructions
 
+## REGLAS CRÍTICAS DEL AGENTE (OBLIGATORIAS)
+
+**Estas reglas deben seguirse SIEMPRE sin excepción:**
+
+1. **VERSIÓN OBLIGATORIA**: NUNCA desplegar sin actualizar versión en `src/version.ts` primero
+   - Incrementar versión ANTES de `npm run build`
+   - Formato: `X.Y.Z-DESCRIPCION-CORTA`
+   - Ejemplo: `5.2.3-FIX-REPORTES`
+
+2. **VERIFICACIÓN POST-DEPLOY**: Después de desplegar, SIEMPRE verificar que la versión subió
+   - Ejecutar: `ssh root@143.244.191.139 "curl -s http://localhost:3001/api/version"`
+   - Confirmar que muestra la nueva versión ANTES de decir "listo"
+   - Si no coincide, investigar y corregir
+
+3. **NO PEDIR DISCULPAS**: Nunca escribir "perdón por no darlo", "disculpa", "lo siento"
+   - Ser directo y profesional
+   - Reconocer errores con "arreglado", "corregido", "actualizado"
+
+4. **PROBAR ANTES DE ENTREGAR**: Verificar lógica antes de mostrar código al usuario
+   - Para cambios de BD: ejecutar query de prueba primero
+   - Para lógica compleja: revisar casos edge
+   - Para cálculos: validar con datos reales
+
+5. **DEPLOYMENT COMPLETO**: Verificar TODOS los pasos se completaron
+   - ✓ Versión actualizada
+   - ✓ Build exitoso
+   - ✓ Archivos copiados (frontend Y backend si aplica)
+   - ✓ PM2 reiniciado (si backend cambió)
+   - ✓ Versión verificada en servidor
+
+## ERRORES COMUNES Y PREVENCIÓN
+
+### Errores de Deployment Recurrentes
+
+**1. Olvidar actualizar versión**
+- ❌ Error: Desplegar sin cambiar `src/version.ts`
+- ✅ Solución: SIEMPRE incrementar versión ANTES de `npm run build`
+- Verificación: `ssh root@143.244.191.139 'curl -s http://localhost:3001/api/version'`
+
+**2. Desplegar a directorio incorrecto**
+- ❌ Error: Frontend a `/opt/crmp/frontend/` en vez de `/opt/crmp/dist/client/`
+- ✅ Rutas correctas:
+  - Frontend: `/opt/crmp/dist/client/`
+  - Backend: `/opt/crmp/server-FINAL.js` y `/opt/crmp/src/backend/`
+  - PM2 process: `crmp-api` (NOT crm-api)
+
+**3. Olvidar reiniciar PM2**
+- ❌ Error: Cambiar backend sin `pm2 restart crmp-api`
+- ✅ Solución: SIEMPRE reiniciar después de cambios en backend
+- Comando: `ssh root@143.244.191.139 "pm2 restart crmp-api"`
+
+**4. No verificar que la versión subió**
+- ❌ Error: Decir "listo" sin confirmar versión
+- ✅ Solución: Ejecutar curl al endpoint `/api/version` y comparar
+
+**5. Queries de BD sin probar**
+- ❌ Error: Modificar query y desplegar sin probar
+- ✅ Solución: Ejecutar query de prueba con `psql` primero
+- Comando: `ssh root@143.244.191.139 "PGPASSWORD=CRM_Seguro_2025! psql -h localhost -U crm_user -d crm_pro -c 'SELECT ...'"`
+
+**6. No desplegar todos los archivos necesarios**
+- ❌ Error: Cambiar controller pero no desplegarlo
+- ✅ Checklist para cada cambio:
+  - Frontend modificado? → `scp dist/client/*`
+  - Backend modificado? → `scp server-FINAL.js` y/o `scp src/backend/controllers/`
+  - Base de datos? → Ejecutar SQL remoto
+
+**7. Asumir que el código funcionó**
+- ❌ Error: "Debería funcionar" sin verificar
+- ✅ Solución: Probar endpoint/query ANTES de mostrar al usuario
+- Para endpoints: `curl http://localhost:3001/api/...`
+- Para queries: Ejecutar en `psql` con datos reales
+
+**8. Cache de navegador**
+- ❌ Error: Usuario no ve cambios por cache
+- ✅ Solución: Vite tiene cache-busting con timestamps
+- Recordar al usuario: Ctrl+Shift+R para refrescar
+
+**9. Verificar solo versión sin probar funcionalidad**
+- ❌ Error: Versión correcta pero código no funciona
+- ✅ Solución: PROBAR la funcionalidad después de desplegar
+- Verificar:
+  - Para endpoints: Probar con datos reales desde el frontend
+  - Para queries: Ejecutar query completa con `psql` verificando resultado
+  - Para contadores: Verificar que los números mostrados son correctos
+  - NO asumir que versión correcta = código funciona
+  
+**10. Rutas del servidor mal configuradas**
+- ❌ Error: Backend no usa las rutas modulares de `src/backend/routes/`
+- ✅ Solución: Verificar que `server-FINAL.js` importa y monta correctamente las rutas
+- Check: `grep 'app.use.*Routes' /opt/crmp/server-FINAL.js`
+
+**11. Endpoints duplicados LEGACY sobrescribiendo modulares**
+- ❌ Error: `server-FINAL.js` tiene endpoint legacy (ej: `app.get('/api/clients')`) después de montar ruta modular
+- ✅ Solución: 
+  - Buscar: `grep -n 'app.get.*api/clients' /opt/crmp/server-FINAL.js`
+  - Comentar TODOS los endpoints legacy duplicados
+  - Dejar solo: `app.use('/api/clients', clientRoutes)` (línea ~70)
+- Síntoma: Cambios en `clientController.js` no se reflejan en API
+- Verificación: `ssh root@143.244.191.139 "grep -n 'app.get.*api/clients' /opt/crmp/server-FINAL.js"`
+
+**12. Decir "listo" cuando versión subió pero funcionalidad NO**
+- ❌ Error: Verificar solo versión del API sin probar que el cambio funciona
+- ✅ Solución:
+  - Después de desplegar, hacer query a BD verificando datos reales
+  - Para stats/contadores: contar directamente con `psql`
+  - Para endpoints: hacer request de prueba (con token si es privado)
+  - NO asumir que deploy exitoso = código funciona
+- Comando test: `ssh root@143.244.191.139 "PGPASSWORD=CRM_Seguro_2025! psql -h localhost -U crm_user -d crm_pro -c 'SELECT ...'"`
+
+**13. Usar campo LEGACY en vez del campo correcto**
+- ❌ Error: Usar `is_completed` (boolean legacy) en vez de `completed_date` (timestamp autoritativo)
+- ✅ Solución:
+  - Tabla `follow_up_prospects`: Usar `completed_date IS NOT NULL` para verificar si está completado
+  - NO usar `is_completed` para lógica de filtros o contadores
+  - Convertir checkbox UI a completed_date: `completed_date: data.is_completed ? new Date().toISOString() : null`
+- Archivos afectados: `FollowUp.tsx` (líneas 153, 361, 372, 637, 658)
+- Verificación: `grep -n 'is_completed' src/react-app/pages/FollowUp.tsx`
+
+**14. Contadores globales cuando debería ser filtrado por contexto**
+- ❌ Error: Mostrar "Activos (50)" cuando el usuario está viendo UN cliente específico
+- ✅ Solución:
+  - Si hay `client_id` en URL (`?client_id=XXX`), filtrar datos ANTES de contar
+  - Crear variable intermedia `clientFilteredProspects` para contadores
+  - Ejemplo: `clientFilteredProspects.filter(p => p.completed_date == null).length`
+- Archivos afectados: `FollowUp.tsx` (navegación desde Clientes)
+- Verificación: Abrir `/seguimiento?client_id=123` y verificar que contadores muestran solo datos de ese cliente
+
+**15. Integridad de datos: Registros huérfanos sin foreign keys**
+- ❌ Error: Tabla con foreign key nullable cuando lógicamente debería ser NOT NULL
+- ✅ Solución:
+  - Revisar schema: `follow_up_prospects.client_id` es nullable pero la mayoría de queries asumen que existe
+  - Opción 1: Hacer `client_id NOT NULL` y limpiar huérfanos
+  - Opción 2: Modificar TODAS las queries para manejar `client_id IS NULL` (usar LEFT JOIN)
+  - Ejemplo encontrado: 5 de 6 completados tenían `client_id = NULL` causando contadores incorrectos
+- Verificación: `SELECT COUNT(*) FROM follow_up_prospects WHERE client_id IS NULL;`
+- Decisión tomada: Contadores de Clientes cuentan solo los que tienen `client_id`, Reportes muestra todos (LEFT JOIN)
+
+**16. Asumir schema sin verificar columnas reales**
+- ❌ Error: Usar nombres de columnas (`vendor_id`, `is_active`) que NO existen en tabla actual
+- ✅ Solución:
+  - SIEMPRE verificar schema con: `ssh root@IP "PGPASSWORD=X psql -h localhost -U user -d db -c '\d table_name'"`
+  - NUNCA asumir nombres basándose en código viejo
+  - Ejemplo v2026-93:
+    - `clients.vendor_id` NO existe → usar `salesperson_id` (UUID)
+    - `bans.is_active` NO existe → usar `status` ('A'/'C')
+    - `clients.is_active` NO existe → campo fue eliminado en migración
+- Síntoma: Error SQL "column XYZ does not exist"
+- Verificación: Ejecutar `\d table_name` antes de escribir queries
+
+**17. Arquitectura dual vendors/salespeople sin mapeo**
+- ❌ Error: Mezclar `vendors` (INTEGER legacy) con `salespeople` (UUID nuevo) sin conversión
+- ✅ Contexto del sistema:
+  - **Sistema NUEVO**: `salespeople(id UUID)` ← `clients.salesperson_id`, `users_auth.salesperson_id`
+  - **Sistema LEGACY**: `vendors(id INTEGER)` ← `follow_up_prospects.vendor_id`, `sales_reports.vendor_id`
+- ⚠️ Problema: Frontend envía `salesperson_id` (UUID) pero tablas legacy esperan `vendor_id` (INTEGER)
+- ✅ Solución temporal (v2026-93):
+  - Importador usa `salesperson_id` para `clients` (OK)
+  - NO crea `follow_up_prospects` (requiere mapeo vendors↔salespeople que no existe)
+  - Documentar limitación en PENDIENTES
+- 📋 TODO futuro:
+  - Opción A: Migrar ALL `vendor_id` → `salesperson_id` UUID
+  - Opción B: Crear tabla mapeo `vendor_salesperson_mapping`
+
+### Checklist Pre-Deployment
+
+Antes de cada deploy, verificar:
+- [ ] Versión actualizada en `src/version.ts`
+- [ ] Build exitoso (`npm run build`)
+- [ ] Queries probadas en BD remota
+- [ ] Archivos copiados a rutas correctas
+- [ ] PM2 reiniciado (si backend cambió)
+- [ ] Versión verificada con `curl`
+- [ ] Confirmación al usuario solo después de verificar
+
 ## Project Overview
 
 VentasPro is a **Spanish-language** CRM for sales teams with integrated customer management, follow-up tracking, goals, and CSV/XLSX import. Built with **React 19 + Vite** (frontend) and **Node/Express + PostgreSQL** (backend).

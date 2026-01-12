@@ -1,3 +1,4 @@
+import express from 'express';
 import { getVendors, createVendor, updateVendor, deleteVendor } from '../controllers/vendorController.js';
 import { authenticateToken } from '../middlewares/auth.js';
 

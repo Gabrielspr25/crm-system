@@ -7,6 +7,7 @@ interface BAN {
   id: number;
   ban_number: string;
   client_id: number;
+  account_type?: string | null;
   description: string | null;
   status?: string;
   cancel_reason?: string | null;
@@ -481,14 +482,26 @@ export default function ClientModal({
                     )}
                   </div>
                 ) : (
-                  clientBANs.map((ban) => (
+                  <>
+                  {console.log('🔴🔴🔴 ClientModal - clientBANs ANTES del map:', clientBANs)}
+                  {console.log('🔴🔴🔴 ClientModal - clientBANs.length:', clientBANs.length)}
+                  {clientBANs.map((ban) => {
+                    console.log('🟡 Renderizando BAN:', ban.ban_number, 'account_type:', ban.account_type);
+                    return (
                     <div key={ban.id} className="bg-gray-700 dark:bg-gray-800 rounded-lg border border-gray-600 dark:border-gray-600 p-4">
                       <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center">
-                          <Hash className="w-4 h-4 text-gray-500 dark:text-gray-400 mr-2" />
-                          <span className="font-mono text-sm font-medium text-gray-900 dark:text-gray-100">
-                            BAN {ban.ban_number}
-                          </span>
+                        <div className="flex items-center gap-3">
+                          <div className="flex items-center">
+                            <Hash className="w-4 h-4 text-gray-500 dark:text-gray-400 mr-2" />
+                            <span className="font-mono text-sm font-medium text-gray-900 dark:text-gray-100">
+                              BAN: {ban.ban_number}
+                            </span>
+                          </div>
+                          {ban.account_type && (
+                            <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-blue-900/40 text-blue-200 border border-blue-500/30">
+                              {ban.account_type}
+                            </span>
+                          )}
                         </div>
                         <div className="flex items-center space-x-2">
                           {onEditBAN && (
@@ -599,7 +612,9 @@ export default function ClientModal({
                         )}
                       </div>
                     </div>
-                  ))
+                  );
+                  })}
+                  </>
 
                 )}              </div>            </div>
           )}

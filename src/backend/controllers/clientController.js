@@ -77,23 +77,23 @@ export const getClients = async (req, res) => {
 
         // FILTROS POR TAB - Basado en status de BANs (C=Cancelado, A=Activo)
         if (tab === 'cancelled') {
-            // Cancelados: Clientes con BANs cancelados (status = 'C')
-            whereClause = `WHERE EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id AND b.status = 'C')`;
+            // Cancelados: Clientes con BANs cancelados (status = 'C') Y con nombre
+            whereClause = `WHERE EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id AND b.status = 'C')
+                           AND (c.name IS NOT NULL AND c.name != '' AND c.name != 'NULL')`;
         } else if (tab === 'active' || !tab) {
             // Activos: BAN activo y con nombre
             whereClause = `WHERE EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id AND b.status = 'A')
                            AND (c.name IS NOT NULL AND c.name != '' AND c.name != 'NULL')`;
         } else if (tab === 'following') {
-            // Siguiendo: En seguimiento activo (no completado)
-            whereClause = `WHERE EXISTS (SELECT 1 FROM follow_up_prospects f WHERE f.client_id = c.id AND f.is_active = 1 AND (f.is_completed IS NULL OR f.is_completed = 0))`;
+            // Siguiendo: En seguimiento activo (no completado) Y con al menos 1 BAN activo
+            whereClause = `WHERE EXISTS (SELECT 1 FROM follow_up_prospects f WHERE f.client_id = c.id AND f.completed_date IS NULL)
+                           AND EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id AND b.status = 'A')`;
         } else if (tab === 'completed') {
             // Completadas: Con seguimiento completado
-            whereClause = `WHERE EXISTS (SELECT 1 FROM follow_up_prospects f WHERE f.client_id = c.id AND f.is_completed = 1)
-                           AND NOT EXISTS (SELECT 1 FROM follow_up_prospects f WHERE f.client_id = c.id AND f.is_active = 1 AND (f.is_completed IS NULL OR f.is_completed = 0))`;
+            whereClause = `WHERE EXISTS (SELECT 1 FROM follow_up_prospects f WHERE f.client_id = c.id AND f.completed_date IS NOT NULL)`;
         } else if (tab === 'incomplete') {
-            // Incompletos: BAN activo pero sin nombre
-            whereClause = `WHERE EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id AND b.status = 'A')
-                           AND (c.name IS NULL OR c.name = '' OR c.name = 'NULL')`;
+            // Incompletos: Sin nombre (sin importar si BAN es A o C)
+            whereClause = `WHERE (c.name IS NULL OR c.name = '' OR c.name = 'NULL')`;
         }
 
         const clients = await query(
@@ -117,14 +117,16 @@ export const getClients = async (req, res) => {
             SELECT 
                 (SELECT COUNT(DISTINCT c.id) FROM clients c 
                  WHERE EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id AND b.status = 'A')
-                 AND (c.name IS NOT NULL AND c.name != '' AND c.name != 'NULL')) as active_count,
+                 AND (c.name IS NOT NULL AND c.name <> '' AND c.name <> 'NULL')) as active_count,
                 (SELECT COUNT(DISTINCT c.id) FROM clients c 
-                 WHERE EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id AND b.status = 'C')) as cancelled_count,
-                0 as following_count,
-                0 as completed_count,
+                 WHERE EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id AND b.status = 'C')
+                 AND (c.name IS NOT NULL AND c.name <> '' AND c.name <> 'NULL')) as cancelled_count,
+                (SELECT COUNT(DISTINCT c.id) FROM clients c
+                 WHERE EXISTS (SELECT 1 FROM follow_up_prospects f WHERE f.client_id = c.id AND f.completed_date IS NULL)) as following_count,
+                (SELECT COUNT(DISTINCT c.id) FROM clients c
+                 WHERE EXISTS (SELECT 1 FROM follow_up_prospects f WHERE f.client_id = c.id AND f.completed_date IS NOT NULL)) as completed_count,
                 (SELECT COUNT(DISTINCT c.id) FROM clients c 
-                 WHERE EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id AND b.status = 'A')
-                 AND (c.name IS NULL OR c.name = '' OR c.name = 'NULL')) as incomplete_count
+                 WHERE (c.name IS NULL OR c.name = '' OR c.name = 'NULL')) as incomplete_count
         `);
         
         res.json({
@@ -170,23 +172,13 @@ export const createClient = async (req, res) => {
     }
 
     try {
-        // Lógica de asignación de vendedor (simplificada para el refactor, mantener lógica original si es compleja)
-        // Aquí asumimos que si viene vendor_id se usa, si no, se podría asignar basado en usuario logueado
-        // Para mantener compatibilidad con server-FINAL.js, replicamos lógica básica:
-
-        let finalVendorId = vendor_id;
-        if (!finalVendorId && req.user && req.user.salespersonId) {
-            // Si el usuario es vendedor, se asigna a sí mismo
-            const vendorRes = await query('SELECT id FROM vendors WHERE salesperson_id = $1', [req.user.salespersonId]);
-            if (vendorRes.length > 0) {
-                finalVendorId = vendorRes[0].id;
-            }
-        }
+        // Asignar salesperson_id del usuario autenticado
+        const salespersonId = req.user?.salespersonId || null;
 
         const result = await query(
             `INSERT INTO clients
-        (owner_name, name, contact_person, email, phone, additional_phone, cellular, address, city, zip_code, includes_ban, salesperson_id, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW(),NOW())
+        (owner_name, name, contact_person, email, phone, additional_phone, cellular, address, city, zip_code, salesperson_id, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),NOW())
        RETURNING *`,
             [
                 owner_name?.trim() || null,
@@ -199,8 +191,7 @@ export const createClient = async (req, res) => {
                 address,
                 city,
                 zip_code,
-                includes_ban ? 1 : 0,
-                finalVendorId
+                salespersonId
             ]
         );
 
@@ -245,15 +236,12 @@ export const updateClient = async (req, res) => {
               address = COALESCE($8, address),
               city = COALESCE($9, city),
               zip_code = COALESCE($10, zip_code),
-              includes_ban = COALESCE($11, includes_ban),
-              salesperson_id = COALESCE($12, salesperson_id),
               updated_at = NOW()
-        WHERE id = $13
+        WHERE id = $11
         RETURNING *`,
             [
                 owner_name, name, contact_person, email, phone, additional_phone, cellular,
-                address, city, zip_code, includes_ban !== undefined ? (includes_ban ? 1 : 0) : undefined,
-                vendor_id, id
+                address, city, zip_code, id
             ]
         );
 

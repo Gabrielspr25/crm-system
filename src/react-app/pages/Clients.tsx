@@ -1102,6 +1102,7 @@ export default function Clients() {
 
   // Función para cargar BANs del cliente cuando se abre el modal de edición
   const loadClientBANs = async (clientId: number) => {
+    console.log('🚨🚨🚨 loadClientBANs INICIADO para cliente:', clientId);
     try {
       // Load client's BANs and Subscribers in parallel (Optimized)
       const [bansResponse, subscribersResponse] = await Promise.all([
@@ -1111,6 +1112,7 @@ export default function Clients() {
 
       if (bansResponse.ok) {
         const fetchedBans: BAN[] = await bansResponse.json();
+        console.log('🔵 BANs recibidos del API:', fetchedBans);
         let allSubscribers: any[] = [];
 
         if (subscribersResponse.ok) {
@@ -1123,11 +1125,15 @@ export default function Clients() {
           subscribers: allSubscribers.filter((s: any) => s.ban_id === ban.id)
         }));
 
+        console.log('🟢 BANs con suscriptores mapeados:', bansWithSubscribers);
+        console.log('🟢 Primer BAN account_type:', bansWithSubscribers[0]?.account_type);
         setClientBANs(bansWithSubscribers);
         evaluateBanRequirement(clientId, bansWithSubscribers);
+      } else {
+        console.error('❌ Error en bansResponse:', bansResponse.status);
       }
     } catch (error) {
-      console.error('Error loading client BANs:', error);
+      console.error('❌❌❌ Error loading client BANs:', error);
       setClientBANs([]);
     }
   };
@@ -1356,7 +1362,7 @@ export default function Clients() {
 
   const handleUpdateBAN = async (data: any) => {
     try {
-      if (!editingBAN) return;
+      if (!editingBAN) return false;
 
       const response = await authFetch(`/api/bans/${editingBAN.id}`, {
         method: "PUT",
@@ -1366,11 +1372,10 @@ export default function Clients() {
       if (!response.ok) {
         const error = await response.json();
         notify('error', error.error || "Error al actualizar el BAN");
-        throw new Error(error.error || "Error al actualizar el BAN");
+        return false; // No cerrar el modal
       }
 
       notify('success', `BAN ${data.ban_number} actualizado correctamente.`);
-      setShowBANModal(false);
       setEditingBAN(null);
 
       // Recargar BANs del cliente
@@ -1398,9 +1403,11 @@ export default function Clients() {
         }
       }
       refetchClients();
+      return true; // Éxito - permitir cerrar el modal
     } catch (error) {
       console.error("Error updating BAN:", error);
-      throw error;
+      notify('error', "Error al actualizar el BAN");
+      return false; // No cerrar el modal
     }
   };
 
@@ -1735,57 +1742,6 @@ export default function Clients() {
         </div>
       </div>
 
-      {/* Statistics - V2.0 */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-        <div className="bg-gray-900 rounded-lg shadow-sm border-2 border-blue-500/50 p-4" title="Total de clientes únicos registrados en el sistema">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-400">Cantidad de Clientes</p>
-              <p className="text-2xl font-bold text-white">{totalClients}</p>
-              <div className="flex gap-2 text-xs mt-1">
-                <span className="text-green-400" title="Clientes activos, en seguimiento o completados">Clt. Act: {activeClientsCount + followingClientsCount + completedClientsCount}</span>
-              </div>
-            </div>
-            <Users className="w-8 h-8 text-blue-500" />
-          </div>
-        </div>
-        <div className="bg-gray-900 rounded-lg shadow-sm border-2 border-green-500/50 p-4" title="Total de líneas (BANs) individuales">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-400">Cantidad de BAN</p>
-              <p className="text-2xl font-bold text-green-400">{totalBans}</p>
-              <div className="flex gap-2 text-xs mt-1">
-                <span className="text-green-400" title="Total de BANs activos">BANs Act: {activeBans}</span>
-                <span className="text-red-400" title="Total de BANs cancelados">BANs Canc: {cancelledBans}</span>
-              </div>
-            </div>
-            <Hash className="w-8 h-8 text-green-500" />
-          </div>
-        </div>
-        <div className="bg-gray-900 rounded-lg shadow-sm border-2 border-blue-500/50 p-4" title="Total de suscriptores (líneas finales)">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-400">Cant de Suscriptores</p>
-              <p className="text-2xl font-bold text-blue-400">{totalSubscribers}</p>
-              <div className="flex gap-2 text-xs mt-1">
-                <span className="text-green-400" title="Suscriptores activos">Susc. Act: {activeSubscribers}</span>
-                <span className="text-red-400" title="Suscriptores cancelados">Susc. Canc: {cancelledSubscribers}</span>
-              </div>
-            </div>
-            <Phone className="w-8 h-8 text-blue-500" />
-          </div>
-        </div>
-        <div className="bg-gray-900 rounded-lg shadow-sm border-2 border-yellow-500/50 p-4" title="Total de suscriptores en oportunidad">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-400">Suscriptores en Oportunidad</p>
-              <p className="text-2xl font-bold text-yellow-400">{subscribersInOpportunity}</p>
-            </div>
-            <Calendar className="w-8 h-8 text-yellow-500" />
-          </div>
-        </div>
-      </div>
-
       {notification && (
         <div
           className={`mb-4 rounded-lg border px-4 py-3 text-sm transition-colors ${notification.type === 'success'
@@ -1837,14 +1793,12 @@ export default function Clients() {
           </span>
         </button>
         <button
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${activeTab === 'completed'
-            ? 'bg-indigo-600 text-white shadow-lg'
-            : 'bg-gray-800 text-gray-400 hover:text-white'
-            }`}
-          onClick={() => setActiveTab('completed')}
+          className="px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 bg-gray-800 text-gray-400 hover:text-white hover:bg-indigo-600"
+          onClick={() => navigate('/seguimiento?tab=completed')}
+          title="Ver ventas completadas en módulo Seguimiento"
         >
           Completadas
-          <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${activeTab === 'completed' ? 'bg-indigo-700' : 'bg-gray-700'}`}>
+          <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-gray-700">
             {completedClientsCount}
           </span>
         </button>
@@ -2058,12 +2012,12 @@ export default function Clients() {
                         </div>
                       ) : item.wasCompleted ? (
                         <button
-                          onClick={() => navigate('/reportes')}
+                          onClick={() => navigate('/seguimiento?tab=completed')}
                           className="px-3 py-1 rounded text-xs transition-colors flex items-center gap-1 mx-auto bg-purple-600 hover:bg-purple-700 text-white"
-                          title="Ver en reportes"
+                          title="Ver en Seguimiento (Completadas)"
                         >
                           <BarChart3 className="w-3 h-3" />
-                          Ver Reporte
+                          Ver Seguimiento
                         </button>
                       ) : item.isBeingFollowed ? (
                         <div className="flex flex-col items-center gap-2">
@@ -3269,6 +3223,11 @@ function ClientManagementModal({
                           </div>
                           <div className="flex items-center gap-2">
                             <h4 className="text-sm font-semibold text-white">BAN: {ban.ban_number}</h4>
+                            {ban.account_type && (
+                              <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-blue-900/40 text-blue-200 border border-blue-500/30">
+                                {ban.account_type}
+                              </span>
+                            )}
                             <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${(ban.status === "cancelled" || ban.status === "cancelado") ? "bg-red-900/40 text-red-100 border border-red-500/30" : "bg-emerald-900/40 text-emerald-100 border border-emerald-500/30"}`}>
                               {(ban.status === "cancelled" || ban.status === "cancelado") ? "Cancelado" : "Activo"}
                             </span>

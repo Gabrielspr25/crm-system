@@ -10,7 +10,7 @@ interface Product {
   category_name: string | null;
   description: string | null;
   price: number | null;
-  monthly_goal: number;
+  commission_percentage: number;
   created_at: string;
 }
 
@@ -30,7 +30,7 @@ export default function Products() {
     category_id: "",
     description: "",
     price: "",
-    monthly_goal: "",
+    commission_percentage: "",
   });
 
   const { data: products, loading: productsLoading, refetch: refetchProducts } = useApi<Product[]>("/api/products");
@@ -50,7 +50,7 @@ export default function Products() {
         ...formData,
         category_id: formData.category_id || null,
         price: formData.price ? parseFloat(formData.price) : null,
-        monthly_goal: formData.monthly_goal ? parseInt(formData.monthly_goal) : 0,
+        commission_percentage: formData.commission_percentage ? parseFloat(formData.commission_percentage) : 10.00,
       };
 
       if (editingProduct) {
@@ -83,7 +83,7 @@ export default function Products() {
       category_id: product.category_id || "",
       description: product.description || "",
       price: product.price ? product.price.toString() : "",
-      monthly_goal: product.monthly_goal ? product.monthly_goal.toString() : "0",
+      commission_percentage: product.commission_percentage ? product.commission_percentage.toString() : "10.00",
     });
     setShowModal(true);
   };
@@ -109,7 +109,7 @@ export default function Products() {
       category_id: "",
       description: "",
       price: "",
-      monthly_goal: "0",
+      commission_percentage: "10.00",
     });
   };
 
@@ -222,9 +222,9 @@ export default function Products() {
                   </div>
                 )}
 
-                {product.monthly_goal > 0 && (
+                {product.commission_percentage > 0 && (
                   <div className="text-sm text-gray-600 dark:text-gray-300">
-                    <span className="font-medium">Meta mensual:</span> {product.monthly_goal} unidades
+                    <span className="font-medium">Comisión:</span> {product.commission_percentage}%
                   </div>
                 )}
               </div>
@@ -316,15 +316,17 @@ export default function Products() {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Meta Mensual (unidades)
+                  Comisión (%)
                 </label>
                 <input
                   type="number"
                   min="0"
-                  value={formData.monthly_goal}
-                  onChange={(e) => setFormData({ ...formData, monthly_goal: e.target.value })}
+                  max="100"
+                  step="0.01"
+                  value={formData.commission_percentage}
+                  onChange={(e) => setFormData({ ...formData, commission_percentage: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
-                  placeholder="0"
+                  placeholder="10.00"
                 />
               </div>
 
