@@ -34,15 +34,22 @@
 
 ### Errores de Deployment Recurrentes
 
-**1. Olvidar actualizar versión**
-- ❌ Error: Desplegar sin cambiar `src/version.ts`
-- ✅ Solución: SIEMPRE incrementar versión ANTES de `npm run build`
+**1. Olvidar actualizar versión en package.json Y src/version.ts**
+- ❌ Error: Actualizar solo `src/version.ts` pero NO `package.json`
+- ✅ Solución: SIEMPRE actualizar AMBOS archivos antes de `npm run build`:
+  - `package.json` línea 4: `"version": "2026-XXX"`
+  - `src/version.ts`: `export const APP_VERSION = "2026-XXX"`
 - Verificación: `ssh root@143.244.191.139 'curl -s http://localhost:3001/api/version'`
+- Verificación Web: `curl -s https://crmp.ss-group.cloud | grep 'CURRENT_VERSION'`
 
-**2. Desplegar a directorio incorrecto**
-- ❌ Error: Frontend a `/opt/crmp/frontend/` en vez de `/opt/crmp/dist/client/`
+**2. Desplegar frontend a directorio incorrecto**
+- ❌ Error: Desplegar a `/var/www/crmp/` cuando nginx sirve desde `/opt/crmp/dist/client/`
+- ✅ Solución: SIEMPRE verificar nginx config antes de desplegar:
+  - `ssh root@143.244.191.139 "grep 'root ' /etc/nginx/sites-available/crmp.ss-group.cloud"`
+  - Resultado: `root /opt/crmp/dist/client;`
+- ✅ Comando correcto: `scp -r dist\client\* root@143.244.191.139:/opt/crmp/dist/client/`
 - ✅ Rutas correctas:
-  - Frontend: `/opt/crmp/dist/client/`
+  - Frontend (nginx): `/opt/crmp/dist/client/`
   - Backend: `/opt/crmp/server-FINAL.js` y `/opt/crmp/src/backend/`
   - PM2 process: `crmp-api` (NOT crm-api)
 

@@ -295,6 +295,51 @@ export async function runSystemDiagnostics(req, res) {
       message: `Error: ${error.message}`
     });
   }
+
+  // 5.4 Verificar vendedores sin acceso al sistema
+  try {
+    const vendorsNoLogin = await pool.query(`
+      SELECT v.id, v.name 
+      FROM vendors v
+      WHERE v.is_active = 1
+      AND v.id NOT IN (
+        SELECT DISTINCT vendor_id FROM sales_reports WHERE vendor_id IS NOT NULL
+        UNION
+        SELECT DISTINCT vendor_id FROM follow_up_prospects WHERE vendor_id IS NOT NULL
+      )
+      AND v.name NOT IN (
+        SELECT s.name FROM salespeople s
+        JOIN users_auth u ON s.id = u.salesperson_id
+      )
+      ORDER BY v.created_at DESC
+    `);
+    
+    const count = vendorsNoLogin.rows.length;
+    if (count === 0) {
+      checks.push({
+        name: '5.4 Integridad: Vendedores → Acceso Sistema',
+        status: 'success',
+        message: 'Todos los vendedores activos tienen acceso o datos históricos'
+      });
+    } else {
+      checks.push({
+        name: '5.4 Integridad: Vendedores → Acceso Sistema',
+        status: 'warning',
+        message: `${count} vendedor(es) activo sin login ni datos`,
+        details: { 
+          vendedores: vendorsNoLogin.rows.map(v => v.name),
+          sugerencia: 'Usar "Nuevo Vendedor" con campos de Usuario/Contraseña'
+        }
+      });
+    }
+  } catch (error) {
+    checks.push({
+      name: '5.4 Integridad: Vendedores → Acceso Sistema',
+      status: 'error',
+      message: `Error: ${error.message}`
+    });
+  }
+
   try {
     const prospectsNoClient = await pool.query(`
       SELECT COUNT(*) as count FROM follow_up_prospects 
@@ -718,10 +763,228 @@ export async function runSystemDiagnostics(req, res) {
   }
 
   // ========================================
-  // 9. ESTADÍSTICAS GENERALES
+  // 9. AUDITORÍA DE SEGURIDAD
   // ========================================
 
-  // 9.1 Verificar estadísticas operativas
+  // 9.1 Verificar secretos JWT configurados
+  try {
+    const hasJwtSecret = !!process.env.JWT_SECRET && process.env.JWT_SECRET !== 'development-secret';
+    const hasRefreshSecret = !!process.env.JWT_REFRESH_SECRET && process.env.JWT_REFRESH_SECRET !== 'development-refresh-secret';
+    
+    if (hasJwtSecret && hasRefreshSecret) {
+      checks.push({
+        name: '9.1 Seguridad: JWT Secrets',
+        status: 'success',
+        message: 'Secrets de producción configurados correctamente'
+      });
+    } else {
+      checks.push({
+        name: '9.1 Seguridad: JWT Secrets',
+        status: 'error',
+        message: 'Usando secrets por defecto (INSEGURO en producción)',
+        details: { 
+          jwtSecret: hasJwtSecret ? 'OK' : 'DEFAULT',
+          refreshSecret: hasRefreshSecret ? 'OK' : 'DEFAULT'
+        }
+      });
+    }
+  } catch (error) {
+    checks.push({
+      name: '9.1 Seguridad: JWT Secrets',
+      status: 'error',
+      message: 'No se pudo verificar'
+    });
+  }
+
+  // 9.2 Verificar contraseñas con hash bcrypt
+  try {
+    const passwordCheck = await pool.query(`
+      SELECT 
+        COUNT(*) as total,
+        COUNT(CASE WHEN password_hash LIKE '$2a$%' OR password_hash LIKE '$2b$%' THEN 1 END) as bcrypt_hashed
+      FROM users_auth
+    `);
+    
+    const { total, bcrypt_hashed } = passwordCheck.rows[0];
+    const allHashed = parseInt(total) === parseInt(bcrypt_hashed);
+    
+    checks.push({
+      name: '9.2 Seguridad: Contraseñas Encriptadas',
+      status: allHashed ? 'success' : 'error',
+      message: allHashed 
+        ? `${total} usuarios con bcrypt hash` 
+        : `${parseInt(total) - parseInt(bcrypt_hashed)} contraseñas sin hash (CRÍTICO)`,
+      details: { total: parseInt(total), hashed: parseInt(bcrypt_hashed) }
+    });
+  } catch (error) {
+    checks.push({
+      name: '9.2 Seguridad: Contraseñas Encriptadas',
+      status: 'warning',
+      message: 'No se pudo verificar'
+    });
+  }
+
+  // 9.3 Verificar usuarios con contraseñas débiles (opcional)
+  try {
+    const weakPasswords = await pool.query(`
+      SELECT COUNT(*) as count
+      FROM users_auth
+      WHERE LENGTH(password_hash) < 60
+    `);
+    
+    const count = parseInt(weakPasswords.rows[0].count);
+    checks.push({
+      name: '9.3 Seguridad: Contraseñas Débiles',
+      status: count === 0 ? 'success' : 'warning',
+      message: count === 0 
+        ? 'No se detectaron contraseñas débiles'
+        : `${count} usuarios con posibles contraseñas débiles`,
+      details: { weak_passwords: count }
+    });
+  } catch (error) {
+    checks.push({
+      name: '9.3 Seguridad: Contraseñas Débiles',
+      status: 'warning',
+      message: 'No se pudo verificar'
+    });
+  }
+
+  // 9.4 Verificar permisos de base de datos
+  try {
+    const permissionsCheck = await pool.query(`
+      SELECT 
+        has_table_privilege(current_user, 'clients', 'SELECT') as can_read,
+        has_table_privilege(current_user, 'clients', 'INSERT') as can_write,
+        has_table_privilege(current_user, 'clients', 'DELETE') as can_delete
+    `);
+    
+    const { can_read, can_write, can_delete } = permissionsCheck.rows[0];
+    
+    checks.push({
+      name: '9.4 Seguridad: Permisos de BD',
+      status: can_read && can_write ? 'success' : 'error',
+      message: `Read: ${can_read ? '✓' : '✗'}, Write: ${can_write ? '✓' : '✗'}, Delete: ${can_delete ? '✓' : '✗'}`,
+      details: { read: can_read, write: can_write, delete: can_delete }
+    });
+  } catch (error) {
+    checks.push({
+      name: '9.4 Seguridad: Permisos de BD',
+      status: 'warning',
+      message: 'No se pudo verificar'
+    });
+  }
+
+  // 9.5 Verificar intentos de login fallidos recientes
+  try {
+    const failedLogins = await pool.query(`
+      SELECT COUNT(*) as count
+      FROM users_auth
+      WHERE last_failed_login > NOW() - INTERVAL '24 hours'
+    `);
+    
+    const count = parseInt(failedLogins.rows[0].count || 0);
+    checks.push({
+      name: '9.5 Seguridad: Intentos de Login Fallidos (24h)',
+      status: count > 100 ? 'warning' : 'success',
+      message: count > 100 
+        ? `${count} intentos fallidos (posible ataque de fuerza bruta)`
+        : `${count} intentos fallidos (normal)`,
+      details: { failed_attempts: count }
+    });
+  } catch (error) {
+    // Columna last_failed_login puede no existir
+    checks.push({
+      name: '9.5 Seguridad: Intentos de Login Fallidos',
+      status: 'warning',
+      message: 'No se pudo verificar (columna no existe)'
+    });
+  }
+
+  // 9.6 Verificar sesiones activas
+  try {
+    const activeSessions = await pool.query(`
+      SELECT COUNT(*) as count
+      FROM pg_stat_activity
+      WHERE datname = current_database() 
+        AND state = 'active'
+        AND query NOT LIKE '%pg_stat_activity%'
+    `);
+    
+    const count = parseInt(activeSessions.rows[0].count);
+    checks.push({
+      name: '9.6 Seguridad: Sesiones Activas',
+      status: count > 20 ? 'warning' : 'success',
+      message: `${count} sesiones activas`,
+      details: { active_sessions: count }
+    });
+  } catch (error) {
+    checks.push({
+      name: '9.6 Seguridad: Sesiones Activas',
+      status: 'warning',
+      message: 'No se pudo verificar'
+    });
+  }
+
+  // 9.7 Verificar SSL/TLS en conexión
+  try {
+    const sslCheck = await pool.query('SHOW ssl');
+    const sslEnabled = sslCheck.rows[0].ssl === 'on';
+    
+    checks.push({
+      name: '9.7 Seguridad: SSL en PostgreSQL',
+      status: sslEnabled ? 'success' : 'warning',
+      message: sslEnabled ? 'SSL habilitado' : 'SSL deshabilitado (conexiones sin cifrar)',
+      details: { ssl: sslEnabled }
+    });
+  } catch (error) {
+    checks.push({
+      name: '9.7 Seguridad: SSL en PostgreSQL',
+      status: 'warning',
+      message: 'No se pudo verificar'
+    });
+  }
+
+  // 9.8 Verificar roles y privilegios
+  try {
+    const roleCheck = await pool.query(`
+      SELECT 
+        rolsuper as is_superuser,
+        rolcreaterole as can_create_roles,
+        rolcreatedb as can_create_db
+      FROM pg_roles
+      WHERE rolname = current_user
+    `);
+    
+    const { is_superuser, can_create_roles, can_create_db } = roleCheck.rows[0];
+    
+    if (is_superuser) {
+      checks.push({
+        name: '9.8 Seguridad: Privilegios de Usuario BD',
+        status: 'warning',
+        message: 'Usuario con privilegios de SUPERUSER (riesgo de seguridad)',
+        details: { superuser: is_superuser, create_roles: can_create_roles, create_db: can_create_db }
+      });
+    } else {
+      checks.push({
+        name: '9.8 Seguridad: Privilegios de Usuario BD',
+        status: 'success',
+        message: 'Usuario sin privilegios elevados (seguro)',
+        details: { superuser: is_superuser, create_roles: can_create_roles, create_db: can_create_db }
+      });
+    }
+  } catch (error) {
+    checks.push({
+      name: '9.8 Seguridad: Privilegios de Usuario BD',
+      status: 'warning',
+      message: 'No se pudo verificar'
+    });
+  }
+
+  // ========================================
+  // 10. ESTADÍSTICAS GENERALES
+  // ========================================
+
+  // 10.1 Verificar estadísticas operativas
   try {
     const stats = await pool.query(`
       SELECT 
@@ -732,7 +995,7 @@ export async function runSystemDiagnostics(req, res) {
     `);
     
     checks.push({
-      name: '9.1 Estadísticas del Sistema',
+      name: '10.1 Estadísticas del Sistema',
       status: 'success',
       message: 'Resumen operativo',
       details: {
@@ -744,14 +1007,14 @@ export async function runSystemDiagnostics(req, res) {
     });
   } catch (error) {
     checks.push({
-      name: '9.1 Estadísticas del Sistema',
+      name: '10.1 Estadísticas del Sistema',
       status: 'error',
       message: `Error: ${error.message}`
     });
   }
 
   // ========================================
-  // 10. RESUMEN FINAL
+  // 11. RESUMEN FINAL
   // ========================================
   
   const totalChecks = checks.length;

@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Plus, Search, Edit, Trash2, Building, Mail } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Plus, Search, Edit, Trash2, Building, Mail, Key, User } from "lucide-react";
 import { useApi } from "../hooks/useApi";
 import { authFetch } from "@/react-app/utils/auth";
 
@@ -9,7 +9,6 @@ interface Vendor {
   email: string | null;
   is_active: number;
   created_at: string;
-  updated_at: string;
 }
 
 export default function Vendors() {
@@ -19,6 +18,9 @@ export default function Vendors() {
   const [formData, setFormData] = useState({
     name: "",
     email: "",
+    role: "vendedor" as "admin" | "supervisor" | "vendedor",
+    username: "",
+    password: "",
   });
 
   const { data: vendors, loading: vendorsLoading, refetch: refetchVendors } = useApi<Vendor[]>("/api/vendors");
@@ -58,6 +60,9 @@ export default function Vendors() {
     setFormData({
       name: vendor.name,
       email: vendor.email || "",
+      role: "vendedor",
+      username: "",
+      password: "",
     });
     setShowModal(true);
   };
@@ -87,8 +92,26 @@ export default function Vendors() {
     setFormData({
       name: "",
       email: "",
+      role: "vendedor",
+      username: "",
+      password: "",
     });
   };
+
+  // Auto-generar username y password cuando cambia el nombre
+  useEffect(() => {
+    if (formData.name && !editingVendor) {
+      const firstName = formData.name.split(' ')[0].toLowerCase();
+      const autoUsername = firstName.replace(/[^a-z0-9]/g, '');
+      const autoPassword = `${firstName.charAt(0).toUpperCase()}${firstName.slice(1)}2025!`;
+      
+      setFormData(prev => ({
+        ...prev,
+        username: autoUsername,
+        password: autoPassword,
+      }));
+    }
+  }, [formData.name, editingVendor]);
 
   if (vendorsLoading) {
     return (
@@ -218,6 +241,56 @@ export default function Vendors() {
                   className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white"
                 />
               </div>
+
+              {!editingVendor && (
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Rol *
+                    </label>
+                    <select
+                      required
+                      value={formData.role}
+                      onChange={(e) => setFormData({ ...formData, role: e.target.value as any })}
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white"
+                    >
+                      <option value="vendedor">Vendedor</option>
+                      <option value="supervisor">Supervisor</option>
+                      <option value="admin">Administrador</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      <User className="w-4 h-4 inline mr-1" />
+                      Usuario de Login *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={formData.username}
+                      onChange={(e) => setFormData({ ...formData, username: e.target.value.toLowerCase() })}
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white"
+                      placeholder="usuario"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      <Key className="w-4 h-4 inline mr-1" />
+                      Contraseña Inicial *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={formData.password}
+                      onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white font-mono"
+                    />
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Esta contraseña se usará para el primer login</p>
+                  </div>
+                </>
+              )}
 
               <div className="flex justify-end space-x-3 mt-6">
                 <button
