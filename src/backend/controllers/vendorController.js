@@ -13,7 +13,7 @@ export const getVendors = async (req, res) => {
 };
 
 export const createVendor = async (req, res) => {
-    const { name, email, role, username, password } = req.body;
+    const { name, email, role, username, password, commission_percentage } = req.body;
     
     try {
         // 1. Crear en salespeople (tabla nueva con UUID y role)
@@ -34,8 +34,8 @@ export const createVendor = async (req, res) => {
 
         // 3. Crear en vendors (tabla legacy para compatibilidad con sales_reports)
         const vendorResult = await query(
-            'INSERT INTO vendors (name, email, is_active, created_at) VALUES ($1, $2, 1, NOW()) RETURNING *',
-            [name, email || null]
+            'INSERT INTO vendors (name, email, commission_percentage, is_active, created_at) VALUES ($1, $2, $3, 1, NOW()) RETURNING *',
+            [name, email || null, commission_percentage || 50.00]
         );
         
         res.status(201).json({
@@ -54,11 +54,11 @@ export const createVendor = async (req, res) => {
 
 export const updateVendor = async (req, res) => {
     const { id } = req.params;
-    const { name, email } = req.body;
+    const { name, email, commission_percentage } = req.body;
     try {
         const result = await query(
-            'UPDATE vendors SET name = $1, email = $2 WHERE id = $3 AND is_active = 1 RETURNING *',
-            [name, email || null, id]
+            'UPDATE vendors SET name = $1, email = $2, commission_percentage = $3 WHERE id = $4 AND is_active = 1 RETURNING *',
+            [name, email || null, commission_percentage || 50.00, id]
         );
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Vendedor no encontrado' });
