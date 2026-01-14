@@ -24,9 +24,23 @@ interface FollowUpProspect {
 }
 
 interface Product {
-  id: number;
+  id: string;
   name: string;
   base_price: number;
+  commission_percentage: number;
+}
+
+interface CommissionTier {
+  id: string;
+  product_id: string;
+  range_min: number;
+  range_max: number | null;
+  commission_amount: number;
+}
+
+interface Vendor {
+  id: number;
+  name: string;
   commission_percentage: number;
 }
 
@@ -37,6 +51,7 @@ interface ClientSalesRow {
   clientId: number | null;
   vendor_id: number | null;
   vendor_name: string | null;
+  vendor_commission_pct: number;
   fijo_ren: number;
   fijo_new: number;
   movil_nueva_manual: number;
@@ -44,7 +59,8 @@ interface ClientSalesRow {
   claro_tv: number;
   cloud: number;
   mpls: number;
-  commission: number; // Comisión total calculada por suscriptores
+  company_earnings: number; // Ganancia de la empresa
+  vendor_commission: number; // Comisión del vendedor
   percentage: number; // % promedio de comisión
   mobile: number; // Meta del vendedor
   notes: string;
@@ -76,10 +92,40 @@ export default function Reports() {
   const [paymentAmount, setPaymentAmount] = useState("");
   const [paymentNotes, setPaymentNotes] = useState("");
   
-  const { data: prospects } = useApi<FollowUpProspect[]>("/api/completed-prospects"); // Cambiado a completados
+  const { data: prospects } = useApi<FollowUpProspect[]>("/api/completed-prospects");
   const { data: products } = useApi<Product[]>("/api/products");
+  const { data: tiers } = useApi<CommissionTier[]>("/api/products/tiers");
+  const { data: vendors } = useApi<Vendor[]>("/api/vendors");
 
-  console.log('🔍 REPORTS - prospects:', prospects?.length || 0, 'productos:', products?.length || 0);
+  console.log('🔍 REPORTS - prospects:', prospects?.length || 0, 'productos:', products?.length || 0, 'tiers:', tiers?.length || 0);
+
+  // Helper: Calcular comisión empresa basada en tiers o porcentaje
+  const calculateCompanyEarnings = (productName: string, amount: number): number => {
+    if (amount <= 0) return 0;
+    
+    const product = products?.find(p => p.name.toLowerCase() === productName.toLowerCase());
+    if (!product) return 0;
+
+    // Productos con tiers: Movil New y Movil Ren
+    if (productName.toLowerCase().includes('movil')) {
+      const productTiers = tiers?.filter(t => t.product_id === product.id) || [];
+      if (productTiers.length > 0) {
+        // Buscar tier apropiado
+        const tier = productTiers.find(t => {
+          if (t.range_max === null) return amount >= t.range_min;
+          return amount >= t.range_min && amount <= t.range_max;
+        });
+        return tier ? tier.commission_amount : 0;
+      }
+    }
+
+    // Productos sin tiers: usar porcentaje
+    // Fijo Ren: 50%, Fijo New/Claro TV/Cloud: 100%
+    const commPercent = typeof product.commission_percentage === 'string' 
+      ? parseFloat(product.commission_percentage) 
+      : (product.commission_percentage || 0);
+    return (amount * commPercent) / 100;
+  };
 
   // Cargar pagos desde localStorage
   useEffect(() => {
@@ -118,7 +164,7 @@ export default function Reports() {
 
   // Crear filas de ventas (una por cliente)
   const salesRows = useMemo(() => {
-    if (!filteredProspects || !products) return [];
+    if (!filteredProspects || !products || !vendors) return [];
     
     const rows: ClientSalesRow[] = [];
     
@@ -126,76 +172,38 @@ export default function Reports() {
       const clientName = prospect.client_business_name || prospect.client_name || prospect.company_name;
       const clientId = prospect.client_id;
       
-      // Calcular comisión basada en los productos del prospecto
-      // La comisión se calcula de TODOS los productos en la BD
-      let totalCommission = 0;
+      // Obtener % de comisión del vendedor
+      const vendor = vendors.find(v => v.id === prospect.vendor_id);
+      const vendorCommissionPct = vendor?.commission_percentage || 50;
       
-      // TODOS los productos para calcular comisión automáticamente
-      const productFields = [
-        { field: 'fijo_ren', productName: 'Fijo Ren' },
-        { field: 'fijo_new', productName: 'Fijo New' },
-        { field: 'movil_nueva', productName: 'Movil New' },
-        { field: 'movil_renovacion', productName: 'Movil Ren' },
-        { field: 'claro_tv', productName: 'Claro TV' },
-        { field: 'cloud', productName: 'Cloud' },
-        { field: 'mpls', productName: 'MPLS' }
-      ];
-
-      const totalAmount = typeof prospect.total_amount === 'string' 
-        ? parseFloat(prospect.total_amount) 
-        : (prospect.total_amount || 0);
-
-      // Detectar productos activos
-      const activeProducts = productFields.filter(({ field }) => {
-        const val = prospect[field as keyof typeof prospect];
-        const numVal = typeof val === 'string' ? parseFloat(val) : (val || 0);
-        return numVal > 0;
-      });
-
-      // SIEMPRE calcular por campo individual (no usar total_amount)
-      productFields.forEach(({ field, productName }) => {
-        const val = prospect[field as keyof typeof prospect];
-        const numVal = typeof val === 'string' ? parseFloat(val) : (val || 0);
-        
-        if (numVal > 0) {
-          const product = products?.find(p => p.name.toLowerCase() === productName.toLowerCase());
-          
-          if (product && product.commission_percentage) {
-            const commPercent = typeof product.commission_percentage === 'string' 
-              ? parseFloat(product.commission_percentage) 
-              : (product.commission_percentage || 0);
-            const commission = (numVal * commPercent) / 100;
-            totalCommission += commission;
-            }
-          }
-      });
-      
-      const rowId = prospect.id;
-      const movilNueva = movilNuevaManual[rowId] || 0;
-      const movilRen = movilRenManual[rowId] || 0;
-      const rowNotes = notes[rowId] || "";
-      
-      // Obtener valores reales de móvil desde la BD (no los manuales)
-      const movilNuevaDB = typeof prospect.movil_nueva === 'string' 
-        ? parseFloat(prospect.movil_nueva) 
-        : (prospect.movil_nueva || 0);
-      const movilRenDB = typeof prospect.movil_renovacion === 'string' 
-        ? parseFloat(prospect.movil_renovacion) 
-        : (prospect.movil_renovacion || 0);
-      
-      // CALCULAR VALORES EN DÓLARES para móvil (cantidad × valor por línea)
-      // Móvil: cantidad de líneas, necesitamos calcular el valor total
-      // Por ahora usamos los valores de los campos de la BD directamente
+      // Valores de productos
       const fijoRenValue = Number(prospect.fijo_ren) || 0;
       const fijoNewValue = Number(prospect.fijo_new) || 0;
-      const movilNuevaValue = movilNuevaDB; // Este es el valor calculado en BD
-      const movilRenValue = movilRenDB; // Este es el valor calculado en BD
+      const movilNuevaValue = Number(prospect.movil_nueva) || 0;
+      const movilRenValue = Number(prospect.movil_renovacion) || 0;
       const claroTvValue = Number(prospect.claro_tv) || 0;
       const cloudValue = Number(prospect.cloud) || 0;
       const mplsValue = Number(prospect.mpls) || 0;
       
-      // El total es la SUMA de todos los campos (no usar total_amount de BD)
-      const total = fijoRenValue + fijoNewValue + movilNuevaValue + movilRenValue + claroTvValue + cloudValue + mplsValue;
+      // Calcular ganancia empresa para cada producto
+      const earnings = {
+        fijo_ren: calculateCompanyEarnings('Fijo Ren', fijoRenValue),
+        fijo_new: calculateCompanyEarnings('Fijo New', fijoNewValue),
+        movil_nueva: calculateCompanyEarnings('Movil New', movilNuevaValue),
+        movil_ren: calculateCompanyEarnings('Movil Ren', movilRenValue),
+        claro_tv: calculateCompanyEarnings('Claro TV', claroTvValue),
+        cloud: calculateCompanyEarnings('Cloud', cloudValue),
+        mpls: calculateCompanyEarnings('MPLS', mplsValue)
+      };
+      
+      // Total ganancia empresa
+      const totalCompanyEarnings = Object.values(earnings).reduce((sum, val) => sum + val, 0);
+      
+      // Comisión vendedor = ganancia empresa × % vendedor
+      const totalVendorCommission = (totalCompanyEarnings * vendorCommissionPct) / 100;
+      
+      const rowId = prospect.id;
+      const rowNotes = notes[rowId] || "";
       
       rows.push({
         id: rowId,
@@ -204,6 +212,7 @@ export default function Reports() {
         clientId: clientId,
         vendor_id: prospect.vendor_id,
         vendor_name: prospect.vendor_name || null,
+        vendor_commission_pct: vendorCommissionPct,
         fijo_ren: fijoRenValue,
         fijo_new: fijoNewValue,
         movil_nueva_manual: movilNuevaValue,
@@ -211,15 +220,17 @@ export default function Reports() {
         claro_tv: claroTvValue,
         cloud: cloudValue,
         mpls: mplsValue,
-        commission: totalCommission,
-        mobile: 0, // Removido - no se usa
+        company_earnings: totalCompanyEarnings,
+        vendor_commission: totalVendorCommission,
+        percentage: vendorCommissionPct,
+        mobile: 0,
         notes: rowNotes,
-        total
+        total: fijoRenValue + fijoNewValue + movilNuevaValue + movilRenValue + claroTvValue + cloudValue + mplsValue
       });
     });
     
     return rows;
-  }, [filteredProspects, products, movilNuevaManual, movilRenManual, notes]);
+  }, [filteredProspects, products, vendors, tiers, notes, calculateCompanyEarnings]);
 
   // Filtrar por búsqueda
   const filteredRows = useMemo(() => {
@@ -234,11 +245,10 @@ export default function Reports() {
   // Totales
   const totals = useMemo(() => {
     return filteredRows.reduce((acc, row) => ({
-      commission: acc.commission + row.commission,
-      movilNueva: acc.movilNueva + row.movil_nueva_manual,
-      movilRen: acc.movilRen + row.movil_renovacion_manual,
+      company_earnings: acc.company_earnings + row.company_earnings,
+      vendor_commission: acc.vendor_commission + row.vendor_commission,
       total: acc.total + row.total
-    }), { commission: 0, movilNueva: 0, movilRen: 0, total: 0 });
+    }), { company_earnings: 0, vendor_commission: 0, total: 0 });
   }, [filteredRows]);
 
   const handleMovilNuevaChange = (rowId: number, value: string) => {
@@ -307,8 +317,8 @@ export default function Reports() {
     alert('Pago registrado correctamente');
   };
 
-  // Obtener lista única de vendedores
-  const vendors = useMemo(() => {
+  // Obtener lista única de vendedores para filtro
+  const vendorOptions = useMemo(() => {
     const vendorMap = new Map<number, string>();
     filteredProspects?.forEach(p => {
       if (p.vendor_id && p.vendor_name) {
@@ -477,7 +487,7 @@ export default function Reports() {
               className="w-full px-4 py-2.5 bg-gray-900 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
             >
               <option value="">Todos</option>
-              {vendors.map(v => (
+              {vendorOptions.map(v => (
                 <option key={v.id} value={v.id}>{v.name}</option>
               ))}
             </select>
@@ -513,7 +523,8 @@ export default function Reports() {
                 <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider whitespace-nowrap">CLAROTV</th>
                 <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider whitespace-nowrap">CLOUD</th>
                 <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider whitespace-nowrap">MPLS</th>
-                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider whitespace-nowrap">Comisión</th>
+                <th className="px-4 py-3 text-right text-xs font-semibold text-green-400 uppercase tracking-wider whitespace-nowrap">Ganancia Empresa</th>
+                <th className="px-4 py-3 text-right text-xs font-semibold text-blue-400 uppercase tracking-wider whitespace-nowrap">Comisión Vendedor</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider whitespace-nowrap">Notas</th>
                 <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider whitespace-nowrap">Total</th>
               </tr>
@@ -521,7 +532,7 @@ export default function Reports() {
             <tbody className="divide-y divide-gray-700">
               {filteredRows.length === 0 ? (
                 <tr>
-                  <td colSpan={14} className="px-4 py-8 text-center text-gray-400">
+                  <td colSpan={15} className="px-4 py-8 text-center text-gray-400">
                     <FileText className="mx-auto h-12 w-12 text-gray-600 mb-2" />
                     <p>No hay ventas registradas</p>
                   </td>
@@ -553,8 +564,12 @@ export default function Reports() {
                         <td className={`px-4 py-3 text-sm text-right text-gray-300 ${(Number(row.claro_tv) > 0 && !isPaid) ? 'border-2 border-green-500 bg-green-900/20' : ''}`}>{row.claro_tv}</td>
                         <td className={`px-4 py-3 text-sm text-right text-gray-300 ${(Number(row.cloud) > 0 && !isPaid) ? 'border-2 border-green-500 bg-green-900/20' : ''}`}>{row.cloud}</td>
                         <td className={`px-4 py-3 text-sm text-right text-gray-300 ${(Number(row.mpls) > 0 && !isPaid) ? 'border-2 border-green-500 bg-green-900/20' : ''}`}>{row.mpls}</td>
-                        <td className="px-4 py-3 text-sm text-right text-gray-300">
-                          ${row.commission.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        <td className="px-4 py-3 text-sm text-right font-semibold text-green-400">
+                          ${row.company_earnings.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-right font-semibold text-blue-400">
+                          ${row.vendor_commission.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          <span className="text-xs text-gray-500 ml-1">({row.vendor_commission_pct}%)</span>
                         </td>
                         <td className="px-4 py-3">
                           <input
@@ -597,11 +612,14 @@ export default function Reports() {
                     <td className="px-4 py-3 text-sm text-right text-gray-300">
                       {filteredRows.reduce((sum, r) => sum + (Number(r.mpls) || 0), 0).toFixed(2)}
                     </td>
-                    <td className="px-4 py-3 text-sm text-right text-gray-300">
-                      ${totals.commission.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    <td className="px-4 py-3 text-sm text-right font-bold text-green-400">
+                      ${totals.company_earnings.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-right font-bold text-blue-400">
+                      ${totals.vendor_commission.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </td>
                     <td className="px-4 py-3 text-sm text-right text-gray-300">-</td>
-                    <td className="px-4 py-3 text-sm text-right text-green-400">
+                    <td className="px-4 py-3 text-sm text-right text-gray-300">
                       ${totals.total.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </td>
                   </tr>

@@ -7,6 +7,7 @@ interface Vendor {
   id: number;
   name: string;
   email: string | null;
+  commission_percentage: number;
   is_active: number;
   created_at: string;
 }
@@ -18,6 +19,7 @@ export default function Vendors() {
   const [formData, setFormData] = useState({
     name: "",
     email: "",
+    commission_percentage: "50.00",
     role: "vendedor" as "admin" | "supervisor" | "vendedor",
     username: "",
     password: "",
@@ -60,6 +62,7 @@ export default function Vendors() {
     setFormData({
       name: vendor.name,
       email: vendor.email || "",
+      commission_percentage: vendor.commission_percentage?.toString() || "50.00",
       role: "vendedor",
       username: "",
       password: "",
@@ -92,6 +95,7 @@ export default function Vendors() {
     setFormData({
       name: "",
       email: "",
+      commission_percentage: "50.00",
       role: "vendedor",
       username: "",
       password: "",
@@ -172,6 +176,11 @@ export default function Vendors() {
                         {vendor.email}
                       </div>
                     )}
+                    <div className="mt-2 inline-flex items-center px-2 py-1 bg-green-50 dark:bg-green-900/20 rounded-lg">
+                      <span className="text-xs text-green-700 dark:text-green-300 font-medium">
+                        % Comisión: {vendor.commission_percentage || 50}%
+                      </span>
+                    </div>
                   </div>
                 </div>
                 <div className="flex space-x-1">
@@ -240,6 +249,29 @@ export default function Vendors() {
                   onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white"
                 />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  % Comisión *
+                </label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    required
+                    min="0"
+                    max="100"
+                    step="0.01"
+                    value={formData.commission_percentage}
+                    onChange={(e) => setFormData({ ...formData, commission_percentage: e.target.value })}
+                    className="w-full px-3 py-2 pr-8 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white"
+                    placeholder="50.00"
+                  />
+                  <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500 dark:text-gray-400">%</span>
+                </div>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  Porcentaje de comisión sobre la ganancia de la empresa
+                </p>
               </div>
 
               {!editingVendor && (

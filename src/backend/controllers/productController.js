@@ -125,3 +125,32 @@ export const getVendorGoals = async (req, res) => {
         serverError(res, error, 'Error obteniendo metas de vendedores');
     }
 };
+
+export const getProductTiers = async (req, res) => {
+    const { id } = req.params;
+    try {
+        const tiers = await query(
+            `SELECT * FROM product_commission_tiers 
+             WHERE product_id = $1 
+             ORDER BY range_min ASC`,
+            [id]
+        );
+        res.json(tiers.rows);
+    } catch (error) {
+        serverError(res, error, 'Error obteniendo tiers de comisión');
+    }
+};
+
+export const getAllTiers = async (req, res) => {
+    try {
+        const tiers = await query(
+            `SELECT t.*, p.name as product_name 
+             FROM product_commission_tiers t
+             LEFT JOIN products p ON t.product_id = p.id
+             ORDER BY p.name, t.range_min ASC`
+        );
+        res.json(tiers.rows);
+    } catch (error) {
+        serverError(res, error, 'Error obteniendo todos los tiers');
+    }
+};
