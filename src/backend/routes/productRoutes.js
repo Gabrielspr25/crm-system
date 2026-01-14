@@ -1,3 +1,4 @@
+import express from 'express';
 import { getProducts, createProduct, updateProduct, deleteProduct, getBusinessGoals, getVendorGoals, getProductTiers, getAllTiers } from '../controllers/productController.js';
 import { authenticateToken } from '../middlewares/auth.js';
 
