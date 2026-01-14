@@ -652,15 +652,15 @@ export default function Reports() {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <p className="text-sm text-gray-300">Total Comisiones</p>
+              <p className="text-sm text-gray-300">Ganancia Empresa</p>
               <p className="text-2xl font-bold text-white">
-                ${totals.commission.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                ${(totals.company_earnings || 0).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </p>
             </div>
             <div>
-              <p className="text-sm text-gray-300">Total a Pagar</p>
-              <p className="text-2xl font-bold text-green-400">
-                ${totals.commission.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              <p className="text-sm text-gray-300">Comisión Vendedores</p>
+              <p className="text-2xl font-bold text-blue-400">
+                ${(totals.vendor_commission || 0).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </p>
             </div>
           </div>

@@ -23,6 +23,7 @@ import banRoutes from './src/backend/routes/banRoutes.js';
 import importRoutes from './src/backend/routes/importRoutes.js';
 import vendorRoutes from './src/backend/routes/vendorRoutes.js';
 import systemRoutes from './src/backend/routes/systemRoutes.js';
+import productRoutes from './src/backend/routes/productRoutes.js';
 
 // ======================================================
 // Configuración base
@@ -74,6 +75,7 @@ app.use('/api/bans', banRoutes);
 app.use('/api/importador', importRoutes);
 app.use('/api/vendors', vendorRoutes);
 app.use('/api/system', systemRoutes);
+app.use('/api/products', productRoutes);
 
 
 const JWT_SECRET = process.env.JWT_SECRET || 'development-secret';
@@ -663,6 +665,8 @@ app.delete('/api/categories/:id', async (req, res) => {
   }
 });
 
+// LEGACY ENDPOINT - Reemplazado por productRoutes modular (línea ~78)
+/*
 app.get('/api/products', async (_req, res) => {
   try {
     const rows = await query(
@@ -684,6 +688,7 @@ app.get('/api/products', async (_req, res) => {
     serverError(res, error, 'Error obteniendo productos');
   }
 });
+*/
 
 const normalizeNullableNumber = (value) => {
   if (value === null || value === undefined || value === '') {
@@ -709,6 +714,8 @@ const normalizeBillingCycle = (value) => {
   return ['monthly', 'quarterly', 'yearly'].includes(normalized) ? normalized : null;
 };
 
+// LEGACY ENDPOINT - Reemplazado por productRoutes modular
+/*
 app.post('/api/products', async (req, res) => {
   const {
     name,
@@ -759,7 +766,10 @@ app.post('/api/products', async (req, res) => {
     serverError(res, error, 'Error creando producto');
   }
 });
+*/
 
+// LEGACY ENDPOINT - Reemplazado por productRoutes modular
+/*
 app.put('/api/products/:id', async (req, res) => {
   const productId = req.params.id; // UUID
   
@@ -838,7 +848,10 @@ app.put('/api/products/:id', async (req, res) => {
     serverError(res, error, 'Error actualizando producto');
   }
 });
+*/
 
+// LEGACY ENDPOINT - Reemplazado por productRoutes modular
+/*
 app.delete('/api/products/:id', async (req, res) => {
   const productId = req.params.id; // UUID
 
@@ -857,6 +870,7 @@ app.delete('/api/products/:id', async (req, res) => {
     serverError(res, error, 'Error eliminando producto');
   }
 });
+*/
 
 app.get('/api/product-goals', async (req, res) => {
   const { period_year: periodYearParam, period_month: periodMonthParam, include_inactive: includeInactiveParam } = req.query;
