@@ -102,8 +102,9 @@ export default function Reports() {
   // Helper: Calcular comisión empresa basada en tiers o porcentaje
   const calculateCompanyEarnings = (productName: string, amount: number): number => {
     if (amount <= 0) return 0;
+    if (!products || products.length === 0) return 0;
     
-    const product = products?.find(p => p.name.toLowerCase() === productName.toLowerCase());
+    const product = products.find(p => p.name.toLowerCase() === productName.toLowerCase());
     if (!product) return 0;
 
     // Productos con tiers: Movil New y Movil Ren
@@ -173,7 +174,7 @@ export default function Reports() {
       const clientId = prospect.client_id;
       
       // Obtener % de comisión del vendedor
-      const vendor = vendors.find(v => v.id === prospect.vendor_id);
+      const vendor = vendors?.find(v => v.id === prospect.vendor_id);
       const vendorCommissionPct = vendor?.commission_percentage || 50;
       
       // Valores de productos
@@ -245,9 +246,9 @@ export default function Reports() {
   // Totales
   const totals = useMemo(() => {
     return filteredRows.reduce((acc, row) => ({
-      company_earnings: acc.company_earnings + row.company_earnings,
-      vendor_commission: acc.vendor_commission + row.vendor_commission,
-      total: acc.total + row.total
+      company_earnings: acc.company_earnings + (row.company_earnings || 0),
+      vendor_commission: acc.vendor_commission + (row.vendor_commission || 0),
+      total: acc.total + (row.total || 0)
     }), { company_earnings: 0, vendor_commission: 0, total: 0 });
   }, [filteredRows]);
 
@@ -383,12 +384,24 @@ export default function Reports() {
         <div className="bg-gradient-to-br from-green-600 to-green-700 rounded-xl p-6 shadow-lg">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-green-100 text-sm font-medium">Comisión Total</p>
+              <p className="text-green-100 text-sm font-medium">Ganancia Empresa</p>
               <p className="text-3xl font-bold text-white mt-2">
-                ${totals.commission.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                ${(totals.company_earnings || 0).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </p>
             </div>
             <DollarSign className="w-12 h-12 text-green-200 opacity-50" />
+          </div>
+        </div>
+
+        <div className="bg-gradient-to-br from-blue-600 to-blue-700 rounded-xl p-6 shadow-lg">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-blue-100 text-sm font-medium">Comisión Vendedores</p>
+              <p className="text-3xl font-bold text-white mt-2">
+                ${(totals.vendor_commission || 0).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </p>
+            </div>
+            <DollarSign className="w-12 h-12 text-blue-200 opacity-50" />
           </div>
         </div>
 
