@@ -99,12 +99,12 @@ CREATE TABLE clients (
 );
 
 -- ===============================================
--- TABLA: BANS (Cuentas de facturación - 9 dígitos)
+-- TABLA: BANS (Cuentas de facturación - hasta 20 caracteres)
 -- ===============================================
 CREATE TABLE bans (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     client_id UUID NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
-    ban_number VARCHAR(9) NOT NULL UNIQUE CHECK (ban_number ~ '^[0-9]{9}$'),
+    ban_number VARCHAR(20) NOT NULL UNIQUE,
     account_type VARCHAR(50),
     status VARCHAR(1) CHECK (status IN ('C', 'A')),
     created_at TIMESTAMP DEFAULT NOW(),
@@ -112,12 +112,12 @@ CREATE TABLE bans (
 );
 
 -- ===============================================
--- TABLA: SUSCRIPTORES (Líneas de servicio - 10 dígitos)
+-- TABLA: SUSCRIPTORES (Líneas de servicio - hasta 20 caracteres)
 -- ===============================================
 CREATE TABLE subscribers (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     ban_id UUID NOT NULL REFERENCES bans(id) ON DELETE CASCADE,
-    phone VARCHAR(10) NOT NULL CHECK (phone ~ '^[0-9]{10}$'),
+    phone VARCHAR(20) NOT NULL,
     plan VARCHAR(255),
     monthly_value DECIMAL(10,2),
     remaining_payments INTEGER,
