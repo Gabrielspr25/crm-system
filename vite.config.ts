@@ -21,12 +21,12 @@ const replaceVersionPlugin = () => {
 };
 
 export default defineConfig({
-  plugins: [react(), cloudflare(), replaceVersionPlugin()],
+  plugins: [react(), /* cloudflare(), */ replaceVersionPlugin()],
   server: {
     port: 5173,
     strictPort: true,
     host: true,
-    hmr: {                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        
+    hmr: {
       overlay: true,
       protocol: 'ws',
       host: 'localhost',

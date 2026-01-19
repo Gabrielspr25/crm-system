@@ -1,7 +1,7 @@
 {
   "name": "mocha-app",
   "private": true,
-  "version": "2026-177",
+  "version": "2026-178",
   "type": "module",
   "dependencies": {
     "@azure/msal-browser": "^4.27.0",
@@ -32,6 +32,7 @@
     "react": "19.0.0",
     "react-dom": "19.0.0",
     "react-router": "^7.5.3",
+    "ssh2": "^1.17.0",
     "tailwind-merge": "^3.4.0",
     "uuid": "^13.0.0",
     "xlsx": "^0.18.5",
