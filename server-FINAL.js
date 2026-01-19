@@ -67,17 +67,9 @@ const distPath = path.join(__dirname, 'dist/client');
 // const varWwwPath = '/var/www/crmp'; // DEPRECATED: We now use /opt/crmp/dist/client
 app.use(express.static(distPath));
 
-// Rutas de Módulos Específicos
-app.use('/api/referidos', referidosRoutes);
-app.use('/api/tariffs', tarifasRoutes);
-app.use('/api/clients', clientRoutes);
-app.use('/api/bans', banRoutes);
-app.use('/api/importador', importRoutes);
-app.use('/api/vendors', vendorRoutes);
-app.use('/api/system', systemRoutes);
-app.use('/api/products', productRoutes);
-
-
+// ======================================================
+// JWT y Autenticación (MOVED UP FOR SECURITY)
+// ======================================================
 const JWT_SECRET = process.env.JWT_SECRET || 'development-secret';
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'development-refresh-secret';
 const ACCESS_TOKEN_TTL = process.env.JWT_EXPIRES_IN || '15m';
@@ -419,13 +411,22 @@ app.get('/api/health', async (_req, res) => {
   }
 });
 
+// ======================================================
+// APLICAR AUTENTICACIÓN ANTES DE RUTAS
+// ======================================================
 app.use(authenticateRequest);
 
-// Rutas de Referidos
+// Rutas de Módulos Específicos (PROTECTED)
 app.use('/api/referidos', referidosRoutes);
-
-// Rutas de Tarifas y Planes
-app.use('/api/tarifas', tarifasRoutes);
+app.use('/api/tariffs', tarifasRoutes);
+app.use('/api/clients', clientRoutes);
+app.use('/api/bans', banRoutes);
+app.use('/api/importador', importRoutes);
+app.use('/api/vendors', vendorRoutes);
+app.use('/api/products', productRoutes);
+if (process.env.NODE_ENV !== 'production') {
+  app.use('/api/system', systemRoutes);
+}
 
 // ======================================================
 // Endpoint para limpiar nombres BAN
@@ -1520,7 +1521,7 @@ app.get('/api/follow-up-prospects', authenticateRequest, async (req, res) => {
 app.post('/api/follow-up-prospects', authenticateRequest, async (req, res) => {
   try {
     const { client_id } = req.body;
-    
+
     if (!client_id) {
       return res.status(400).json({ error: 'client_id es obligatorio' });
     }
@@ -1530,7 +1531,7 @@ app.post('/api/follow-up-prospects', authenticateRequest, async (req, res) => {
     if (clientData.length === 0) {
       return res.status(404).json({ error: 'Cliente no encontrado' });
     }
-    
+
     const companyName = clientData[0].name || 'Sin nombre';
 
     // Verificar si ya existe un seguimiento activo
@@ -1538,7 +1539,7 @@ app.post('/api/follow-up-prospects', authenticateRequest, async (req, res) => {
       'SELECT id FROM follow_up_prospects WHERE client_id = $1 AND is_active = true AND (is_completed IS NULL OR is_completed = false)',
       [client_id]
     );
-    
+
     if (existingActive.length > 0) {
       return res.status(400).json({ error: 'Este cliente ya tiene un seguimiento activo' });
     }
@@ -1562,7 +1563,7 @@ app.post('/api/follow-up-prospects', authenticateRequest, async (req, res) => {
 app.put('/api/follow-up-prospects/:id/complete', authenticateRequest, async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     const result = await query(
       `UPDATE follow_up_prospects 
        SET is_completed = true, completed_date = NOW(), is_active = false, updated_at = NOW()
@@ -1586,7 +1587,7 @@ app.put('/api/follow-up-prospects/:id/complete', authenticateRequest, async (req
 app.delete('/api/follow-up-prospects/:id', authenticateRequest, async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     const result = await query(
       'DELETE FROM follow_up_prospects WHERE id = $1 RETURNING *',
       [id]
@@ -1629,12 +1630,12 @@ app.get('/api/follow-up-steps', authenticateRequest, async (req, res) => {
 app.put('/api/follow-up-prospects/:id', authenticateRequest, async (req, res) => {
   try {
     const { id } = req.params;
-    const { 
+    const {
       client_id, priority_id, vendor_id, completed_date,
-      fijo_ren, fijo_new, movil_nueva, movil_renovacion, 
-      claro_tv, cloud, mpls, notes 
+      fijo_ren, fijo_new, movil_nueva, movil_renovacion,
+      claro_tv, cloud, mpls, notes
     } = req.body;
-    
+
     const result = await query(
       `UPDATE follow_up_prospects 
        SET client_id = $1, priority_id = $2, vendor_id = $3, 
@@ -1644,8 +1645,8 @@ app.put('/api/follow-up-prospects/:id', authenticateRequest, async (req, res) =>
        WHERE id = $13
        RETURNING *`,
       [client_id, priority_id, vendor_id, completed_date,
-       fijo_ren || 0, fijo_new || 0, movil_nueva || 0, movil_renovacion || 0,
-       claro_tv || 0, cloud || 0, mpls || 0, notes, id]
+        fijo_ren || 0, fijo_new || 0, movil_nueva || 0, movil_renovacion || 0,
+        claro_tv || 0, cloud || 0, mpls || 0, notes, id]
     );
 
     if (result.length === 0) {
@@ -1663,7 +1664,7 @@ app.put('/api/follow-up-prospects/:id', authenticateRequest, async (req, res) =>
 app.put('/api/follow-up-prospects/:id/return', authenticateRequest, async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     const result = await query(
       `UPDATE follow_up_prospects 
        SET is_active = false, updated_at = NOW()
@@ -1691,7 +1692,7 @@ app.put('/api/follow-up-prospects/:id/return', authenticateRequest, async (req, 
 app.get('/api/call-logs/:prospect_id', authenticateRequest, async (req, res) => {
   try {
     const { prospect_id } = req.params;
-    
+
     const logs = await query(
       `SELECT cl.*, s.name as step_name
        FROM call_logs cl
@@ -1712,7 +1713,7 @@ app.get('/api/call-logs/:prospect_id', authenticateRequest, async (req, res) => 
 app.post('/api/call-logs', authenticateRequest, async (req, res) => {
   try {
     const { follow_up_id, call_date, notes, outcome, next_call_date, step_completed, step_id } = req.body;
-    
+
     // Guardar call log
     const result = await query(
       `INSERT INTO call_logs (follow_up_id, call_date, notes, outcome, next_call_date, step_completed, step_id)
