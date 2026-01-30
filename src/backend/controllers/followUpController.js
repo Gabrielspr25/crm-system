@@ -18,6 +18,15 @@ export const getFollowUpProspects = async (req, res) => {
     }
 };
 
+export const getFollowUpSteps = async (req, res) => {
+    try {
+        const steps = await query('SELECT * FROM pipeline_steps ORDER BY order_index ASC');
+        res.json(steps);
+    } catch (error) {
+        serverError(res, error, 'Error obteniendo pasos del pipeline');
+    }
+};
+
 export const createFollowUpProspect = async (req, res) => {
     const {
         company_name,

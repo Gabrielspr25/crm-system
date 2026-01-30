@@ -14,13 +14,17 @@ export const getVendors = async (req, res) => {
 
 export const createVendor = async (req, res) => {
     const { name, email, role, username, password, commission_percentage } = req.body;
-    
+
+    console.log('📝 CREATE VENDOR - Datos recibidos:', { name, email, role, username, hasPassword: !!password, commission_percentage });
+
     try {
         // 1. Crear en salespeople (tabla nueva con UUID y role)
+        console.log('📝 Insertando en salespeople con:', [name, email || null, role || 'vendedor']);
         const salespersonResult = await query(
             'INSERT INTO salespeople (name, email, role, created_at, updated_at) VALUES ($1, $2, $3, NOW(), NOW()) RETURNING id',
             [name, email || null, role || 'vendedor']
         );
+        console.log('✅ Salesperson creado, resultado:', salespersonResult.rows);
         const salespersonId = salespersonResult.rows[0].id;
 
         // 2. Crear usuario de login en users_auth (si se proporcionó username/password)
@@ -37,7 +41,7 @@ export const createVendor = async (req, res) => {
             'INSERT INTO vendors (name, email, commission_percentage, is_active, created_at) VALUES ($1, $2, $3, 1, NOW()) RETURNING *',
             [name, email || null, commission_percentage || 50.00]
         );
-        
+
         res.status(201).json({
             vendor: vendorResult.rows[0],
             salesperson_id: salespersonId,
@@ -63,7 +67,7 @@ export const updateVendor = async (req, res) => {
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Vendedor no encontrado' });
         }
-        
+
         res.json(result.rows[0]);
     } catch (error) {
         serverError(res, error, 'Error actualizando vendedor');

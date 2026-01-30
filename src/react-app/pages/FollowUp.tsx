@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from "react";
 import { useSearchParams } from "react-router";
-import { Search, Plus, Phone, Edit3, Settings, Trash2, ArrowLeft, Calendar as CalendarIcon, List, ChevronLeft, ChevronRight } from "lucide-react";
+import { Search, Plus, Phone, Edit3, Settings, Trash2, ArrowLeft, Calendar as CalendarIcon, List, ChevronLeft, ChevronRight, LayoutList, Clock, AlertTriangle } from "lucide-react";
 import { useApi } from "../hooks/useApi";
 import { authFetch, getCurrentUser } from "@/react-app/utils/auth";
 import { APP_VERSION } from "@/version";
@@ -85,13 +85,13 @@ export default function FollowUp() {
   const [showCallModal, setShowCallModal] = useState(false);
   const [showPriorityManager, setShowPriorityManager] = useState(false);
   const [callLogs, setCallLogs] = useState<CallLog[]>([]);
-  const [viewMode, setViewMode] = useState<'list' | 'calendar'>('list');
+  const [viewMode, setViewMode] = useState<'list' | 'calendar' | 'agenda'>('agenda');
   const [calendarDate, setCalendarDate] = useState(new Date());
 
   const { data: prospects, loading, refetch: refetchProspects } = useApi<FollowUpProspect[]>("/api/follow-up-prospects?include_completed=true");
   const { data: priorities, refetch: refetchPriorities } = useApi<Priority[]>("/api/priorities");
   const { data: vendors } = useApi<Vendor[]>("/api/vendors");
-  const { data: steps, refetch: refetchSteps } = useApi<FollowUpStep[]>("/api/follow-up-steps");
+  const { data: steps, refetch: refetchSteps } = useApi<FollowUpStep[]>("/api/follow-up-prospects/steps");
   const { data: clients } = useApi<Client[]>("/api/clients");
 
   // Detectar client_id en URL y abrir modal automáticamente
@@ -108,7 +108,7 @@ export default function FollowUp() {
 
   const uniqueProspects = useMemo(() => {
     const seen = new Map<string, FollowUpProspect>();
-    
+
     (prospects || []).forEach((prospect) => {
       // Si tiene client_id, usar como key para deduplicar
       // Si NO tiene client_id, usar id único (no deduplicar)
@@ -117,7 +117,7 @@ export default function FollowUp() {
         seen.set(key, prospect);
       }
     });
-    
+
     // NO filtrar por is_active - el filtro de showCompleted ya maneja seguimiento/completados
     return Array.from(seen.values());
   }, [prospects, clients]);
@@ -147,11 +147,11 @@ export default function FollowUp() {
       // Filtro por búsqueda
       const matchesSearch = prospect.company_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
         (prospect.vendor_name && prospect.vendor_name.toLowerCase().includes(searchTerm.toLowerCase()));
-      
+
       // Filtro por estado completado/seguimiento
       const isCompleted = prospect.completed_date != null;
       const matchesStatus = showCompleted ? isCompleted : !isCompleted;
-      
+
       return matchesSearch && matchesStatus;
     });
   }, [clientFilteredProspects, searchTerm, showCompleted]);
@@ -180,13 +180,13 @@ export default function FollowUp() {
   useEffect(() => {
     const editId = searchParams.get('edit');
     const isCompleted = searchParams.get('completed') === 'true';
-    
+
     if (editId && prospects) {
       const prospectToEdit = prospects.find(p => p.id === Number(editId));
       if (prospectToEdit) {
         // Abrir el modal automáticamente
         handleEdit(prospectToEdit);
-        
+
         // Limpiar los parámetros de la URL para evitar que se abra de nuevo
         window.history.replaceState({}, '', '/seguimiento');
       }
@@ -258,6 +258,7 @@ export default function FollowUp() {
     outcome: string;
     next_call_date: string;
     step_completed: boolean;
+    step_id?: number | null;
   }) => {
     try {
       console.log('[FollowUp] Guardando llamada:', { follow_up_id: selectedProspect?.id, ...callData });
@@ -269,10 +270,18 @@ export default function FollowUp() {
           notes: callData.notes,
           outcome: callData.outcome,
           next_call_date: callData.next_call_date,
-          step_id: selectedProspect?.step_id,
+          step_id: callData.step_id || selectedProspect?.step_id, // Use new step if provided
           step_completed: callData.step_completed
         }
       });
+
+      // Update prospect step if changed
+      if (callData.step_id && callData.step_id !== selectedProspect?.step_id) {
+        await authFetch(`/api/follow-up-prospects/${selectedProspect!.id}`, {
+          method: 'PUT',
+          json: { step_id: callData.step_id }
+        });
+      }
 
       if (!response.ok) {
         throw new Error('Error al guardar la llamada');
@@ -291,7 +300,7 @@ export default function FollowUp() {
 
   const handleReturnToBD = async (prospect: FollowUpProspect) => {
     console.log('🟠 handleReturnToBD called:', prospect);
-    
+
     if (!confirm(`¿Devolver "${prospect.company_name}" a la base de datos disponibles?`)) {
       console.log('🟠 User cancelled return');
       return;
@@ -366,26 +375,24 @@ export default function FollowUp() {
             className="w-full pl-10 pr-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-white placeholder-gray-500"
           />
         </div>
-        
+
         {/* Toggle Seguimiento/Completados */}
         <div className="flex bg-gray-800 border border-gray-700 rounded-lg p-1">
           <button
             onClick={() => setShowCompleted(false)}
-            className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-              !showCompleted
-                ? 'bg-blue-600 text-white'
-                : 'text-gray-400 hover:text-white'
-            }`}
+            className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${!showCompleted
+              ? 'bg-blue-600 text-white'
+              : 'text-gray-400 hover:text-white'
+              }`}
           >
             Seguimiento ({clientFilteredProspects.filter(p => p.completed_date == null).length})
           </button>
           <button
             onClick={() => setShowCompleted(true)}
-            className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-              showCompleted
-                ? 'bg-purple-600 text-white'
-                : 'text-gray-400 hover:text-white'
-            }`}
+            className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${showCompleted
+              ? 'bg-purple-600 text-white'
+              : 'text-gray-400 hover:text-white'
+              }`}
           >
             Completados ({clientFilteredProspects.filter(p => p.completed_date != null).length})
           </button>
@@ -395,25 +402,33 @@ export default function FollowUp() {
         <div className="flex bg-gray-800 border border-gray-700 rounded-lg p-1">
           <button
             onClick={() => setViewMode('list')}
-            className={`p-2 rounded-md transition-colors ${
-              viewMode === 'list'
-                ? 'bg-gray-700 text-white'
-                : 'text-gray-400 hover:text-white'
-            }`}
+            className={`p-2 rounded-md transition-colors ${viewMode === 'list'
+              ? 'bg-gray-700 text-white'
+              : 'text-gray-400 hover:text-white'
+              }`}
             title="Vista Lista"
           >
             <List className="w-5 h-5" />
           </button>
           <button
             onClick={() => setViewMode('calendar')}
-            className={`p-2 rounded-md transition-colors ${
-              viewMode === 'calendar'
-                ? 'bg-gray-700 text-white'
-                : 'text-gray-400 hover:text-white'
-            }`}
+            className={`p-2 rounded-md transition-colors ${viewMode === 'calendar'
+              ? 'bg-gray-700 text-white'
+              : 'text-gray-400 hover:text-white'
+              }`}
             title="Vista Calendario"
           >
             <CalendarIcon className="w-5 h-5" />
+          </button>
+          <button
+            onClick={() => setViewMode('agenda')}
+            className={`p-2 rounded-md transition-colors ${viewMode === 'agenda'
+              ? 'bg-gray-700 text-white'
+              : 'text-gray-400 hover:text-white'
+              }`}
+            title="Vista Agenda"
+          >
+            <LayoutList className="w-5 h-5" />
           </button>
         </div>
       </div>
@@ -454,104 +469,109 @@ export default function FollowUp() {
               <tbody className="bg-gray-900 divide-y divide-gray-800">
                 {filteredProspects.map((prospect) => {
                   return (
-                  <tr 
-                    key={prospect.id} 
-                    className="hover:bg-gray-800 transition-colors"
-                  >
-                    <td className="px-4 py-4 whitespace-nowrap">
-                      <div className="text-sm font-medium text-gray-200">{prospect.company_name}</div>
-                      {prospect.client_name && (
-                        <div className="text-xs text-blue-400">Cliente: {prospect.client_business_name || prospect.client_name}</div>
-                      )}
-                      {prospect.contact_phone && (
-                        <div className="text-xs text-gray-500">{prospect.contact_phone}</div>
-                      )}
-                    </td>
-                    <td className="px-4 py-4 whitespace-nowrap">
-                      {prospect.priority_name && (
-                        <span
-                          className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium text-white"
-                          style={{ backgroundColor: prospect.priority_color }}
-                        >
-                          {prospect.priority_name}
+                    <tr
+                      key={prospect.id}
+                      className="hover:bg-gray-800 transition-colors"
+                    >
+                      <td className="px-4 py-4 whitespace-nowrap">
+                        <div className="text-sm font-medium text-gray-200">{prospect.company_name}</div>
+                        {prospect.client_name && (
+                          <div className="text-xs text-blue-400">Cliente: {prospect.client_business_name || prospect.client_name}</div>
+                        )}
+                        {prospect.contact_phone && (
+                          <div className="text-xs text-gray-500">{prospect.contact_phone}</div>
+                        )}
+                      </td>
+                      <td className="px-4 py-4 whitespace-nowrap">
+                        {prospect.priority_name && (
+                          <span
+                            className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium text-white"
+                            style={{ backgroundColor: prospect.priority_color }}
+                          >
+                            {prospect.priority_name}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-4 whitespace-nowrap">
+                        <span className="text-sm text-gray-300">{prospect.vendor_name || '-'}</span>
+                      </td>
+                      <td className="px-4 py-4 whitespace-nowrap">
+                        <span className="text-sm text-gray-300">{prospect.step_name || '-'}</span>
+                      </td>
+                      <td className={`px-4 py-4 whitespace-nowrap text-center ${(prospect.fijo_ren && parseFloat(prospect.fijo_ren.toString()) > 0) ? 'border-2 border-green-500 bg-green-900/20' : ''}`}>
+                        <span className="text-sm text-gray-300">{prospect.fijo_ren || 0}</span>
+                      </td>
+                      <td className={`px-4 py-4 whitespace-nowrap text-center ${(prospect.fijo_new && parseFloat(prospect.fijo_new.toString()) > 0) ? 'border-2 border-green-500 bg-green-900/20' : ''}`}>
+                        <span className="text-sm text-gray-300">{prospect.fijo_new || 0}</span>
+                      </td>
+                      <td className={`px-4 py-4 whitespace-nowrap text-center ${(prospect.movil_nueva && parseFloat(prospect.movil_nueva.toString()) > 0) ? 'border-2 border-green-500 bg-green-900/20' : ''}`}>
+                        <span className="text-sm text-gray-300">{prospect.movil_nueva || 0}</span>
+                      </td>
+                      <td className={`px-4 py-4 whitespace-nowrap text-center ${(prospect.movil_renovacion && parseFloat(prospect.movil_renovacion.toString()) > 0) ? 'border-2 border-green-500 bg-green-900/20' : ''}`}>
+                        <span className="text-sm text-gray-300">{prospect.movil_renovacion || 0}</span>
+                      </td>
+                      <td className={`px-4 py-4 whitespace-nowrap text-center ${(prospect.claro_tv && parseFloat(prospect.claro_tv.toString()) > 0) ? 'border-2 border-green-500 bg-green-900/20' : ''}`}>
+                        <span className="text-sm text-gray-300">{prospect.claro_tv || 0}</span>
+                      </td>
+                      <td className={`px-4 py-4 whitespace-nowrap text-center ${(prospect.cloud && parseFloat(prospect.cloud.toString()) > 0) ? 'border-2 border-green-500 bg-green-900/20' : ''}`}>
+                        <span className="text-sm text-gray-300">{prospect.cloud || 0}</span>
+                      </td>
+                      <td className={`px-4 py-4 whitespace-nowrap text-center ${(prospect.mpls && parseFloat(prospect.mpls.toString()) > 0) ? 'border-2 border-green-500 bg-green-900/20' : ''}`}>
+                        <span className="text-sm text-gray-300">{prospect.mpls || 0}</span>
+                      </td>
+                      <td className="px-4 py-4 whitespace-nowrap text-center">
+                        <span className="text-xs px-2 py-1 rounded bg-blue-900/40 text-blue-200 border border-blue-500/30">
+                          {prospect.base || 'BD propia'}
                         </span>
-                      )}
-                    </td>
-                    <td className="px-4 py-4 whitespace-nowrap">
-                      <span className="text-sm text-gray-300">{prospect.vendor_name || '-'}</span>
-                    </td>
-                    <td className="px-4 py-4 whitespace-nowrap">
-                      <span className="text-sm text-gray-300">{prospect.step_name || '-'}</span>
-                    </td>
-                    <td className={`px-4 py-4 whitespace-nowrap text-center ${(prospect.fijo_ren && parseFloat(prospect.fijo_ren.toString()) > 0) ? 'border-2 border-green-500 bg-green-900/20' : ''}`}>
-                      <span className="text-sm text-gray-300">{prospect.fijo_ren || 0}</span>
-                    </td>
-                    <td className={`px-4 py-4 whitespace-nowrap text-center ${(prospect.fijo_new && parseFloat(prospect.fijo_new.toString()) > 0) ? 'border-2 border-green-500 bg-green-900/20' : ''}`}>
-                      <span className="text-sm text-gray-300">{prospect.fijo_new || 0}</span>
-                    </td>
-                    <td className={`px-4 py-4 whitespace-nowrap text-center ${(prospect.movil_nueva && parseFloat(prospect.movil_nueva.toString()) > 0) ? 'border-2 border-green-500 bg-green-900/20' : ''}`}>
-                      <span className="text-sm text-gray-300">{prospect.movil_nueva || 0}</span>
-                    </td>
-                    <td className={`px-4 py-4 whitespace-nowrap text-center ${(prospect.movil_renovacion && parseFloat(prospect.movil_renovacion.toString()) > 0) ? 'border-2 border-green-500 bg-green-900/20' : ''}`}>
-                      <span className="text-sm text-gray-300">{prospect.movil_renovacion || 0}</span>
-                    </td>
-                    <td className={`px-4 py-4 whitespace-nowrap text-center ${(prospect.claro_tv && parseFloat(prospect.claro_tv.toString()) > 0) ? 'border-2 border-green-500 bg-green-900/20' : ''}`}>
-                      <span className="text-sm text-gray-300">{prospect.claro_tv || 0}</span>
-                    </td>
-                    <td className={`px-4 py-4 whitespace-nowrap text-center ${(prospect.cloud && parseFloat(prospect.cloud.toString()) > 0) ? 'border-2 border-green-500 bg-green-900/20' : ''}`}>
-                      <span className="text-sm text-gray-300">{prospect.cloud || 0}</span>
-                    </td>
-                    <td className={`px-4 py-4 whitespace-nowrap text-center ${(prospect.mpls && parseFloat(prospect.mpls.toString()) > 0) ? 'border-2 border-green-500 bg-green-900/20' : ''}`}>
-                      <span className="text-sm text-gray-300">{prospect.mpls || 0}</span>
-                    </td>
-                    <td className="px-4 py-4 whitespace-nowrap text-center">
-                      <span className="text-xs px-2 py-1 rounded bg-blue-900/40 text-blue-200 border border-blue-500/30">
-                        {prospect.base || 'BD propia'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-4 whitespace-nowrap text-center">
-                      <div className="text-sm text-gray-300">{formatDate(prospect.last_call_date)}</div>
-                      {prospect.next_call_date && (
-                        <div className="text-xs text-blue-400">Próx: {formatDate(prospect.next_call_date)}</div>
-                      )}
-                    </td>
-                    <td className="px-4 py-4 whitespace-nowrap text-center">
-                      <div className="flex items-center justify-center gap-2">
-                        <button
-                          onClick={() => handleCall(prospect)}
-                          className="text-green-400 hover:text-green-300 transition-colors"
-                          title="Registrar llamada"
-                        >
-                          <Phone className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => handleEdit(prospect)}
-                          className="text-blue-400 hover:text-blue-300 transition-colors"
-                          title="Editar"
-                        >
-                          <Edit3 className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => handleReturnToBD(prospect)}
-                          className="px-3 py-1 bg-orange-600 hover:bg-orange-700 text-white rounded text-xs transition-colors flex items-center gap-1"
-                          title="Devolver a disponibles"
-                        >
-                          <ArrowLeft className="w-3 h-3" />
-                          Devolver
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
+                      </td>
+                      <td className="px-4 py-4 whitespace-nowrap text-center">
+                        <div className="text-sm text-gray-300">{formatDate(prospect.last_call_date)}</div>
+                        {prospect.next_call_date && (
+                          <div className="text-xs text-blue-400">Próx: {formatDate(prospect.next_call_date)}</div>
+                        )}
+                      </td>
+                      <td className="px-4 py-4 whitespace-nowrap text-center">
+                        <div className="flex items-center justify-center gap-2">
+                          <button
+                            onClick={() => handleCall(prospect)}
+                            className="text-green-400 hover:text-green-300 transition-colors"
+                            title="Registrar llamada"
+                          >
+                            <Phone className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleEdit(prospect)}
+                            className="text-blue-400 hover:text-blue-300 transition-colors"
+                            title="Editar"
+                          >
+                            <Edit3 className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleReturnToBD(prospect)}
+                            className="px-3 py-1 bg-orange-600 hover:bg-orange-700 text-white rounded text-xs transition-colors flex items-center gap-1"
+                            title="Devolver a disponibles"
+                          >
+                            <ArrowLeft className="w-3 h-3" />
+                            Devolver
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
                   );
                 })}
               </tbody>
             </table>
           </div>
         </div>
-      ) : (
+      ) : viewMode === 'calendar' ? (
         <CalendarView
           currentDate={calendarDate}
           onDateChange={setCalendarDate}
+          prospects={filteredProspects}
+          onSelectProspect={handleEdit}
+        />
+      ) : (
+        <AgendaView
           prospects={filteredProspects}
           onSelectProspect={handleEdit}
         />
@@ -684,9 +704,9 @@ function ProspectModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (saving) return; // Prevenir doble submit
-    
+
     setSaving(true);
     try {
       const resolvedVendorId = disableVendorSelect && enforcedVendorId != null
@@ -700,6 +720,7 @@ function ProspectModal({
         client_id: formData.client_id || null,
         priority_id: formData.priority_id ? parseInt(formData.priority_id.toString(), 10) : null,
         vendor_id: resolvedVendorId,
+        step_id: formData.step_id ? parseInt(formData.step_id.toString(), 10) : null,
       };
 
       console.log('[FollowUp] Guardando prospecto:', data);
@@ -976,8 +997,8 @@ function StepManagerPanel({ steps, onSaved }: { steps: FollowUpStep[]; onSaved: 
       {message && (
         <div
           className={`mx-4 mt-4 mb-2 rounded-lg px-4 py-3 text-sm border ${message.type === 'success'
-              ? 'border-green-500/40 bg-green-900/30 text-green-100'
-              : 'border-red-500/40 bg-red-900/30 text-red-100'
+            ? 'border-green-500/40 bg-green-900/30 text-green-100'
+            : 'border-red-500/40 bg-red-900/30 text-red-100'
             }`}
         >
           {message.text}
@@ -1097,7 +1118,7 @@ function CallModal({
 }: {
   prospect: FollowUpProspect;
   callLogs: CallLog[];
-  onSave: (data: { notes: string; outcome: string; next_call_date: string; step_completed: boolean }) => void;
+  onSave: (data: { notes: string; outcome: string; next_call_date: string; step_completed: boolean; step_id?: number | null }) => void;
   onClose: () => void;
   steps: FollowUpStep[];
   onStepsUpdated: () => Promise<void> | void;
@@ -1107,15 +1128,16 @@ function CallModal({
     notes: '',
     outcome: 'completed',
     next_call_date: '',
-    step_completed: false
+    step_completed: false,
+    step_id: prospect.step_id
   });
   const [activeTab, setActiveTab] = useState<'all' | 'manage'>('all');
   const [activeMainTab, setActiveMainTab] = useState<'steps' | 'call'>('call');
-  
+
   // Ordenar pasos y encontrar el actual
   const sortedSteps = useMemo(() => [...steps].sort((a, b) => a.order_index - b.order_index), [steps]);
   const currentStep = useMemo(() => steps.find(s => s.id === prospect.step_id), [steps, prospect.step_id]);
-  
+
   // Calcular historial de fechas de completado basado en logs
   const stepCompletionDates = useMemo(() => {
     const dates: Record<number, string> = {};
@@ -1125,7 +1147,7 @@ function CallModal({
           // Si hay múltiples logs para el mismo paso, tomamos el más reciente (asumiendo que callLogs viene ordenado o lo ordenamos)
           // Pero callLogs suele venir ordenado por fecha desc.
           if (!dates[log.step_id]) {
-             dates[log.step_id] = log.call_date;
+            dates[log.step_id] = log.call_date;
           }
         }
       });
@@ -1142,7 +1164,7 @@ function CallModal({
 
   const handleStepClick = async (step: FollowUpStep) => {
     const isCompleted = !!stepCompletionDates[step.id];
-    if (isCompleted) return; 
+    if (isCompleted) return;
 
     if (!confirm(`¿Marcar "${step.name}" como completado?`)) return;
 
@@ -1170,7 +1192,7 @@ function CallModal({
   return (
     <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-gray-900 rounded-xl shadow-2xl border border-gray-800 w-full max-w-7xl h-[90vh] flex flex-col overflow-hidden">
-        
+
         {/* Header */}
         <div className="flex justify-between items-center px-6 py-4 border-b border-gray-800 bg-gray-900/50 shrink-0">
           <div>
@@ -1179,8 +1201,8 @@ function CallModal({
               Registrar Actividad
             </h2>
             <p className="text-sm text-gray-400 flex items-center gap-2">
-              {prospect.company_name} 
-              <span className="text-gray-600">•</span> 
+              {prospect.company_name}
+              <span className="text-gray-600">•</span>
               <span className="text-blue-400">{prospect.contact_phone || 'Sin teléfono'}</span>
             </p>
           </div>
@@ -1194,13 +1216,13 @@ function CallModal({
 
         {/* Main Tabs */}
         <div className="flex border-b border-gray-800 bg-gray-900/50 shrink-0">
-          <button 
+          <button
             onClick={() => setActiveMainTab('call')}
             className={`flex-1 px-6 py-3 text-sm font-medium transition-colors text-center ${activeMainTab === 'call' ? 'text-blue-400 border-b-2 border-blue-400 bg-gray-800/30' : 'text-gray-400 hover:text-white hover:bg-gray-800/20'}`}
           >
             Llamada
           </button>
-          <button 
+          <button
             onClick={() => setActiveMainTab('steps')}
             className={`flex-1 px-6 py-3 text-sm font-medium transition-colors text-center ${activeMainTab === 'steps' ? 'text-blue-400 border-b-2 border-blue-400 bg-gray-800/30' : 'text-gray-400 hover:text-white hover:bg-gray-800/20'}`}
           >
@@ -1209,37 +1231,37 @@ function CallModal({
         </div>
 
         <div className="flex-1 overflow-hidden flex flex-col">
-          
+
           {/* TAB: PASOS (CHECKLIST) */}
           {activeMainTab === 'steps' && (
             <div className="flex-1 flex flex-col bg-gray-900/30">
               <div className="p-4 border-b border-gray-800 flex justify-between items-center bg-gray-800/20">
                 <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wider">Progreso del Cliente</h3>
-                <button 
-                  onClick={() => setActiveTab('manage')} 
+                <button
+                  onClick={() => setActiveTab('manage')}
                   className="text-xs text-blue-400 hover:text-blue-300 hover:underline"
                 >
                   Configurar Pasos
                 </button>
               </div>
-              
+
               <div className="flex-1 overflow-y-auto p-4 space-y-2">
                 {activeTab === 'manage' ? (
                   <div className="h-full flex flex-col">
-                     <div className="flex justify-between items-center mb-2">
-                        <h4 className="text-white font-medium">Editar Pasos</h4>
-                        <button onClick={() => setActiveTab('all')} className="text-xs text-gray-400 hover:text-white">Volver</button>
-                     </div>
-                     <StepManagerPanel steps={steps} onSaved={() => { onStepsUpdated(); setActiveTab('all'); }} />
+                    <div className="flex justify-between items-center mb-2">
+                      <h4 className="text-white font-medium">Editar Pasos</h4>
+                      <button onClick={() => setActiveTab('all')} className="text-xs text-gray-400 hover:text-white">Volver</button>
+                    </div>
+                    <StepManagerPanel steps={steps} onSaved={() => { onStepsUpdated(); setActiveTab('all'); }} />
                   </div>
                 ) : (
                   sortedSteps.map((step, index) => {
                     const completionDate = stepCompletionDates[step.id];
                     const isCompleted = !!completionDate;
                     const isCurrent = currentStep?.id === step.id;
-                    
+
                     return (
-                      <div 
+                      <div
                         key={step.id}
                         className={`
                           relative flex items-center gap-3 p-4 rounded-lg border transition-all duration-200 max-w-3xl mx-auto w-full
@@ -1252,7 +1274,7 @@ function CallModal({
                           <div className="absolute left-[1.65rem] top-10 bottom-[-1rem] w-px bg-gray-800 -z-10" />
                         )}
 
-                        <div 
+                        <div
                           onClick={() => handleStepClick(step)}
                           className={`
                             w-8 h-8 rounded flex items-center justify-center shrink-0 border mt-0.5 transition-colors cursor-pointer
@@ -1264,15 +1286,15 @@ function CallModal({
 
                         {/* FECHA AL LADO DE LA CASILLA */}
                         <div className="flex flex-col justify-center min-w-[100px]">
-                           {isCompleted ? (
-                              <span className="text-xs font-bold text-green-400 bg-green-900/20 px-2 py-1 rounded border border-green-900/30 text-center">
-                                {new Date(completionDate).toLocaleDateString()}
-                              </span>
-                           ) : (
-                              <span className="text-[10px] text-gray-600 text-center italic">
-                                --/--/----
-                              </span>
-                           )}
+                          {isCompleted ? (
+                            <span className="text-xs font-bold text-green-400 bg-green-900/20 px-2 py-1 rounded border border-green-900/30 text-center">
+                              {new Date(completionDate).toLocaleDateString()}
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-gray-600 text-center italic">
+                              --/--/----
+                            </span>
+                          )}
                         </div>
 
                         <div className="flex-1 min-w-0" onClick={() => handleStepClick(step)}>
@@ -1286,7 +1308,7 @@ function CallModal({
                               </span>
                             )}
                           </div>
-                          
+
                           {!isCompleted && isCurrent && (
                             <p className="text-sm text-blue-400 mt-1">Paso actual sugerido</p>
                           )}
@@ -1303,19 +1325,33 @@ function CallModal({
           {/* TAB: LLAMADA (FORMULARIO Y HISTORIAL) */}
           {activeMainTab === 'call' && (
             <div className="flex-1 flex flex-col bg-gray-900">
-              
+
               {/* Formulario (Parte Superior) */}
               <div className="p-6 border-b border-gray-800 bg-gray-800/10">
                 <form onSubmit={handleSubmit}>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
                     <div>
+                      <label className="block text-xs font-medium text-gray-400 mb-1 uppercase">Paso Actual (Etapa)</label>
+                      <select
+                        value={formData.step_id || ''}
+                        onChange={(e) => setFormData(prev => ({ ...prev, step_id: e.target.value ? Number(e.target.value) : null }))}
+                        className="w-full px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all mb-3"
+                      >
+                        <option value="">Seleccionar paso</option>
+                        {steps.map(step => (
+                          <option key={step.id} value={step.id}>
+                            {step.name}
+                          </option>
+                        ))}
+                      </select>
+
                       <label className="block text-xs font-medium text-gray-400 mb-1 uppercase">Resultado de la llamada</label>
                       <select
                         value={formData.outcome}
                         onChange={(e) => setFormData(prev => ({ ...prev, outcome: e.target.value }))}
                         className="w-full px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                       >
-                        <option value="completed">Completada (Hablé con el cliente)</option>
+                        <option value="completed">Llamada Realizada (Hablé con el cliente)</option>
                         <option value="pending">Pendiente (Llamar más tarde)</option>
                         <option value="no_answer">No contesta</option>
                         <option value="voicemail">Correo de voz / Buzón</option>
@@ -1405,7 +1441,7 @@ function CallModal({
                           <div className="flex justify-between items-start mb-1.5">
                             <div className="flex items-center gap-2">
                               <span className="text-xs font-medium text-gray-300">
-                                {new Date(log.call_date).toLocaleDateString()} 
+                                {new Date(log.call_date).toLocaleDateString()}
                                 <span className="text-gray-500 mx-1">·</span>
                                 {new Date(log.call_date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                               </span>
@@ -1415,21 +1451,20 @@ function CallModal({
                                 </span>
                               )}
                             </div>
-                            <span className={`text-[10px] px-2 py-0.5 rounded-full border ${
-                              log.outcome === 'completed' ? 'bg-blue-900/20 text-blue-300 border-blue-900/30' :
+                            <span className={`text-[10px] px-2 py-0.5 rounded-full border ${log.outcome === 'completed' ? 'bg-blue-900/20 text-blue-300 border-blue-900/30' :
                               log.outcome === 'no_answer' ? 'bg-red-900/20 text-red-300 border-red-900/30' :
-                              'bg-gray-700 text-gray-300 border-gray-600'
-                            }`}>
-                              {log.outcome === 'completed' ? 'Completada' : 
-                               log.outcome === 'no_answer' ? 'No contesta' : 
-                               log.outcome === 'voicemail' ? 'Buzón' : log.outcome}
+                                'bg-gray-700 text-gray-300 border-gray-600'
+                              }`}>
+                              {log.outcome === 'completed' ? 'Completada' :
+                                log.outcome === 'no_answer' ? 'No contesta' :
+                                  log.outcome === 'voicemail' ? 'Buzón' : log.outcome}
                             </span>
                           </div>
-                          
+
                           {log.notes && (
                             <p className="text-sm text-gray-300 whitespace-pre-line leading-relaxed">{log.notes}</p>
                           )}
-                          
+
                           {log.next_call_date && (
                             <div className="mt-2 flex items-center gap-1.5 text-xs text-blue-400/80">
                               <CalendarIcon className="w-3 h-3" />
@@ -1607,8 +1642,8 @@ function PriorityManagerModal({ priorities, onClose, onSaved }: PriorityManagerM
         {message && (
           <div
             className={`mx-6 mt-4 mb-2 rounded-lg px-4 py-3 text-sm border ${message.type === 'success'
-                ? 'border-green-500/40 bg-green-900/30 text-green-100'
-                : 'border-red-500/40 bg-red-900/30 text-red-100'
+              ? 'border-green-500/40 bg-green-900/30 text-green-100'
+              : 'border-red-500/40 bg-red-900/30 text-red-100'
               }`}
           >
             {message.text}
@@ -1709,6 +1744,189 @@ function PriorityManagerModal({ priorities, onClose, onSaved }: PriorityManagerM
 
 
 
+
+// Agenda/Kanban View Component
+function AgendaView({
+  prospects,
+  onSelectProspect
+}: {
+  prospects: FollowUpProspect[];
+  onSelectProspect: (prospect: FollowUpProspect) => void;
+}) {
+  // Logic to group prospects
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+
+  const nextWeek = new Date(today);
+  nextWeek.setDate(nextWeek.getDate() + 7);
+
+  const groups = {
+    overdue: [] as FollowUpProspect[],
+    today: [] as FollowUpProspect[],
+    tomorrow: [] as FollowUpProspect[],
+    week: [] as FollowUpProspect[],
+    future: [] as FollowUpProspect[],
+    noDate: [] as FollowUpProspect[],
+  };
+
+  prospects.forEach(p => {
+    if (!p.next_call_date) {
+      groups.noDate.push(p);
+      return;
+    }
+    // We parse the date part only to avoid timezone shifts if possible, 
+    // but assuming ISO string, usually Date() works if we just want day comparison.
+    // However, to be safe with local dates:
+    const d = new Date(p.next_call_date);
+    // Reset time to 0 to compare dates
+    const dDate = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const todayDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const tomorrowDate = new Date(tomorrow.getFullYear(), tomorrow.getMonth(), tomorrow.getDate());
+    const nextWeekDate = new Date(nextWeek.getFullYear(), nextWeek.getMonth(), nextWeek.getDate());
+
+    if (dDate < todayDate) groups.overdue.push(p);
+    else if (dDate.getTime() === todayDate.getTime()) groups.today.push(p);
+    else if (dDate.getTime() === tomorrowDate.getTime()) groups.tomorrow.push(p);
+    else if (dDate <= nextWeekDate) groups.week.push(p);
+    else groups.future.push(p);
+  });
+
+  const renderCard = (p: FollowUpProspect) => (
+    <div
+      key={p.id}
+      onClick={() => onSelectProspect(p)}
+      className="bg-gray-800 p-3 rounded-lg border border-gray-700 hover:border-blue-500 cursor-pointer shadow-sm hover:shadow-md transition-all group"
+    >
+      <div className="flex justify-between items-start mb-2">
+        <h4 className="font-medium text-white truncate pr-2" title={p.company_name}>
+          {p.company_name}
+        </h4>
+        {p.priority_color && (
+          <div
+            className="w-2.5 h-2.5 rounded-full shrink-0 mt-1.5"
+            style={{ backgroundColor: p.priority_color }}
+            title={`Prioridad: ${p.priority_name}`}
+          />
+        )}
+      </div>
+
+      <div className="text-xs text-gray-400 mb-2 flex items-center gap-1">
+        <Phone className="w-3 h-3" />
+        {p.contact_phone || 'Sin teléfono'}
+      </div>
+
+      <div className="bg-gray-900/50 rounded p-2 mb-2">
+        <div className="text-xs text-gray-400 uppercase font-semibold mb-1">Próxima Tarea (Paso)</div>
+        <div className="text-sm text-blue-300 font-medium">
+          {p.step_name || 'Sin paso asignado'}
+        </div>
+      </div>
+
+      <div className="flex justify-between items-center text-xs text-gray-500 mt-2 pt-2 border-t border-gray-700/50">
+        <span>
+          {p.vendor_name || 'Sin vendedor'}
+        </span>
+        <span className="flex items-center gap-1 group-hover:text-blue-400 transition-colors">
+          <Edit3 className="w-3 h-3" />
+          Gestionar
+        </span>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 overflow-x-auto pb-4">
+
+      {/* Vencidos */}
+      <div className="min-w-[280px] bg-gray-900/50 rounded-xl border border-red-900/30 flex flex-col max-h-[calc(100vh-250px)]">
+        <div className="p-3 border-b border-red-900/30 bg-red-900/10 rounded-t-xl flex justify-between items-center sticky top-0 backdrop-blur-sm">
+          <h3 className="font-semibold text-red-200 flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4" />
+            Vencidos
+          </h3>
+          <span className="bg-red-900/40 text-red-200 text-xs px-2 py-0.5 rounded-full border border-red-700/50">
+            {groups.overdue.length}
+          </span>
+        </div>
+        <div className="p-3 space-y-3 overflow-y-auto custom-scrollbar flex-1">
+          {groups.overdue.map(renderCard)}
+          {groups.overdue.length === 0 && <p className="text-gray-500 text-sm italic text-center py-4">No hay tareas vencidas</p>}
+        </div>
+      </div>
+
+      {/* Hoy */}
+      <div className="min-w-[280px] bg-gray-900/50 rounded-xl border border-blue-900/30 flex flex-col max-h-[calc(100vh-250px)]">
+        <div className="p-3 border-b border-blue-900/30 bg-blue-900/10 rounded-t-xl flex justify-between items-center sticky top-0 backdrop-blur-sm">
+          <h3 className="font-semibold text-blue-200 flex items-center gap-2">
+            <Clock className="w-4 h-4" />
+            Para Hoy
+          </h3>
+          <span className="bg-blue-900/40 text-blue-200 text-xs px-2 py-0.5 rounded-full border border-blue-700/50">
+            {groups.today.length}
+          </span>
+        </div>
+        <div className="p-3 space-y-3 overflow-y-auto custom-scrollbar flex-1">
+          {groups.today.map(renderCard)}
+          {groups.today.length === 0 && <p className="text-gray-500 text-sm italic text-center py-4">Todo al día</p>}
+        </div>
+      </div>
+
+      {/* Mañana */}
+      <div className="min-w-[280px] bg-gray-900/50 rounded-xl border border-gray-800 flex flex-col max-h-[calc(100vh-250px)]">
+        <div className="p-3 border-b border-gray-800 bg-gray-800/50 rounded-t-xl flex justify-between items-center sticky top-0 backdrop-blur-sm">
+          <h3 className="font-semibold text-gray-200">Mañana</h3>
+          <span className="bg-gray-800 text-gray-300 text-xs px-2 py-0.5 rounded-full border border-gray-700">
+            {groups.tomorrow.length}
+          </span>
+        </div>
+        <div className="p-3 space-y-3 overflow-y-auto custom-scrollbar flex-1">
+          {groups.tomorrow.map(renderCard)}
+          {groups.tomorrow.length === 0 && <p className="text-gray-600 text-sm italic text-center py-4">Nada programado</p>}
+        </div>
+      </div>
+
+      {/* Próxima Semana */}
+      <div className="min-w-[280px] bg-gray-900/50 rounded-xl border border-gray-800 flex flex-col max-h-[calc(100vh-250px)]">
+        <div className="p-3 border-b border-gray-800 bg-gray-800/50 rounded-t-xl flex justify-between items-center sticky top-0 backdrop-blur-sm">
+          <h3 className="font-semibold text-gray-300">Próximos 7 Días</h3>
+          <span className="bg-gray-800 text-gray-300 text-xs px-2 py-0.5 rounded-full border border-gray-700">
+            {groups.week.length}
+          </span>
+        </div>
+        <div className="p-3 space-y-3 overflow-y-auto custom-scrollbar flex-1">
+          {groups.week.map(renderCard)}
+          {groups.week.length === 0 && <p className="text-gray-600 text-sm italic text-center py-4">Nada programado</p>}
+        </div>
+      </div>
+
+      {/* Futuro / Sin Fecha */}
+      <div className="min-w-[280px] bg-gray-900/50 rounded-xl border border-gray-800 flex flex-col max-h-[calc(100vh-250px)]">
+        <div className="p-3 border-b border-gray-800 bg-gray-800/50 rounded-t-xl flex justify-between items-center sticky top-0 backdrop-blur-sm">
+          <h3 className="font-semibold text-gray-400">Futuro / Sin Fecha</h3>
+          <span className="bg-gray-800 text-gray-400 text-xs px-2 py-0.5 rounded-full border border-gray-700">
+            {groups.future.length + groups.noDate.length}
+          </span>
+        </div>
+        <div className="p-3 space-y-3 overflow-y-auto custom-scrollbar flex-1">
+          {groups.future.map(renderCard)}
+          {groups.noDate.length > 0 && (
+            <>
+              {groups.future.length > 0 && <div className="border-t border-gray-800 my-2"></div>}
+              <div className="text-xs font-semibold text-gray-500 uppercase mb-2 px-1">Sin Fecha</div>
+              {groups.noDate.map(renderCard)}
+            </>
+          )}
+          {groups.future.length === 0 && groups.noDate.length === 0 && <p className="text-gray-600 text-sm italic text-center py-4">Vacío</p>}
+        </div>
+      </div>
+
+    </div>
+  );
+}
+
 // Calendar View Component
 function CalendarView({
   currentDate,
@@ -1723,13 +1941,13 @@ function CalendarView({
 }) {
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
-  
+
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const firstDayOfMonth = new Date(year, month, 1).getDay(); // 0 = Sunday
-  
+
   // Adjust for Monday start (0 = Monday, 6 = Sunday)
   const startDay = (firstDayOfMonth + 6) % 7;
-  
+
   const monthNames = [
     "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
     "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
@@ -1751,16 +1969,16 @@ function CalendarView({
       // Usamos UTC para evitar problemas de zona horaria si la fecha viene como ISO string
       // Pero next_call_date suele ser YYYY-MM-DD o ISO. Asumimos que queremos comparar el día calendario.
       // Mejor enfoque: comparar strings YYYY-MM-DD
-      
+
       // Convertir ambas a string YYYY-MM-DD local para comparar
       const dStr = d.toISOString().split('T')[0];
-      
+
       // Construir string local YYYY-MM-DD para el día del calendario
       // Ojo: month es 0-indexed
       const currentMonthStr = (month + 1).toString().padStart(2, '0');
       const currentDayStr = day.toString().padStart(2, '0');
       const targetStr = `${year}-${currentMonthStr}-${currentDayStr}`;
-      
+
       return dStr === targetStr;
     });
   };
@@ -1803,7 +2021,7 @@ function CalendarView({
           </div>
         ))}
       </div>
-      
+
       <div className="grid grid-cols-7 auto-rows-fr bg-gray-900">
         {/* Empty cells for previous month */}
         {Array.from({ length: startDay }).map((_, i) => (
@@ -1814,22 +2032,21 @@ function CalendarView({
         {Array.from({ length: daysInMonth }).map((_, i) => {
           const day = i + 1;
           const dayProspects = getProspectsForDay(day);
-          const isToday = 
-            day === new Date().getDate() && 
-            month === new Date().getMonth() && 
+          const isToday =
+            day === new Date().getDate() &&
+            month === new Date().getMonth() &&
             year === new Date().getFullYear();
 
           return (
-            <div 
-              key={day} 
-              className={`min-h-[120px] border-b border-r border-gray-800 p-2 transition-colors hover:bg-gray-800/30 ${
-                isToday ? 'bg-blue-900/10' : ''
-              }`}
+            <div
+              key={day}
+              className={`min-h-[120px] border-b border-r border-gray-800 p-2 transition-colors hover:bg-gray-800/30 ${isToday ? 'bg-blue-900/10' : ''
+                }`}
             >
               <div className={`text-sm font-medium mb-2 ${isToday ? 'text-blue-400' : 'text-gray-400'}`}>
                 {day}
               </div>
-              
+
               <div className="space-y-1">
                 {dayProspects.map(prospect => (
                   <button
@@ -1842,8 +2059,8 @@ function CalendarView({
                         {prospect.company_name}
                       </span>
                       {prospect.priority_color && (
-                        <div 
-                          className="w-2 h-2 rounded-full" 
+                        <div
+                          className="w-2 h-2 rounded-full"
                           style={{ backgroundColor: prospect.priority_color }}
                         />
                       )}
@@ -1857,7 +2074,7 @@ function CalendarView({
             </div>
           );
         })}
-        
+
         {/* Empty cells for next month to fill grid */}
         {Array.from({ length: (7 - ((startDay + daysInMonth) % 7)) % 7 }).map((_, i) => (
           <div key={`next-${i}`} className="min-h-[120px] border-b border-r border-gray-800 bg-gray-900/50" />

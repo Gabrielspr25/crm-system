@@ -74,3 +74,121 @@ export const deleteReferido = async (req, res) => {
         res.status(500).json({ error: 'Error interno del servidor' });
     }
 };
+
+// Búsqueda inteligente de clientes, BANs y suscriptores
+export const searchClientsBANsSubscribers = async (req, res) => {
+    const { q } = req.query;
+    
+    if (!q || q.trim().length < 2) {
+        return res.json([]);
+    }
+
+    const searchTerm = `%${q.trim()}%`;
+    
+    try {
+        // Buscar en clientes
+        const clients = await query(`
+            SELECT 
+                'client' as type,
+                id,
+                name,
+                contact_name,
+                phone,
+                email,
+                salesperson_id
+            FROM clients 
+            WHERE 
+                name ILIKE $1 
+                OR contact_name ILIKE $1 
+                OR phone ILIKE $1
+            LIMIT 10
+        `, [searchTerm]);
+
+        // Buscar en BANs
+        const bans = await query(`
+            SELECT 
+                'ban' as type,
+                b.id,
+                b.ban_number,
+                b.address,
+                c.name as client_name,
+                c.id as client_id
+            FROM bans b
+            LEFT JOIN clients c ON b.client_id = c.id
+            WHERE 
+                b.ban_number ILIKE $1 
+                OR b.address ILIKE $1
+            LIMIT 10
+        `, [searchTerm]);
+
+        // Buscar en suscriptores
+        const subscribers = await query(`
+            SELECT 
+                'subscriber' as type,
+                s.id,
+                s.phone,
+                s.imei,
+                b.ban_number,
+                c.name as client_name,
+                c.id as client_id
+            FROM subscribers s
+            LEFT JOIN bans b ON s.ban_id = b.id
+            LEFT JOIN clients c ON b.client_id = c.id
+            WHERE 
+                s.phone ILIKE $1 
+                OR s.imei ILIKE $1
+            LIMIT 10
+        `, [searchTerm]);
+
+        // Combinar resultados
+        const results = [...clients, ...bans, ...subscribers];
+        res.json(results);
+    } catch (error) {
+        console.error('Error searching:', error);
+        res.status(500).json({ error: 'Error en la búsqueda' });
+    }
+};
+
+// Creación rápida de cliente y referido
+export const createClientQuick = async (req, res) => {
+    const { nombre, contacto, telefono, email, tax_id, ban_number, salesperson_id, notas } = req.body;
+    
+    if (!nombre || !telefono) {
+        return res.status(400).json({ error: 'Nombre y teléfono son requeridos' });
+    }
+
+    try {
+        // Crear cliente
+        const clientResult = await query(`
+            INSERT INTO clients (name, contact_name, phone, email, tax_id, salesperson_id)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING *
+        `, [nombre, contacto || nombre, telefono, email, tax_id, salesperson_id]);
+
+        const client = clientResult[0];
+
+        // Si viene BAN, crear BAN también
+        if (ban_number) {
+            await query(`
+                INSERT INTO bans (client_id, ban_number)
+                VALUES ($1, $2)
+            `, [client.id, ban_number]);
+        }
+
+        // Crear referido automáticamente
+        const referidoResult = await query(`
+            INSERT INTO referidos (nombre, email, tipo, suscriptor, vendedor, notas, estado, fecha)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            RETURNING *
+        `, [nombre, email, 'Cliente Nuevo', telefono, salesperson_id, notas || 'Cliente creado desde referidos', 'Pendiente', new Date()]);
+
+        res.status(201).json({
+            client,
+            referido: referidoResult[0]
+        });
+    } catch (error) {
+        console.error('Error creating quick client:', error);
+        res.status(500).json({ error: 'Error al crear cliente' });
+    }
+};
+

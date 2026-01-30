@@ -5,7 +5,7 @@ import { serverError } from '../middlewares/errorHandler.js';
 export const getCategories = async (req, res) => {
     try {
         const categories = await query('SELECT * FROM categories ORDER BY name ASC');
-        res.json(categories.rows);
+        res.json(categories);
     } catch (error) {
         serverError(res, error, 'Error obteniendo categorías');
     }

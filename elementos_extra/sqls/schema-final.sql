@@ -93,6 +93,7 @@ CREATE TABLE clients (
     address TEXT,
     city VARCHAR(100),
     zip_code VARCHAR(20),
+    tax_id VARCHAR(20),
     salesperson_id UUID REFERENCES salespeople(id) ON DELETE SET NULL,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()

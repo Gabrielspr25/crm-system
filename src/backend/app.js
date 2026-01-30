@@ -16,6 +16,7 @@ import productRoutes from './routes/productRoutes.js';
 import importRoutes from './routes/importRoutes.js';
 import aiRoutes from './routes/aiRoutes.js';
 import referidosRoutes from './routes/referidosRoutes.js';
+import discrepanciasRoutes from './routes/discrepanciasRoutes.js';
 
 const app = express();
 
@@ -36,6 +37,8 @@ app.use('/api/products', productRoutes);
 app.use('/api/importador', importRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/referidos', referidosRoutes);
+app.use('/api/discrepancias', discrepanciasRoutes);
+
 
 // Ruta de prueba
 app.get('/', (req, res) => {

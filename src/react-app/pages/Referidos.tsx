@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Plus,
   Search,
@@ -13,7 +13,10 @@ import {
   Bell,
   Calendar,
   Phone,
-  X
+  X,
+  UserPlus,
+  Building2,
+  WifiOff
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -36,6 +39,29 @@ export default function ReferidosPage() {
   const [filterStatus, setFilterStatus] = useState('Todos');
   const [todayAlerts, setTodayAlerts] = useState<any[]>([]);
   const [showAlerts, setShowAlerts] = useState(false);
+  
+  // Tabs state
+  const [activeTab, setActiveTab] = useState<'lista' | 'registrar'>('lista');
+  
+  // Online/Offline detection
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  
+  // Quick client form state
+  const [quickClientForm, setQuickClientForm] = useState({
+    nombre: '',
+    contacto: '',
+    telefono: '',
+    email: '',
+    tax_id: '',
+    ban_number: '',
+    notas: ''
+  });
+  
+  // Search state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [selectedClient, setSelectedClient] = useState<any>(null);
 
   // Status Management State
   const [statuses, setStatuses] = useState([
@@ -62,6 +88,18 @@ export default function ReferidosPage() {
 
   useEffect(() => {
     loadReferidos();
+    
+    // Online/offline listeners
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
   }, []);
 
   // Verificar alertas del día cuando cambia la data
@@ -91,6 +129,73 @@ export default function ReferidosPage() {
       }
     } catch (error) {
       console.error("Error loading referidos", error);
+    }
+  };
+  
+  // Debounced search function
+  const debouncedSearch = useMemo(() => {
+    let timeoutId: NodeJS.Timeout;
+    return (query: string) => {
+      clearTimeout(timeoutId);
+      if (query.length < 2) {
+        setSearchResults([]);
+        return;
+      }
+      setIsSearching(true);
+      timeoutId = setTimeout(async () => {
+        try {
+          const res = await authFetch(`/api/referidos/search?q=${encodeURIComponent(query)}`);
+          if (res.ok) {
+            const results = await res.json();
+            setSearchResults(results);
+          }
+        } catch (error) {
+          console.error('Error searching:', error);
+        } finally {
+          setIsSearching(false);
+        }
+      }, 300);
+    };
+  }, []);
+  
+  // Quick client submit
+  const handleQuickClientSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isOnline) return;
+    
+    try {
+      const userStr = localStorage.getItem('crm_user');
+      const user = userStr ? JSON.parse(userStr) : null;
+      
+      const res = await authFetch('/api/referidos/quick-client', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...quickClientForm,
+          salesperson_id: user?.salesperson_id
+        })
+      });
+      
+      if (res.ok) {
+        alert('✅ Cliente y referido creados exitosamente');
+        setQuickClientForm({
+          nombre: '',
+          contacto: '',
+          telefono: '',
+          email: '',
+          tax_id: '',
+          ban_number: '',
+          notas: ''
+        });
+        setActiveTab('lista');
+        loadReferidos();
+      } else {
+        const error = await res.json();
+        alert(`❌ Error: ${error.error}`);
+      }
+    } catch (error) {
+      console.error('Error creating quick client:', error);
+      alert('❌ Error al crear cliente');
     }
   };
 
@@ -209,6 +314,14 @@ export default function ReferidosPage() {
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-200 font-sans transition-colors duration-200">
 
+      {/* Offline Banner */}
+      {!isOnline && (
+        <div className="fixed top-0 left-0 right-0 z-[100] bg-red-500 text-white p-3 text-center font-semibold flex items-center justify-center gap-2">
+          <WifiOff className="w-5 h-5" />
+          Sin conexión a Internet
+        </div>
+      )}
+
       {/* Alerta de Recordatorios del Día */}
       {showAlerts && todayAlerts.length > 0 && (
         <div className="fixed top-4 right-4 z-50 w-96 bg-amber-50 dark:bg-amber-900/90 border border-amber-200 dark:border-amber-700 rounded-xl shadow-2xl overflow-hidden animate-pulse">
@@ -285,7 +398,7 @@ export default function ReferidosPage() {
           </div>
           <h1 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
             Gestión de Referidos
-            <span className="text-[10px] bg-slate-200 dark:bg-slate-700 px-2 py-0.5 rounded-full text-slate-600 dark:text-slate-300 font-normal">v2.1-CALENDAR</span>
+            <span className="text-[10px] bg-slate-200 dark:bg-slate-700 px-2 py-0.5 rounded-full text-slate-600 dark:text-slate-300 font-normal">v2.2-MOBILE</span>
           </h1>
         </div>
 
@@ -294,7 +407,7 @@ export default function ReferidosPage() {
           <button
             onClick={() => setShowAlerts(!showAlerts)}
             className={cn(
-              "relative px-3 py-2 rounded-lg flex items-center gap-2 transition-colors",
+              "relative px-3 py-2 min-h-[44px] rounded-lg flex items-center gap-2 transition-colors",
               todayAlerts.length > 0
                 ? "bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-900/50 dark:text-amber-300 dark:hover:bg-amber-900/70"
                 : "text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
@@ -311,7 +424,7 @@ export default function ReferidosPage() {
 
           <button
             onClick={() => setIsCalendarOpen(true)}
-            className="p-2 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-600 transition-colors"
+            className="p-2 min-h-[44px] rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-600 transition-colors"
             title="Calendario"
           >
             <Calendar className="w-5 h-5" />
@@ -319,35 +432,68 @@ export default function ReferidosPage() {
 
           <button
             onClick={() => setIsStatusModalOpen(true)}
-            className="hidden sm:flex px-4 py-2 text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
+            className="hidden sm:flex px-4 py-2 min-h-[44px] text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
           >
             Gestionar Estados
           </button>
           <button
             onClick={() => openModal()}
-            className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors shadow-sm hover:shadow-md active:scale-95 duration-150"
+            className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 min-h-[44px] rounded-lg flex items-center gap-2 transition-colors shadow-sm hover:shadow-md active:scale-95 duration-150"
           >
             <Plus className="w-4 h-4" />
             <span>Nuevo Registro</span>
           </button>
         </div>
       </div>
+      
+      {/* Tabs */}
+      <div className="mb-6 flex gap-2 border-b border-slate-200 dark:border-slate-800">
+        <button
+          onClick={() => setActiveTab('lista')}
+          className={cn(
+            "px-4 py-3 min-h-[44px] font-medium transition-colors relative flex items-center gap-2",
+            activeTab === 'lista'
+              ? "text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-600 dark:border-indigo-400"
+              : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200"
+          )}
+        >
+          <FileText className="w-4 h-4" />
+          Lista de Referidos
+          <span className="bg-slate-200 dark:bg-slate-700 px-2 py-0.5 rounded-full text-xs">
+            {data.length}
+          </span>
+        </button>
+        <button
+          onClick={() => setActiveTab('registrar')}
+          className={cn(
+            "px-4 py-3 min-h-[44px] font-medium transition-colors relative flex items-center gap-2",
+            activeTab === 'registrar'
+              ? "text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-600 dark:border-indigo-400"
+              : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200"
+          )}
+        >
+          <UserPlus className="w-4 h-4" />
+          Registrar Cliente
+        </button>
+      </div>
 
       {/* Main Content */}
       <div className="w-full">
-        {/* Search and Filter Bar */}
-        <div className="mb-6 flex flex-col sm:flex-row gap-4 justify-between items-center">
-          <div className="flex flex-1 gap-4 w-full">
-            {/* Search */}
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
-              <input
-                type="text"
-                placeholder="Buscar por nombre, email, modelo..."
-                className="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-200 dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all bg-white dark:bg-slate-900 dark:text-white dark:placeholder-slate-500"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
+        {activeTab === 'lista' ? (
+          <>
+            {/* Search and Filter Bar */}
+            <div className="mb-6 flex flex-col sm:flex-row gap-4 justify-between items-center">
+              <div className="flex flex-1 gap-4 w-full">
+                {/* Search */}
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
+                  <input
+                    type="text"
+                    placeholder="Buscar por nombre, email, modelo..."
+                    className="w-full pl-10 pr-4 py-2 min-h-[44px] rounded-lg border border-slate-200 dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all bg-white dark:bg-slate-900 dark:text-white dark:placeholder-slate-500"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                  />
             </div>
 
             {/* Status Filter */}
@@ -494,6 +640,8 @@ export default function ReferidosPage() {
             </table>
           </div>
         </div>
+          </>
+        ) : null}
       </div>
 
       {/* Main Form Modal */}
@@ -855,6 +1003,256 @@ export default function ReferidosPage() {
                 </button>
               </form>
             </div>
+          </div>
+        </div>
+      )}
+      
+      {/* Tab: Registrar Cliente */}
+      {activeTab === 'registrar' && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Card 1: Buscar Cliente Existente */}
+          <div className="bg-white dark:bg-slate-900 rounded-xl shadow-sm p-6 h-fit">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="bg-blue-100 dark:bg-blue-900/30 p-3 rounded-lg">
+                <Search className="w-6 h-6 text-blue-600 dark:text-blue-400" />
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+                  Buscar Cliente Existente
+                </h2>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Por BAN, suscriptor o nombre de empresa
+                </p>
+              </div>
+            </div>
+            
+            <div className="space-y-4">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
+                <input
+                  type="text"
+                  placeholder="Ej: 849-123-4567, Acme Inc..."
+                  className="w-full pl-11 pr-4 py-3 min-h-[44px] rounded-lg border-2 border-slate-200 dark:border-slate-700 focus:border-blue-500 dark:focus:border-blue-400 outline-none transition-all bg-white dark:bg-slate-950 dark:text-white text-base"
+                  value={searchQuery}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    debouncedSearch(e.target.value);
+                  }}
+                  disabled={!isOnline}
+                />
+              </div>
+              
+              {isSearching && (
+                <div className="text-center py-8 text-slate-500 dark:text-slate-400">
+                  <div className="animate-spin w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full mx-auto mb-2"></div>
+                  Buscando...
+                </div>
+              )}
+              
+              {!isSearching && searchResults.length > 0 && (
+                <div className="space-y-2 max-h-96 overflow-y-auto">
+                  {searchResults.map((result, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => setSelectedClient(result)}
+                      className={cn(
+                        "w-full text-left p-4 rounded-lg border-2 transition-all min-h-[44px]",
+                        selectedClient?.id === result.id && selectedClient?.type === result.type
+                          ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20"
+                          : "border-slate-200 dark:border-slate-700 hover:border-blue-300 dark:hover:border-blue-600"
+                      )}
+                    >
+                      <div className="flex items-start gap-3">
+                        {result.type === 'client' && <Building2 className="w-5 h-5 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" />}
+                        {result.type === 'ban' && <FileText className="w-5 h-5 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />}
+                        {result.type === 'subscriber' && <Phone className="w-5 h-5 text-purple-600 dark:text-purple-400 flex-shrink-0 mt-0.5" />}
+                        <div className="flex-1 min-w-0">
+                          <div className="font-semibold text-slate-900 dark:text-white text-sm">
+                            {result.type === 'client' && result.name}
+                            {result.type === 'ban' && `BAN: ${result.ban_number}`}
+                            {result.type === 'subscriber' && `Tel: ${result.phone}`}
+                          </div>
+                          <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                            {result.type === 'client' && `Contacto: ${result.contact_name || 'N/A'}`}
+                            {result.type === 'ban' && `Cliente: ${result.client_name || 'Sin asignar'}`}
+                            {result.type === 'subscriber' && `Cliente: ${result.client_name || 'N/A'} • BAN: ${result.ban_number}`}
+                          </div>
+                          {result.type === 'client' && result.phone && (
+                            <div className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
+                              📞 {result.phone}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+              
+              {!isSearching && searchQuery.length >= 2 && searchResults.length === 0 && (
+                <div className="text-center py-8 text-slate-500 dark:text-slate-400">
+                  <XCircle className="w-12 h-12 mx-auto mb-2 text-slate-300 dark:text-slate-600" />
+                  <p>No se encontraron resultados</p>
+                  <button
+                    onClick={() => {
+                      setQuickClientForm({
+                        ...quickClientForm,
+                        nombre: searchQuery
+                      });
+                      setSearchQuery('');
+                      setSearchResults([]);
+                    }}
+                    className="mt-3 text-sm text-blue-600 dark:text-blue-400 hover:underline"
+                  >
+                    Crear como cliente nuevo →
+                  </button>
+                </div>
+              )}
+              
+              {selectedClient && (
+                <button
+                  onClick={() => {
+                    alert(`✅ Referir a: ${selectedClient.name || selectedClient.client_name}`);
+                    // Aquí puedes abrir el modal de referido con datos pre-llenados
+                  }}
+                  disabled={!isOnline}
+                  className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-3 min-h-[44px] rounded-lg font-semibold transition-colors flex items-center justify-center gap-2"
+                >
+                  <CheckCircle2 className="w-5 h-5" />
+                  Referir Este Cliente
+                </button>
+              )}
+            </div>
+          </div>
+          
+          {/* Card 2: Crear Cliente Nuevo */}
+          <div className="bg-white dark:bg-slate-900 rounded-xl shadow-sm p-6 h-fit">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="bg-green-100 dark:bg-green-900/30 p-3 rounded-lg">
+                <UserPlus className="w-6 h-6 text-green-600 dark:text-green-400" />
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+                  Crear Cliente Nuevo
+                </h2>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Llena los datos y referir automáticamente
+                </p>
+              </div>
+            </div>
+            
+            <form onSubmit={handleQuickClientSubmit} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase">
+                  Empresa / Nombre <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={quickClientForm.nombre}
+                  onChange={(e) => setQuickClientForm({...quickClientForm, nombre: e.target.value})}
+                  className="w-full px-4 py-3 min-h-[44px] rounded-lg border-2 border-slate-200 dark:border-slate-700 focus:border-green-500 dark:focus:border-green-400 outline-none transition-all bg-white dark:bg-slate-950 dark:text-white text-base"
+                  placeholder="Ej: Acme Corporation"
+                  disabled={!isOnline}
+                />
+              </div>
+              
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase">
+                  Persona de Contacto
+                </label>
+                <input
+                  type="text"
+                  value={quickClientForm.contacto}
+                  onChange={(e) => setQuickClientForm({...quickClientForm, contacto: e.target.value})}
+                  className="w-full px-4 py-3 min-h-[44px] rounded-lg border-2 border-slate-200 dark:border-slate-700 focus:border-green-500 dark:focus:border-green-400 outline-none transition-all bg-white dark:bg-slate-950 dark:text-white text-base"
+                  placeholder="Ej: Juan Pérez"
+                  disabled={!isOnline}
+                />
+              </div>
+              
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase">
+                  Teléfono <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="tel"
+                  required
+                  value={quickClientForm.telefono}
+                  onChange={(e) => setQuickClientForm({...quickClientForm, telefono: e.target.value})}
+                  className="w-full px-4 py-3 min-h-[44px] rounded-lg border-2 border-slate-200 dark:border-slate-700 focus:border-green-500 dark:focus:border-green-400 outline-none transition-all bg-white dark:bg-slate-950 dark:text-white text-base"
+                  placeholder="809-555-1234"
+                  disabled={!isOnline}
+                />
+              </div>
+              
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase">
+                  Email
+                </label>
+                <input
+                  type="email"
+                  value={quickClientForm.email}
+                  onChange={(e) => setQuickClientForm({...quickClientForm, email: e.target.value})}
+                  className="w-full px-4 py-3 min-h-[44px] rounded-lg border-2 border-slate-200 dark:border-slate-700 focus:border-green-500 dark:focus:border-green-400 outline-none transition-all bg-white dark:bg-slate-950 dark:text-white text-base"
+                  placeholder="contacto@empresa.com"
+                  disabled={!isOnline}
+                />
+              </div>
+              
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase">
+                  RNC / Cédula
+                </label>
+                <input
+                  type="text"
+                  value={quickClientForm.tax_id}
+                  onChange={(e) => setQuickClientForm({...quickClientForm, tax_id: e.target.value})}
+                  className="w-full px-4 py-3 min-h-[44px] rounded-lg border-2 border-slate-200 dark:border-slate-700 focus:border-green-500 dark:focus:border-green-400 outline-none transition-all bg-white dark:bg-slate-950 dark:text-white text-base"
+                  placeholder="101-234567-8"
+                  maxLength={20}
+                  disabled={!isOnline}
+                />
+                <p className="text-xs text-slate-500 dark:text-slate-400">Opcional: RNC o Cédula fiscal</p>
+              </div>
+              
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase">
+                  BAN (Opcional)
+                </label>
+                <input
+                  type="text"
+                  value={quickClientForm.ban_number}
+                  onChange={(e) => setQuickClientForm({...quickClientForm, ban_number: e.target.value})}
+                  className="w-full px-4 py-3 min-h-[44px] rounded-lg border-2 border-slate-200 dark:border-slate-700 focus:border-green-500 dark:focus:border-green-400 outline-none transition-all bg-white dark:bg-slate-950 dark:text-white text-base"
+                  placeholder="Ej: 849-123-4567"
+                  disabled={!isOnline}
+                />
+              </div>
+              
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase flex items-center gap-2">
+                  <FileText className="w-3 h-3" /> Notas
+                </label>
+                <textarea
+                  value={quickClientForm.notas}
+                  onChange={(e) => setQuickClientForm({...quickClientForm, notas: e.target.value})}
+                  rows={3}
+                  className="w-full px-4 py-3 rounded-lg border-2 border-slate-200 dark:border-slate-700 focus:border-green-500 dark:focus:border-green-400 outline-none transition-all bg-white dark:bg-slate-950 dark:text-white text-base resize-none"
+                  placeholder="Detalles adicionales..."
+                  disabled={!isOnline}
+                />
+              </div>
+              
+              <button
+                type="submit"
+                disabled={!isOnline}
+                className="w-full bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-3 min-h-[44px] rounded-lg font-semibold transition-colors flex items-center justify-center gap-2 shadow-sm"
+              >
+                <CheckCircle2 className="w-5 h-5" />
+                Crear y Referir
+              </button>
+            </form>
           </div>
         </div>
       )}

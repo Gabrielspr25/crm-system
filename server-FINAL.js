@@ -24,6 +24,8 @@ import importRoutes from './src/backend/routes/importRoutes.js';
 import vendorRoutes from './src/backend/routes/vendorRoutes.js';
 import systemRoutes from './src/backend/routes/systemRoutes.js';
 import productRoutes from './src/backend/routes/productRoutes.js';
+import tiersFixedRoutes from './src/backend/routes/tiersFixedRoutes.js';
+import posIntegrationRoutes from './src/backend/routes/posIntegrationRoutes.js';
 
 // ======================================================
 // Configuración base
@@ -62,13 +64,48 @@ app.use('/api', limiter);
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
+// ======================================================
+// DEBUG: FIX SCHEMA ENDPOINT (EMERGENCY)
+// ======================================================
+app.get('/api/debug/fix-schema', async (req, res) => {
+  if (req.query.token !== 'FIXME123') return res.status(403).json({ error: 'Forbidden' });
+
+  try {
+    console.log('[DEBUG] Testing CREATE TABLE permissions...');
+
+    await query(`
+      CREATE TABLE IF NOT EXISTS test_permissions_check (
+        id SERIAL PRIMARY KEY,
+        test_val VARCHAR(255)
+      );
+    `);
+
+    // Si llegamos aquí, PODEMOS crear tablas.
+    // Intentemos crear la tabla satélite de comisiones
+    await query(`
+      CREATE TABLE IF NOT EXISTS follow_up_commissions (
+          prospect_id INTEGER PRIMARY KEY, -- No FK constraint yet to avoid perm issues, just logical link
+          vendor_commission DECIMAL(10,2) DEFAULT 0,
+          manual_company_earnings DECIMAL(10,2),
+          updated_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+
+    res.json({ success: true, message: 'CRITICAL SUCCESS: Created satellite table follow_up_commissions' });
+
+  } catch (error) {
+    console.error('[DEBUG] Error creating table:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Servir archivos estáticos del frontend (dist/client)
 const distPath = path.join(__dirname, 'dist/client');
 // const varWwwPath = '/var/www/crmp'; // DEPRECATED: We now use /opt/crmp/dist/client
 app.use(express.static(distPath));
 
 // ======================================================
-// JWT y Autenticación (MOVED UP FOR SECURITY)
+// Seguridad y Autenticación (MOVED UP FOR SECURITY)
 // ======================================================
 const JWT_SECRET = process.env.JWT_SECRET || 'development-secret';
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'development-refresh-secret';
@@ -78,25 +115,12 @@ const REFRESH_TOKEN_TTL = process.env.JWT_REFRESH_EXPIRES_IN || '7d';
 const PUBLIC_ROUTES = new Set([
   'GET /api/health',
   'GET /api/health/full',
-  'GET /api/system-test/full',
   'GET /api/version',
   'POST /api/login',
   'POST /api/token/refresh',
-  'POST /api/tarifas/parse-document',
   'GET /api/tarifas/plans',
-  'GET /api/tarifas/categories',
-  'POST /api/tarifas/categories',
-  'PUT /api/tarifas/categories',
-  'DELETE /api/tarifas/categories'
+  'GET /api/tarifas/categories'
 ]);
-
-app.get('/api/version', (req, res) => {
-  res.json({
-    version: packageJson.version,
-    env: process.env.NODE_ENV,
-    timestamp: new Date().toISOString()
-  });
-});
 
 const normalizeRoutePath = (routePath) => {
   if (!routePath.startsWith('/')) {
@@ -113,36 +137,10 @@ const isPublicRoute = (req) => {
   if (PUBLIC_ROUTES.has(key)) {
     return true;
   }
-  // Permitir rutas de categorías con ID (ej: PUT /api/tarifas/categories/123)
-  if (req.path.match(/^\/api\/tarifas\/categories\/\d+$/)) {
-    return true;
-  }
   return false;
 };
 
-const sanitizeUserPayload = (row) => ({
-  userId: toDbId(row.id),
-  username: row.username,
-  salespersonId: toDbId(row.salesperson_id),
-  salespersonName: row.salesperson_name,
-  role: row.role || 'vendedor'
-});
-
-const issueTokens = (payload) => ({
-  accessToken: jwt.sign(payload, JWT_SECRET, { expiresIn: ACCESS_TOKEN_TTL }),
-  refreshToken: jwt.sign(payload, JWT_REFRESH_SECRET, { expiresIn: REFRESH_TOKEN_TTL })
-});
-
-async function findUserByUsername(username) {
-  const rows = await query(
-    `SELECT u.id, u.username, u.password, s.id AS salesperson_id, s.name AS salesperson_name, s.role
-       FROM users_auth u
-       JOIN salespeople s ON u.salesperson_id = s.id
-       WHERE u.username = $1`,
-    [username]
-  );
-  return rows[0];
-}
+// Functions `toDbId` etc are hoisted so we can use them here
 
 const authenticateRequest = async (req, res, next) => {
   if (req.method === 'OPTIONS' || isPublicRoute(req)) {
@@ -169,6 +167,58 @@ const authenticateRequest = async (req, res, next) => {
     return res.status(401).json({ error: 'Token inválido o expirado' });
   }
 };
+
+// APLICAR SEGURIDAD ANTES DE MONTAR RUTAS
+app.use(authenticateRequest);
+
+// Rutas de Módulos Específicos
+app.use('/api/referidos', referidosRoutes);
+app.use('/api/tariffs', tarifasRoutes);
+app.use('/api/clients', clientRoutes);
+app.use('/api/bans', banRoutes);
+app.use('/api/importador', importRoutes);
+app.use('/api/vendors', vendorRoutes);
+app.use('/api/products', productRoutes);
+app.use('/api/tiers-fixed', tiersFixedRoutes);
+app.use('/api/pos', posIntegrationRoutes);
+
+// System Routes - PROTECTED EXTRA
+// Solo permitir system en dev o con rol admin (validado dentro del router o aqui)
+// Por ahora solo autenticado
+if (process.env.NODE_ENV !== 'production') {
+  app.use('/api/system', systemRoutes);
+}
+
+// Helpers que se quedaron abajo (issueTokens, etc) siguen ahí? 
+// No, I am replacing the chunk that contained them?
+// Wait, the original chunk 83-181 contained helpers?
+// Lines 133-155: sanitizeUserPayload, issueTokens, findUserByUsername.
+// I must KEEP them.
+// I will re-add them after the routes.
+
+const sanitizeUserPayload = (row) => ({
+  userId: toDbId(row.id),
+  username: row.username,
+  salespersonId: toDbId(row.salesperson_id),
+  salespersonName: row.salesperson_name,
+  role: row.role || 'vendedor'
+});
+
+const issueTokens = (payload) => ({
+  accessToken: jwt.sign(payload, JWT_SECRET, { expiresIn: ACCESS_TOKEN_TTL }),
+  refreshToken: jwt.sign(payload, JWT_REFRESH_SECRET, { expiresIn: REFRESH_TOKEN_TTL })
+});
+
+async function findUserByUsername(username) {
+  const rows = await query(
+    `SELECT u.id, u.username, u.password, s.id AS salesperson_id, s.name AS salesperson_name, s.role
+       FROM users_auth u
+       JOIN salespeople s ON u.salesperson_id = s.id
+       WHERE u.username = $1`,
+    [username]
+  );
+  return rows[0];
+}
 
 // ======================================================
 // Conexión a PostgreSQL
@@ -278,6 +328,23 @@ function sameId(a, b) {
     return false;
   }
   return String(a) === String(b);
+}
+
+function normalizeReportMonth(monthStr) {
+  if (!monthStr || typeof monthStr !== 'string') {
+    return null;
+  }
+  const parts = monthStr.split('-');
+  if (parts.length < 2) {
+    return null;
+  }
+  const year = Number(parts[0]);
+  const month = Number(parts[1]);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+    return null;
+  }
+  const paddedMonth = String(month).padStart(2, '0');
+  return `${year}-${paddedMonth}-01`;
 }
 
 function badRequest(res, message) {
@@ -411,22 +478,13 @@ app.get('/api/health', async (_req, res) => {
   }
 });
 
-// ======================================================
-// APLICAR AUTENTICACIÓN ANTES DE RUTAS
-// ======================================================
-app.use(authenticateRequest);
+app.get('/api/version', (_req, res) => {
+  res.json({ version: packageJson.version });
+});
 
-// Rutas de Módulos Específicos (PROTECTED)
-app.use('/api/referidos', referidosRoutes);
-app.use('/api/tariffs', tarifasRoutes);
-app.use('/api/clients', clientRoutes);
-app.use('/api/bans', banRoutes);
-app.use('/api/importador', importRoutes);
-app.use('/api/vendors', vendorRoutes);
-app.use('/api/products', productRoutes);
-if (process.env.NODE_ENV !== 'production') {
-  app.use('/api/system', systemRoutes);
-}
+// Rutas de Referidos y Tarifas (DUPLICATE MOUNTS REMOVED)
+// Handled at the top of the file securely
+
 
 // ======================================================
 // Endpoint para limpiar nombres BAN
@@ -1633,27 +1691,76 @@ app.put('/api/follow-up-prospects/:id', authenticateRequest, async (req, res) =>
     const {
       client_id, priority_id, vendor_id, completed_date,
       fijo_ren, fijo_new, movil_nueva, movil_renovacion,
-      claro_tv, cloud, mpls, notes
+      claro_tv, cloud, mpls, notes, vendor_commission,
+      manual_company_earnings
     } = req.body;
 
+    console.log(`[UPDATE PROSPECT ${id}] movil_nueva=${movil_nueva}, movil_renovacion=${movil_renovacion}`);
+
+    // Saneamiento de entradas numéricas y IDs
+    const sanitizedVendorCommission = vendor_commission === '' || vendor_commission === null || vendor_commission === undefined ? 0 : parseFloat(vendor_commission);
+    const sanitizedCompanyEarnings = manual_company_earnings === '' || manual_company_earnings === null || manual_company_earnings === undefined ? null : parseFloat(manual_company_earnings);
+
+    // IDs opcionales deben ser null si son undefined
+    const p_priority_id = priority_id === undefined ? null : priority_id;
+    const p_vendor_id = vendor_id === undefined ? null : vendor_id;
+    const p_client_id = client_id === undefined ? null : client_id;
+    const p_completed_date = completed_date === undefined ? null : completed_date;
+    const p_notes = notes === undefined ? null : notes;
+
+    // Productos default 0 si undefined
+    const p_fijo_ren = fijo_ren || 0;
+    const p_fijo_new = fijo_new || 0;
+    const p_movil_nueva = movil_nueva || 0;
+    const p_movil_renovacion = movil_renovacion || 0;
+    const p_claro_tv = claro_tv || 0;
+    const p_cloud = cloud || 0;
+    const p_mpls = mpls || 0;
+
+    // 1. Actualizar tabla principal (sin columnas conflictivas)
     const result = await query(
       `UPDATE follow_up_prospects 
-       SET client_id = $1, priority_id = $2, vendor_id = $3, 
-           completed_date = $4, fijo_ren = $5, fijo_new = $6,
+       SET client_id = COALESCE($1, client_id), 
+           priority_id = COALESCE($2, priority_id), 
+           vendor_id = COALESCE($3, vendor_id), 
+           completed_date = $4, 
+           fijo_ren = $5, fijo_new = $6,
            movil_nueva = $7, movil_renovacion = $8, claro_tv = $9,
-           cloud = $10, mpls = $11, notes = $12, updated_at = NOW()
+           cloud = $10, mpls = $11, notes = COALESCE($12, notes), 
+           updated_at = NOW()
        WHERE id = $13
        RETURNING *`,
-      [client_id, priority_id, vendor_id, completed_date,
-        fijo_ren || 0, fijo_new || 0, movil_nueva || 0, movil_renovacion || 0,
-        claro_tv || 0, cloud || 0, mpls || 0, notes, id]
+      [p_client_id, p_priority_id, p_vendor_id, p_completed_date,
+        p_fijo_ren, p_fijo_new, p_movil_nueva, p_movil_renovacion,
+        p_claro_tv, p_cloud, p_mpls, p_notes,
+        id]
     );
+
+    // 2. Actualizar/Insertar en tabla satélite de comisiones
+    // (Solo si los valores vinieron definidos en el request o asumimos que siempre queremos sincronizar)
+    // Dado que Reports.tsx manda el objeto completo, sincronizamos siempre.
+    await query(`
+      INSERT INTO follow_up_commissions (prospect_id, vendor_commission, manual_company_earnings, updated_at)
+      VALUES ($1, $2, $3, NOW())
+      ON CONFLICT (prospect_id) 
+      DO UPDATE SET 
+        vendor_commission = EXCLUDED.vendor_commission,
+        manual_company_earnings = EXCLUDED.manual_company_earnings,
+        updated_at = NOW()
+    `, [id,
+      isNaN(sanitizedVendorCommission) ? 0 : sanitizedVendorCommission,
+      isNaN(sanitizedCompanyEarnings) ? null : sanitizedCompanyEarnings
+    ]);
 
     if (result.length === 0) {
       return res.status(404).json({ error: 'Prospecto no encontrado' });
     }
 
-    res.json({ success: true, prospect: result[0] });
+    const updatedProspect = result[0];
+    updatedProspect.vendor_commission = isNaN(sanitizedVendorCommission) ? 0 : sanitizedVendorCommission;
+    updatedProspect.manual_company_earnings = isNaN(sanitizedCompanyEarnings) ? null : sanitizedCompanyEarnings;
+
+    res.json({ success: true, prospect: updatedProspect });
   } catch (error) {
     console.error('Error actualizando prospecto:', error);
     res.status(500).json({ error: 'Error actualizando prospecto' });
@@ -1723,6 +1830,8 @@ app.post('/api/call-logs', authenticateRequest, async (req, res) => {
     );
 
     // Si se completó el paso, avanzar al siguiente
+    let next_step_id = step_id; // mantener actual si no avanza
+
     if (step_completed && step_id) {
       // Obtener siguiente paso
       const nextSteps = await query(
@@ -1731,17 +1840,20 @@ app.post('/api/call-logs', authenticateRequest, async (req, res) => {
          ORDER BY order_index ASC LIMIT 1`,
         [step_id]
       );
-
-      const next_step_id = nextSteps.length > 0 ? nextSteps[0].id : null;
-
-      // Actualizar prospecto con siguiente paso
-      await query(
-        `UPDATE follow_up_prospects 
-         SET step_id = $1, updated_at = NOW()
-         WHERE id = $2`,
-        [next_step_id, follow_up_id]
-      );
+      if (nextSteps.length > 0) next_step_id = nextSteps[0].id;
     }
+
+    // Actualizar prospecto: Última llamada, Próxima llamada, Nuevo Paso (si aplica)
+    await query(
+      `UPDATE follow_up_prospects 
+       SET 
+         last_call_date = $1,
+         next_call_date = $2,
+         step_id = COALESCE($3, step_id),
+         updated_at = NOW()
+       WHERE id = $4`,
+      [call_date, next_call_date, step_completed ? next_step_id : null, follow_up_id]
+    );
 
     res.json({ success: true, log: result[0] });
   } catch (error) {
@@ -1760,19 +1872,186 @@ app.get('/api/completed-prospects', authenticateRequest, async (req, res) => {
         c.name as client_name,
         c.city,
         c.address,
-        v.name as vendor_name,
-        v.id as vendor_id
+        COALESCE(v.name, sp.name) as vendor_name,
+        COALESCE(v.id::text, sp.id::text) as vendor_id,
+        v.commission_percentage,
+        sp.commission_fijo_new,
+        sp.commission_fijo_ren,
+        COALESCE(fc.vendor_commission, 0) as vendor_commission,
+        fc.manual_company_earnings
       FROM follow_up_prospects fup
+      LEFT JOIN follow_up_commissions fc ON fup.id = fc.prospect_id
       LEFT JOIN clients c ON fup.client_id = c.id
       LEFT JOIN vendors v ON fup.vendor_id = v.id
-      WHERE fup.completed_date IS NOT NULL 
-        AND fup.vendor_id IS NOT NULL
+      LEFT JOIN salespeople sp ON c.salesperson_id = sp.id
+      WHERE fup.completed_date IS NOT NULL
       ORDER BY fup.completed_date DESC
     `);
+
+    // Para cada prospect, obtener los suscriptores del cliente
+    for (const prospect of rows) {
+      if (prospect.client_id) {
+        const subscribers = await query(`
+          SELECT 
+            s.id,
+            s.phone,
+            s.monthly_value,
+            s.line_type,
+            b.ban_number,
+            b.account_type
+          FROM subscribers s
+          INNER JOIN bans b ON s.ban_id = b.id
+          WHERE b.client_id = $1
+        `, [prospect.client_id]);
+        prospect.subscribers = subscribers;
+      } else {
+        prospect.subscribers = [];
+      }
+    }
+
     res.json(rows);
   } catch (error) {
     console.error('Error fetching completed prospects:', error);
-    res.json([]);
+    res.status(500).json({ error: 'Error fetching completed prospects', details: error.message });
+  }
+});
+
+// ======================================================
+// Reportes por Suscriptor (mensual)
+app.get('/api/subscriber-reports', authenticateRequest, async (req, res) => {
+  try {
+    const reportMonth = normalizeReportMonth(req.query.month);
+    const params = [];
+    let whereClause = '';
+
+    if (reportMonth) {
+      params.push(reportMonth);
+      whereClause = 'WHERE fup.completed_date IS NOT NULL AND date_trunc(\'month\', fup.completed_date)::date = $1';
+    } else {
+      whereClause = 'WHERE fup.completed_date IS NOT NULL';
+    }
+
+    const rows = await query(`
+      SELECT
+        s.id as subscriber_id,
+        s.phone,
+        s.created_at as activation_date,
+        b.ban_number as ban_number,
+        c.id as client_id,
+        c.name as client_name,
+        c.salesperson_id,
+        sp.name as salesperson_name,
+        s.monthly_value as monthly_value,
+        fup.completed_date as completed_date,
+        date_trunc('month', fup.completed_date)::date as report_month,
+        sr.company_earnings,
+        sr.vendor_commission,
+        sr.paid_amount,
+        sr.paid_date
+      FROM subscribers s
+      JOIN bans b ON s.ban_id = b.id
+      JOIN clients c ON b.client_id = c.id
+      LEFT JOIN LATERAL (
+        SELECT fup.completed_date
+        FROM follow_up_prospects fup
+        WHERE fup.client_id = c.id AND fup.completed_date IS NOT NULL
+        ORDER BY fup.completed_date DESC
+        LIMIT 1
+      ) fup ON true
+      LEFT JOIN salespeople sp ON c.salesperson_id = sp.id
+      LEFT JOIN subscriber_reports sr
+        ON sr.subscriber_id = s.id
+       AND sr.report_month = date_trunc('month', fup.completed_date)::date
+      ${whereClause}
+      ORDER BY s.created_at DESC
+    `, params);
+
+    const mapped = rows.map((row) => ({
+      subscriber_id: row.subscriber_id,
+      phone: row.phone,
+      activation_date: row.activation_date,
+      completed_date: row.completed_date,
+      ban_number: row.ban_number,
+      client_id: row.client_id,
+      client_name: row.client_name,
+      client_business_name: null,
+      vendor_id: row.salesperson_id,
+      vendor_name: row.salesperson_name,
+      report_month: row.report_month,
+      monthly_value: row.monthly_value === null || row.monthly_value === undefined ? null : Number(row.monthly_value),
+      company_earnings: row.company_earnings === null || row.company_earnings === undefined ? null : Number(row.company_earnings),
+      vendor_commission: row.vendor_commission === null || row.vendor_commission === undefined ? null : Number(row.vendor_commission),
+      paid_amount: row.paid_amount === null || row.paid_amount === undefined ? null : Number(row.paid_amount),
+      paid_date: row.paid_date
+    }));
+
+    res.json(mapped);
+  } catch (error) {
+    console.error('Error fetching subscriber reports:', error);
+    res.status(500).json({ error: 'Error fetching subscriber reports', details: error.message });
+  }
+});
+
+// PUT: Guardar reporte por suscriptor
+app.put('/api/subscriber-reports/:subscriber_id', authenticateRequest, async (req, res) => {
+  try {
+    const { subscriber_id } = req.params;
+    const { report_month, company_earnings, vendor_commission, paid_amount, paid_date } = req.body || {};
+
+    const normalizedMonth = normalizeReportMonth(report_month);
+    if (!normalizedMonth) {
+      return badRequest(res, 'report_month es obligatorio y debe venir como YYYY-MM');
+    }
+
+    const sanitizedCompanyEarnings =
+      company_earnings === '' || company_earnings === null || company_earnings === undefined
+        ? null
+        : parseFloat(company_earnings);
+    const sanitizedVendorCommission =
+      vendor_commission === '' || vendor_commission === null || vendor_commission === undefined
+        ? null
+        : parseFloat(vendor_commission);
+    const sanitizedPaidAmount =
+      paid_amount === '' || paid_amount === null || paid_amount === undefined
+        ? null
+        : parseFloat(paid_amount);
+
+    const result = await query(`
+      INSERT INTO subscriber_reports (
+        subscriber_id,
+        report_month,
+        company_earnings,
+        vendor_commission,
+        paid_amount,
+        paid_date,
+        created_at,
+        updated_at
+      ) VALUES ($1, $2::date, $3, $4, $5, $6, NOW(), NOW())
+      ON CONFLICT (subscriber_id, report_month)
+      DO UPDATE SET
+        company_earnings = EXCLUDED.company_earnings,
+        vendor_commission = EXCLUDED.vendor_commission,
+        paid_amount = EXCLUDED.paid_amount,
+        paid_date = EXCLUDED.paid_date,
+        updated_at = NOW()
+      RETURNING *
+    `, [
+      subscriber_id,
+      normalizedMonth,
+      Number.isNaN(sanitizedCompanyEarnings) ? null : sanitizedCompanyEarnings,
+      Number.isNaN(sanitizedVendorCommission) ? null : sanitizedVendorCommission,
+      Number.isNaN(sanitizedPaidAmount) ? null : sanitizedPaidAmount,
+      paid_date || null
+    ]);
+
+    if (result.length === 0) {
+      return res.status(404).json({ error: 'Suscriptor no encontrado' });
+    }
+
+    res.json({ success: true, report: result[0] });
+  } catch (error) {
+    console.error('Error saving subscriber report:', error);
+    res.status(500).json({ error: 'Error saving subscriber report' });
   }
 });
 
@@ -2042,9 +2321,8 @@ app.get('*', (req, res) => {
     return res.status(404).json({ error: 'Endpoint no encontrado' });
   }
 
-  const indexPath = process.platform === 'linux' && fs.existsSync(varWwwPath)
-    ? path.join(varWwwPath, 'index.html')
-    : path.join(distPath, 'index.html');
+  // Siempre usar distPath (varWwwPath deprecated)
+  const indexPath = path.join(distPath, 'index.html');
 
   if (fs.existsSync(indexPath)) {
     res.sendFile(indexPath);

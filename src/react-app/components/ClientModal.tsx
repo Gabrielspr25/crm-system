@@ -70,11 +70,14 @@ export default function ClientModal({
     address: '',
     city: '',
     zip_code: '',
+    tax_id: '',
     includes_ban: false,
     vendor_id: undefined,
   });
   const [formMessage, setFormMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [isSendingToPOS, setIsSendingToPOS] = useState(false);
+  const [posSuccessId, setPosSuccessId] = useState<number | null>(null);
 
   const authUser = getCurrentUser();
   const isVendorUser = authUser?.role === "vendedor";
@@ -140,6 +143,7 @@ export default function ClientModal({
         address: client.address ?? '',
         city: (client as any).city ?? '',
         zip_code: (client as any).zip_code ?? '',
+        tax_id: (client as any).tax_id ?? '',
         includes_ban: Boolean(client.includes_ban),
         vendor_id: client.vendor_id ?? undefined,
       });
@@ -157,6 +161,7 @@ export default function ClientModal({
         address: '',
         city: '',
         zip_code: '',
+        tax_id: '',
         base: 'BD propia',
         includes_ban: false,
         vendor_id: undefined,
@@ -188,6 +193,48 @@ export default function ClientModal({
       }
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleEnviarAPOS = async () => {
+    if (!client) {
+      setFormMessage({ type: 'error', text: 'Debe guardar el cliente primero antes de enviar al POS' });
+      return;
+    }
+
+    setIsSendingToPOS(true);
+    setFormMessage(null);
+    setPosSuccessId(null);
+
+    try {
+      const response = await authFetch('/api/pos/enviar-cliente', {
+        method: 'POST',
+        json: {
+          ...client,
+          tax_id: formData.tax_id || client.tax_id,
+          salesperson_id: effectiveVendorId
+        }
+      });
+
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({ error: 'Error al enviar cliente al POS' }));
+        throw new Error(result.error || 'Error al enviar cliente al POS');
+      }
+
+      const result = await response.json();
+
+      setPosSuccessId(result.clientecreditoid);
+      setFormMessage({ 
+        type: 'success', 
+        text: `✅ Cliente enviado al POS exitosamente. ID POS: ${result.clientecreditoid}` 
+      });
+    } catch (error: any) {
+      setFormMessage({ 
+        type: 'error', 
+        text: error.message || 'Error al enviar cliente al POS' 
+      });
+    } finally {
+      setIsSendingToPOS(false);
     }
   };
 
@@ -239,20 +286,6 @@ export default function ClientModal({
               )}
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* Nombre y Apellido Dueño */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Nombre y Apellido Dueño
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.owner_name || ''}
-                    onChange={(e) => setFormData({ ...formData, owner_name: e.target.value })}
-                    className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    placeholder="Ej: Juan Pérez"
-                  />
-                </div>
-
                 {/* Empresa / Razón Social */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
@@ -268,10 +301,39 @@ export default function ClientModal({
                   />
                 </div>
 
+                {/* RNC / Cédula */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    RNC / Cédula *
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.tax_id || ''}
+                    onChange={(e) => setFormData({ ...formData, tax_id: e.target.value })}
+                    className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="RNC o Cédula fiscal"
+                    required
+                  />
+                </div>
+
+                {/* Nombre y Apellido Dueño */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Nombre y Apellido Dueño
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.owner_name || ''}
+                    onChange={(e) => setFormData({ ...formData, owner_name: e.target.value })}
+                    className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="Ej: Juan Pérez"
+                  />
+                </div>
+
                 {/* Persona de Contacto */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Persona de Contacto
+                    Persona de Contacto *
                   </label>
                   <input
                     type="text"
@@ -279,13 +341,14 @@ export default function ClientModal({
                     onChange={(e) => setFormData({ ...formData, contact_person: e.target.value })}
                     className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     placeholder="Ej: María González"
+                    required
                   />
                 </div>
 
                 {/* Email */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Email
+                    Email *
                   </label>
                   <input
                     type="email"
@@ -294,20 +357,37 @@ export default function ClientModal({
                     className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     placeholder="correo@ejemplo.com"
                     autoComplete="off"
+                    required
                   />
                 </div>
 
-                {/* Teléfono */}
+                {/* Teléfono Principal */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Teléfono
+                    Teléfono Principal *
                   </label>
                   <input
                     type="tel"
                     value={formData.phone || ''}
                     onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                     className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    placeholder="+1 234 567 8900"
+                    placeholder="+1 787 234 5678"
+                    required
+                  />
+                </div>
+
+                {/* Celular */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Celular *
+                  </label>
+                  <input
+                    type="tel"
+                    value={formData.cellular || ''}
+                    onChange={(e) => setFormData({ ...formData, cellular: e.target.value })}
+                    className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="+1 787 999 8888"
+                    required
                   />
                 </div>
 
@@ -321,28 +401,14 @@ export default function ClientModal({
                     value={formData.additional_phone || ''}
                     onChange={(e) => setFormData({ ...formData, additional_phone: e.target.value })}
                     className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    placeholder="Teléfono adicional"
-                  />
-                </div>
-
-                {/* Celular */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Celular
-                  </label>
-                  <input
-                    type="tel"
-                    value={formData.cellular || ''}
-                    onChange={(e) => setFormData({ ...formData, cellular: e.target.value })}
-                    className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    placeholder="Número de celular"
+                    placeholder="Teléfono adicional (opcional)"
                   />
                 </div>
 
                 {/* Dirección */}
                 <div className="md:col-span-2">
                   <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Dirección
+                    Dirección *
                   </label>
                   <textarea
                     value={formData.address || ''}
@@ -350,13 +416,14 @@ export default function ClientModal({
                     rows={3}
                     className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     placeholder="Dirección completa del cliente"
+                    required
                   />
                 </div>
 
                 {/* Ciudad */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Ciudad
+                    Ciudad *
                   </label>
                   <input
                     type="text"
@@ -364,13 +431,14 @@ export default function ClientModal({
                     onChange={(e) => setFormData({ ...formData, city: e.target.value })}
                     className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     placeholder="Ciudad del cliente"
+                    required
                   />
                 </div>
 
                 {/* Código Postal */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Código Postal
+                    Código Postal *
                   </label>
                   <input
                     type="text"
@@ -378,10 +446,11 @@ export default function ClientModal({
                     onChange={(e) => setFormData({ ...formData, zip_code: e.target.value })}
                     className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     placeholder="Código postal"
+                    required
                   />
                 </div>
 
-                {/* Vendor */}
+                {/* Vendedor Asignado */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Vendedor Asignado *
@@ -445,6 +514,40 @@ export default function ClientModal({
                 >
                   Cancelar
                 </button>
+                
+                {/* Botón Enviar a POS - Solo visible si es edición */}
+                {isEditing && (
+                  <button
+                    type="button"
+                    onClick={handleEnviarAPOS}
+                    disabled={isSendingToPOS || isSaving || !!posSuccessId}
+                    className={`px-6 py-2 rounded-lg transition-all duration-200 flex items-center gap-2 ${
+                      posSuccessId
+                        ? 'bg-green-600 text-white cursor-default'
+                        : isSendingToPOS
+                        ? 'bg-purple-900/60 text-purple-200 cursor-wait'
+                        : 'bg-gradient-to-r from-purple-600 to-pink-600 text-white hover:from-purple-700 hover:to-pink-700 shadow-lg shadow-purple-500/25'
+                    }`}
+                  >
+                    {posSuccessId ? (
+                      <>
+                        <span>✓</span>
+                        <span>Enviado al POS</span>
+                      </>
+                    ) : isSendingToPOS ? (
+                      <>
+                        <span className="animate-spin">⏳</span>
+                        <span>Enviando...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>📤</span>
+                        <span>Enviar a POS</span>
+                      </>
+                    )}
+                  </button>
+                )}
+                
                 <button
                   type="submit"
                   disabled={isSaving}

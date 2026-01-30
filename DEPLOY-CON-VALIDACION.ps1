@@ -9,7 +9,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $SERVER = "root@143.244.191.139"
-$FRONTEND_PATH = "/var/www/crmp"
+$FRONTEND_PATH = "/opt/crmp/dist/client"
 $BACKEND_PATH = "/opt/crmp"
 $NGINX_CONFIG = "/etc/nginx/sites-available/crmp.ss-group.cloud"
 $DOMAIN = "https://crmp.ss-group.cloud"
@@ -40,11 +40,13 @@ function Test-Step {
         if ($result) {
             Write-Host " OK $SuccessMessage" -ForegroundColor Green
             return $true
-        } else {
+        }
+        else {
             Write-Host " ERROR $ErrorMessage" -ForegroundColor Red
             return $false
         }
-    } catch {
+    }
+    catch {
         Write-Host " ERROR $_" -ForegroundColor Red
         return $false
     }
@@ -61,7 +63,8 @@ if (-not $SkipBuild) {
             throw "Build falló"
         }
         Write-Host "OK Build completado" -ForegroundColor Green
-    } catch {
+    }
+    catch {
         Write-Host "ERROR en build: $_" -ForegroundColor Red
         exit 1
     }
@@ -74,7 +77,8 @@ if (-not $SkipBuild) {
     
     $buildFiles = Get-ChildItem "dist/client" -Recurse | Measure-Object
     Write-Host "Archivos generados: $($buildFiles.Count)" -ForegroundColor Cyan
-} else {
+}
+else {
     Write-Host "`nPASO 1: SKIP BUILD (usando build existente)" -ForegroundColor Yellow
 }
 
@@ -83,6 +87,11 @@ Write-Host "`nPASO 2: COPIAR ARCHIVOS AL SERVIDOR" -ForegroundColor Yellow
 Write-Host "========================================`n" -ForegroundColor Yellow
 
 try {
+    # Limpiar carpeta remota (agresivo)
+    Write-Host "Limpiando servidor..." -NoNewline
+    Invoke-SSHCommand "rm -rf ${FRONTEND_PATH}/*" | Out-Null
+    Write-Host " OK" -ForegroundColor Green
+
     # Copiar frontend
     Write-Host "Copiando archivos frontend..." -NoNewline
     scp -r dist/client/* "${SERVER}:${FRONTEND_PATH}/" 2>&1 | Out-Null
@@ -91,15 +100,17 @@ try {
     }
     Write-Host " OK" -ForegroundColor Green
     
-    # Copiar backend (solo server-FINAL.js y package.json)
+    # Copiar backend (server-FINAL.js, package.json y carpeta src)
     Write-Host "Copiando backend..." -NoNewline
     scp server-FINAL.js package.json "${SERVER}:${BACKEND_PATH}/" 2>&1 | Out-Null
+    scp -r src "${SERVER}:${BACKEND_PATH}/" 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw "Error copiando backend"
     }
     Write-Host " OK" -ForegroundColor Green
     
-} catch {
+}
+catch {
     Write-Host "ERROR copiando archivos: $_" -ForegroundColor Red
     exit 1
 }
@@ -112,62 +123,59 @@ $allValid = $true
 
 # 3.1 Validar archivos frontend
 $allValid = $allValid -and (Test-Step `
-    -Name "Archivos frontend copiados" `
-    -Test { 
+        -Name "Archivos frontend copiados" `
+        -Test { 
         $result = Invoke-SSHCommand "ls ${FRONTEND_PATH}/index.html ${FRONTEND_PATH}/assets/ 2>&1"
         return $result -notlike "*No such file*"
     } `
-    -SuccessMessage "index.html y assets/ presentes" `
-    -ErrorMessage "Archivos faltantes en ${FRONTEND_PATH}"
+        -SuccessMessage "index.html y assets/ presentes" `
+        -ErrorMessage "Archivos faltantes en ${FRONTEND_PATH}"
 )
 
 # 3.2 Validar permisos
 $allValid = $allValid -and (Test-Step `
-    -Name "Permisos correctos" `
-    -Test {
+        -Name "Permisos correctos" `
+        -Test {
         $result = Invoke-SSHCommand "stat -c '%U:%G %a' ${FRONTEND_PATH}"
         return $result -match "www-data:www-data 755"
     } `
-    -SuccessMessage "www-data:www-data 755" `
-    -ErrorMessage "Permisos incorrectos"
+        -SuccessMessage "www-data:www-data 755" `
+        -ErrorMessage "Permisos incorrectos"
 )
 
 # Si permisos incorrectos, corregir
-if (-not $allValid) {
-    Write-Host "Corrigiendo permisos..." -NoNewline
-    ssh $SERVER "chown -R www-data:www-data ${FRONTEND_PATH}" 2>&1 | Out-Null
-    ssh $SERVER "chmod -R 755 ${FRONTEND_PATH}" 2>&1 | Out-Null
-    Write-Host " OK" -ForegroundColor Green
-    $allValid = $true
-}
+# Siempre asegurar permisos correctos recursivamente
+Write-Host "Asegurando permisos..." -NoNewline
+Invoke-SSHCommand "chown -R www-data:www-data ${FRONTEND_PATH} && chmod -R 755 ${FRONTEND_PATH}" 2>&1 | Out-Null
+Write-Host " OK" -ForegroundColor Green
 
 # 3.3 Validar nginx config
 $allValid = $allValid -and (Test-Step `
-    -Name "Nginx config correcto" `
-    -Test {
+        -Name "Nginx config correcto" `
+        -Test {
         $result = Invoke-SSHCommand "grep 'root ${FRONTEND_PATH}' ${NGINX_CONFIG}"
         return $result -like "*root ${FRONTEND_PATH}*"
     } `
-    -SuccessMessage "root ${FRONTEND_PATH}" `
-    -ErrorMessage "Config apunta a ruta incorrecta"
+        -SuccessMessage "root ${FRONTEND_PATH}" `
+        -ErrorMessage "Config apunta a ruta incorrecta"
 )
 
 # 3.4 Validar solo 1 config activo
 $allValid = $allValid -and (Test-Step `
-    -Name "Solo 1 config activo" `
-    -Test {
+        -Name "Solo 1 config activo" `
+        -Test {
         $result = Invoke-SSHCommand "ls /etc/nginx/sites-enabled/ | grep -E 'crm|ventaspro' | wc -l"
         return [int]$result -eq 2  # crmp.ss-group.cloud + ventaspro
     } `
-    -SuccessMessage "crmp.ss-group.cloud + ventaspro" `
-    -ErrorMessage "Configs duplicados detectados"
+        -SuccessMessage "crmp.ss-group.cloud + ventaspro" `
+        -ErrorMessage "Configs duplicados detectados"
 )
 
 # 3.5 Reiniciar servicios
 Write-Host "`nReiniciando servicios..." -ForegroundColor Yellow
 
 Write-Host "PM2 restart..." -NoNewline
-ssh $SERVER "pm2 restart crmp-api" 2>&1 | Out-Null
+ssh $SERVER "pm2 restart ventaspro-backend" 2>&1 | Out-Null
 Start-Sleep -Seconds 3
 Write-Host " OK" -ForegroundColor Green
 
@@ -183,50 +191,50 @@ if (-not $SkipTests) {
     
     # 4.1 Backend health
     $allValid = $allValid -and (Test-Step `
-        -Name "Backend API responde" `
-        -Test {
+            -Name "Backend API responde" `
+            -Test {
             $result = Invoke-SSHCommand "curl -s http://localhost:3001/api/version"
             return $result -like "*version*"
         } `
-        -SuccessMessage "API responde correctamente" `
-        -ErrorMessage "Backend no responde"
+            -SuccessMessage "API responde correctamente" `
+            -ErrorMessage "Backend no responde"
     )
     
     # 4.2 HTML carga
     $allValid = $allValid -and (Test-Step `
-        -Name "HTML carga (200 OK)" `
-        -Test {
+            -Name "HTML carga (200 OK)" `
+            -Test {
             $result = Invoke-SSHCommand "curl -I ${DOMAIN}/ 2>&1 | head -1"
             return $result -like "*200 OK*"
         } `
-        -SuccessMessage "HTML carga correctamente" `
-        -ErrorMessage "HTML retorna error"
+            -SuccessMessage "HTML carga correctamente" `
+            -ErrorMessage "HTML retorna error"
     )
     
     # 4.3 Assets cargan
     $allValid = $allValid -and (Test-Step `
-        -Name "Assets cargan (CSS)" `
-        -Test {
+            -Name "Assets cargan (CSS)" `
+            -Test {
             $cssFile = Invoke-SSHCommand "ls ${FRONTEND_PATH}/assets/*.css | head -1"
             $cssName = Split-Path $cssFile -Leaf
             $result = Invoke-SSHCommand "curl -I ${DOMAIN}/assets/${cssName} 2>&1 | head -1"
             return $result -like "*200 OK*"
         } `
-        -SuccessMessage "Assets cargan correctamente" `
-        -ErrorMessage "Assets retornan 403/404"
+            -SuccessMessage "Assets cargan correctamente" `
+            -ErrorMessage "Assets retornan 403/404"
     )
     
     # 4.4 Assets JS cargan
     $allValid = $allValid -and (Test-Step `
-        -Name "Assets cargan (JS)" `
-        -Test {
+            -Name "Assets cargan (JS)" `
+            -Test {
             $jsFile = Invoke-SSHCommand "ls ${FRONTEND_PATH}/assets/*.js | grep -v map | head -1"
             $jsName = Split-Path $jsFile -Leaf
             $result = Invoke-SSHCommand "curl -I ${DOMAIN}/assets/${jsName} 2>&1 | head -1"
             return $result -like "*200 OK*"
         } `
-        -SuccessMessage "JS carga correctamente" `
-        -ErrorMessage "JS retorna error"
+            -SuccessMessage "JS carga correctamente" `
+            -ErrorMessage "JS retorna error"
     )
 }
 
@@ -250,7 +258,8 @@ if ($allValid) {
     Start-Process $DOMAIN
     
     exit 0
-} else {
+}
+else {
     Write-Host "ERROR DEPLOYMENT CON ERRORES" -ForegroundColor Red
     Write-Host "=========================`n" -ForegroundColor Red
     Write-Host "Revisa los errores arriba y vuelve a intentar" -ForegroundColor Yellow

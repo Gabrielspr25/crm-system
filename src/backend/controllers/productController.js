@@ -9,7 +9,7 @@ export const getProducts = async (req, res) => {
             LEFT JOIN categories c ON p.category_id = c.id 
             ORDER BY p.name ASC
         `);
-        res.json(products.rows);
+        res.json(products); // query() ya devuelve rows directamente
     } catch (error) {
         serverError(res, error, 'Error obteniendo productos');
     }
@@ -135,7 +135,7 @@ export const getProductTiers = async (req, res) => {
              ORDER BY range_min ASC`,
             [id]
         );
-        res.json(tiers.rows);
+        res.json(tiers);
     } catch (error) {
         serverError(res, error, 'Error obteniendo tiers de comisión');
     }
@@ -149,8 +149,54 @@ export const getAllTiers = async (req, res) => {
              LEFT JOIN products p ON t.product_id = p.id
              ORDER BY p.name, t.range_min ASC`
         );
-        res.json(tiers.rows);
+        res.json(tiers);
     } catch (error) {
         serverError(res, error, 'Error obteniendo todos los tiers');
+    }
+};
+
+export const createTier = async (req, res) => {
+    const { product_id, range_min, range_max, commission_amount } = req.body;
+    try {
+        const result = await query(
+            `INSERT INTO product_commission_tiers (product_id, range_min, range_max, commission_amount, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, NOW(), NOW()) RETURNING *`,
+            [product_id, range_min, range_max, commission_amount]
+        );
+        res.status(201).json(result.rows[0]);
+    } catch (error) {
+        serverError(res, error, 'Error creando tier');
+    }
+};
+
+export const updateTier = async (req, res) => {
+    const { id } = req.params;
+    const { range_min, range_max, commission_amount } = req.body;
+    try {
+        const result = await query(
+            `UPDATE product_commission_tiers 
+             SET range_min = $1, range_max = $2, commission_amount = $3, updated_at = NOW()
+             WHERE id = $4 RETURNING *`,
+            [range_min, range_max, commission_amount, id]
+        );
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Tier no encontrado' });
+        }
+        res.json(result.rows[0]);
+    } catch (error) {
+        serverError(res, error, 'Error actualizando tier');
+    }
+};
+
+export const deleteTier = async (req, res) => {
+    const { id } = req.params;
+    try {
+        const result = await query('DELETE FROM product_commission_tiers WHERE id = $1 RETURNING id', [id]);
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Tier no encontrado' });
+        }
+        res.json({ message: 'Tier eliminado correctamente' });
+    } catch (error) {
+        serverError(res, error, 'Error eliminando tier');
     }
 };

@@ -9,6 +9,7 @@ import {
   Folder,
   Package,
   FileText,
+  CheckSquare,
   UserCircle2,
   Sun,
   Moon,
@@ -16,8 +17,13 @@ import {
   Target,
   Mail,
   Layers,
-  Activity
+  Activity,
+  DollarSign,
+  LayoutDashboard,
+  AlertTriangle
 } from "lucide-react";
+
+
 import { useTheme } from "@/react-app/hooks/useTheme";
 import { getCurrentRole, getCurrentUser, clearAuthToken } from "@/react-app/utils/auth";
 import { useApi } from "@/react-app/hooks/useApi";
@@ -33,7 +39,9 @@ type NavItem = {
 
 // VERSION: 2025-01-15-CON-IMPORTADOR-VISUAL
 const navigation: NavItem[] = [
-  { name: "Clientes", href: "/", icon: Users, roles: ["admin", "supervisor", "vendedor"] },
+  { name: "Panel General", href: "/", icon: LayoutDashboard, roles: ["admin", "supervisor", "vendedor"] },
+  { name: "Tareas", href: "/tareas", icon: CheckSquare, roles: ["admin", "supervisor", "vendedor"] },
+  { name: "Clientes", href: "/clientes", icon: Users, roles: ["admin", "supervisor", "vendedor"] },
   { name: "Seguimiento", href: "/seguimiento", icon: PhoneCall, roles: ["admin", "supervisor", "vendedor"] },
   { name: "Reportes", href: "/reportes", icon: BarChart3, roles: ["admin", "supervisor", "vendedor"] },
   { name: "Tarifas", href: "/tarifas", icon: Layers, roles: ["admin", "supervisor", "vendedor"] },
@@ -42,10 +50,13 @@ const navigation: NavItem[] = [
   { name: "Vendedores", href: "/vendedores", icon: Building2, roles: ["admin", "supervisor"] },
   { name: "Categorías", href: "/categorias", icon: Folder, roles: ["admin"] },
   { name: "Productos", href: "/productos", icon: Package, roles: ["admin", "supervisor"] },
+  { name: "Comisiones", href: "/comisiones", icon: DollarSign, roles: ["admin", "supervisor"] },
   { name: "Metas", href: "/metas", icon: Target, roles: ["admin", "supervisor"] },
   { name: "Importador", href: "/importador", icon: Upload, roles: ["admin", "supervisor"] },
   { name: "Historial", href: "/historial", icon: FileText, roles: ["admin"] },
+  { name: "Discrepancias", href: "/discrepancias", icon: AlertTriangle, roles: ["admin", "supervisor"] },
   { name: "Perfil", href: "/perfil", icon: UserCircle2, roles: ["admin", "supervisor", "vendedor"] }
+
 ];
 
 interface LayoutProps {

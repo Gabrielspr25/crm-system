@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
-import { Plus, Search, Edit, Trash2, Package, DollarSign } from "lucide-react";
+import { Plus, Search, Edit, Trash2, Package, DollarSign, Layers } from "lucide-react";
 import { useApi } from "../hooks/useApi";
 import { authFetch } from "@/react-app/utils/auth";
+import { useNavigate } from "react-router";
 
 interface Product {
   id: string; // UUID
@@ -21,7 +22,16 @@ interface Category {
   created_at: string;
 }
 
+interface CommissionTier {
+  id: string;
+  product_id: string;
+  range_min: number;
+  range_max: number | null;
+  commission_amount: number;
+}
+
 export default function Products() {
+  const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState("");
   const [showModal, setShowModal] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -35,6 +45,24 @@ export default function Products() {
 
   const { data: products, loading: productsLoading, refetch: refetchProducts } = useApi<Product[]>("/api/products");
   const { data: categories, refetch: refetchCategories } = useApi<Category[]>("/api/categories");
+  const { data: tiers, refetch: refetchTiers } = useApi<CommissionTier[]>("/api/products/tiers");
+
+  const [showTierModal, setShowTierModal] = useState(false);
+  const [editingTier, setEditingTier] = useState<CommissionTier | null>(null);
+  const [tierProductId, setTierProductId] = useState<string>("");
+  const [tierFormData, setTierFormData] = useState({
+    range_min: "",
+    range_max: "",
+    commission_amount: ""
+  });
+
+  console.log('🔍 PRODUCTS v2026-96 - Loading:', productsLoading, 'Data:', products?.length || 0, 'Products:', products);
+  
+  if (products && products.length > 0) {
+    console.log('✅ PRODUCTOS CARGADOS:', products);
+  } else if (!productsLoading && (!products || products.length === 0)) {
+    console.warn('⚠️ No hay productos o array vacío');
+  }
 
   const filteredProducts = (products || []).filter(product =>
     product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -109,8 +137,79 @@ export default function Products() {
       category_id: "",
       description: "",
       price: "",
-      commission_percentage: "10.00",
+      commission_percentage: "",
     });
+  };
+
+  // Funciones para gestionar tiers
+  const handleEditTier = (tier: CommissionTier, productId: string) => {
+    setEditingTier(tier);
+    setTierProductId(productId);
+    setTierFormData({
+      range_min: tier.range_min.toString(),
+      range_max: tier.range_max?.toString() || "",
+      commission_amount: tier.commission_amount.toString()
+    });
+    setShowTierModal(true);
+  };
+
+  const handleNewTier = (productId: string) => {
+    setEditingTier(null);
+    setTierProductId(productId);
+    setTierFormData({
+      range_min: "",
+      range_max: "",
+      commission_amount: ""
+    });
+    setShowTierModal(true);
+  };
+
+  const handleSubmitTier = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    try {
+      const payload = {
+        product_id: tierProductId,
+        range_min: parseFloat(tierFormData.range_min),
+        range_max: tierFormData.range_max ? parseFloat(tierFormData.range_max) : null,
+        commission_amount: parseFloat(tierFormData.commission_amount)
+      };
+
+      if (editingTier) {
+        await authFetch(`/api/products/tiers/${editingTier.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+      } else {
+        await authFetch("/api/products/tiers", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+      }
+
+      setShowTierModal(false);
+      setEditingTier(null);
+      setTierProductId("");
+      setTierFormData({ range_min: "", range_max: "", commission_amount: "" });
+      refetchTiers();
+    } catch (error) {
+      console.error("Error saving tier:", error);
+    }
+  };
+
+  const handleDeleteTier = async (tierId: string) => {
+    if (!confirm("¿Eliminar este tier de comisión?")) return;
+
+    try {
+      await authFetch(`/api/products/tiers/${tierId}`, {
+        method: "DELETE"
+      });
+      refetchTiers();
+    } catch (error) {
+      console.error("Error deleting tier:", error);
+    }
   };
 
   // Escuchar eventos de actualización de categorías
@@ -126,6 +225,8 @@ export default function Products() {
       window.removeEventListener('categories-updated', handleCategoriesUpdate);
     };
   }, [refetchCategories]);
+
+  console.log('🔍 PRODUCTS - Loading:', productsLoading, 'Data:', products?.length || 0);
 
   if (productsLoading) {
     return (
@@ -225,6 +326,53 @@ export default function Products() {
                 {product.commission_percentage > 0 && (
                   <div className="text-sm text-gray-600 dark:text-gray-300">
                     <span className="font-medium">Comisión:</span> {product.commission_percentage}%
+                  </div>
+                )}
+
+                {/* Mostrar tiers SOLO para productos móviles */}
+                {(product.name.toLowerCase().includes('movil') || product.name.toLowerCase().includes('móvil')) && (
+                  <div className="mt-4 border-t border-gray-200 dark:border-slate-700 pt-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm font-semibold text-gray-700 dark:text-gray-300">Tiers de Comisión</span>
+                      <button
+                        onClick={() => handleNewTier(product.id)}
+                        className="text-xs px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded transition-colors"
+                      >
+                        + Agregar
+                      </button>
+                    </div>
+                    <div className="space-y-1">
+                      {(tiers || [])
+                        .filter(t => t.product_id === product.id)
+                        .sort((a, b) => a.range_min - b.range_min)
+                        .map(tier => (
+                          <div key={tier.id} className="flex items-center justify-between text-xs bg-gray-50 dark:bg-slate-700 px-2 py-1.5 rounded">
+                            <span className="text-gray-700 dark:text-gray-300">
+                              ${tier.range_min} - {tier.range_max ? `$${tier.range_max}` : '∞'}: <span className="font-bold text-green-600 dark:text-green-400">${tier.commission_amount}</span>
+                            </span>
+                            <div className="flex gap-1">
+                              <button
+                                onClick={() => handleEditTier(tier, product.id)}
+                                className="p-1 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/20 rounded"
+                                title="Editar tier"
+                              >
+                                <Edit className="w-3 h-3" />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteTier(tier.id)}
+                                className="p-1 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/20 rounded"
+                                title="Eliminar tier"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+                          </div>
+                        ))
+                      }
+                      {(tiers || []).filter(t => t.product_id === product.id).length === 0 && (
+                        <p className="text-xs text-gray-500 dark:text-gray-400 italic">Sin tiers configurados</p>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
@@ -347,6 +495,88 @@ export default function Products() {
                   className="px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-lg hover:shadow-lg transition-all duration-200"
                 >
                   {editingProduct ? "Actualizar" : "Crear"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Tier */}
+      {showTierModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl p-6 w-full max-w-md mx-4">
+            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">
+              {editingTier ? "Editar Tier de Comisión" : "Nuevo Tier de Comisión"}
+            </h2>
+
+            <form onSubmit={handleSubmitTier} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Rango Mínimo (cantidad) *
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  required
+                  min="0"
+                  value={tierFormData.range_min}
+                  onChange={(e) => setTierFormData({ ...tierFormData, range_min: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
+                  placeholder="0"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Rango Máximo (cantidad)
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={tierFormData.range_max}
+                  onChange={(e) => setTierFormData({ ...tierFormData, range_max: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
+                  placeholder="Dejar vacío para infinito"
+                />
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">Dejar vacío para sin límite (∞)</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Comisión ($) *
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  required
+                  min="0"
+                  value={tierFormData.commission_amount}
+                  onChange={(e) => setTierFormData({ ...tierFormData, commission_amount: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
+                  placeholder="25.00"
+                />
+              </div>
+
+              <div className="flex justify-end space-x-3 mt-6">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowTierModal(false);
+                    setEditingTier(null);
+                    setTierProductId("");
+                    setTierFormData({ range_min: "", range_max: "", commission_amount: "" });
+                  }}
+                  className="px-4 py-2 text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-slate-700 rounded-lg hover:bg-gray-200 dark:hover:bg-slate-600 transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-gradient-to-r from-green-500 to-green-600 text-white rounded-lg hover:shadow-lg transition-all duration-200"
+                >
+                  {editingTier ? "Actualizar" : "Crear"}
                 </button>
               </div>
             </form>

@@ -1,6 +1,7 @@
-import XLSX from 'xlsx';
+busca ese archivo y es e que vas a probar hasta dejaro en BedDouble
 import pg from 'pg';
 import fs from 'fs';
+import { BedDouble } from 'lucide-react'
 
 const { Pool } = pg;
 

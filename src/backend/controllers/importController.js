@@ -60,10 +60,11 @@ export const saveImportData = async (req, res) => {
                         const ownerName = String(clientData.owner_name || '').trim();
                         const contactPerson = String(clientData.contact_person || '').trim();
                         const vendorName = String(clientData.salesperson_id || '').trim();
+                        const vendorIdFromPayload = clientData.vendor_id ? parseInt(clientData.vendor_id) : null;
                         const banNumber = String(banData.ban_number || '').trim();
                         const accountType = String(banData.account_type || '').trim();
                         const phone = String(subData.phone || '').trim();
-                        
+
                         // Mapeo de status a 1 carácter (A=Activo, C=Cancelado)
                         const rawStatus = String(banData.status || '').trim().toUpperCase();
                         let banStatusValue = null;
@@ -103,7 +104,17 @@ export const saveImportData = async (req, res) => {
                             const banId = existingBan.rows[0].id;
                             clientId = existingBan.rows[0].client_id;
 
-                            if (vendorName) {
+                            // Priorizar vendor_id del payload, luego buscar por nombre
+                            if (vendorIdFromPayload) {
+                                finalVendorId = vendorIdFromPayload;
+                                const mappingRes = await client.query(
+                                    'SELECT salesperson_id FROM vendor_salesperson_mapping WHERE vendor_id = $1',
+                                    [finalVendorId]
+                                );
+                                if (mappingRes.rows.length > 0) {
+                                    finalSalespersonId = mappingRes.rows[0].salesperson_id;
+                                }
+                            } else if (vendorName) {
                                 const vendorRes = await client.query('SELECT id FROM vendors WHERE name ILIKE $1', [vendorName]);
                                 if (vendorRes.rows.length > 0) {
                                     finalVendorId = vendorRes.rows[0].id;
@@ -162,6 +173,10 @@ export const saveImportData = async (req, res) => {
                                 updateFields.push(`zip_code = $${paramCount++}`);
                                 updateValues.push(clientData.zip_code);
                             }
+                            if (clientData.tax_id) {
+                                updateFields.push(`tax_id = $${paramCount++}`);
+                                updateValues.push(clientData.tax_id);
+                            }
                             if (finalSalespersonId) {
                                 updateFields.push(`salesperson_id = $${paramCount++}`);
                                 updateValues.push(finalSalespersonId);
@@ -180,7 +195,17 @@ export const saveImportData = async (req, res) => {
 
                             updated++;
                         } else {
-                            if (vendorName) {
+                            // Priorizar vendor_id del payload, luego buscar por nombre
+                            if (vendorIdFromPayload) {
+                                finalVendorId = vendorIdFromPayload;
+                                const mappingRes = await client.query(
+                                    'SELECT salesperson_id FROM vendor_salesperson_mapping WHERE vendor_id = $1',
+                                    [finalVendorId]
+                                );
+                                if (mappingRes.rows.length > 0) {
+                                    finalSalespersonId = mappingRes.rows[0].salesperson_id;
+                                }
+                            } else if (vendorName) {
                                 const vendorRes = await client.query('SELECT id FROM vendors WHERE name ILIKE $1', [vendorName]);
                                 if (vendorRes.rows.length > 0) {
                                     finalVendorId = vendorRes.rows[0].id;
@@ -205,8 +230,8 @@ export const saveImportData = async (req, res) => {
                                     clientId = existingClient.rows[0].id;
                                 } else {
                                     const newClient = await client.query(
-                                        `INSERT INTO clients (name, owner_name, contact_person, email, phone, additional_phone, cellular, address, city, zip_code, salesperson_id, created_at, updated_at)
-                                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
+                                        `INSERT INTO clients (name, owner_name, contact_person, email, phone, additional_phone, cellular, address, city, zip_code, tax_id, salesperson_id, created_at, updated_at)
+                                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
                                          RETURNING id, name`,
                                         [
                                             clientName,
@@ -219,6 +244,7 @@ export const saveImportData = async (req, res) => {
                                             clientData.address || null,
                                             clientData.city || null,
                                             clientData.zip_code || null,
+                                            clientData.tax_id || null,
                                             finalSalespersonId // UUID mapeado
                                         ]
                                     );
@@ -242,10 +268,17 @@ export const saveImportData = async (req, res) => {
                             }
 
                             const newBan = await client.query(
-                                `INSERT INTO bans (ban_number, client_id, account_type, status, created_at, updated_at)
-                                 VALUES ($1, $2, $3, $4, NOW(), NOW())
+                                `INSERT INTO bans (
+                                    ban_number, client_id, account_type, status, 
+                                    dealer_code, dealer_name, reason_desc, sub_status_report,
+                                    created_at, updated_at
+                                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
                                  RETURNING id`,
-                                [banNumber, clientId, accountType || null, banStatusValue || null]
+                                [
+                                    banNumber, clientId, accountType || null, banStatusValue || null,
+                                    banData.dealer_code || null, banData.dealer_name || null,
+                                    banData.reason_desc || null, banData.sub_status_report || null
+                                ]
                             );
                         }
 
@@ -262,6 +295,15 @@ export const saveImportData = async (req, res) => {
                                 const remainingPayments = subData.remaining_payments ? parseInt(String(subData.remaining_payments).replace(/[^0-9]/g, '')) : null;
                                 const contractEndDate = subData.contract_end_date || null;
 
+                                // Campos originales
+                                const imei = subData.imei || null;
+                                const initActivationDate = subData.init_activation_date || null;
+                                const effectiveDate = subData.effective_date || null;
+                                const activityCode = subData.activity_code || null;
+                                const subscriberNameRemote = subData.subscriber_name_remote || null;
+                                const priceCode = subData.price_code || null;
+                                const subActvLocation = subData.sub_actv_location || null;
+
                                 if (clientId && !clientSalesStats.has(clientId)) {
                                     clientSalesStats.set(clientId, {
                                         salesperson_id: finalVendorId,
@@ -272,6 +314,7 @@ export const saveImportData = async (req, res) => {
                                     });
                                 }
                                 const stats = clientSalesStats.get(clientId);
+                                const lineType = (subData.line_type || 'NEW').toUpperCase();
 
                                 if (existingSub.rows.length > 0) {
                                     await client.query(
@@ -283,12 +326,28 @@ export const saveImportData = async (req, res) => {
                                              contract_term = COALESCE($5, contract_term),
                                              contract_end_date = COALESCE($6, contract_end_date),
                                              line_type = COALESCE($7, line_type),
+                                             imei = COALESCE($9, imei),
+                                             init_activation_date = COALESCE($10, init_activation_date),
+                                             effective_date = COALESCE($11, effective_date),
+                                             activity_code = COALESCE($12, activity_code),
+                                             subscriber_name_remote = COALESCE($13, subscriber_name_remote),
+                                             price_code = COALESCE($14, price_code),
+                                             sub_actv_location = COALESCE($15, sub_actv_location),
                                              updated_at = NOW()
                                          WHERE id = $8`,
-                                        [banId, plan, monthlyValue, remainingPayments, contractTerm, contractEndDate, subData.line_type || 'NEW', existingSub.rows[0].id]
+                                        [
+                                            banId, plan, monthlyValue, remainingPayments, contractTerm,
+                                            contractEndDate, lineType, existingSub.rows[0].id,
+                                            imei, initActivationDate, effectiveDate, activityCode,
+                                            subscriberNameRemote, priceCode, subActvLocation
+                                        ]
                                     );
                                     if (stats) {
-                                        stats.renewed_lines++;
+                                        if (lineType === 'NEW') {
+                                            stats.new_lines++;
+                                        } else {
+                                            stats.renewed_lines++;
+                                        }
                                         stats.total_amount += monthlyValue || 0;
                                     }
                                 } else {
@@ -296,12 +355,24 @@ export const saveImportData = async (req, res) => {
                                         `INSERT INTO subscribers (
                                             ban_id, phone, plan, monthly_value, 
                                             remaining_payments, contract_term, contract_end_date,
-                                            line_type, created_at, updated_at
-                                         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())`,
-                                        [banId, phone, plan, monthlyValue, remainingPayments, contractTerm, contractEndDate, subData.line_type || 'NEW']
+                                            line_type, imei, init_activation_date, effective_date,
+                                            activity_code, subscriber_name_remote, price_code,
+                                            sub_actv_location,
+                                            created_at, updated_at
+                                         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW())`,
+                                        [
+                                            banId, phone, plan, monthlyValue, remainingPayments,
+                                            contractTerm, contractEndDate, lineType, imei,
+                                            initActivationDate, effectiveDate, activityCode,
+                                            subscriberNameRemote, priceCode, subActvLocation
+                                        ]
                                     );
                                     if (stats) {
-                                        stats.new_lines++;
+                                        if (lineType === 'NEW') {
+                                            stats.new_lines++;
+                                        } else {
+                                            stats.renewed_lines++;
+                                        }
                                         stats.total_amount += monthlyValue || 0;
                                     }
                                 }

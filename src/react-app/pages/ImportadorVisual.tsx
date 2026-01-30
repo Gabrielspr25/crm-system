@@ -113,7 +113,7 @@ export default function ImportadorVisual() {
     const labels: Record<string, Record<string, string>> = {
       "Clientes": {
         "owner_name": "Nombre y Apellido Dueño",
-        "name": "Empresa",
+        "name": "Empresa / Subscriber Name",
         "contact_person": "Persona de Contacto",
         "email": "Email",
         "phone": "Teléfono",
@@ -122,19 +122,31 @@ export default function ImportadorVisual() {
         "address": "Dirección",
         "city": "Ciudad",
         "zip_code": "Código Postal",
+        "tax_id": "Tax ID / Seguro Social",
       },
       "BANs": {
         "ban_number": "Número BAN",
-        "account_type": "Tipo de Cuenta",
-        "status": "Estado",
+        "account_type": "Tipo de Cuenta (ACC_TYPE)",
+        "status": "Estado (SUB_STATUS)",
+        "dealer_code": "Código de Dealer",
+        "dealer_name": "Nombre de Dealer",
+        "reason_desc": "Razón de Estado (REASON_DESC)",
+        "sub_status_report": "Reporte de Estado",
       },
       "Suscriptores": {
-        "phone": "Número de Teléfono",
-        "plan": "Plan",
-        "monthly_value": "Valor Mensual",
+        "phone": "Número (SUBSCRIBER_NO)",
+        "plan": "Plan / Price Plan",
+        "monthly_value": "Renta Mensual",
         "remaining_payments": "Plazos Faltantes",
-        "contract_term": "Meses Vendidos",
+        "contract_term": "Meses Contrato",
         "contract_end_date": "Fecha Fin Contrato",
+        "imei": "IMEI / Equipo",
+        "init_activation_date": "Fecha Activación Inicial",
+        "effective_date": "Fecha Efectiva",
+        "activity_code": "Código de Actividad",
+        "subscriber_name_remote": "Nombre Remoto",
+        "price_code": "Código de Precio",
+        "sub_actv_location": "Ubicación Activación",
       },
     };
     return labels[table]?.[col] || col;
@@ -144,16 +156,15 @@ export default function ImportadorVisual() {
     {
       table: "Clientes",
       columns: [
-        "owner_name",
         "name",
-        "contact_person",
+        "tax_id",
         "email",
         "phone",
-        "additional_phone",
-        "cellular",
         "address",
         "city",
-        "zip_code"
+        "zip_code",
+        "contact_person",
+        "owner_name"
       ]
     },
     {
@@ -161,7 +172,11 @@ export default function ImportadorVisual() {
       columns: [
         "ban_number",
         "account_type",
-        "status"
+        "status",
+        "dealer_code",
+        "dealer_name",
+        "reason_desc",
+        "sub_status_report"
       ]
     },
     {
@@ -170,9 +185,16 @@ export default function ImportadorVisual() {
         "phone",
         "plan",
         "monthly_value",
-        "remaining_payments",
+        "imei",
+        "init_activation_date",
+        "effective_date",
+        "activity_code",
+        "subscriber_name_remote",
         "contract_term",
-        "contract_end_date"
+        "contract_end_date",
+        "remaining_payments",
+        "price_code",
+        "sub_actv_location"
       ]
     },
   ]);
@@ -1339,8 +1361,8 @@ export default function ImportadorVisual() {
                 }
               }}
               className={`text-[10px] px-2 py-0.5 rounded border mt-1 transition-colors ${isActivacionesMode
-                  ? "bg-blue-900 text-blue-200 border-blue-700 hover:bg-blue-800"
-                  : "bg-neutral-700 text-gray-400 border-neutral-600 hover:bg-neutral-600"
+                ? "bg-blue-900 text-blue-200 border-blue-700 hover:bg-blue-800"
+                : "bg-neutral-700 text-gray-400 border-neutral-600 hover:bg-neutral-600"
                 }`}
             >
               {isActivacionesMode ? "📋 Modo Activaciones: ON" : "📄 Modo Activaciones: OFF"}
@@ -1606,8 +1628,8 @@ export default function ImportadorVisual() {
                           onDragStart={() => handleDragStart(col)}
                           whileHover={{ scale: 1.05 }}
                           className={`flex items-center justify-between px-3 py-1 rounded-md cursor-grab select-none shadow-md ${assignedColumns.includes(col)
-                              ? "bg-green-700 hover:bg-green-600 text-white"
-                              : "bg-blue-700 hover:bg-blue-500 text-white"
+                            ? "bg-green-700 hover:bg-green-600 text-white"
+                            : "bg-blue-700 hover:bg-blue-500 text-white"
                             }`}
                         >
                           {col}

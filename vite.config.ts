@@ -38,6 +38,7 @@ export default defineConfig({
     },
   },
   build: {
+    outDir: 'dist/client',
     rollupOptions: {
       output: {
         // HASH ÚNICO POR BUILD - IMPOSIBLE DE CACHEAR

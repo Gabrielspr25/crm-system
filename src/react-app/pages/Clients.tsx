@@ -300,7 +300,7 @@ export default function Clients() {
   const [offerGeneratorClientName, setOfferGeneratorClientName] = useState('');
 
   const [clientItems, setClientItems] = useState<ClientItem[]>([]);
-  const [activeTab, setActiveTab] = useState<'all' | 'active' | 'cancelled' | 'following' | 'completed' | 'incomplete'>('active');
+  const [activeTab, setActiveTab] = useState<'all' | 'active' | 'cancelled' | 'completed' | 'incomplete' | 'following'>('active');
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [notification, setNotification] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const [pendingBanClientId, setPendingBanClientId] = useState<number | null>(null);
@@ -930,9 +930,9 @@ export default function Clients() {
 
       await Promise.all([refetchProspects(), refetchClients()]);
 
-      // Cambiar a la pestaña de "Seguimiento" automáticamente
-      console.log('🔄 Cambiando a pestaña "Siguiendo"');
-      setActiveTab('following');
+      // Redirigir al módulo de Seguimiento
+      console.log('🔄 Redirigiendo a módulo Seguimiento');
+      navigate('/seguimiento');
     } catch (error) {
       console.error('Error sending client to follow-up:', error);
       notify('error', error instanceof Error ? error.message : 'No fue posible enviar el cliente a seguimiento.');
@@ -1782,24 +1782,15 @@ export default function Clients() {
         </button>
         <button
           className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${activeTab === 'following'
-            ? 'bg-purple-600 text-white shadow-lg'
+            ? 'bg-green-600 text-white shadow-lg'
             : 'bg-gray-800 text-gray-400 hover:text-white'
             }`}
           onClick={() => setActiveTab('following')}
+          title="Clientes en seguimiento activo"
         >
           Seguimiento
-          <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${activeTab === 'following' ? 'bg-purple-700' : 'bg-gray-700'}`}>
+          <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${activeTab === 'following' ? 'bg-green-700' : 'bg-gray-700'}`}>
             {followingClientsCount}
-          </span>
-        </button>
-        <button
-          className="px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 bg-gray-800 text-gray-400 hover:text-white hover:bg-indigo-600"
-          onClick={() => navigate('/seguimiento?tab=completed')}
-          title="Ver ventas completadas en módulo Seguimiento"
-        >
-          Completadas
-          <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-gray-700">
-            {completedClientsCount}
           </span>
         </button>
         <button
@@ -1988,98 +1979,29 @@ export default function Clients() {
                           Completar
                         </button>
                       ) : activeTab === 'cancelled' ? (
-                        <div className="flex gap-2 justify-center">
-                          <button
-                            onClick={() => handleViewClientDetail(item.clientId, 'info')}
-                            className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-1 rounded text-xs transition-colors flex items-center gap-1"
-                            title="Editar datos del cliente"
-                          >
-                            <Edit className="w-3 h-3" />
-                            Editar
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              handleSendToFollowUp(item.clientId);
-                            }}
-                            className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-xs transition-colors flex items-center gap-1"
-                            title="Reactivar / Seguimiento"
-                          >
-                            <UserPlus className="w-3 h-3" />
-                            Reactivar
-                          </button>
-                        </div>
-                      ) : item.wasCompleted ? (
                         <button
-                          onClick={() => navigate('/seguimiento?tab=completed')}
-                          className="px-3 py-1 rounded text-xs transition-colors flex items-center gap-1 mx-auto bg-purple-600 hover:bg-purple-700 text-white"
-                          title="Ver en Seguimiento (Completadas)"
+                          onClick={() => handleViewClientDetail(item.clientId, 'info')}
+                          className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-1 rounded text-xs transition-colors flex items-center gap-1 mx-auto"
+                          title="Editar datos del cliente"
                         >
-                          <BarChart3 className="w-3 h-3" />
-                          Ver Seguimiento
+                          <Edit className="w-3 h-3" />
+                          Editar
                         </button>
-                      ) : item.isBeingFollowed ? (
-                        <div className="flex flex-col items-center gap-2">
-                          <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-green-900/60 text-green-200 text-xs font-medium">
-                            <UserPlus className="w-3 h-3" /> Siguiendo
-                          </span>
-                          <div className="flex gap-2">
-                            <button
-                              onClick={() => navigate(`/seguimiento?client_id=${item.clientId}`)}
-                              className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-xs transition-colors flex items-center gap-1"
-                              title="Ir a gestión de seguimiento"
-                            >
-                              <Package className="w-3 h-3" />
-                              Productos
-                            </button>
-                            <button
-                              onClick={() => handleViewClientDetail(item.clientId, 'info')}
-                              className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-1 rounded text-xs transition-colors flex items-center gap-1"
-                              title="Editar datos del cliente"
-                            >
-                              <Edit className="w-3 h-3" />
-                              Datos
-                            </button>
-                            <button
-                              onClick={() => handleStopFollowing(item.followUpProspectId!, item.businessName || item.clientName)}
-                              className="bg-orange-600 hover:bg-orange-700 text-white px-3 py-1 rounded text-xs transition-colors"
-                              title="Devolver al pool de clientes"
-                            >
-                              Devolver
-                            </button>
-                          </div>
-                        </div>
                       ) : (
-                        <div className="flex items-center justify-center gap-2">
-                          <button
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              console.log('🟡 CLICK DETECTADO en botón A Seguimiento - clientId:', item.clientId);
-                              handleSendToFollowUp(item.clientId);
-                            }}
-                            className="px-3 py-1 rounded text-xs transition-colors flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white"
-                            title="Enviar a seguimiento"
-                          >
-                            <UserPlus className="w-3 h-3" />
-                            A Seguimiento
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              console.log('🟣 CLICK FUSIONAR - ID:', item.clientId);
-                              setMergeSourceId(item.clientId);
-                              setShowMergeModal(true);
-                            }}
-                            className="p-1 text-purple-400 hover:text-purple-300 transition-colors z-10 relative"
-                            title="Fusionar Cliente (Este será el Origen/Eliminado)"
-                          >
-                            <Merge size={16} />
-                          </button>
-                        </div>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            console.log('🟣 CLICK FUSIONAR - ID:', item.clientId);
+                            setMergeSourceId(item.clientId);
+                            setShowMergeModal(true);
+                          }}
+                          className="p-1 text-purple-400 hover:text-purple-300 transition-colors z-10 relative mx-auto flex items-center justify-center"
+                          title="Fusionar Cliente"
+                        >
+                          <Merge size={16} />
+                        </button>
                       )}
                     </td>
                   </tr>
@@ -2259,8 +2181,8 @@ export default function Clients() {
             }}
             onFollowUpUpdated={async () => {
               await refetchProspects();
-              // Cambiar a la pestaña de "Seguimiento" automáticamente
-              setActiveTab('following');
+              // Redirigir al módulo de Seguimiento
+              navigate('/seguimiento');
             }}
             onEditSubscriber={(subscriber, banId) => {
               setEditingSubscriber(subscriber);
@@ -2385,6 +2307,10 @@ function ClientManagementModal({
     address: client.address || '',
     city: (client as any).city || '',
     zip_code: (client as any).zip_code || '',
+    tax_id: (client as any).tax_id || '',
+    owner_name: (client as any).owner_name || '',
+    cellular: (client as any).cellular || '',
+    additional_phone: (client as any).additional_phone || '',
   });
 
   useEffect(() => {
@@ -2835,6 +2761,36 @@ function ClientManagementModal({
                       </button>
                       <button
                         onClick={async () => {
+                          try {
+                            const response = await authFetch('/api/pos/enviar-cliente', {
+                              method: 'POST',
+                              json: {
+                                ...client,
+                                salesperson_id: client.salesperson_id || client.vendor_id
+                              }
+                            });
+                            
+                            if (!response.ok) {
+                              const error = await response.json();
+                              setFormMessage({ type: 'error', text: error.error || 'Error al enviar al POS' });
+                              return;
+                            }
+                            
+                            const result = await response.json();
+                            setFormMessage({ type: 'success', text: `✅ Cliente enviado al POS (ID: ${result.clientecreditoid})` });
+                          } catch (error) {
+                            console.error('Error enviando a POS:', error);
+                            setFormMessage({ type: 'error', text: 'Error al enviar al POS' });
+                          }
+                        }}
+                        className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white px-4 py-2 rounded-lg text-sm flex items-center gap-2 transition-all shadow-lg shadow-purple-500/25"
+                        title="Enviar cliente al sistema POS"
+                      >
+                        <span>📤</span>
+                        Enviar a POS
+                      </button>
+                      <button
+                        onClick={async () => {
                           if (client.bans.length > 0) {
                             setFormMessage({ type: 'info', text: 'No se puede eliminar un cliente con BANs activos. Elimina los BANs primero.' });
                             return;
@@ -2900,6 +2856,10 @@ function ClientManagementModal({
                             address: client.address || '',
                             city: (client as any).city || '',
                             zip_code: (client as any).zip_code || '',
+                            tax_id: (client as any).tax_id || '',
+                            owner_name: (client as any).owner_name || '',
+                            cellular: (client as any).cellular || '',
+                            additional_phone: (client as any).additional_phone || '',
                           });
                         }}
                         className="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors"
@@ -2913,116 +2873,141 @@ function ClientManagementModal({
               </div>
 
               {isEditingClient ? (
-                // Formulario de edición inline
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="bg-gray-800 rounded-lg p-6 space-y-4">
-                    <h4 className="text-lg font-medium text-white mb-4">Información Básica</h4>
-
+                // Formulario de edición inline - ORDEN PROFESIONAL POS
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-gray-800/50 rounded-lg p-6">
+                    {/* Empresa / Razón Social */}
                     <div>
-                      <label className="block text-sm font-medium text-gray-400 mb-2">Nombre del Cliente</label>
+                      <label className="block text-sm font-medium text-gray-300 mb-2">Empresa / Razón Social *</label>
                       <input
                         type="text"
                         value={editClientData.name}
                         onChange={(e) => setEditClientData({ ...editClientData, name: e.target.value })}
                         className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500"
+                        required
                       />
                     </div>
 
+                    {/* RNC / Cédula */}
                     <div>
-                      <label className="block text-sm font-medium text-gray-400 mb-2">Nombre de Empresa</label>
+                      <label className="block text-sm font-medium text-gray-300 mb-2">RNC / Cédula *</label>
                       <input
                         type="text"
-                        value={editClientData.business_name}
-                        onChange={(e) => setEditClientData({ ...editClientData, business_name: e.target.value })}
+                        value={(editClientData as any).tax_id || ''}
+                        onChange={(e) => setEditClientData({ ...editClientData, tax_id: e.target.value } as any)}
                         className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500"
+                        placeholder="RNC o Cédula fiscal"
+                        required
                       />
                     </div>
 
+                    {/* Nombre y Apellido Dueño */}
                     <div>
-                      <label className="block text-sm font-medium text-gray-400 mb-2">Persona de Contacto</label>
+                      <label className="block text-sm font-medium text-gray-300 mb-2">Nombre y Apellido Dueño</label>
+                      <input
+                        type="text"
+                        value={(editClientData as any).owner_name || ''}
+                        onChange={(e) => setEditClientData({ ...editClientData, owner_name: e.target.value } as any)}
+                        className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500"
+                        placeholder="Nombre completo del propietario"
+                      />
+                    </div>
+
+                    {/* Persona de Contacto */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-300 mb-2">Persona de Contacto *</label>
                       <input
                         type="text"
                         value={editClientData.contact_person}
                         onChange={(e) => setEditClientData({ ...editClientData, contact_person: e.target.value })}
                         className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500"
+                        required
                       />
                     </div>
-                  </div>
 
-                  <div className="bg-gray-800 rounded-lg p-6 space-y-4">
-                    <h4 className="text-lg font-medium text-white mb-4">Datos de Contacto</h4>
-
+                    {/* Email */}
                     <div>
-                      <label className="block text-sm font-medium text-gray-400 mb-2">Email</label>
+                      <label className="block text-sm font-medium text-gray-300 mb-2">Email *</label>
                       <input
                         type="email"
                         value={editClientData.email}
                         onChange={(e) => setEditClientData({ ...editClientData, email: e.target.value })}
                         className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500"
+                        required
                       />
                     </div>
 
+                    {/* Teléfono Principal */}
                     <div>
-                      <label className="block text-sm font-medium text-gray-400 mb-2">Teléfono Principal</label>
+                      <label className="block text-sm font-medium text-gray-300 mb-2">Teléfono Principal *</label>
                       <input
-                        type="text"
+                        type="tel"
                         value={editClientData.phone}
                         onChange={(e) => setEditClientData({ ...editClientData, phone: e.target.value })}
                         className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500"
+                        placeholder="+1 787 234 5678"
+                        required
                       />
                     </div>
 
+                    {/* Celular */}
                     <div>
-                      <label className="block text-sm font-medium text-gray-400 mb-2">Teléfono Secundario</label>
+                      <label className="block text-sm font-medium text-gray-300 mb-2">Celular *</label>
                       <input
-                        type="text"
-                        value={editClientData.secondary_phone}
-                        onChange={(e) => setEditClientData({ ...editClientData, secondary_phone: e.target.value })}
+                        type="tel"
+                        value={(editClientData as any).cellular || editClientData.mobile_phone || ''}
+                        onChange={(e) => setEditClientData({ ...editClientData, cellular: e.target.value, mobile_phone: e.target.value } as any)}
                         className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500"
+                        placeholder="+1 787 999 8888"
+                        required
                       />
                     </div>
 
+                    {/* Teléfono Adicional */}
                     <div>
-                      <label className="block text-sm font-medium text-gray-400 mb-2">Teléfono Móvil</label>
+                      <label className="block text-sm font-medium text-gray-300 mb-2">Teléfono Adicional</label>
                       <input
-                        type="text"
-                        value={editClientData.mobile_phone}
-                        onChange={(e) => setEditClientData({ ...editClientData, mobile_phone: e.target.value })}
+                        type="tel"
+                        value={(editClientData as any).additional_phone || editClientData.secondary_phone || ''}
+                        onChange={(e) => setEditClientData({ ...editClientData, additional_phone: e.target.value, secondary_phone: e.target.value } as any)}
                         className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500"
+                        placeholder="Opcional"
                       />
                     </div>
-                  </div>
 
-                  <div className="bg-gray-800 rounded-lg p-6 space-y-4">
-                    <h4 className="text-lg font-medium text-white mb-4">Ubicación</h4>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-400 mb-2">Dirección</label>
-                      <input
-                        type="text"
+                    {/* Dirección - Ancho completo */}
+                    <div className="md:col-span-2">
+                      <label className="block text-sm font-medium text-gray-300 mb-2">Dirección *</label>
+                      <textarea
                         value={editClientData.address}
                         onChange={(e) => setEditClientData({ ...editClientData, address: e.target.value })}
+                        rows={3}
                         className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500"
+                        required
                       />
                     </div>
 
+                    {/* Ciudad */}
                     <div>
-                      <label className="block text-sm font-medium text-gray-400 mb-2">Ciudad</label>
+                      <label className="block text-sm font-medium text-gray-300 mb-2">Ciudad *</label>
                       <input
                         type="text"
                         value={editClientData.city}
                         onChange={(e) => setEditClientData({ ...editClientData, city: e.target.value })}
                         className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500"
+                        required
                       />
                     </div>
 
+                    {/* Código Postal */}
                     <div>
-                      <label className="block text-sm font-medium text-gray-400 mb-2">Código Postal</label>
+                      <label className="block text-sm font-medium text-gray-300 mb-2">Código Postal *</label>
                       <input
                         type="text"
                         value={editClientData.zip_code}
                         onChange={(e) => setEditClientData({ ...editClientData, zip_code: e.target.value })}
                         className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500"
+                        required
                       />
                     </div>
                   </div>

@@ -1,5 +1,5 @@
 import express from 'express';
-import { getProducts, createProduct, updateProduct, deleteProduct, getBusinessGoals, getVendorGoals, getProductTiers, getAllTiers } from '../controllers/productController.js';
+import { getProducts, createProduct, updateProduct, deleteProduct, getBusinessGoals, getVendorGoals, getProductTiers, getAllTiers, createTier, updateTier, deleteTier } from '../controllers/productController.js';
 import { authenticateToken } from '../middlewares/auth.js';
 
 const router = express.Router();
@@ -13,6 +13,9 @@ router.delete('/:id', deleteProduct);
 router.get('/goals/business', getBusinessGoals);
 router.get('/goals/vendors', getVendorGoals);
 router.get('/tiers', getAllTiers);
+router.post('/tiers', createTier);
+router.put('/tiers/:id', updateTier);
+router.delete('/tiers/:id', deleteTier);
 router.get('/:id/tiers', getProductTiers);
 
 export default router;
