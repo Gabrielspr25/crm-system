@@ -25,17 +25,13 @@ export const mergeClients = async (req, res) => {
         await query('UPDATE bans SET client_id = $1 WHERE client_id = $2', [targetId, sourceId]);
 
         // 3. Mover Seguimientos (FollowUps)
-        // Verificar si existe la tabla follow_ups o similar
-        // Asumimos que existe y tiene client_id
         try {
             await query('UPDATE follow_ups SET client_id = $1 WHERE client_id = $2', [targetId, sourceId]);
         } catch (e) {
-            console.warn("No se pudo actualizar follow_ups (quizás no existe la tabla o columna)", e.message);
+            console.warn("No se pudo actualizar follow_ups", e.message);
         }
 
-        // 4. Mover Contactos (si hubiera tabla separada, pero parece que están en clients)
-
-        // 5. Eliminar Cliente Origen
+        // 4. Eliminar Cliente Origen
         await query('DELETE FROM clients WHERE id = $1', [sourceId]);
 
         res.json({ success: true, message: `Cliente ${sourceId} fusionado en ${targetId} correctamente.` });
@@ -59,7 +55,7 @@ export const searchClients = async (req, res) => {
              LEFT JOIN bans b ON c.id = b.client_id
              WHERE c.name ILIKE $1 
                 OR c.email ILIKE $1 
-                OR b.ban_number ILIKE $1
+                OR CAST(b.ban_number AS text) ILIKE $1
              LIMIT 20`,
             [searchTerm]
         );
@@ -75,34 +71,40 @@ export const getClients = async (req, res) => {
         let whereClause = '';
         const params = [];
 
-        // FILTROS POR TAB - Basado en status de BANs (C=Cancelado, A=Activo)
+        // FILTROS POR TAB - TEMPORALMENTE SIN FILTRO DE STATUS
         if (tab === 'cancelled') {
-            // Cancelados: Clientes con BANs cancelados (status = 'C') Y con nombre
-            whereClause = `WHERE EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id AND b.status = 'C')
+            whereClause = `WHERE EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id)
                            AND (c.name IS NOT NULL AND c.name != '' AND c.name != 'NULL')`;
         } else if (tab === 'active' || !tab) {
-            // Activos: BAN activo y con nombre
-            whereClause = `WHERE EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id AND b.status = 'A')
+            // MOSTRAR TODOS LOS CLIENTES CON BANS (sin filtrar por status)
+            whereClause = `WHERE EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id)
                            AND (c.name IS NOT NULL AND c.name != '' AND c.name != 'NULL')`;
         } else if (tab === 'following') {
-            // Siguiendo: En seguimiento activo (no completado) Y con al menos 1 BAN activo
             whereClause = `WHERE EXISTS (SELECT 1 FROM follow_up_prospects f WHERE f.client_id = c.id AND f.completed_date IS NULL)
-                           AND EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id AND b.status = 'A')`;
+                           AND EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id)`;
         } else if (tab === 'completed') {
-            // Completadas: Con seguimiento completado
             whereClause = `WHERE EXISTS (SELECT 1 FROM follow_up_prospects f WHERE f.client_id = c.id AND f.completed_date IS NOT NULL)`;
         } else if (tab === 'incomplete') {
-            // Incompletos: Sin nombre (sin importar si BAN es A o C)
             whereClause = `WHERE (c.name IS NULL OR c.name = '' OR c.name = 'NULL')`;
         }
 
         const clients = await query(
             `SELECT c.*,
-            (SELECT COUNT(*) FROM bans b WHERE b.client_id = c.id AND b.status = 'A') as active_ban_count,
-            (SELECT COUNT(*) FROM bans b WHERE b.client_id = c.id AND b.status = 'C') as cancelled_ban_count,
+            (SELECT COUNT(*) FROM bans b WHERE b.client_id = c.id AND (b.status = 'A' OR LOWER(b.status) = 'activo')) as active_ban_count,
+            (SELECT COUNT(*) FROM bans b WHERE b.client_id = c.id AND (b.status = 'C' OR LOWER(b.status) = 'inactivo')) as cancelled_ban_count,
             (SELECT COUNT(*) FROM bans b WHERE b.client_id = c.id) as ban_count,
             (SELECT COUNT(*) FROM subscribers s JOIN bans b ON s.ban_id = b.id WHERE b.client_id = c.id) as active_subscriber_count,
             (SELECT COUNT(*) FROM subscribers s JOIN bans b ON s.ban_id = b.id WHERE b.client_id = c.id) as subscriber_count,
+            (SELECT string_agg(CAST(s.phone AS text), ', ') FROM subscribers s JOIN bans b ON s.ban_id = b.id WHERE b.client_id = c.id) as subscriber_phones,
+            (
+                SELECT json_agg(json_build_object(
+                    'ban_number', CAST(b.ban_number AS text), 
+                    'phone', CAST(s.phone AS text)
+                ))
+                FROM bans b
+                JOIN subscribers s ON s.ban_id = b.id
+                WHERE b.client_id = c.id
+            ) as subscribers_detail,
             (SELECT string_agg(CAST(b.ban_number AS text), ', ') FROM bans b WHERE b.client_id = c.id) as ban_numbers,
             (SELECT COUNT(*) > 0 FROM bans b WHERE b.client_id = c.id) as has_bans,
             (SELECT COUNT(*) > 0 FROM bans b WHERE b.client_id = c.id AND b.status = 'C') as has_cancelled_bans
@@ -111,15 +113,15 @@ export const getClients = async (req, res) => {
        ORDER BY c.created_at DESC`,
             params
         );
-        
-        // Calcular contadores para todos los tabs (sin filtros)
+
+        // Calcular contadores para todos los tabs (SIN FILTRO DE STATUS)
         const stats = await query(`
             SELECT 
                 (SELECT COUNT(DISTINCT c.id) FROM clients c 
-                 WHERE EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id AND b.status = 'A')
+                 WHERE EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id)
                  AND (c.name IS NOT NULL AND c.name <> '' AND c.name <> 'NULL')) as active_count,
                 (SELECT COUNT(DISTINCT c.id) FROM clients c 
-                 WHERE EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id AND b.status = 'C')
+                 WHERE EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id)
                  AND (c.name IS NOT NULL AND c.name <> '' AND c.name <> 'NULL')) as cancelled_count,
                 (SELECT COUNT(DISTINCT c.id) FROM clients c
                  WHERE EXISTS (SELECT 1 FROM follow_up_prospects f WHERE f.client_id = c.id AND f.completed_date IS NULL)) as following_count,
@@ -128,7 +130,7 @@ export const getClients = async (req, res) => {
                 (SELECT COUNT(DISTINCT c.id) FROM clients c 
                  WHERE (c.name IS NULL OR c.name = '' OR c.name = 'NULL')) as incomplete_count
         `);
-        
+
         res.json({
             clients: clients,
             stats: stats[0]
@@ -172,7 +174,6 @@ export const createClient = async (req, res) => {
     }
 
     try {
-        // Asignar salesperson_id del usuario autenticado
         const salespersonId = req.user?.salespersonId || null;
 
         const result = await query(

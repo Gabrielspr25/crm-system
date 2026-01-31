@@ -4,3 +4,13 @@ uploads/
 .env
 *.log
 
+# Large files and temp directories
+claropr-root.tar.gz
+temp_claropr_extract/
+*.tar
+*.tar.gz
+*.jar
+temp_*.js
+test_*.js
+diagnose_*.sh
+get_prod_schema.sh

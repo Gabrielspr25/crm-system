@@ -45,6 +45,8 @@ interface Client {
   cancelled_ban_count?: number;
   subscribers_in_opportunity?: number;
   base: string | null;
+  subscriber_phones?: string | null;
+  subscribers_detail?: { ban_number: string; phone: string; status?: string }[] | null;
 }
 
 interface Vendor {
@@ -163,6 +165,7 @@ interface ClientRowSummary {
   contactPerson?: string | null;
   base?: string | null;
   notes?: string | null;
+  subscribersDetail?: { ban_number: string; phone: string; status?: string }[] | null;
 }
 
 interface ClientDetail {
@@ -491,7 +494,8 @@ export default function Clients() {
             zipCode: client.zip_code,
             contactPerson: client.contact_person,
             base: client.base,
-            notes: null // Notas no vienen en el objeto client principal por defecto, se podrian agregar si es necesario
+            notes: null,
+            subscribersDetail: client.subscribers_detail
           });
         }
 
@@ -579,6 +583,10 @@ export default function Clients() {
           entry.base.followUpProspectId = item.followUpProspectId;
         }
         entry.base.includesBan = entry.base.includesBan || item.includesBan;
+        // Merge details if needed, simpler to take one source
+        if (!entry.base.subscribersDetail && item.subscribersDetail) {
+          entry.base.subscribersDetail = item.subscribersDetail;
+        }
       }
 
       if (item.banId) {
@@ -750,6 +758,10 @@ export default function Clients() {
         ? clientFromBackend.ban_numbers.split(',').map(b => b.trim()).filter(b => b)
         : [];
 
+      const allSubscriberPhones = clientFromBackend?.subscriber_phones
+        ? clientFromBackend.subscriber_phones.split(',').map(p => p.trim()).filter(p => p)
+        : Array.from(subscriberPhones);
+
       const metadata = clientMetadata.get(base.clientId) || { lastActivity: null, banType: null, hasCancelledBans: false, isIncomplete: false };
       return {
         ...base,
@@ -762,11 +774,12 @@ export default function Clients() {
         daysUntilExpiry: primary?.daysUntilExpiry ?? 999999,
         status: primary?.status ?? 'no-date',
         banNumbers: allBanNumbers,
-        subscriberPhones: Array.from(subscriberPhones),
+        subscriberPhones: allSubscriberPhones,
         lastActivity: metadata.lastActivity,
         banType: metadata.banType,
         hasCancelledBans: metadata.hasCancelledBans,
         isIncomplete: metadata.isIncomplete,
+        subscribersDetail: clientFromBackend?.subscribers_detail || base.subscribersDetail || [],
       };
     });
   }, [clientItems, clients]);
@@ -840,14 +853,14 @@ export default function Clients() {
   const completedClients = filteredClients.filter(item => item.wasCompleted && !item.hasCancelledBans && !item.isIncomplete);
   const incompleteClients = filteredClients.filter(item => item.isIncomplete);
   const cancelledClients = filteredClients.filter(item => item.hasCancelledBans);
-  
+
   // Contadores para tabs (usar stats del backend si están disponibles, sino calcular localmente)
   const activeClientsCount = clientStats?.active_count ?? clientSummaries.filter(item => !item.hasCancelledBans && !item.isIncomplete).length;
   const cancelledClientsCount = clientStats?.cancelled_count ?? clientSummaries.filter(item => item.hasCancelledBans).length;
   const followingClientsCount = clientStats?.following_count ?? clientSummaries.filter(item => item.isBeingFollowed && !item.wasCompleted && !item.hasCancelledBans && !item.isIncomplete).length;
   const completedClientsCount = clientStats?.completed_count ?? clientSummaries.filter(item => item.wasCompleted && !item.hasCancelledBans && !item.isIncomplete).length;
   const incompleteClientsCount = clientStats?.incomplete_count ?? clientSummaries.filter(item => item.isIncomplete).length;
-  
+
   // Total de todos los clientes (para verificación)
   const totalAllClients = clientSummaries.length;
 
@@ -1508,34 +1521,52 @@ export default function Clients() {
 
     console.log(`📊 Exportando ${scope === 'all' ? 'TODO' : 'VISTA ACTUAL'} - Registros: ${dataToProcess.length}`);
 
-    const dataToExport = dataToProcess.map(client => ({
-      'ID': client.clientId,
-      'Nombre': client.clientName || '',
-      'Empresa': client.businessName || '',
-      'Tipo (Móvil/Fijo/Conv)': client.banType || 'Indefinido',
-      'Email': client.email || '',
-      'Teléfono Principal': client.primarySubscriberPhone || client.phone || '',
-      'Móvil Contacto': (client as any).mobile_phone || '',
-      'Teléfono Secundario': (client as any).secondary_phone || '',
-      'Dirección': client.address || '',
-      'Ciudad': client.city || '',
-      'Código Postal': client.zipCode || '',
-      'Persona Contacto': client.contactPerson || '',
-      'Base': (client as any).base || 'BD propia',
-      'Estado': (() => {
-        if (client.hasCancelledBans) return 'Cancelado';
-        if ((client as any).isIncomplete) return 'Incompleto';
-        if (client.wasCompleted) return 'Completado';
-        if (client.isBeingFollowed) return 'En Seguimiento';
-        return 'Disponible';
-      })(),
-      'Vendedor': client.vendorName || 'Sin asignar',
-      'BANs': client.banNumbers ? client.banNumbers.join(', ') : '',
-      'Total Suscriptores': client.totalSubscribers || 0,
-      'Fecha Vencimiento': client.primaryContractEndDate ? new Date(client.primaryContractEndDate).toLocaleDateString() : '',
-      'Última Actividad': client.lastActivity ? new Date(client.lastActivity).toLocaleDateString() : '',
-      'Notas': client.notes || ''
-    }));
+    const dataToExport: any[] = [];
+
+    dataToProcess.forEach(client => {
+      // Si tiene detalles de suscriptores, generamos una fila por cada uno (EXPLOSIÓN)
+      const details = client.subscribersDetail;
+      if (details && details.length > 0) {
+        details.forEach(sub => {
+          dataToExport.push({
+            'ID': client.clientId,
+            'Nombre': client.contactPerson || client.clientName,
+            'Empresa': client.businessName || client.clientName || 'Sin Nombre',
+            'Tipo': client.banType || 'Indefinido',
+            'Email': client.email || '',
+            'Teléfono Principal': client.phone || '',
+            'Dirección': client.address || '',
+            'Ciudad': client.city || '',
+            'Base': (client as any).base || 'BD propia',
+            'Estado': sub.status || 'Activo', // Estado del suscriptor si existe, o general
+            'Vendedor': client.vendorName || 'Sin asignar',
+            'BAN': sub.ban_number, // BAN específico de este suscriptor
+            'Suscriptor': sub.phone, // Teléfono de este suscriptor
+            'Fecha Vencimiento': client.primaryContractEndDate ? new Date(client.primaryContractEndDate).toLocaleDateString() : '',
+            'Notas': client.notes || ''
+          });
+        });
+      } else {
+        // Si no tiene suscriptores, generamos una fila única con la info general
+        dataToExport.push({
+          'ID': client.clientId,
+          'Nombre': client.contactPerson || client.clientName,
+          'Empresa': client.businessName || client.clientName || 'Sin Nombre',
+          'Tipo': client.banType || 'Indefinido',
+          'Email': client.email || '',
+          'Teléfono Principal': client.phone || '',
+          'Dirección': client.address || '',
+          'Ciudad': client.city || '',
+          'Base': (client as any).base || 'BD propia',
+          'Estado': client.hasCancelledBans ? 'Cancelado' : 'Disponible',
+          'Vendedor': client.vendorName || 'Sin asignar',
+          'BAN': client.primaryBanNumber !== '-' ? client.primaryBanNumber : '',
+          'Suscriptor': '',
+          'Fecha Vencimiento': client.primaryContractEndDate ? new Date(client.primaryContractEndDate).toLocaleDateString() : '',
+          'Notas': client.notes || ''
+        });
+      }
+    });
 
     const ws = XLSX.utils.json_to_sheet(dataToExport);
     const wb = XLSX.utils.book_new();
@@ -1558,8 +1589,8 @@ export default function Clients() {
       { wch: 15 }, // Base
       { wch: 10 }, // Estado
       { wch: 20 }, // Vendedor
-      { wch: 20 }, // BANs
-      { wch: 10 }, // Total Subs
+      { wch: 15 }, // BAN
+      { wch: 15 }, // Suscriptor
       { wch: 15 }, // Vencimiento
       { wch: 15 }, // Ultima Actividad
       { wch: 30 }  // Notas
@@ -1805,7 +1836,7 @@ export default function Clients() {
             {incompleteClientsCount}
           </span>
         </button>
-        
+
         {/* Total para verificación */}
         <div className="ml-auto flex items-center gap-2 text-sm text-gray-400">
           <span className="font-medium">Total:</span>
@@ -2769,13 +2800,13 @@ function ClientManagementModal({
                                 salesperson_id: client.salesperson_id || client.vendor_id
                               }
                             });
-                            
+
                             if (!response.ok) {
                               const error = await response.json();
                               setFormMessage({ type: 'error', text: error.error || 'Error al enviar al POS' });
                               return;
                             }
-                            
+
                             const result = await response.json();
                             setFormMessage({ type: 'success', text: `✅ Cliente enviado al POS (ID: ${result.clientecreditoid})` });
                           } catch (error) {

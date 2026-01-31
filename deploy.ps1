@@ -28,6 +28,14 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "❌ Error subiendo archivos backend" -ForegroundColor Red
     exit 1
 }
+
+# 2.2. SUBIR SRC (Necesario para imports del backend)
+Write-Host "📤 Subiendo carpeta src..." -ForegroundColor Yellow
+scp -r src root@143.244.191.139:/opt/crmp/
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "❌ Error subiendo carpeta src" -ForegroundColor Red
+    exit 1
+}
 Write-Host "✅ Archivos subidos" -ForegroundColor Green
 
 # 3. PERMISOS

@@ -41,22 +41,21 @@ export const compareExcelAgainstDB = async (req, res) => {
             if (mode === 'remote') {
                 // --- COMPARACIÓN CONTRA SERVIDOR REMOTO (PRODUCCIÓN) ---
                 try {
-                    const remoteRes = await remotePool.query(`
-                        SELECT 
-                            fechaactivacion as fecha,
-                            ban,
-                            numerocelularactivado as suscriber,
-                            nombre,
-                            codigovoz as codigo_voz,
-                            valor,
-                            imsi as simcard,
-                            emai as imei,
-                            producttype as seguro,
-                            pricecode as price_code
+                    SELECT
+                    fechaactivacion as fecha,
+                        ban,
+                        numerocelularactivado as suscriber,
+                        NULL as nombre,
+                        codigovoz as codigo_voz,
+                        NULL as valor,
+                        simcard as simcard,
+                        emai as imei,
+                        NULL as seguro,
+                        pricecode as price_code
                         FROM venta
                         WHERE numerocelularactivado = $1 OR ban = $2
                         LIMIT 1
-                    `, [phone, banNumber]);
+                        `, [phone, banNumber]);
 
                     if (remoteRes.rows.length === 0) {
                         discrepancies.push({
@@ -76,15 +75,15 @@ export const compareExcelAgainstDB = async (req, res) => {
             } else {
                 // --- COMPARACIÓN CONTRA BASE DE DATOS LOCAL ---
                 const localRes = await localQuery(`
-                    SELECT 
-                        s.phone, s.plan, s.monthly_value, s.status as status_activation, s.imei,
+                    SELECT
+                    s.phone, s.plan, s.monthly_value, s.status as status_activation, s.imei,
                         b.ban_number, b.account_type,
                         c.name as client_name
                     FROM subscribers s
                     JOIN bans b ON s.ban_id = b.id
                     JOIN clients c ON b.client_id = c.id
                     WHERE s.phone = $1
-                `, [phone]);
+                        `, [phone]);
 
                 if (localRes.length === 0) {
                     discrepancies.push({
@@ -226,22 +225,20 @@ export const syncRemoteData = async (req, res) => {
 
                 // Ejecutar UPDATE en la tabla venta de claropr remota
                 const updateRes = await remotePool.query(`
-                    UPDATE venta 
-                    SET 
-                        ban = $1, 
-                        emai = $2, 
-                        pricecode = $3, 
+                    UPDATE venta
+                    SET
+                    ban = $1,
+                        emai = $2,
+                        pricecode = $3,
                         fechaactivacion = $4,
-                        imsi = $5,
-                        producttype = $6
-                    WHERE numerocelularactivado = $7
-                `, [
+                        simcard = $5
+                    WHERE numerocelularactivado = $6
+                        `, [
                     String(row.ban || '').trim(),
                     String(row.imei || '').trim(),
                     String(row.plan || '').trim(),
                     finalDate,
                     String(row.imsi || '').trim(),
-                    String(row.product_type || row.tipo_celu || '').trim(),
                     String(row.phone || '').trim()
                 ]);
 
@@ -249,12 +246,12 @@ export const syncRemoteData = async (req, res) => {
                     results.updated++;
                 } else {
                     results.failed++;
-                    results.errors.push(`No se encontró registro para el teléfono ${row.phone} en Producción`);
+                    results.errors.push(`No se encontró registro para el teléfono ${ row.phone } en Producción`);
                 }
             } catch (err) {
                 results.failed++;
-                results.errors.push(`Error en ${row.phone}: ${err.message}`);
-                console.error(`Error syncing ${row.phone} to remote:`, err);
+                results.errors.push(`Error en ${ row.phone }: ${ err.message } `);
+                console.error(`Error syncing ${ row.phone } to remote: `, err);
             }
         }
 
