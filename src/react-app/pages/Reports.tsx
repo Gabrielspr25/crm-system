@@ -253,6 +253,7 @@ export default function Reports() {
             <thead>
               <tr className="bg-slate-800/50 border-b border-slate-700">
                 <th className="px-4 py-4 text-[10px] font-black text-slate-500 uppercase sticky left-0 bg-slate-900 z-10 w-56">Cliente</th>
+                <th className="px-2 py-4 text-[10px] font-bold text-slate-200 uppercase text-left border-b border-slate-700 w-[140px]">Vendedor</th>
                 <th className="px-2 py-4 text-[10px] font-bold text-slate-200 uppercase text-left border-b border-slate-700 w-[110px]">BAN</th>
                 <th className="px-2 py-4 text-[10px] font-bold text-slate-200 uppercase text-left border-b border-slate-700 w-[140px]">Telefono</th>
                 <th className="px-2 py-4 text-[10px] font-bold text-slate-200 uppercase text-right border-b border-slate-700 w-[120px]">Mensualidad</th>
@@ -266,7 +267,7 @@ export default function Reports() {
               {groupedClients.map(group => (
                 <Fragment key={group.client_id || group.client}>
                   <tr className="bg-slate-800/40">
-                    <td colSpan={8} className="px-4 py-3">
+                    <td colSpan={9} className="px-4 py-3">
                       <div className="flex items-center gap-3">
                         <div className="text-slate-100 font-bold truncate">{group.client}</div>
                         <div className="text-[10px] text-slate-500 font-medium uppercase tracking-tighter">{group.vendor_name}</div>
@@ -286,6 +287,7 @@ export default function Reports() {
                     return (
                       <tr key={row.id} className="hover:bg-slate-800/20 transition-colors group">
                         <td className="px-4 py-3 text-slate-200 text-xs">&nbsp;</td>
+                        <td className="px-2 py-3 text-left text-xs text-slate-400 font-medium">{group.vendor_name || '-'}</td>
                         <td className="px-2 py-3 text-left text-xs text-slate-200 font-mono font-medium">{row.ban_number || '-'}</td>
                         <td className="px-2 py-3 text-left text-xs text-slate-200 font-mono font-medium">{row.phone || '-'}</td>
                         <td className="px-2 py-3 text-right text-xs text-slate-200 font-mono font-medium">

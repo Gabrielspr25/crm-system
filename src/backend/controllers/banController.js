@@ -33,6 +33,11 @@ export const createBan = async (req, res) => {
         return badRequest(res, 'Cliente y número de cuenta son obligatorios');
     }
 
+    // VALIDACIÓN OBLIGATORIA: Tipo de cuenta es requerido
+    if (!req.body.account_type || req.body.account_type.trim() === '') {
+        return badRequest(res, 'Tipo de cuenta (account_type) es obligatorio. Debe ser Móvil, Fijo, o Convergente.');
+    }
+
     try {
         // Verificar si ya existe
         const existing = await query('SELECT id FROM bans WHERE ban_number = $1', [ban_number]);
@@ -66,6 +71,11 @@ export const updateBan = async (req, res) => {
         const existing = await query('SELECT id FROM bans WHERE id = $1', [id]);
         if (existing.length === 0) {
             return notFound(res, 'BAN');
+        }
+
+        // VALIDACIÓN: Si se intenta cambiar account_type, no puede estar vacío
+        if ('account_type' in req.body && (!account_type || account_type.trim() === '')) {
+            return badRequest(res, 'Tipo de cuenta no puede estar vacío. Debe ser Móvil, Fijo, o Convergente.');
         }
 
         // Convertir strings vacíos a undefined para que COALESCE funcione correctamente

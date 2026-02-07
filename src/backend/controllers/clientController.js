@@ -71,13 +71,15 @@ export const getClients = async (req, res) => {
         let whereClause = '';
         const params = [];
 
-        // FILTROS POR TAB - TEMPORALMENTE SIN FILTRO DE STATUS
+        // FILTROS POR TAB - CON FILTRO DE STATUS CORREGIDO
         if (tab === 'cancelled') {
+            // CANCELADOS: Clientes CON TODOS LOS BANs cancelados (ninguno activo)
             whereClause = `WHERE EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id)
+                           AND NOT EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id AND (b.status = 'A' OR LOWER(b.status) = 'activo'))
                            AND (c.name IS NOT NULL AND c.name != '' AND c.name != 'NULL')`;
         } else if (tab === 'active' || !tab) {
-            // MOSTRAR TODOS LOS CLIENTES CON BANS (sin filtrar por status)
-            whereClause = `WHERE EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id)
+            // ACTIVOS: Clientes CON AL MENOS UN BAN ACTIVO
+            whereClause = `WHERE EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id AND (b.status = 'A' OR LOWER(b.status) = 'activo'))
                            AND (c.name IS NOT NULL AND c.name != '' AND c.name != 'NULL')`;
         } else if (tab === 'following') {
             whereClause = `WHERE EXISTS (SELECT 1 FROM follow_up_prospects f WHERE f.client_id = c.id AND f.completed_date IS NULL)
@@ -114,14 +116,14 @@ export const getClients = async (req, res) => {
             params
         );
 
-        // Calcular contadores para todos los tabs (SIN FILTRO DE STATUS)
+        // Calcular contadores para todos los tabs CON FILTRO DE STATUS CORRECTO
         const stats = await query(`
             SELECT 
                 (SELECT COUNT(DISTINCT c.id) FROM clients c 
-                 WHERE EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id)
+                 WHERE EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id AND b.status = 'A')
                  AND (c.name IS NOT NULL AND c.name <> '' AND c.name <> 'NULL')) as active_count,
                 (SELECT COUNT(DISTINCT c.id) FROM clients c 
-                 WHERE EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id)
+                 WHERE EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id AND b.status = 'C')
                  AND (c.name IS NOT NULL AND c.name <> '' AND c.name <> 'NULL')) as cancelled_count,
                 (SELECT COUNT(DISTINCT c.id) FROM clients c
                  WHERE EXISTS (SELECT 1 FROM follow_up_prospects f WHERE f.client_id = c.id AND f.completed_date IS NULL)) as following_count,
@@ -175,6 +177,24 @@ export const createClient = async (req, res) => {
 
     try {
         const salespersonId = req.user?.salespersonId || null;
+
+        // VALIDACIÓN OBLIGATORIA: Vendedor debe estar asignado
+        if (!salespersonId) {
+            return badRequest(res, 'Vendedor asignado es obligatorio. No se puede crear un cliente sin vendedor.');
+        }
+
+        // VALIDACIÓN: Verificar que no exista un cliente con el mismo nombre
+        const existingClient = await query(
+            'SELECT id, name FROM clients WHERE UPPER(TRIM(name)) = UPPER(TRIM($1))',
+            [name]
+        );
+
+        if (existingClient.length > 0) {
+            return badRequest(res, 
+                `Ya existe un cliente con el nombre "${existingClient[0].name}". ` +
+                `No se permiten nombres duplicados. ID existente: ${existingClient[0].id}`
+            );
+        }
 
         const result = await query(
             `INSERT INTO clients
@@ -249,5 +269,32 @@ export const updateClient = async (req, res) => {
         res.json(result[0]);
     } catch (error) {
         serverError(res, error, 'Error actualizando cliente');
+    }
+};
+
+/**
+ * GET /api/clients/check-duplicate?name=NOMBRE
+ * Verifica si existe un cliente con el mismo nombre (case-insensitive, trimmed)
+ */
+export const checkDuplicateClient = async (req, res) => {
+    const { name } = req.query;
+
+    if (!name || name.trim() === '') {
+        return badRequest(res, 'name es requerido');
+    }
+
+    try {
+        const existing = await query(
+            'SELECT id, name FROM clients WHERE UPPER(TRIM(name)) = UPPER(TRIM($1))',
+            [name]
+        );
+
+        res.json({
+            exists: existing.length > 0,
+            existingName: existing[0]?.name || null,
+            existingId: existing[0]?.id || null
+        });
+    } catch (error) {
+        serverError(res, error, 'Error verificando duplicado');
     }
 };

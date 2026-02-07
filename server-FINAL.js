@@ -26,6 +26,14 @@ import systemRoutes from './src/backend/routes/systemRoutes.js';
 import productRoutes from './src/backend/routes/productRoutes.js';
 import tiersFixedRoutes from './src/backend/routes/tiersFixedRoutes.js';
 import posIntegrationRoutes from './src/backend/routes/posIntegrationRoutes.js';
+import discrepanciasRoutes from './src/backend/routes/discrepanciasRoutes.js';
+import salesHistoryRoutes from './src/backend/routes/salesHistoryRoutes.js';
+console.log('🔍 DEBUG: discrepanciasRoutes imported:', typeof discrepanciasRoutes);
+
+const JWT_SECRET = process.env.JWT_SECRET || 'tango_secret_key_2024';
+const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'tango_refresh_secret_key_2024';
+const ACCESS_TOKEN_TTL = '12h';
+const REFRESH_TOKEN_TTL = '7d';
 
 // ======================================================
 // Configuración base
@@ -67,74 +75,8 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 // ======================================================
 // DEBUG: FIX SCHEMA ENDPOINT (EMERGENCY)
 // ======================================================
-app.get('/api/debug/fix-schema', async (req, res) => {
-  if (req.query.token !== 'FIXME123') return res.status(403).json({ error: 'Forbidden' });
-
-  try {
-    console.log('[DEBUG] Testing CREATE TABLE permissions...');
-
-    await query(`
-      CREATE TABLE IF NOT EXISTS test_permissions_check (
-        id SERIAL PRIMARY KEY,
-        test_val VARCHAR(255)
-      );
-    `);
-
-    // Si llegamos aquí, PODEMOS crear tablas.
-    // Intentemos crear la tabla satélite de comisiones
-    await query(`
-      CREATE TABLE IF NOT EXISTS follow_up_commissions (
-          prospect_id INTEGER PRIMARY KEY, -- No FK constraint yet to avoid perm issues, just logical link
-          vendor_commission DECIMAL(10,2) DEFAULT 0,
-          manual_company_earnings DECIMAL(10,2),
-          updated_at TIMESTAMP DEFAULT NOW()
-      );
-    `);
-
-    res.json({ success: true, message: 'CRITICAL SUCCESS: Created satellite table follow_up_commissions' });
-
-  } catch (error) {
-    console.error('[DEBUG] Error creating table:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Servir archivos estáticos del frontend (dist/client)
-const distPath = path.join(__dirname, 'dist/client');
-// const varWwwPath = '/var/www/crmp'; // DEPRECATED: We now use /opt/crmp/dist/client
-app.use(express.static(distPath));
-
-// ======================================================
-// Seguridad y Autenticación (MOVED UP FOR SECURITY)
-// ======================================================
-const JWT_SECRET = process.env.JWT_SECRET || 'development-secret';
-const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'development-refresh-secret';
-const ACCESS_TOKEN_TTL = process.env.JWT_EXPIRES_IN || '15m';
-const REFRESH_TOKEN_TTL = process.env.JWT_REFRESH_EXPIRES_IN || '7d';
-
-const PUBLIC_ROUTES = new Set([
-  'GET /api/health',
-  'GET /api/health/full',
-  'GET /api/version',
-  'POST /api/login',
-  'POST /api/token/refresh',
-  'GET /api/tarifas/plans',
-  'GET /api/tarifas/categories'
-]);
-
-const normalizeRoutePath = (routePath) => {
-  if (!routePath.startsWith('/')) {
-    return `/${routePath}`;
-  }
-  return routePath.replace(/\/+$/, '') || '/';
-};
-
 const isPublicRoute = (req) => {
-  if (!req.path.startsWith('/api')) {
-    return true;
-  }
-  const key = `${req.method.toUpperCase()} ${normalizeRoutePath(req.path)}`;
-  if (PUBLIC_ROUTES.has(key)) {
+  if (req.path === '/api/login' || req.path === '/api/token/refresh' || req.path === '/api/health' || req.path === '/api/version') {
     return true;
   }
   return false;
@@ -181,6 +123,9 @@ app.use('/api/vendors', vendorRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/tiers-fixed', tiersFixedRoutes);
 app.use('/api/pos', posIntegrationRoutes);
+app.use('/api/discrepancias', discrepanciasRoutes);
+app.use('/api/sales-history', salesHistoryRoutes);
+console.log('🔍 DEBUG: /api/discrepancias routes mounted');
 
 // System Routes - PROTECTED EXTRA
 // Solo permitir system en dev o con rol admin (validado dentro del router o aqui)

@@ -314,6 +314,10 @@ export default function Clients() {
   const [mergeSourceId, setMergeSourceId] = useState<number | null>(null);
   const [mergeTargetId, setMergeTargetId] = useState<number | null>(null);
   const [isMerging, setIsMerging] = useState(false);
+  const [mergeSearchTerm, setMergeSearchTerm] = useState('');
+  const [mergeSearchResults, setMergeSearchResults] = useState<Client[]>([]);
+  const [showMergeSearchResults, setShowMergeSearchResults] = useState(false);
+  const [selectedTargetClient, setSelectedTargetClient] = useState<Client | null>(null);
 
   const { data: clientsResponse, loading: clientsLoading, error: clientsError, refetch: refetchClients } = useApi<{ clients: Client[], stats: { active_count: number, cancelled_count: number, following_count: number, completed_count: number, incomplete_count: number } }>(`/api/clients?tab=${activeTab}`);
   const clients = clientsResponse?.clients || [];
@@ -952,6 +956,33 @@ export default function Clients() {
     }
   };
 
+  const handleMergeSearch = async (term: string) => {
+    setMergeSearchTerm(term);
+    if (!term || term.trim().length < 2) {
+      setMergeSearchResults([]);
+      setShowMergeSearchResults(false);
+      return;
+    }
+
+    try {
+      const res = await authFetch(`/api/clients/search?q=${encodeURIComponent(term)}`);
+      if (res.ok) {
+        const results = await res.json();
+        setMergeSearchResults(results.filter((c: Client) => c.id !== mergeSourceId));
+        setShowMergeSearchResults(true);
+      }
+    } catch (error) {
+      console.error('Error searching clients:', error);
+    }
+  };
+
+  const handleSelectTargetClient = (client: Client) => {
+    setSelectedTargetClient(client);
+    setMergeTargetId(client.id);
+    setMergeSearchTerm(client.business_name || client.name || '');
+    setShowMergeSearchResults(false);
+  };
+
   const handleMergeClients = async () => {
     if (!mergeSourceId || !mergeTargetId) {
       notify('error', 'Selecciona ambos clientes para fusionar.');
@@ -978,6 +1009,9 @@ export default function Clients() {
         setShowMergeModal(false);
         setMergeSourceId(null);
         setMergeTargetId(null);
+        setMergeSearchTerm('');
+        setMergeSearchResults([]);
+        setSelectedTargetClient(null);
         refetchClients();
       } else {
         const err = await res.json();
@@ -2258,20 +2292,90 @@ export default function Clients() {
               </div>
             </div>
 
-            <div className="mb-6">
-              <label className="block text-sm text-gray-400 mb-1">Selecciona Cliente Destino</label>
-              <select
-                className="w-full bg-gray-800 border border-gray-600 rounded p-2 text-white focus:border-purple-500 outline-none"
-                onChange={(e) => setMergeTargetId(Number(e.target.value))}
-                value={mergeTargetId || ''}
-              >
-                <option value="">-- Seleccionar Destino --</option>
-                {clients?.filter(c => c.id !== mergeSourceId).map(c => (
-                  <option key={c.id} value={c.id}>
-                    {c.business_name || c.name} (ID: {c.id})
-                  </option>
-                ))}
-              </select>
+            <div className="mb-6 relative">
+              <label className="block text-sm text-gray-400 mb-1">Buscar Cliente Destino</label>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                <input
+                  type="text"
+                  placeholder="Buscar por nombre, email o BAN..."
+                  value={mergeSearchTerm}
+                  onChange={(e) => handleMergeSearch(e.target.value)}
+                  onFocus={() => mergeSearchTerm.length >= 2 && setShowMergeSearchResults(true)}
+                  className="w-full pl-10 pr-10 py-2 bg-gray-800 border border-gray-600 rounded text-white placeholder-gray-500 focus:border-purple-500 outline-none"
+                />
+                {mergeSearchTerm && (
+                  <button
+                    onClick={() => {
+                      setMergeSearchTerm('');
+                      setMergeSearchResults([]);
+                      setSelectedTargetClient(null);
+                      setMergeTargetId(null);
+                      setShowMergeSearchResults(false);
+                    }}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-200"
+                  >
+                    <X size={18} />
+                  </button>
+                )}
+              </div>
+
+              {showMergeSearchResults && mergeSearchResults.length > 0 && (
+                <div className="absolute top-full left-0 right-0 mt-1 bg-gray-800 border border-gray-600 rounded-lg shadow-2xl max-h-60 overflow-y-auto z-50">
+                  {mergeSearchResults.map((client) => (
+                    <button
+                      key={client.id}
+                      onClick={() => handleSelectTargetClient(client)}
+                      className="w-full px-4 py-3 text-left hover:bg-gray-700 transition-colors border-b border-gray-700 last:border-b-0"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex-1">
+                          <div className="font-medium text-white">
+                            {client.business_name || client.name}
+                          </div>
+                          <div className="text-xs text-gray-400 mt-1">
+                            ID: {client.id} {client.email && `• ${client.email}`}
+                          </div>
+                          {client.ban_numbers && (
+                            <div className="text-xs text-purple-400 mt-1">
+                              BANs: {client.ban_numbers}
+                            </div>
+                          )}
+                        </div>
+                        {client.vendor_name && (
+                          <span className="text-xs px-2 py-1 rounded bg-blue-900/30 text-blue-300 whitespace-nowrap">
+                            {client.vendor_name}
+                          </span>
+                        )}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {showMergeSearchResults && mergeSearchResults.length === 0 && mergeSearchTerm.length >= 2 && (
+                <div className="absolute top-full left-0 right-0 mt-1 bg-gray-800 border border-gray-600 rounded-lg shadow-2xl p-4 z-50">
+                  <p className="text-gray-400 text-sm">No se encontraron clientes</p>
+                </div>
+              )}
+
+              {selectedTargetClient && (
+                <div className="mt-3 p-3 bg-green-900/20 border border-green-500/30 rounded">
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <div className="text-sm font-medium text-green-200">
+                        ✓ Cliente destino seleccionado
+                      </div>
+                      <div className="text-sm text-gray-300 mt-1">
+                        {selectedTargetClient.business_name || selectedTargetClient.name}
+                      </div>
+                      <div className="text-xs text-gray-400 mt-1">
+                        ID: {selectedTargetClient.id}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="flex justify-end gap-3">
@@ -2280,6 +2384,10 @@ export default function Clients() {
                   setShowMergeModal(false);
                   setMergeSourceId(null);
                   setMergeTargetId(null);
+                  setMergeSearchTerm('');
+                  setMergeSearchResults([]);
+                  setSelectedTargetClient(null);
+                  setShowMergeSearchResults(false);
                 }}
                 className="px-4 py-2 rounded bg-gray-700 hover:bg-gray-600 text-white"
               >
@@ -3244,10 +3352,10 @@ function ClientManagementModal({
                                 {ban.account_type}
                               </span>
                             )}
-                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${(ban.status === "cancelled" || ban.status === "cancelado") ? "bg-red-900/40 text-red-100 border border-red-500/30" : "bg-emerald-900/40 text-emerald-100 border border-emerald-500/30"}`}>
-                              {(ban.status === "cancelled" || ban.status === "cancelado") ? "Cancelado" : "Activo"}
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${(ban.status === 'C' || ban.status?.toLowerCase() === 'cancelado' || ban.status?.toLowerCase() === 'inactivo' || ban.status === 'cancelled') ? "bg-red-900/40 text-red-100 border border-red-500/30" : "bg-emerald-900/40 text-emerald-100 border border-emerald-500/30"}`}>
+                              {(ban.status === 'C' || ban.status?.toLowerCase() === 'cancelado' || ban.status?.toLowerCase() === 'inactivo' || ban.status === 'cancelled') ? "Cancelado" : "Activo"}
                             </span>
-                            {(ban.status === "cancelled" || ban.status === "cancelado") && ban.cancel_reason && (
+                            {(ban.status === 'C' || ban.status?.toLowerCase() === 'cancelado' || ban.status?.toLowerCase() === 'inactivo' || ban.status === 'cancelled') && ban.cancel_reason && (
                               <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-orange-900/40 text-orange-100 border border-orange-500/30">
                                 {ban.cancel_reason}
                               </span>
@@ -3382,21 +3490,21 @@ function ClientManagementModal({
                           </button>
                         </div>
                       )}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-center py-8 bg-gray-800/50 rounded-lg border-2 border-dashed border-gray-600">
+                      <Hash className="mx-auto h-12 w-12 text-gray-600 mb-3" />
+                      <h3 className="text-base font-medium text-gray-300 mb-2">Este cliente no tiene BANs asignados</h3>
+                      <p className="text-gray-500 text-sm mb-4">Crea el primer BAN para comenzar a gestionar suscriptores</p>
+                      <button
+                        onClick={() => setShowBANForm(true)}
+                        className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-4 py-2 rounded-lg text-sm transition-all duration-200 shadow-lg shadow-blue-500/25"
+                      >
+                        Crear Primer BAN
+                      </button>
                     </div>
-                  ))
-                ) : (
-                  <div className="text-center py-8 bg-gray-800/50 rounded-lg border-2 border-dashed border-gray-600">
-                    <Hash className="mx-auto h-12 w-12 text-gray-600 mb-3" />
-                    <h3 className="text-base font-medium text-gray-300 mb-2">Este cliente no tiene BANs asignados</h3>
-                    <p className="text-gray-500 text-sm mb-4">Crea el primer BAN para comenzar a gestionar suscriptores</p>
-                    <button
-                      onClick={() => setShowBANForm(true)}
-                      className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-4 py-2 rounded-lg text-sm transition-all duration-200 shadow-lg shadow-blue-500/25"
-                    >
-                      Crear Primer BAN
-                    </button>
-                  </div>
-                )}
+                  )}
               </div>
             </div>
           )}
