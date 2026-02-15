@@ -5,6 +5,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import readline from 'readline';
 
 const execPromise = promisify(exec);
 const __filename = fileURLToPath(import.meta.url);
@@ -14,7 +15,8 @@ const config = {
     host: '143.244.191.139',
     port: 22,
     username: 'root',
-    password: process.env.DEPLOY_SSH_PASS || 'CL@70049ro', // Fallback for immediate execution
+    privateKey: fs.existsSync('deploy_key') ? fs.readFileSync('deploy_key') : undefined,
+    password: process.env.DEPLOY_SSH_PASS, // Fallback
     remotePath: '/var/www/VentasProui'
 };
 
@@ -69,6 +71,17 @@ const commands = [
 
 async function deploy() {
     console.log('🚀 INICIANDO DEPLOY SEGURO (SSH2)...');
+
+    if (!config.privateKey && !config.password) {
+        const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+        config.password = await new Promise(resolve => {
+            rl.question('🔑 Contraseña SSH no detectada. Ingrésala: ', (pwd) => {
+                rl.close();
+                resolve(pwd);
+            });
+        });
+        console.log('\n');
+    }
 
     // 1. Tarball
     console.log('[1/4] Comprimiendo archivos locales...');

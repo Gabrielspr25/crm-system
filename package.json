@@ -1,12 +1,13 @@
 {
   "name": "mocha-app",
   "private": true,
-  "version": "2026-281",
+  "version": "2026-334",
   "type": "module",
   "dependencies": {
     "@azure/msal-browser": "^4.27.0",
     "@azure/msal-react": "^3.0.23",
     "@hono/zod-validator": "^0.5.0",
+    "@tinymce/tinymce-react": "^5.1.1",
     "@types/bcryptjs": "^2.4.6",
     "bcrypt": "^6.0.0",
     "bcryptjs": "^3.0.3",
@@ -32,8 +33,10 @@
     "react": "19.0.0",
     "react-dom": "19.0.0",
     "react-router": "^7.5.3",
+    "recharts": "^3.7.0",
     "ssh2": "^1.17.0",
     "tailwind-merge": "^3.4.0",
+    "tinymce": "^7.9.1",
     "uuid": "^13.0.0",
     "xlsx": "^0.18.5",
     "zod": "^3.24.3"

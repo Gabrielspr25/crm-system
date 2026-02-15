@@ -20,7 +20,10 @@ import {
   Activity,
   DollarSign,
   LayoutDashboard,
-  AlertTriangle
+  AlertTriangle,
+  SendHorizontal,
+  Menu,
+  X
 } from "lucide-react";
 
 
@@ -40,21 +43,22 @@ type NavItem = {
 // VERSION: 2025-01-15-CON-IMPORTADOR-VISUAL
 const navigation: NavItem[] = [
   { name: "Panel General", href: "/", icon: LayoutDashboard, roles: ["admin", "supervisor", "vendedor"] },
-  { name: "Tareas", href: "/tareas", icon: CheckSquare, roles: ["admin", "supervisor", "vendedor"] },
+  { name: "Tareas", href: "/tareas", icon: CheckSquare, roles: ["admin", "supervisor"] },
   { name: "Clientes", href: "/clientes", icon: Users, roles: ["admin", "supervisor", "vendedor"] },
   { name: "Seguimiento", href: "/seguimiento", icon: PhoneCall, roles: ["admin", "supervisor", "vendedor"] },
   { name: "Reportes", href: "/reportes", icon: BarChart3, roles: ["admin", "supervisor", "vendedor"] },
   { name: "Tarifas", href: "/tarifas", icon: Layers, roles: ["admin", "supervisor", "vendedor"] },
   { name: "Referidos", href: "/referidos", icon: Users, roles: ["admin", "supervisor", "vendedor"] },
   { name: "Correos", href: "/correos", icon: Mail, roles: ["admin", "supervisor", "vendedor"] },
+  { name: "Campañas", href: "/campanas", icon: SendHorizontal, roles: ["admin"] },
   { name: "Vendedores", href: "/vendedores", icon: Building2, roles: ["admin", "supervisor"] },
   { name: "Categorías", href: "/categorias", icon: Folder, roles: ["admin"] },
   { name: "Productos", href: "/productos", icon: Package, roles: ["admin", "supervisor"] },
-  { name: "Comisiones", href: "/comisiones", icon: DollarSign, roles: ["admin", "supervisor"] },
   { name: "Metas", href: "/metas", icon: Target, roles: ["admin", "supervisor"] },
   { name: "Importador", href: "/importador", icon: Upload, roles: ["admin", "supervisor"] },
   { name: "Historial", href: "/historial", icon: FileText, roles: ["admin"] },
   { name: "Discrepancias", href: "/discrepancias", icon: AlertTriangle, roles: ["admin", "supervisor"] },
+  { name: "Reglas y Procesos", href: "/reglas-procesos", icon: FileText, roles: ["admin", "supervisor"], external: true },
   { name: "Perfil", href: "/perfil", icon: UserCircle2, roles: ["admin", "supervisor", "vendedor"] }
 
 ];
@@ -115,6 +119,7 @@ export default function Layout({ children }: LayoutProps) {
   const userLabel = user?.salespersonName || user?.username || "Usuario";
   const isVendor = role.toLowerCase() === "vendedor";
   const [goalFilter, setGoalFilter] = useState("");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // Obtener metas del vendedor para el mes actual
   const currentYear = new Date().getFullYear();
@@ -187,8 +192,24 @@ export default function Layout({ children }: LayoutProps) {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 dark:from-slate-900 dark:to-slate-800 transition-colors duration-300">
+      {/* Botón Hamburguesa - Solo visible en móvil */}
+      <button
+        onClick={() => setSidebarOpen(!sidebarOpen)}
+        className="lg:hidden fixed top-4 left-4 z-[60] p-2 bg-slate-800 border border-slate-700 text-slate-300 rounded-lg shadow-lg hover:bg-slate-700 transition-colors"
+      >
+        {sidebarOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+      </button>
+
+      {/* Overlay - Solo visible en móvil cuando sidebar abierto */}
+      {sidebarOpen && (
+        <div
+          className="lg:hidden fixed inset-0 bg-black/50 z-40"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
       {/* Sidebar */}
-      <div className="fixed inset-y-0 left-0 z-50 w-64 bg-slate-800 dark:bg-slate-800 shadow-xl border-r border-slate-700 dark:border-slate-700">
+      <div className={`fixed inset-y-0 left-0 z-50 w-64 bg-slate-800 dark:bg-slate-800 shadow-xl border-r border-slate-700 dark:border-slate-700 transform transition-transform duration-300 ease-in-out lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="flex h-full flex-col">
           {/* Logo */}
           <div className="flex flex-col items-center justify-center py-4 border-b border-slate-700 dark:border-slate-700">
@@ -222,60 +243,7 @@ export default function Layout({ children }: LayoutProps) {
             </div>
           </div>
 
-          {/* Metas del Vendedor - Solo para vendedores */}
-          {isVendor && goalsByProduct.length > 0 && (
-            <div className="p-4 border-b border-slate-700 dark:border-slate-700 space-y-3 max-h-[400px] overflow-y-auto">
-              <div className="flex items-center gap-2 mb-2">
-                <h3 className="text-sm font-semibold text-white">Mis Metas</h3>
-              </div>
-
-              <input
-                type="text"
-                placeholder="Filtrar producto..."
-                value={goalFilter}
-                onChange={(e) => setGoalFilter(e.target.value)}
-                className="w-full px-2 py-1 text-xs bg-slate-800 border border-slate-600 rounded text-slate-200 mb-2 focus:ring-1 focus:ring-blue-500"
-              />
-
-              <div className="bg-gradient-to-br from-emerald-900/40 to-blue-900/40 border border-emerald-500/30 rounded-lg p-3 shadow-lg space-y-4">
-                {goalsByProduct
-                  .filter(g => g.productName.toLowerCase().includes(goalFilter.toLowerCase()))
-                  .map(productGoal => (
-                    <div key={productGoal.productId} className="border-b border-slate-700/50 last:border-0 pb-3 last:pb-0">
-                      <div className="flex justify-between items-center mb-1">
-                        <span className="text-xs font-semibold text-emerald-300 truncate max-w-[60%]" title={productGoal.productName}>
-                          {productGoal.productName}
-                        </span>
-                        <span className="text-[10px] font-bold text-white">
-                          {productGoal.progress.toFixed(1)}%
-                        </span>
-                      </div>
-
-                      <div className="w-full h-1.5 bg-slate-700/50 rounded-full overflow-hidden mb-1">
-                        <div
-                          className="h-full bg-gradient-to-r from-emerald-500 to-blue-500 rounded-full transition-all duration-300"
-                          style={{ width: `${Math.min(productGoal.progress, 100)}%` }}
-                        />
-                      </div>
-
-                      <div className="flex justify-between text-[10px] text-slate-400">
-                        <span>{productGoal.current.toLocaleString('es-ES', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} / {productGoal.target.toLocaleString('es-ES', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
-                        <span className="text-blue-400">Diaria: ${productGoal.dailyGoal.toLocaleString('es-ES', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
-                      </div>
-                    </div>
-                  ))}
-                {goalsByProduct.filter(g => g.productName.toLowerCase().includes(goalFilter.toLowerCase())).length === 0 && (
-                  <p className="text-xs text-slate-500 text-center">No hay productos.</p>
-                )}
-              </div>
-
-              {goalsByProduct.length > 0 && (
-                <p className="text-[10px] text-slate-400 text-center pt-1">
-                  {goalsByProduct[0].workingDaysRemaining} días laborables restantes
-                </p>
-              )}
-            </div>
-          )}
+          {/* Metas del Vendedor removidas - ahora se muestran en Panel General */}
 
           {/* Navigation */}
           <nav className="flex-1 space-y-1 p-4">
@@ -304,6 +272,7 @@ export default function Layout({ children }: LayoutProps) {
                     key={item.name}
                     href={item.href}
                     className={className}
+                    onClick={() => setSidebarOpen(false)}
                   >
                     {icon}
                     {item.name}
@@ -316,6 +285,7 @@ export default function Layout({ children }: LayoutProps) {
                   key={item.name}
                   to={item.href}
                   className={className}
+                  onClick={() => setSidebarOpen(false)}
                 >
                   {icon}
                   {item.name}
@@ -363,8 +333,8 @@ export default function Layout({ children }: LayoutProps) {
       </div>
 
       {/* Main content */}
-      <div className="pl-64">
-        <main className="min-h-screen p-6">
+      <div className="lg:pl-64">
+        <main className="min-h-screen p-6 lg:p-6 pt-20 lg:pt-6">
           <div className="mx-auto max-w-[98%]">
             {children}
           </div>

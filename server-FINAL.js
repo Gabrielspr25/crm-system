@@ -28,6 +28,9 @@ import tiersFixedRoutes from './src/backend/routes/tiersFixedRoutes.js';
 import posIntegrationRoutes from './src/backend/routes/posIntegrationRoutes.js';
 import discrepanciasRoutes from './src/backend/routes/discrepanciasRoutes.js';
 import salesHistoryRoutes from './src/backend/routes/salesHistoryRoutes.js';
+import campaignRoutes from './src/backend/routes/campaignRoutes.js';
+import trackingRoutes from './src/backend/routes/trackingRoutes.js';
+import goalsRoutes from './src/backend/routes/goalsRoutes.js';
 console.log('🔍 DEBUG: discrepanciasRoutes imported:', typeof discrepanciasRoutes);
 
 const JWT_SECRET = process.env.JWT_SECRET || 'tango_secret_key_2024';
@@ -125,6 +128,9 @@ app.use('/api/tiers-fixed', tiersFixedRoutes);
 app.use('/api/pos', posIntegrationRoutes);
 app.use('/api/discrepancias', discrepanciasRoutes);
 app.use('/api/sales-history', salesHistoryRoutes);
+app.use('/api/campaigns', campaignRoutes);
+app.use('/api/tracking', trackingRoutes);
+app.use('/api/goals', goalsRoutes);
 console.log('🔍 DEBUG: /api/discrepancias routes mounted');
 
 // System Routes - PROTECTED EXTRA
@@ -350,7 +356,7 @@ function mapVendorGoalRow(row) {
 const PRODUCT_GOALS_SELECT = `
   SELECT pg.*, p.name AS product_name, v.name AS vendor_name
     FROM product_goals pg
-    LEFT JOIN products p ON pg.product_id = p.id
+    LEFT JOIN products p ON pg.product_id::text = p.id::text
     LEFT JOIN vendors v ON pg.vendor_id = v.id
 `;
 
@@ -1484,12 +1490,23 @@ app.delete('/api/goals/:id', async (req, res) => {
 app.get('/api/follow-up-prospects', authenticateRequest, async (req, res) => {
   try {
     const { include_completed } = req.query;
+    const { role, salespersonId } = req.user;
 
-    // NO filtrar por is_active - el frontend maneja el filtro de completados
-    let whereClause = '';
+    // Construir WHERE clause con filtros
+    const conditions = [];
+    const params = [];
+    
     if (include_completed !== 'true') {
-      whereClause = 'WHERE p.completed_date IS NULL';
+      conditions.push('p.completed_date IS NULL');
     }
+
+    // FILTRO VENDEDOR: Solo sus propios seguimientos
+    if (role === 'vendedor' && salespersonId) {
+      conditions.push('c.salesperson_id = $' + (params.length + 1));
+      params.push(salespersonId);
+    }
+
+    const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
 
     const sql = `
       SELECT 
@@ -1508,7 +1525,7 @@ app.get('/api/follow-up-prospects', authenticateRequest, async (req, res) => {
       ORDER BY p.created_at DESC
     `;
 
-    const rows = await query(sql);
+    const rows = await query(sql, params);
     res.json(rows);
   } catch (error) {
     // Si la tabla no existe, devolver array vacío para no romper el frontend
@@ -1862,19 +1879,369 @@ app.get('/api/completed-prospects', authenticateRequest, async (req, res) => {
 });
 
 // ======================================================
+// Sincronizar PYMES desde Tango Legacy (auto-crea clientes/BANs/subscribers faltantes)
+// ======================================================
+app.post('/api/subscriber-reports/sync-pymes', authenticateRequest, async (req, res) => {
+  let legacyPool = null;
+  const crmClient = await pool.connect();
+  try {
+    // 1. Conectar a Tango Legacy
+    legacyPool = new Pool({
+      host: '167.99.12.125', port: 5432, user: 'postgres',
+      password: 'fF00JIRFXc', database: 'claropr',
+      connectionTimeoutMillis: 10000, max: 2,
+    });
+
+    // 2. Traer TODAS las ventas PYMES de Tango (fuente de verdad)
+    const legacyResult = await legacyPool.query(`
+      SELECT v.ventaid, v.ban, v.status as linea,
+             COALESCE(v.comisionclaro, 0) as com_empresa,
+             COALESCE(v.comisionvendedor, 0) as com_vendedor,
+             v.fechaactivacion, v.ventatipoid,
+             COALESCE(cc.nombre, 'SIN NOMBRE') as cliente,
+             vt.nombre as tipo, vd.nombre as vendedor
+      FROM venta v
+      JOIN ventatipo vt ON vt.ventatipoid = v.ventatipoid
+      LEFT JOIN clientecredito cc ON cc.clientecreditoid = v.clientecreditoid
+      LEFT JOIN vendedor vd ON vd.vendedorid = v.vendedorid
+      WHERE v.ventatipoid IN (138, 139, 140, 141)
+        AND v.activo = true
+      ORDER BY cc.nombre, v.ban, v.ventaid
+    `);
+    const ventas = legacyResult.rows;
+    console.log(`[SYNC-PYMES] Tango: ${ventas.length} ventas PYMES`);
+
+    await crmClient.query('BEGIN');
+
+    // 3. Collect all unique BANs from Tango
+    const allBANs = [...new Set(ventas.map(v => (v.ban || '').trim()).filter(Boolean))];
+
+    // 4. Get existing subscribers in CRM for those BANs
+    const existingSubs = await crmClient.query(`
+      SELECT s.id as sub_id, s.phone, b.ban_number, b.id as ban_id,
+             c.name as client_name, c.id as client_id, c.salesperson_id
+      FROM subscribers s
+      JOIN bans b ON b.id = s.ban_id
+      JOIN clients c ON c.id = b.client_id
+      WHERE b.ban_number = ANY($1)
+      ORDER BY b.ban_number, s.phone
+    `, [allBANs]);
+
+    const subsByBan = {};
+    for (const s of existingSubs.rows) {
+      if (!subsByBan[s.ban_number]) subsByBan[s.ban_number] = [];
+      subsByBan[s.ban_number].push(s);
+    }
+
+    // 5. Delete ONLY PYMES reports that have NO manual data (preserve user-entered commissions)
+    const delResult = await crmClient.query(`
+      DELETE FROM subscriber_reports WHERE subscriber_id IN (
+        SELECT s.id FROM subscribers s JOIN bans b ON b.id = s.ban_id
+        WHERE b.ban_number = ANY($1)
+      )
+      AND (company_earnings IS NULL OR company_earnings = 0)
+      AND (vendor_commission IS NULL OR vendor_commission = 0)
+      AND (paid_amount IS NULL OR paid_amount = 0)
+    `, [allBANs]);
+    console.log(`[SYNC-PYMES] Borrados: ${delResult.rowCount} reports vacíos (preservando datos manuales)`);
+
+    // 6. Group ventas by BAN
+    const ventasByBan = {};
+    for (const v of ventas) {
+      const ban = (v.ban || '').trim();
+      if (!ban) continue;
+      if (!ventasByBan[ban]) ventasByBan[ban] = [];
+      ventasByBan[ban].push(v);
+    }
+
+    let inserted = 0, created_clients = 0, created_bans = 0, created_subs = 0, errors = 0;
+    const details = [];
+
+    // Helper: determine line_type and account_type from ventatipoid
+    function ventaTypeInfo(ventatipoid) {
+      const id = Number(ventatipoid);
+      // 138=Update REN, 139=Update NEW, 140=Fijo REN, 141=Fijo NEW
+      const lineType = (id === 138 || id === 140) ? 'REN' : 'NEW';
+      const accountType = (id === 138 || id === 139) ? 'UPDATE' : 'FIJO';
+      return { lineType, accountType };
+    }
+
+    // 7. Process each BAN group — 1 venta = 1 subscriber = 1 report
+    for (const ban of Object.keys(ventasByBan)) {
+      const banVentas = ventasByBan[ban];
+      let banSubs = subsByBan[ban] || [];
+      let banId = banSubs.length > 0 ? banSubs[0].ban_id : null;
+      let clientId = banSubs.length > 0 ? banSubs[0].client_id : null;
+
+      // Determine account_type from first venta
+      const firstTypeInfo = ventaTypeInfo(banVentas[0].ventatipoid);
+
+      // AUTO-CREATE: if BAN doesn't exist in CRM, create client + BAN
+      if (banSubs.length === 0) {
+        try {
+          const firstVenta = banVentas[0];
+          const clienteName = (firstVenta.cliente || 'SIN NOMBRE').trim();
+          const vendedorName = (firstVenta.vendedor || '').trim().toUpperCase();
+
+          // Find salesperson in CRM
+          let spId = null;
+          if (vendedorName) {
+            const spResult = await crmClient.query(
+              "SELECT id FROM salespeople WHERE UPPER(name) LIKE $1 LIMIT 1",
+              [`%${vendedorName}%`]
+            );
+            if (spResult.rows.length > 0) spId = spResult.rows[0].id;
+          }
+
+          // Check if client already exists by name
+          const existClient = await crmClient.query(
+            "SELECT id FROM clients WHERE UPPER(name) = $1 LIMIT 1",
+            [clienteName.toUpperCase()]
+          );
+          if (existClient.rows.length > 0) {
+            clientId = existClient.rows[0].id;
+          } else {
+            const newClient = await crmClient.query(
+              "INSERT INTO clients (name, salesperson_id) VALUES ($1, $2) RETURNING id",
+              [clienteName, spId]
+            );
+            clientId = newClient.rows[0].id;
+            created_clients++;
+            console.log(`[SYNC-PYMES] + Cliente creado: ${clienteName}`);
+          }
+
+          // Create BAN with correct account_type
+          const newBan = await crmClient.query(
+            "INSERT INTO bans (client_id, ban_number, account_type) VALUES ($1, $2, $3) RETURNING id",
+            [clientId, ban, firstTypeInfo.accountType]
+          );
+          banId = newBan.rows[0].id;
+          created_bans++;
+
+          // Create follow_up as completed
+          await crmClient.query(`
+            INSERT INTO follow_up_prospects (client_id, company_name, is_active, completed_date, is_completed, notes)
+            VALUES ($1, $2, false, NOW(), true, 'PYMES - Auto-creado por Sync Tango')
+            ON CONFLICT DO NOTHING
+          `, [clientId, clienteName]);
+
+          details.push({ ban, cliente: clienteName, status: 'auto_created' });
+        } catch (createErr) {
+          console.error(`[SYNC-PYMES] Error creando BAN ${ban}:`, createErr.message);
+          errors++;
+          details.push({ ban, status: 'create_error', error: createErr.message });
+          continue;
+        }
+      } else {
+        // Update account_type on existing BAN if missing
+        await crmClient.query(
+          "UPDATE bans SET account_type = $1 WHERE id = $2 AND (account_type IS NULL OR account_type = '')",
+          [firstTypeInfo.accountType, banId]
+        );
+      }
+
+      // 8. For each venta, find or create a subscriber, then create report
+      // Track which subscribers are already used (for this sync run)
+      const usedSubIds = new Set();
+
+      for (const v of banVentas) {
+        const { lineType, accountType } = ventaTypeInfo(v.ventatipoid);
+        const linea = (v.linea || '').replace(/[^0-9]/g, '');
+        const month = v.fechaactivacion ? new Date(v.fechaactivacion) : new Date();
+        const monthStr = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, '0')}-01`;
+
+        let targetSub = null;
+
+        // Try match by phone number (if we have one)
+        if (linea.length >= 7) {
+          targetSub = banSubs.find(s => {
+            if (usedSubIds.has(`${s.sub_id}|${monthStr}`)) return false;
+            const sp = (s.phone || '').replace(/[^0-9]/g, '');
+            return sp.endsWith(linea.slice(-7));
+          });
+        }
+
+        // Try find any unused subscriber for this month
+        if (!targetSub) {
+          targetSub = banSubs.find(s => !usedSubIds.has(`${s.sub_id}|${monthStr}`));
+        }
+
+        // No available subscriber — create a new one
+        if (!targetSub) {
+          try {
+            const phone = linea.length >= 7 ? linea : `LINEA-${ban}-${banSubs.length + 1}`;
+            const newSub = await crmClient.query(
+              "INSERT INTO subscribers (ban_id, phone, line_type) VALUES ($1, $2, $3) RETURNING id",
+              [banId, phone, lineType]
+            );
+            created_subs++;
+            const newSubObj = { sub_id: newSub.rows[0].id, phone, ban_number: ban, ban_id: banId, client_id: clientId };
+            banSubs.push(newSubObj);
+            targetSub = newSubObj;
+          } catch (subErr) {
+            console.error(`[SYNC-PYMES] Error creando subscriber BAN ${ban}:`, subErr.message);
+            errors++;
+            continue;
+          }
+        }
+
+        // Mark this subscriber+month as used
+        usedSubIds.add(`${targetSub.sub_id}|${monthStr}`);
+
+        // Update subscriber line_type if needed
+        await crmClient.query(
+          "UPDATE subscribers SET line_type = $1 WHERE id = $2 AND line_type != $1",
+          [lineType, targetSub.sub_id]
+        );
+
+        // 9. Insert report (comisiones en 0 para entrada manual)
+        try {
+          await crmClient.query(`
+            INSERT INTO subscriber_reports (subscriber_id, report_month, company_earnings, vendor_commission)
+            VALUES ($1, $2, 0, 0)
+            ON CONFLICT (subscriber_id, report_month) DO NOTHING
+          `, [targetSub.sub_id, monthStr]);
+          inserted++;
+        } catch (insErr) {
+          console.error(`[SYNC-PYMES] Insert error sub=${targetSub.sub_id}:`, insErr.message);
+          errors++;
+        }
+      }
+    }
+
+    // 10. Final verification — compare COUNTS (ventas must match exactly)
+    const crmTotal = await crmClient.query(`
+      SELECT COUNT(*) as reports
+      FROM subscriber_reports WHERE subscriber_id IN (
+        SELECT s.id FROM subscribers s JOIN bans b ON b.id = s.ban_id WHERE b.ban_number = ANY($1)
+      )
+    `, [allBANs]);
+
+    const tangoTotal = await legacyPool.query(
+      "SELECT COUNT(*) as ventas FROM venta WHERE ventatipoid IN (138,139,140,141) AND activo = true"
+    );
+
+    const crmCount = Number(crmTotal.rows[0].reports);
+    const tangoCount = Number(tangoTotal.rows[0].ventas);
+    const match = crmCount === tangoCount;
+
+    console.log(`[SYNC-PYMES] Tango: ${tangoCount} ventas | CRM: ${crmCount} reports | ${match ? '✓ MATCH PERFECTO' : `⚠ DIFF (${tangoCount - crmCount})`}`);
+
+    await crmClient.query('COMMIT');
+    console.log(`[SYNC-PYMES] COMMIT OK — ${inserted} reports, ${created_clients} clientes, ${created_bans} BANs, ${created_subs} subs creados`);
+
+    res.json({
+      success: true,
+      stats: {
+        total_legacy: ventas.length,
+        reports_created: inserted,
+        clients_created: created_clients,
+        bans_created: created_bans,
+        subscribers_created: created_subs,
+        errors,
+        tango_ventas: tangoCount,
+        crm_reports: crmCount,
+        totals_match: match
+      },
+      details
+    });
+
+  } catch (error) {
+    try { await crmClient.query('ROLLBACK'); } catch (e) { /* ignore */ }
+    console.error('[SYNC-PYMES] Error:', error);
+    res.status(500).json({ error: 'Error al sincronizar PYMES', details: error.message });
+  } finally {
+    crmClient.release();
+    if (legacyPool) {
+      try { await legacyPool.end(); } catch (e) { /* ignore */ }
+    }
+  }
+});
+
+// ======================================================
+// Comparación Tango PYMES vs CRM por mes
+app.get('/api/subscriber-reports/comparison', authenticateRequest, async (req, res) => {
+  let legacyPool = null;
+  try {
+    // 1. Datos de Tango
+    legacyPool = new Pool({
+      host: '167.99.12.125', port: 5432, user: 'postgres',
+      password: 'fF00JIRFXc', database: 'claropr',
+      connectionTimeoutMillis: 10000, max: 2,
+    });
+    const tangoResult = await legacyPool.query(`
+      SELECT
+        TO_CHAR(fechaactivacion, 'YYYY-MM') as month,
+        COUNT(*) as ventas,
+        COALESCE(SUM(comisionclaro), 0) as empresa,
+        COALESCE(SUM(comisionvendedor), 0) as vendedor
+      FROM venta
+      WHERE ventatipoid IN (138, 139, 140, 141) AND activo = true
+      GROUP BY TO_CHAR(fechaactivacion, 'YYYY-MM')
+      ORDER BY month
+    `);
+
+    // 2. Datos del CRM
+    const crmResult = await pool.query(`
+      SELECT
+        TO_CHAR(report_month, 'YYYY-MM') as month,
+        COUNT(*) as ventas,
+        COALESCE(SUM(company_earnings), 0) as empresa,
+        COALESCE(SUM(vendor_commission), 0) as comision,
+        COALESCE(SUM(paid_amount), 0) as pagado
+      FROM subscriber_reports
+      GROUP BY TO_CHAR(report_month, 'YYYY-MM')
+      ORDER BY month
+    `);
+
+    // 3. Merge
+    const tangoMap = {};
+    for (const r of tangoResult.rows) {
+      tangoMap[r.month] = { ventas: parseInt(r.ventas), empresa: parseFloat(r.empresa), vendedor: parseFloat(r.vendedor) };
+    }
+    const crmMap = {};
+    for (const r of crmResult.rows) {
+      crmMap[r.month] = { ventas: parseInt(r.ventas), empresa: parseFloat(r.empresa), comision: parseFloat(r.comision), pagado: parseFloat(r.pagado) };
+    }
+
+    const allMonths = [...new Set([...Object.keys(tangoMap), ...Object.keys(crmMap)])].sort();
+    const comparison = allMonths.map(month => ({
+      month,
+      tango: tangoMap[month] || { ventas: 0, empresa: 0, vendedor: 0 },
+      crm: crmMap[month] || { ventas: 0, empresa: 0, comision: 0, pagado: 0 },
+      match: (tangoMap[month]?.ventas || 0) === (crmMap[month]?.ventas || 0),
+    }));
+
+    res.json({ comparison });
+  } catch (error) {
+    console.error('[COMPARISON] Error:', error);
+    res.status(500).json({ error: 'Error al comparar datos', details: error.message });
+  } finally {
+    if (legacyPool) { try { await legacyPool.end(); } catch (e) {} }
+  }
+});
+
+// ======================================================
 // Reportes por Suscriptor (mensual)
 app.get('/api/subscriber-reports', authenticateRequest, async (req, res) => {
   try {
     const reportMonth = normalizeReportMonth(req.query.month);
+    const { role, salespersonId } = req.user;
     const params = [];
-    let whereClause = '';
+    const conditions = [];
 
     if (reportMonth) {
       params.push(reportMonth);
-      whereClause = 'WHERE fup.completed_date IS NOT NULL AND date_trunc(\'month\', fup.completed_date)::date = $1';
-    } else {
-      whereClause = 'WHERE fup.completed_date IS NOT NULL';
+      conditions.push(`sr.report_month = $${params.length}`);
     }
+
+    // Filtrar por vendedor si no es admin
+    if (role === 'vendedor' && salespersonId) {
+      params.push(salespersonId);
+      conditions.push(`c.salesperson_id = $${params.length}`);
+    }
+
+    const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
 
     const rows = await query(`
       SELECT
@@ -1887,35 +2254,24 @@ app.get('/api/subscriber-reports', authenticateRequest, async (req, res) => {
         c.salesperson_id,
         sp.name as salesperson_name,
         s.monthly_value as monthly_value,
-        fup.completed_date as completed_date,
-        date_trunc('month', fup.completed_date)::date as report_month,
+        sr.report_month,
         sr.company_earnings,
         sr.vendor_commission,
         sr.paid_amount,
         sr.paid_date
-      FROM subscribers s
+      FROM subscriber_reports sr
+      JOIN subscribers s ON sr.subscriber_id = s.id
       JOIN bans b ON s.ban_id = b.id
       JOIN clients c ON b.client_id = c.id
-      LEFT JOIN LATERAL (
-        SELECT fup.completed_date
-        FROM follow_up_prospects fup
-        WHERE fup.client_id = c.id AND fup.completed_date IS NOT NULL
-        ORDER BY fup.completed_date DESC
-        LIMIT 1
-      ) fup ON true
       LEFT JOIN salespeople sp ON c.salesperson_id = sp.id
-      LEFT JOIN subscriber_reports sr
-        ON sr.subscriber_id = s.id
-       AND sr.report_month = date_trunc('month', fup.completed_date)::date
       ${whereClause}
-      ORDER BY s.created_at DESC
+      ORDER BY c.name, b.ban_number, s.phone
     `, params);
 
     const mapped = rows.map((row) => ({
       subscriber_id: row.subscriber_id,
       phone: row.phone,
       activation_date: row.activation_date,
-      completed_date: row.completed_date,
       ban_number: row.ban_number,
       client_id: row.client_id,
       client_name: row.client_name,
@@ -1946,6 +2302,30 @@ app.put('/api/subscriber-reports/:subscriber_id', authenticateRequest, async (re
     const normalizedMonth = normalizeReportMonth(report_month);
     if (!normalizedMonth) {
       return badRequest(res, 'report_month es obligatorio y debe venir como YYYY-MM');
+    }
+
+    // VALIDACIÓN OBLIGATORIA: Cliente debe tener vendedor real (no admin)
+    const clientCheck = await query(`
+      SELECT c.id, c.name, s.name as salesperson_name, s.role as salesperson_role
+      FROM subscribers sub
+      JOIN bans b ON sub.ban_id = b.id
+      JOIN clients c ON b.client_id = c.id
+      LEFT JOIN salespeople s ON c.salesperson_id = s.id
+      WHERE sub.id = $1
+    `, [subscriber_id]);
+
+    if (clientCheck.length === 0) {
+      return res.status(404).json({ error: 'Suscriptor no encontrado' });
+    }
+
+    const { name: clientName, salesperson_name, salesperson_role } = clientCheck[0];
+
+    if (!salesperson_role || salesperson_role !== 'vendedor') {
+      return badRequest(res, 
+        `No se puede guardar. El cliente "${clientName}" debe tener un vendedor asignado. ` +
+        `Actualmente asignado a: ${salesperson_name || 'ninguno'} (${salesperson_role || 'sin role'}). ` +
+        `Asigna el cliente a un vendedor real primero.`
+      );
     }
 
     const sanitizedCompanyEarnings =
@@ -2149,6 +2529,41 @@ RETURNING * `,
   } catch (error) {
     console.error('Error creating subscriber:', error);
     res.status(500).json({ error: 'Error creando suscriptor' });
+  }
+});
+
+// PUT /api/subscribers/:id/cancel - Cancelar línea de suscriptor
+app.put('/api/subscribers/:id/cancel', authenticateRequest, async (req, res) => {
+  const { id } = req.params;
+  const { cancel_reason = null } = req.body || {};
+  try {
+    const existing = await query('SELECT id FROM subscribers WHERE id = $1', [id]);
+    if (existing.length === 0) return res.status(404).json({ error: 'Suscriptor no encontrado' });
+    const result = await query(
+      `UPDATE subscribers SET status = 'cancelado', cancel_reason = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
+      [cancel_reason, id]
+    );
+    res.json(result[0]);
+  } catch (error) {
+    console.error('Error cancelando suscriptor:', error);
+    res.status(500).json({ error: 'Error cancelando suscriptor' });
+  }
+});
+
+// PUT /api/subscribers/:id/reactivate - Reactivar línea cancelada
+app.put('/api/subscribers/:id/reactivate', authenticateRequest, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const existing = await query('SELECT id FROM subscribers WHERE id = $1', [id]);
+    if (existing.length === 0) return res.status(404).json({ error: 'Suscriptor no encontrado' });
+    const result = await query(
+      `UPDATE subscribers SET status = 'activo', cancel_reason = NULL, updated_at = NOW() WHERE id = $1 RETURNING *`,
+      [id]
+    );
+    res.json(result[0]);
+  } catch (error) {
+    console.error('Error reactivando suscriptor:', error);
+    res.status(500).json({ error: 'Error reactivando suscriptor' });
   }
 });
 

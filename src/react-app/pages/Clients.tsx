@@ -1,9 +1,9 @@
 ﻿// VERSION: 2025-01-15-T16-FINAL-V5.1.37-PRODUCTION
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router";
-import { Plus, Search, Edit, Users, Building, Phone, Mail, MapPin, Hash, Calendar, Trash2, UserPlus, Download, FileSpreadsheet, FileText, Check, X, Package, BarChart3, Sparkles, Send, Merge } from "lucide-react";
+import { Plus, Search, Edit, Users, Building, Phone, Mail, MapPin, Hash, Calendar, Trash2, UserPlus, Download, FileSpreadsheet, FileText, Check, X, Package, BarChart3, Sparkles, Send, Merge, Save, FileDown, ShoppingCart, ArrowRightLeft } from "lucide-react";
 import { useApi } from "../hooks/useApi";
-import { authFetch } from "@/react-app/utils/auth";
+import { authFetch, getCurrentUser } from "@/react-app/utils/auth";
 import { APP_VERSION, BUILD_LABEL } from "@/version";
 import ClientModal from "../components/ClientModal";
 import BANModal from "../components/BANModal";
@@ -11,6 +11,7 @@ import SubscriberModal from "../components/SubscriberModal";
 import SalesHistoryTab from "../components/SalesHistoryTab";
 import OfferGenerator from "../components/OfferGenerator";
 import EmailModal from "../components/EmailModal";
+import ComparativaModal from "../components/ComparativaModal";
 import * as XLSX from 'xlsx';
 
 interface Client {
@@ -78,6 +79,7 @@ interface Subscriber {
   contract_start_date: string | null;
   contract_end_date: string | null;
   service_type: string | null;
+  plan?: string | null;
   monthly_value: number | null;
   months: number | null;
   remaining_payments: number | null;
@@ -92,7 +94,7 @@ type ClientStatus = 'overdue' | 'expired' | 'critical' | 'warning' | 'good' | 'n
 
 interface ClientItem {
   clientId: number;
-  clientName: string;
+  clientName: string | null;
   businessName: string | null;
   vendorId: number | null;
   vendorName: string | null;
@@ -132,7 +134,7 @@ interface ClientItem {
 
 interface ClientRowSummary {
   clientId: number;
-  clientName: string;
+  clientName: string | null;
   businessName: string | null;
   vendorId: number | null;
   vendorName: string | null;
@@ -283,12 +285,13 @@ export default function Clients() {
   const [selectedMonth, setSelectedMonth] = useState<string>(""); // Nuevo: filtro de mes
   const [selectedBanType, setSelectedBanType] = useState<string>(""); // Nuevo: filtro tipo de BAN
   const [expirationFilter, setExpirationFilter] = useState<string>(""); // Nuevo: filtro vencimiento
+  const [sortOrder, setSortOrder] = useState<string>(""); // Nuevo: orden
   const [showClientModal, setShowClientModal] = useState(false);
   const [showBANModal, setShowBANModal] = useState(false);
   const [showSubscriberModal, setShowSubscriberModal] = useState(false);
   const [showClientDetailModal, setShowClientDetailModal] = useState(false);
   const [loadingClientDetail, setLoadingClientDetail] = useState(false);
-  const [clientDetailInitialTab, setClientDetailInitialTab] = useState<'info' | 'bans' | 'history' | 'calls'>('bans');
+  const [clientDetailInitialTab, setClientDetailInitialTab] = useState<'info' | 'bans' | 'history' | 'calls' | 'comparativas' | 'ventas'>('bans');
   const [editingClient, setEditingClient] = useState<Client | null>(null);
   const [selectedClientId, setSelectedClientId] = useState<number | null>(null);
   const [selectedBanId, setSelectedBanId] = useState<number | null>(null);
@@ -310,6 +313,9 @@ export default function Clients() {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(50);
 
+  const currentUser = getCurrentUser();
+  const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'supervisor';
+
   const [showMergeModal, setShowMergeModal] = useState(false);
   const [mergeSourceId, setMergeSourceId] = useState<number | null>(null);
   const [mergeTargetId, setMergeTargetId] = useState<number | null>(null);
@@ -322,6 +328,14 @@ export default function Clients() {
   const { data: clientsResponse, loading: clientsLoading, error: clientsError, refetch: refetchClients } = useApi<{ clients: Client[], stats: { active_count: number, cancelled_count: number, following_count: number, completed_count: number, incomplete_count: number } }>(`/api/clients?tab=${activeTab}`);
   const clients = clientsResponse?.clients || [];
   const clientStats = clientsResponse?.stats;
+
+  // DEBUG: Log para verificar filtro de vendedor
+  useEffect(() => {
+    if (clientsResponse) {
+      console.log(`🔍 [Clients] user=${currentUser?.username} role=${currentUser?.role} → ${clients.length} clientes recibidos (tab=${activeTab})`);
+      console.log(`🔍 [Clients] stats=`, clientStats);
+    }
+  }, [clientsResponse]);
   const { data: vendors } = useApi<Vendor[]>("/api/vendors");
   const { data: prospects, refetch: refetchProspects } = useApi<FollowUpProspect[]>("/api/follow-up-prospects?include_completed=true"); const notify = (type: 'success' | 'error' | 'info', text: string) => {
     setNotification({ type, text });
@@ -361,7 +375,7 @@ export default function Clients() {
 
   const clientHasActiveFollowUp = useCallback((clientId: number) => {
     return (prospects || []).some(
-      (p) => p.client_id === clientId && Boolean(p.is_active ?? true) && !Boolean(p.is_completed)
+      (p) => p.client_id === clientId && p.completed_date == null
     );
   }, [prospects]);
 
@@ -415,8 +429,8 @@ export default function Clients() {
         for (const client of clients) {
           // Check if this client is being followed
           const clientProspects = followUpProspects.filter((p) => p.client_id === client.id);
-          const activeProspect = clientProspects.find((p) => Boolean(p.is_active ?? true) && !Boolean(p.is_completed));
-          const completedProspectExists = !activeProspect && clientProspects.some((p) => Boolean(p.is_completed));
+          const activeProspect = clientProspects.find((p) => p.completed_date == null);
+          const completedProspectExists = !activeProspect && clientProspects.some((p) => p.completed_date != null);
 
           const isBeingFollowed = Boolean(activeProspect);
           const wasCompleted = completedProspectExists;
@@ -487,12 +501,12 @@ export default function Clients() {
             primarySubscriberPhone: primarySubscriberPhone,
             primaryContractEndDate: primaryContractEndDate,
             lastActivity: client.last_activity,
-            hasCancelledBans: Boolean(client.has_cancelled_bans),
+            hasCancelledBans: Boolean(client.has_cancelled_bans) && Number(client.active_ban_count || 0) === 0,
             banType: banType,
             email: client.email,
             phone: client.phone,
             secondary_phone: client.secondary_phone,
-            mobile_phone: client.mobile_phone,
+            mobile_phone: client.cellular || client.mobile_phone,
             address: client.address,
             city: client.city,
             zipCode: client.zip_code,
@@ -503,8 +517,8 @@ export default function Clients() {
           });
         }
 
-        // Sort by client name
-        clientData.sort((a, b) => a.clientName.localeCompare(b.clientName));
+        // Sort by client name (null-safe para incompletos sin nombre)
+        clientData.sort((a, b) => (a.clientName || '').localeCompare(b.clientName || ''));
         console.log(`✅ Procesamiento básico completado. Total clientItems: ${clientData.length}`);
         setClientItems(clientData);
 
@@ -656,7 +670,7 @@ export default function Clients() {
             banType = 'Fijo';
           }
         }
-        const hasCancelledBans = Boolean(client.has_cancelled_bans);
+        const hasCancelledBans = Boolean(client.has_cancelled_bans) && Number(client.active_ban_count || 0) === 0;
 
         // Incompleto: cliente activo sin nombre/empresa
         const hasName = Boolean(
@@ -793,7 +807,7 @@ export default function Clients() {
     if (searchTerm) {
       const term = searchTerm.toLowerCase();
       const matchesSearch = (
-        item.clientName.toLowerCase().includes(term) ||
+        (item.clientName || '').toLowerCase().includes(term) ||
         (item.businessName && item.businessName.toLowerCase().includes(term)) ||
         (item.email && item.email.toLowerCase().includes(term)) ||
         (item.phone && item.phone.toLowerCase().includes(term)) ||
@@ -882,7 +896,22 @@ export default function Clients() {
 
   // Al usar backend filtering, filteredClients ya contiene solo lo que queremos
   // Sin embargo, mantenemos la lógica de búsqueda sobre los resultados retornados
-  const clientsForTab = filteredClients;
+  const clientsForTab = [...filteredClients].sort((a, b) => {
+    if (sortOrder === 'expiry_asc') {
+      // Vencidos más antiguos primero (sin fecha al final)
+      const dateA = a.primaryContractEndDate ? new Date(a.primaryContractEndDate).getTime() : Infinity;
+      const dateB = b.primaryContractEndDate ? new Date(b.primaryContractEndDate).getTime() : Infinity;
+      return dateA - dateB;
+    }
+    if (sortOrder === 'expiry_desc') {
+      const dateA = a.primaryContractEndDate ? new Date(a.primaryContractEndDate).getTime() : -Infinity;
+      const dateB = b.primaryContractEndDate ? new Date(b.primaryContractEndDate).getTime() : -Infinity;
+      return dateB - dateA;
+    }
+    if (sortOrder === 'name_asc') return (a.clientName || '').localeCompare(b.clientName || '');
+    if (sortOrder === 'name_desc') return (b.clientName || '').localeCompare(a.clientName || '');
+    return 0; // sin orden adicional
+  });
 
   // Paginación
   const totalPages = Math.ceil(clientsForTab.length / itemsPerPage);
@@ -1100,7 +1129,7 @@ export default function Clients() {
     }
   };
 
-  const handleViewClientDetail = async (clientId: number, initialTab: 'info' | 'bans' | 'history' | 'calls' = 'bans') => {
+  const handleViewClientDetail = async (clientId: number, initialTab: 'info' | 'bans' | 'history' | 'calls' | 'comparativas' | 'ventas' = 'bans') => {
     try {
       setLoadingClientDetail(true);
       setClientDetailInitialTab(initialTab); // Establecer la pestaña inicial
@@ -1215,6 +1244,19 @@ export default function Clients() {
         setSelectedClientId(null);
         setClientBANs([]);
         notify('success', `Cliente ${data.name} creado correctamente.`);
+
+        // Alerta recordando agregar BAN
+        setTimeout(() => {
+          const agregarBan = window.confirm(
+            `⚠️ El cliente "${data.name}" fue creado sin BAN.\n\nRecuerda agregar al menos un BAN para que aparezca correctamente en el sistema.\n\n¿Deseas agregar un BAN ahora?`
+          );
+          if (agregarBan) {
+            setEditingClient(responseData as Client);
+            setSelectedClientId(responseData.id);
+            setClientBANs([]);
+            setTimeout(() => setShowBANModal(true), 150);
+          }
+        }, 300);
       }
     } catch (error) {
       console.error("Error creating client:", error);
@@ -1252,10 +1294,12 @@ export default function Clients() {
       const isNowComplete = hasRealBusinessName && hasEmail && hasContact;
 
       setPendingBanClientId(null);
-      setShowClientModal(false);
-      setEditingClient(null);
-      setSelectedClientId(null);
-      setClientBANs([]);
+      // Modal permanece abierto después de guardar - actualizar datos del cliente editando
+      const updatedResponse = await authFetch(`/api/clients/${editingClient.id}`);
+      if (updatedResponse.ok) {
+        const updatedClient = await updatedResponse.json();
+        setEditingClient(updatedClient);
+      }
       await refetchClients();
 
       notify('success', `Cliente ${data.business_name || data.name} actualizado correctamente.`);
@@ -1643,6 +1687,61 @@ export default function Clients() {
     setShowExportMenu(false);
   };
 
+  const handleExportForMailMerge = () => {
+    console.log('📧 Exportando para Mail Merge (Correspondencia)');
+
+    const dataToExport: any[] = [];
+    
+    // Función para validar formato de email
+    const isValidEmail = (email: string): boolean => {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      return emailRegex.test(email);
+    };
+
+    let validCount = 0;
+    let invalidCount = 0;
+
+    // Usar todos los clientes filtrados actualmente visibles
+    clientsForTab.forEach(client => {
+      const email = client.email?.trim() || '';
+      const isValid = email !== '' && isValidEmail(email);
+      
+      if (isValid) validCount++;
+      if (email !== '' && !isValid) invalidCount++;
+
+      dataToExport.push({
+        'Nombre': client.contactPerson || client.clientName || 'Sin Nombre',
+        'Email': email || 'SIN EMAIL',
+        'Email Válido': isValid ? 'SÍ' : 'NO',
+        'Estado': client.hasCancelledBans ? 'Cancelado' : 'Activo'
+      });
+    });
+
+    if (dataToExport.length === 0) {
+      notify('error', 'No hay clientes en la vista actual');
+      return;
+    }
+
+    const ws = XLSX.utils.json_to_sheet(dataToExport);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Emails");
+
+    // Ajustar ancho de columnas
+    const wscols = [
+      { wch: 40 }, // Nombre
+      { wch: 35 }, // Email
+      { wch: 14 }, // Email Válido
+      { wch: 12 }  // Estado
+    ];
+    ws['!cols'] = wscols;
+
+    const fileName = `Emails_Correspondencia_${activeTab}_${new Date().toISOString().split('T')[0]}.xlsx`;
+    XLSX.writeFile(wb, fileName);
+    
+    notify('success', `✅ ${validCount} válidos | ⚠️ ${invalidCount} inválidos | Total: ${dataToExport.length}`);
+    setShowExportMenu(false);
+  };
+
   if (clientsLoading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -1713,6 +1812,17 @@ export default function Clients() {
                   <FileSpreadsheet className="w-4 h-4 text-green-500" />
                   Exportar TODO (Activos + Cancelados)
                 </button>
+
+                <div className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider border-t border-b border-gray-700 mt-1">
+                  Mail Merge (Correspondencia)
+                </div>
+                <button
+                  onClick={handleExportForMailMerge}
+                  className="w-full px-4 py-2 text-left text-gray-300 hover:bg-gray-700 hover:text-white flex items-center gap-2"
+                >
+                  <Mail className="w-4 h-4 text-indigo-500" />
+                  Emails para Correspondencia
+                </button>
               </div>
             )}
           </div>
@@ -1769,6 +1879,20 @@ export default function Clients() {
             <option value="this_month">Vence este mes</option>
             <option value="next_month">Vence el próximo mes</option>
             <option value="next_3_months">Próximos 3 meses</option>
+          </select>
+        </div>
+
+        <div className="w-full sm:w-auto min-w-[180px]">
+          <select
+            value={sortOrder}
+            onChange={(e) => setSortOrder(e.target.value)}
+            className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-white"
+          >
+            <option value="">Orden por defecto</option>
+            <option value="expiry_asc">Vencimiento: más antiguo</option>
+            <option value="expiry_desc">Vencimiento: más reciente</option>
+            <option value="name_asc">Nombre: A-Z</option>
+            <option value="name_desc">Nombre: Z-A</option>
           </select>
         </div>
 
@@ -1930,6 +2054,7 @@ export default function Clients() {
             <thead className="bg-gray-800 border-b border-gray-700">
               <tr>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Empresa</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Celular</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Última Actividad</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Tipo BAN</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Base</th>
@@ -1972,9 +2097,14 @@ export default function Clients() {
                         className="text-left hover:text-blue-400 transition-colors"
                       >
                         <div className="text-sm font-medium text-blue-300 hover:text-blue-200 cursor-pointer underline">
-                          {item.businessName || item.clientName}
+                          {item.businessName || item.clientName || '(Sin Nombre)'}
                         </div>
                       </button>
+                    </td>
+                    <td className="px-4 py-4 whitespace-nowrap text-left">
+                      <span className="text-sm text-gray-300 font-mono">
+                        {item.mobile_phone || '-'}
+                      </span>
                     </td>
                     <td className="px-4 py-4 whitespace-nowrap text-left">
                       <span className="text-sm text-gray-300">
@@ -2052,7 +2182,7 @@ export default function Clients() {
                           <Edit className="w-3 h-3" />
                           Editar
                         </button>
-                      ) : (
+                      ) : isAdmin ? (
                         <button
                           type="button"
                           onClick={(e) => {
@@ -2067,7 +2197,7 @@ export default function Clients() {
                         >
                           <Merge size={16} />
                         </button>
-                      )}
+                      ) : null}
                     </td>
                   </tr>
                 );
@@ -2426,15 +2556,176 @@ function ClientManagementModal({
   onRefreshClient?: () => Promise<void>;
   onFollowUpUpdated?: () => Promise<void> | void;
   clientHasActiveFollowUp: (clientId: number) => boolean;
-  initialTab?: 'info' | 'bans' | 'history' | 'calls';
+  initialTab?: 'info' | 'bans' | 'history' | 'calls' | 'comparativas' | 'ventas';
 }) {
-  const [activeTab, setActiveTab] = useState<'info' | 'bans' | 'history' | 'calls'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'info' | 'bans' | 'history' | 'calls' | 'comparativas' | 'ventas'>(initialTab);
   const [showBANForm, setShowBANForm] = useState(false);
   const [showEmailModal, setShowEmailModal] = useState(false);
+  const [showComparativaModal, setShowComparativaModal] = useState(false);
   const [editingBAN, setEditingBAN] = useState<BAN | null>(null);
   const [formMessage, setFormMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const [isSendingToFollowUp, setIsSendingToFollowUp] = useState(false);
   const [isEditingClient, setIsEditingClient] = useState(false);
+  const [subscriberSubTabs, setSubscriberSubTabs] = useState<Record<string, 'activas' | 'canceladas'>>({});
+
+  // === COMPARATIVAS STATE ===
+  interface OfferRow {
+    id: string;
+    subId: string; // subscriber ID original (empty if extra row)
+    ban: string;
+    phone: string;
+    plan: string;
+    cost: string;
+    notes: string;
+  }
+
+  // Editable copies of actual subscriber data (plan + cost + expiry)
+  const [editingActual, setEditingActual] = useState<Record<string, { plan: string; cost: string; expiry: string }>>({});
+  const [savingActualId, setSavingActualId] = useState<string | null>(null);
+  const [savedActualId, setSavedActualId] = useState<string | null>(null);
+
+  // Offer rows - initialized from client subs
+  const [offerRows, setOfferRows] = useState<OfferRow[]>([]);
+  const [offerInitialized, setOfferInitialized] = useState(false);
+  const [comparativaTitle, setComparativaTitle] = useState('');
+  const [savedComparativas, setSavedComparativas] = useState<{ id: string; title: string; created_at: string; data: any }[]>([]);
+
+  // Initialize offer rows from client subscribers when tab opens
+  useEffect(() => {
+    if (activeTab === 'comparativas' && !offerInitialized && client.bans.length > 0) {
+      const rows: OfferRow[] = client.bans.flatMap(ban =>
+        (ban.subscribers || []).map(sub => ({
+          id: crypto.randomUUID(),
+          subId: String(sub.id),
+          ban: ban.ban_number,
+          phone: sub.phone,
+          plan: '',
+          cost: '',
+          notes: '',
+        }))
+      );
+      if (rows.length === 0) {
+        rows.push({ id: crypto.randomUUID(), subId: '', ban: '', phone: '', plan: '', cost: '', notes: '' });
+      }
+      setOfferRows(rows);
+      setOfferInitialized(true);
+    }
+  }, [activeTab, offerInitialized, client.bans]);
+
+  // Load saved comparativas
+  useEffect(() => {
+    if (activeTab === 'comparativas') {
+      const key = `comparativas_${client.id}`;
+      const saved = localStorage.getItem(key);
+      if (saved) {
+        try { setSavedComparativas(JSON.parse(saved)); } catch { setSavedComparativas([]); }
+      }
+    }
+  }, [activeTab, client.id]);
+
+  const getActualValue = (subId: string | number, field: 'plan' | 'cost' | 'expiry', original: any) => {
+    const key = String(subId);
+    if (editingActual[key]) return editingActual[key][field];
+    if (field === 'plan') return (original as any).plan || '';
+    if (field === 'expiry') return original.contract_end_date || '';
+    return original.monthly_value != null ? String(Number(original.monthly_value).toFixed(2)) : '';
+  };
+
+  const setActualValue = (subId: string | number, field: 'plan' | 'cost' | 'expiry', value: string) => {
+    const key = String(subId);
+    setEditingActual(prev => {
+      const sub = client.bans.flatMap(b => b.subscribers || []).find(s => String(s.id) === key);
+      const current = prev[key] || {
+        plan: (sub as any)?.plan || '',
+        cost: sub?.monthly_value != null ? String(Number(sub.monthly_value).toFixed(2)) : '',
+        expiry: sub?.contract_end_date || '',
+      };
+      return { ...prev, [key]: { ...current, [field]: value } };
+    });
+  };
+
+  const handleSaveActualSubscriber = async (subId: string) => {
+    const edits = editingActual[subId];
+    if (!edits) return;
+    setSavingActualId(subId);
+    try {
+      const sub = client.bans.flatMap(b => b.subscribers || []).find(s => String(s.id) === subId);
+      const res = await authFetch(`/api/subscribers/${subId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          phone: sub?.phone,
+          plan: edits.plan || null,
+          monthly_value: edits.cost ? parseFloat(edits.cost) : null,
+          contract_end_date: edits.expiry || null,
+        }),
+      });
+      if (res.ok) {
+        setSavedActualId(subId);
+        setTimeout(() => setSavedActualId(null), 2000);
+        // Refresh client data
+        if (onRefreshClient) await onRefreshClient();
+        setEditingActual(prev => { const n = { ...prev }; delete n[subId]; return n; });
+      } else {
+        setFormMessage({ type: 'error', text: 'Error guardando suscriptor' });
+      }
+    } catch {
+      setFormMessage({ type: 'error', text: 'Error de conexión' });
+    }
+    setSavingActualId(null);
+  };
+
+  const addOfferRow = () => {
+    setOfferRows(prev => [...prev, { id: crypto.randomUUID(), subId: '', ban: '', phone: '', plan: '', cost: '', notes: '' }]);
+  };
+
+  const removeOfferRow = (id: string) => {
+    setOfferRows(prev => prev.filter(r => r.id !== id));
+  };
+
+  const updateOfferRow = (id: string, field: keyof OfferRow, value: string) => {
+    setOfferRows(prev => prev.map(r => r.id === id ? { ...r, [field]: value } : r));
+  };
+
+  const handleSaveComparativa = () => {
+    const title = comparativaTitle.trim() || `Comparativa ${new Date().toLocaleDateString()}`;
+    const currentData = client.bans.flatMap(ban =>
+      (ban.subscribers || []).map(s => ({
+        ban: ban.ban_number,
+        phone: s.phone,
+        plan: getActualValue(s.id, 'plan', s),
+        cost: getActualValue(s.id, 'cost', s),
+        expiry: s.contract_end_date || '',
+      }))
+    );
+
+    const newComparativa = {
+      id: crypto.randomUUID(),
+      title,
+      created_at: new Date().toISOString(),
+      data: {
+        actual: currentData,
+        oferta: offerRows.filter(r => r.ban || r.phone || r.plan || r.cost),
+      }
+    };
+
+    const key = `comparativas_${client.id}`;
+    const existing = [...savedComparativas, newComparativa];
+    localStorage.setItem(key, JSON.stringify(existing));
+    setSavedComparativas(existing);
+    setComparativaTitle('');
+    setFormMessage({ type: 'success', text: `Comparativa "${title}" guardada correctamente.` });
+    setTimeout(() => setFormMessage(null), 3000);
+  };
+
+  const deleteComparativa = (id: string) => {
+    const key = `comparativas_${client.id}`;
+    const updated = savedComparativas.filter(c => c.id !== id);
+    localStorage.setItem(key, JSON.stringify(updated));
+    setSavedComparativas(updated);
+  };
+  // === END COMPARATIVAS STATE ===
+  const [vendorsList, setVendorsList] = useState<{id: string; name: string; role: string}[]>([]);
   const [editClientData, setEditClientData] = useState({
     name: client.name || '',
     business_name: client.business_name || '',
@@ -2450,7 +2741,24 @@ function ClientManagementModal({
     owner_name: (client as any).owner_name || '',
     cellular: (client as any).cellular || '',
     additional_phone: (client as any).additional_phone || '',
+    salesperson_id: (client as any).salesperson_id || '',
   });
+
+  // Cargar lista de vendedores para el dropdown
+  useEffect(() => {
+    const loadVendors = async () => {
+      try {
+        const res = await authFetch('/api/vendors');
+        if (res.ok) {
+          const data = await res.json();
+          setVendorsList(data);
+        }
+      } catch (e) {
+        console.error('Error loading vendors:', e);
+      }
+    };
+    loadVendors();
+  }, []);
 
   useEffect(() => {
     if (!formMessage) return;
@@ -2778,6 +3086,52 @@ function ClientManagementModal({
     }
   };
 
+  const handleCancelSubscriber = async (subscriberId: number, phone: string, banId: string) => {
+    const reason = prompt(`¿Razón de cancelación para ${phone}? (opcional)`);
+    if (reason === null) return; // user clicked Cancel on prompt
+    
+    try {
+      const response = await authFetch(`/api/subscribers/${subscriberId}/cancel`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cancel_reason: reason || null }),
+      });
+
+      if (!response.ok) {
+        setFormMessage({ type: 'error', text: 'Error al cancelar la línea.' });
+        return;
+      }
+
+      setFormMessage({ type: 'success', text: `Línea ${phone} cancelada.` });
+      // Switch to cancelled tab for this BAN
+      setSubscriberSubTabs(prev => ({ ...prev, [banId]: 'canceladas' }));
+      if (onRefreshClient) await onRefreshClient();
+    } catch {
+      setFormMessage({ type: 'error', text: 'Error de conexión al cancelar.' });
+    }
+  };
+
+  const handleReactivateSubscriber = async (subscriberId: number, phone: string, banId: string) => {
+    if (!confirm(`¿Reactivar la línea ${phone}?`)) return;
+    
+    try {
+      const response = await authFetch(`/api/subscribers/${subscriberId}/reactivate`, {
+        method: 'PUT',
+      });
+
+      if (!response.ok) {
+        setFormMessage({ type: 'error', text: 'Error al reactivar la línea.' });
+        return;
+      }
+
+      setFormMessage({ type: 'success', text: `Línea ${phone} reactivada.` });
+      setSubscriberSubTabs(prev => ({ ...prev, [banId]: 'activas' }));
+      if (onRefreshClient) await onRefreshClient();
+    } catch {
+      setFormMessage({ type: 'error', text: 'Error de conexión al reactivar.' });
+    }
+  };
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-gray-900 rounded-xl shadow-xl border border-gray-800 w-full max-w-7xl max-h-[95vh] overflow-hidden">
@@ -2871,6 +3225,29 @@ function ClientManagementModal({
               }`}
           >
             Llamadas y Fechas
+          </button>
+          <button
+            onClick={() => setShowComparativaModal(true)}
+            className={`px-6 py-3 text-sm font-medium transition-colors flex items-center gap-1.5 ${activeTab === 'comparativas'
+              ? 'text-emerald-400 border-b-2 border-emerald-400 bg-gray-750'
+              : 'text-gray-400 hover:text-white hover:bg-gray-750'
+              }`}
+          >
+            <ArrowRightLeft className="w-3.5 h-3.5" />
+            Comparativas
+            {savedComparativas.length > 0 && (
+              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-700">{savedComparativas.length}</span>
+            )}
+          </button>
+          <button
+            onClick={() => setActiveTab('ventas')}
+            className={`px-6 py-3 text-sm font-medium transition-colors flex items-center gap-1.5 ${activeTab === 'ventas'
+              ? 'text-amber-400 border-b-2 border-amber-400 bg-gray-750'
+              : 'text-gray-400 hover:text-white hover:bg-gray-750'
+              }`}
+          >
+            <ShoppingCart className="w-3.5 h-3.5" />
+            Ventas
           </button>
         </div>
 
@@ -2999,6 +3376,7 @@ function ClientManagementModal({
                             owner_name: (client as any).owner_name || '',
                             cellular: (client as any).cellular || '',
                             additional_phone: (client as any).additional_phone || '',
+                            salesperson_id: (client as any).salesperson_id || '',
                           });
                         }}
                         className="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors"
@@ -3149,6 +3527,21 @@ function ClientManagementModal({
                         required
                       />
                     </div>
+
+                    {/* Vendedor Asignado */}
+                    <div className="md:col-span-2">
+                      <label className="block text-sm font-medium text-gray-300 mb-2">Vendedor Asignado</label>
+                      <select
+                        value={editClientData.salesperson_id}
+                        onChange={(e) => setEditClientData({ ...editClientData, salesperson_id: e.target.value })}
+                        className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500"
+                      >
+                        <option value="">Sin asignar</option>
+                        {vendorsList.map((v: any) => (
+                          <option key={v.id} value={v.id}>{v.name} ({v.role})</option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
                 </div>
               ) : (
@@ -3266,15 +3659,48 @@ function ClientManagementModal({
                         </div>
                       )}
 
-                      {client.vendor_name && (
-                        <div className="flex items-center space-x-3">
-                          <Building className="w-5 h-5 text-gray-400" />
-                          <div>
-                            <p className="text-sm text-gray-400">Vendedor Asignado</p>
-                            <p className="text-white font-medium">{client.vendor_name}</p>
-                          </div>
+                      <div className="flex items-center space-x-3">
+                        <Building className="w-5 h-5 text-gray-400" />
+                        <div className="flex-1">
+                          <p className="text-sm text-gray-400">Vendedor Asignado</p>
+                          <p className="text-white font-medium">{client.vendor_name || 'Sin asignar'}</p>
                         </div>
-                      )}
+                        {client.vendor_name ? (
+                          <button
+                            onClick={async () => {
+                              if (!window.confirm(`¿Desasignar vendedor "${client.vendor_name}" de este cliente?`)) return;
+                              try {
+                                const res = await authFetch(`/api/clients/${client.id}`, {
+                                  method: 'PUT',
+                                  json: { salesperson_id: null }
+                                });
+                                if (res.ok) {
+                                  setFormMessage({ type: 'success', text: 'Vendedor desasignado.' });
+                                  if (onRefreshClient) await onRefreshClient();
+                                } else {
+                                  setFormMessage({ type: 'error', text: 'Error al desasignar vendedor.' });
+                                }
+                              } catch (e) {
+                                setFormMessage({ type: 'error', text: 'Error al desasignar vendedor.' });
+                              }
+                            }}
+                            className="text-xs px-2 py-1 bg-red-600/30 hover:bg-red-600/50 text-red-300 rounded transition-colors"
+                            title="Desasignar vendedor"
+                          >
+                            ✕ Desasignar
+                          </button>
+                        ) : !client.vendor_name ? (
+                          <button
+                            onClick={() => {
+                              setIsEditingClient(true);
+                            }}
+                            className="text-xs px-2 py-1 bg-blue-600/30 hover:bg-blue-600/50 text-blue-300 rounded transition-colors"
+                            title="Asignar vendedor"
+                          >
+                            + Asignar
+                          </button>
+                        ) : null}
+                      </div>
 
                       <div className="flex items-center space-x-3">
                         <Building className="w-5 h-5 text-gray-400" />
@@ -3387,93 +3813,137 @@ function ClientManagementModal({
 
                       {/* Subscribers Section */}
                       {ban.subscribers && ban.subscribers.length > 0 ? (
-                        <div className="space-y-2">
-                          <h5 className="text-xs font-medium text-gray-300 flex items-center">
-                            <Users className="w-3 h-3 mr-1" />
-                            Suscriptores ({ban.subscribers.length})
-                          </h5>
-                          <div className="space-y-1">
-                            {ban.subscribers.map((subscriber) => (
-                              <div key={subscriber.id} className="bg-gray-700 rounded p-2">
-                                <div className="flex justify-between items-center">
-                                  <div className="flex items-center space-x-3 text-xs flex-1">
-                                    <div className="flex items-center space-x-1">
-                                      <Phone className="w-3 h-3 text-gray-400" />
-                                      <span className="text-white font-mono">{subscriber.phone}</span>
-                                    </div>
+                        (() => {
+                          const activeSubs = ban.subscribers.filter((s: Subscriber) => s.status !== 'cancelado' && s.status !== 'cancelled');
+                          const cancelledSubs = ban.subscribers.filter((s: Subscriber) => s.status === 'cancelado' || s.status === 'cancelled');
+                          const currentSubTab = subscriberSubTabs[ban.id] || 'activas';
+                          const subsToShow = currentSubTab === 'activas' ? activeSubs : cancelledSubs;
 
-                                    {subscriber.service_type && (
-                                      <div className="flex items-center space-x-1">
-                                        <Building className="w-3 h-3 text-gray-400" />
-                                        <span className="text-gray-300">{subscriber.service_type}</span>
-                                      </div>
-                                    )}
-
-                                    {subscriber.monthly_value && (
-                                      <div className="text-green-400 font-semibold">${subscriber.monthly_value}/mes</div>
-                                    )}
-
-                                    {/* Estado del Suscriptor */}
-                                    <div className="flex items-center gap-2">
-                                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${(subscriber.status === "cancelado" || subscriber.status === "cancelled") ? "bg-red-900/40 text-red-100 border border-red-500/30" : (subscriber.status === "suspendido" ? "bg-yellow-900/40 text-yellow-100 border border-yellow-500/30" : "bg-emerald-900/40 text-emerald-100 border border-emerald-500/30")}`}>
-                                        {(subscriber.status === "cancelado" || subscriber.status === "cancelled") ? "Cancelado" : (subscriber.status === "suspendido" ? "Suspendido" : "Activo")}
-                                      </span>
-                                      {(subscriber.status === "cancelado" || subscriber.status === "cancelled") && subscriber.cancel_reason && (
-                                        <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-orange-900/40 text-orange-100 border border-orange-500/30">
-                                          {subscriber.cancel_reason}
-                                        </span>
-                                      )}
-                                    </div>
-
-                                    {(() => {
-                                      const { status, days } = computeSubscriberTiming(subscriber.contract_end_date);
-                                      const badge = getStatusBadge(status, days, subscriber.created_at);
-                                      return (
-                                        <div className="flex items-center gap-2 text-xs">
-                                          <span className="text-gray-300">
-                                            {subscriber.contract_end_date
-                                              ? new Date(subscriber.contract_end_date).toLocaleDateString()
-                                              : 'Sin fecha'}
-                                          </span>
-                                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${badge.className}`}>
-                                            {badge.label}
-                                          </span>
-                                        </div>
-                                      );
-                                    })()}
-                                  </div>
-                                  <div className="flex items-center space-x-1">
-                                    <button
-                                      onClick={() => handleEditSubscriber(subscriber, ban.id)}
-                                      className="bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded text-xs transition-colors flex items-center gap-1"
-                                    >
-                                      <Edit className="w-3 h-3" />
-                                      Editar
-                                    </button>
-                                    <button
-                                      onClick={() => handleDeleteSubscriber(subscriber.id, ban.id)}
-                                      className="bg-red-600 hover:bg-red-700 text-white px-2 py-1 rounded text-xs transition-colors flex items-center gap-1"
-                                    >
-                                      <Trash2 className="w-3 h-3" />
-                                      Eliminar
-                                    </button>
-                                  </div>
-                                </div>
+                          return (
+                            <div className="space-y-2">
+                              {/* Sub-tabs: Activas / Canceladas */}
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() => setSubscriberSubTabs(prev => ({ ...prev, [ban.id]: 'activas' }))}
+                                  className={`flex items-center gap-1 px-3 py-1 rounded-lg text-xs font-medium transition-all ${currentSubTab === 'activas' ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-900/30' : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200'}`}
+                                >
+                                  <Phone className="w-3 h-3" />
+                                  Activas ({activeSubs.length})
+                                </button>
+                                <button
+                                  onClick={() => setSubscriberSubTabs(prev => ({ ...prev, [ban.id]: 'canceladas' }))}
+                                  className={`flex items-center gap-1 px-3 py-1 rounded-lg text-xs font-medium transition-all ${currentSubTab === 'canceladas' ? 'bg-red-600 text-white shadow-lg shadow-red-900/30' : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200'}`}
+                                >
+                                  <X className="w-3 h-3" />
+                                  Canceladas ({cancelledSubs.length})
+                                </button>
                               </div>
-                            ))}
-                          </div>
-                          <button
-                            onClick={() => {
-                              if (onAddSubscriber) {
-                                onAddSubscriber(ban.id);
-                              }
-                            }}
-                            className="w-full bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded text-xs transition-colors flex items-center justify-center gap-1"
-                          >
-                            <Plus className="w-3 h-3" />
-                            Agregar Suscriptor
-                          </button>
-                        </div>
+
+                              {/* List */}
+                              <div className="space-y-1">
+                                {subsToShow.length > 0 ? subsToShow.map((subscriber: Subscriber) => (
+                                  <div key={subscriber.id} className={`rounded p-2 ${currentSubTab === 'canceladas' ? 'bg-gray-800/60 border border-red-900/20' : 'bg-gray-700'}`}>
+                                    <div className="flex justify-between items-center">
+                                      <div className="flex items-center space-x-3 text-xs flex-1">
+                                        <div className="flex items-center space-x-1">
+                                          <Phone className="w-3 h-3 text-gray-400" />
+                                          <span className={`font-mono ${currentSubTab === 'canceladas' ? 'text-gray-400 line-through' : 'text-white'}`}>{subscriber.phone}</span>
+                                        </div>
+
+                                        {subscriber.plan && (
+                                          <span className="text-gray-400 truncate max-w-[120px]" title={subscriber.plan}>{subscriber.plan}</span>
+                                        )}
+
+                                        {subscriber.monthly_value && (
+                                          <div className={`font-semibold ${currentSubTab === 'canceladas' ? 'text-gray-500' : 'text-green-400'}`}>${subscriber.monthly_value}/mes</div>
+                                        )}
+
+                                        {/* Expiry badge - only for active */}
+                                        {currentSubTab === 'activas' && (() => {
+                                          const { status, days } = computeSubscriberTiming(subscriber.contract_end_date);
+                                          const badge = getStatusBadge(status, days, subscriber.created_at);
+                                          return (
+                                            <div className="flex items-center gap-2 text-xs">
+                                              <span className="text-gray-300">
+                                                {subscriber.contract_end_date
+                                                  ? new Date(subscriber.contract_end_date).toLocaleDateString()
+                                                  : 'Sin fecha'}
+                                              </span>
+                                              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${badge.className}`}>
+                                                {badge.label}
+                                              </span>
+                                            </div>
+                                          );
+                                        })()}
+
+                                        {/* Cancel reason for cancelled */}
+                                        {currentSubTab === 'canceladas' && subscriber.cancel_reason && (
+                                          <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-orange-900/40 text-orange-100 border border-orange-500/30">
+                                            {subscriber.cancel_reason}
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="flex items-center space-x-1">
+                                        {currentSubTab === 'activas' ? (
+                                          <>
+                                            <button
+                                              onClick={() => handleEditSubscriber(subscriber, ban.id)}
+                                              className="bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded text-xs transition-colors flex items-center gap-1"
+                                            >
+                                              <Edit className="w-3 h-3" />
+                                              Editar
+                                            </button>
+                                            <button
+                                              onClick={() => handleCancelSubscriber(subscriber.id, subscriber.phone, String(ban.id))}
+                                              className="bg-orange-600 hover:bg-orange-700 text-white px-2 py-1 rounded text-xs transition-colors flex items-center gap-1"
+                                            >
+                                              <X className="w-3 h-3" />
+                                              Cancelar
+                                            </button>
+                                          </>
+                                        ) : (
+                                          <>
+                                            <button
+                                              onClick={() => handleReactivateSubscriber(subscriber.id, subscriber.phone, String(ban.id))}
+                                              className="bg-emerald-600 hover:bg-emerald-700 text-white px-2 py-1 rounded text-xs transition-colors flex items-center gap-1"
+                                            >
+                                              <Check className="w-3 h-3" />
+                                              Reactivar
+                                            </button>
+                                            <button
+                                              onClick={() => handleDeleteSubscriber(subscriber.id, ban.id)}
+                                              className="bg-red-600 hover:bg-red-700 text-white px-2 py-1 rounded text-xs transition-colors flex items-center gap-1"
+                                            >
+                                              <Trash2 className="w-3 h-3" />
+                                              Eliminar
+                                            </button>
+                                          </>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                )) : (
+                                  <div className="text-center py-3 text-gray-500 text-xs">
+                                    {currentSubTab === 'activas' ? 'No hay líneas activas' : 'No hay líneas canceladas'}
+                                  </div>
+                                )}
+                              </div>
+                              {currentSubTab === 'activas' && (
+                                <button
+                                  onClick={() => {
+                                    if (onAddSubscriber) {
+                                      onAddSubscriber(ban.id);
+                                    }
+                                  }}
+                                  className="w-full bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded text-xs transition-colors flex items-center justify-center gap-1"
+                                >
+                                  <Plus className="w-3 h-3" />
+                                  Agregar Suscriptor
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })()
                       ) : (
                         <div className="bg-gray-700/50 rounded p-3 text-center border border-dashed border-gray-600">
                           <Users className="mx-auto h-4 w-4 text-gray-500 mb-1" />
@@ -3522,6 +3992,323 @@ function ClientManagementModal({
               </p>
             </div>
           )}
+
+          {/* ====== TAB COMPARATIVAS ====== */}
+          {activeTab === 'comparativas' && (
+            <div className="space-y-6">
+              {/* SECCIÓN 1: PLAN ACTUAL (EDITABLE) */}
+              <div>
+                <h3 className="text-lg font-bold text-white mb-3 flex items-center gap-2">
+                  <Package className="w-5 h-5 text-blue-400" />
+                  Plan Actual del Cliente
+                  <span className="text-[10px] text-slate-500 font-normal ml-2">· Edita Plan y Costo, luego guarda</span>
+                </h3>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-slate-800/60">
+                        <th className="px-4 py-2.5 text-[10px] font-bold text-slate-400 uppercase w-[110px]">BAN</th>
+                        <th className="px-3 py-2.5 text-[10px] font-bold text-slate-400 uppercase w-[110px]">Teléfono</th>
+                        <th className="px-3 py-2.5 text-[10px] font-bold text-blue-400 uppercase w-[150px] bg-blue-500/5 border-l border-slate-700">Plan</th>
+                        <th className="px-3 py-2.5 text-[10px] font-bold text-green-400 uppercase text-right w-[110px] bg-green-500/5 border-l border-slate-700">Costo</th>
+                        <th className="px-3 py-2.5 text-[10px] font-bold text-slate-400 uppercase w-[100px] border-l border-slate-700">Vencimiento</th>
+                        <th className="px-3 py-2.5 text-[10px] font-bold text-slate-400 uppercase w-[70px]">Estado</th>
+                        <th className="px-2 py-2.5 text-[10px] font-bold text-slate-400 uppercase w-[50px]"></th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/40">
+                      {client.bans.length > 0 ? (
+                        client.bans.flatMap(ban =>
+                          (ban.subscribers || []).map(sub => {
+                            const subKey = String(sub.id);
+                            const { status, days } = computeSubscriberTiming(sub.contract_end_date);
+                            const badge = getStatusBadge(status, days, sub.created_at);
+                            const isEditing = editingActual[subKey] !== undefined;
+                            return (
+                              <tr key={sub.id} className="hover:bg-slate-800/20 transition-colors">
+                                <td className="px-4 py-1.5 text-xs text-slate-300 font-mono">{ban.ban_number}</td>
+                                <td className="px-3 py-1.5 text-xs text-slate-300 font-mono">{sub.phone}</td>
+                                <td className="px-3 py-1 bg-blue-500/5 border-l border-slate-700">
+                                  <input type="text"
+                                    value={getActualValue(sub.id, 'plan', sub)}
+                                    onChange={e => setActualValue(sub.id, 'plan', e.target.value)}
+                                    className={`w-full bg-slate-800 border text-xs px-2 py-1.5 rounded outline-none font-semibold transition-all ${isEditing ? 'border-blue-500 ring-1 ring-blue-500/20 text-blue-300' : 'border-slate-700 text-blue-300 hover:border-blue-500/50'}`}
+                                  />
+                                </td>
+                                <td className="px-3 py-1 bg-green-500/5 border-l border-slate-700">
+                                  <input type="text"
+                                    value={getActualValue(sub.id, 'cost', sub)}
+                                    onChange={e => setActualValue(sub.id, 'cost', e.target.value)}
+                                    className={`w-full bg-slate-800 border text-xs px-2 py-1.5 rounded outline-none text-right font-mono font-semibold transition-all ${isEditing ? 'border-green-500 ring-1 ring-green-500/20 text-green-400' : 'border-slate-700 text-green-400 hover:border-green-500/50'}`}
+                                  />
+                                </td>
+                                <td className="px-3 py-1 border-l border-slate-700">
+                                  <input type="date"
+                                    value={getActualValue(sub.id, 'expiry', sub)}
+                                    onChange={e => setActualValue(sub.id, 'expiry', e.target.value)}
+                                    className={`w-full bg-slate-800 border text-xs px-2 py-1.5 rounded outline-none font-mono transition-all ${isEditing ? 'border-amber-500 ring-1 ring-amber-500/20 text-amber-300' : 'border-slate-700 text-slate-300 hover:border-amber-500/50'}`}
+                                  />
+                                </td>
+                                <td className="px-3 py-1.5">
+                                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${badge.className}`}>
+                                    {badge.label}
+                                  </span>
+                                </td>
+                                <td className="px-2 py-1.5 text-center">
+                                  {isEditing && (
+                                    <button
+                                      onClick={() => handleSaveActualSubscriber(subKey)}
+                                      disabled={savingActualId === subKey}
+                                      className={`p-1.5 rounded-lg transition-all ${savedActualId === subKey
+                                        ? 'bg-green-600 text-white'
+                                        : 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-900/40'
+                                      }`}
+                                      title="Guardar cambios"
+                                    >
+                                      {savingActualId === subKey ? (
+                                        <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent animate-spin rounded-full" />
+                                      ) : savedActualId === subKey ? (
+                                        <Check className="w-3.5 h-3.5" />
+                                      ) : (
+                                        <Save className="w-3.5 h-3.5" />
+                                      )}
+                                    </button>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })
+                        )
+                      ) : (
+                        <tr>
+                          <td colSpan={7} className="px-4 py-6 text-center text-sm text-gray-500">
+                            No hay suscriptores registrados
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                    {client.bans.length > 0 && (
+                      <tfoot>
+                        <tr className="bg-slate-800/40 border-t border-slate-700">
+                          <td colSpan={3} className="px-4 py-2 text-xs font-bold text-slate-300 text-right">Total Actual:</td>
+                          <td className="px-3 py-2 text-right text-sm text-green-400 font-bold font-mono bg-green-500/5 border-l border-slate-700">
+                            ${client.bans.flatMap(b => b.subscribers || []).reduce((sum, s) => {
+                              const edited = editingActual[String(s.id)];
+                              const val = edited ? parseFloat(edited.cost) || 0 : Number(s.monthly_value) || 0;
+                              return sum + val;
+                            }, 0).toFixed(2)}
+                          </td>
+                          <td colSpan={3}></td>
+                        </tr>
+                      </tfoot>
+                    )}
+                  </table>
+                </div>
+              </div>
+
+              {/* SEPARADOR */}
+              <div className="flex items-center gap-3 py-1">
+                <div className="flex-1 border-t border-emerald-500/30"></div>
+                <div className="flex items-center gap-2 text-emerald-400 text-sm font-bold">
+                  <ArrowRightLeft className="w-4 h-4" />
+                  OFERTA PROPUESTA
+                </div>
+                <div className="flex-1 border-t border-emerald-500/30"></div>
+              </div>
+
+              {/* SECCIÓN 2: OFERTA (EDITABLE, PRE-LLENADA CON BAN/PHONE) */}
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                    <Sparkles className="w-5 h-5 text-emerald-400" />
+                    Nueva Oferta
+                    <span className="text-[10px] text-slate-500 font-normal ml-2">· Mismos BANs y líneas, completa el plan nuevo</span>
+                  </h3>
+                  <button
+                    onClick={addOfferRow}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs flex items-center gap-1 transition-colors"
+                  >
+                    <Plus className="w-3 h-3" />
+                    Agregar Línea
+                  </button>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-emerald-900/20 border border-emerald-500/20">
+                        <th className="px-4 py-2.5 text-[10px] font-bold text-emerald-400 uppercase w-[110px]">BAN</th>
+                        <th className="px-3 py-2.5 text-[10px] font-bold text-emerald-400 uppercase w-[110px]">Teléfono</th>
+                        <th className="px-3 py-2.5 text-[10px] font-bold text-emerald-400 uppercase w-[150px] bg-emerald-500/5 border-l border-emerald-900/30">Plan Nuevo</th>
+                        <th className="px-3 py-2.5 text-[10px] font-bold text-emerald-400 uppercase text-right w-[110px] bg-emerald-500/5 border-l border-emerald-900/30">Costo</th>
+                        <th className="px-3 py-2.5 text-[10px] font-bold text-emerald-400 uppercase w-[160px] border-l border-emerald-900/30">Notas</th>
+                        <th className="px-2 py-2.5 w-[40px]"></th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-emerald-900/20">
+                      {offerRows.map(row => (
+                        <tr key={row.id} className="hover:bg-emerald-900/10 transition-colors">
+                          <td className="px-4 py-1.5">
+                            <input type="text" value={row.ban}
+                              onChange={e => updateOfferRow(row.id, 'ban', e.target.value)}
+                              placeholder="BAN"
+                              className="w-full bg-slate-800 border border-slate-700 text-slate-300 text-xs px-2 py-1.5 rounded outline-none focus:border-emerald-500 font-mono"
+                            />
+                          </td>
+                          <td className="px-3 py-1.5">
+                            <input type="text" value={row.phone}
+                              onChange={e => updateOfferRow(row.id, 'phone', e.target.value)}
+                              placeholder="Teléfono"
+                              className="w-full bg-slate-800 border border-slate-700 text-slate-300 text-xs px-2 py-1.5 rounded outline-none focus:border-emerald-500 font-mono"
+                            />
+                          </td>
+                          <td className="px-3 py-1.5 bg-emerald-500/5 border-l border-emerald-900/30">
+                            <input type="text" value={row.plan}
+                              onChange={e => updateOfferRow(row.id, 'plan', e.target.value)}
+                              placeholder="Plan nuevo"
+                              className="w-full bg-slate-800 border border-slate-700 text-emerald-300 text-xs px-2 py-1.5 rounded outline-none focus:border-emerald-500 font-semibold"
+                            />
+                          </td>
+                          <td className="px-3 py-1.5 bg-emerald-500/5 border-l border-emerald-900/30">
+                            <input type="text" value={row.cost}
+                              onChange={e => updateOfferRow(row.id, 'cost', e.target.value)}
+                              placeholder="$0.00"
+                              className="w-full bg-slate-800 border border-slate-700 text-green-400 text-xs px-2 py-1.5 rounded outline-none focus:border-emerald-500 text-right font-mono font-semibold"
+                            />
+                          </td>
+                          <td className="px-3 py-1.5 border-l border-emerald-900/30">
+                            <input type="text" value={row.notes}
+                              onChange={e => updateOfferRow(row.id, 'notes', e.target.value)}
+                              placeholder="Notas..."
+                              className="w-full bg-slate-800 border border-slate-700 text-slate-300 text-xs px-2 py-1.5 rounded outline-none focus:border-emerald-500"
+                            />
+                          </td>
+                          <td className="px-2 py-1.5 text-center">
+                            <button onClick={() => removeOfferRow(row.id)}
+                              className="text-red-500 hover:text-red-400 transition-colors p-1"
+                              title="Eliminar línea"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="bg-emerald-900/20 border-t border-emerald-500/20">
+                        <td colSpan={3} className="px-4 py-2 text-xs font-bold text-emerald-300 text-right">Total Oferta:</td>
+                        <td className="px-3 py-2 text-right text-sm text-green-400 font-bold font-mono bg-emerald-500/5 border-l border-emerald-900/30">
+                          ${offerRows.reduce((sum, r) => sum + (parseFloat(r.cost) || 0), 0).toFixed(2)}
+                        </td>
+                        <td colSpan={2}></td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+
+              {/* DIFERENCIA */}
+              {(() => {
+                const totalActual = client.bans.flatMap(b => b.subscribers || []).reduce((sum, s) => {
+                  const edited = editingActual[String(s.id)];
+                  return sum + (edited ? parseFloat(edited.cost) || 0 : Number(s.monthly_value) || 0);
+                }, 0);
+                const totalOferta = offerRows.reduce((sum, r) => sum + (parseFloat(r.cost) || 0), 0);
+                const diff = totalOferta - totalActual;
+                return totalOferta > 0 ? (
+                  <div className={`flex items-center justify-between p-4 rounded-lg border ${diff < 0 ? 'bg-green-900/20 border-green-500/30' : diff > 0 ? 'bg-amber-900/20 border-amber-500/30' : 'bg-slate-800/40 border-slate-700'}`}>
+                    <div className="flex items-center gap-4">
+                      <div className="text-xs text-slate-400">Actual: <span className="text-white font-bold">${totalActual.toFixed(2)}</span></div>
+                      <ArrowRightLeft className="w-4 h-4 text-slate-600" />
+                      <div className="text-xs text-slate-400">Oferta: <span className="text-emerald-400 font-bold">${totalOferta.toFixed(2)}</span></div>
+                    </div>
+                    <span className={`text-lg font-bold ${diff < 0 ? 'text-green-400' : diff > 0 ? 'text-amber-400' : 'text-slate-400'}`}>
+                      {diff < 0 ? '-' : diff > 0 ? '+' : ''}${Math.abs(diff).toFixed(2)}
+                      {diff < 0 && <span className="text-xs ml-2 text-green-500">(ahorro)</span>}
+                      {diff > 0 && <span className="text-xs ml-2 text-amber-500">(incremento)</span>}
+                    </span>
+                  </div>
+                ) : null;
+              })()}
+
+              {/* GUARDAR COMPARATIVA */}
+              <div className="flex items-center gap-3">
+                <input
+                  type="text"
+                  value={comparativaTitle}
+                  onChange={e => setComparativaTitle(e.target.value)}
+                  placeholder="Nombre de la comparativa (ej: Migración Abril 2026)"
+                  className="flex-1 bg-slate-800 border border-slate-700 text-white text-sm px-4 py-2.5 rounded-lg outline-none focus:border-emerald-500"
+                />
+                <button
+                  onClick={handleSaveComparativa}
+                  className="bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-700 hover:to-green-700 text-white px-5 py-2.5 rounded-lg text-sm font-medium flex items-center gap-2 transition-all shadow-lg shadow-emerald-900/30"
+                >
+                  <Save className="w-4 h-4" />
+                  Guardar Comparativa
+                </button>
+              </div>
+
+              {/* COMPARATIVAS GUARDADAS */}
+              {savedComparativas.length > 0 && (
+                <div className="mt-2">
+                  <h4 className="text-sm font-bold text-slate-400 mb-2 uppercase">Comparativas Guardadas</h4>
+                  <div className="space-y-2">
+                    {savedComparativas.map(comp => (
+                      <div key={comp.id} className="flex items-center justify-between bg-slate-800/60 rounded-lg px-4 py-3 border border-slate-700">
+                        <div>
+                          <span className="text-sm font-medium text-white">{comp.title}</span>
+                          <span className="text-xs text-slate-500 ml-3">{new Date(comp.created_at).toLocaleDateString()}</span>
+                          <span className="text-xs text-slate-500 ml-2">
+                            · {comp.data.actual?.length || 0} actual, {comp.data.oferta?.length || 0} oferta
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => {
+                              if (comp.data.oferta && comp.data.oferta.length > 0) {
+                                setOfferRows(comp.data.oferta.map((r: any) => ({
+                                  id: crypto.randomUUID(),
+                                  subId: r.subId || '',
+                                  ban: r.ban || '',
+                                  phone: r.phone || '',
+                                  plan: r.plan || '',
+                                  cost: r.cost || '',
+                                  notes: r.notes || '',
+                                })));
+                              }
+                              setFormMessage({ type: 'info', text: `Comparativa "${comp.title}" cargada.` });
+                              setTimeout(() => setFormMessage(null), 2000);
+                            }}
+                            className="text-blue-400 hover:text-blue-300 text-xs px-2 py-1 rounded transition-colors hover:bg-blue-900/30"
+                          >
+                            Cargar
+                          </button>
+                          <button
+                            onClick={() => deleteComparativa(comp.id)}
+                            className="text-red-500 hover:text-red-400 transition-colors p-1"
+                            title="Eliminar"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ====== TAB VENTAS ====== */}
+          {activeTab === 'ventas' && (
+            <div className="text-center py-12">
+              <ShoppingCart className="mx-auto h-12 w-12 text-gray-600" />
+              <h3 className="mt-2 text-lg font-medium text-gray-300">Ventas del Cliente</h3>
+              <p className="mt-1 text-sm text-gray-500">
+                Próximamente: Ventas sincronizadas desde Tango para este cliente
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Footer */}
@@ -3561,6 +4348,15 @@ function ClientManagementModal({
         recipientEmail={client.email || ''}
         recipientName={client.contact_person || client.name}
       />
+
+      {/* Comparativa Modal */}
+      {showComparativaModal && (
+        <ComparativaModal
+          client={client}
+          onClose={() => setShowComparativaModal(false)}
+          onRefreshClient={onRefreshClient}
+        />
+      )}
     </div>
   );
 }

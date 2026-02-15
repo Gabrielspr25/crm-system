@@ -5,13 +5,23 @@ import { query as localQuery } from '../database/db.js';
 import { success, serverError } from '../utils/responses.js';
 
 // Pool remoto para Auditoría Pro
+console.log('🔍 [REMOTE POOL] Creando pool para Manual Comparison a 159.203.70.5:5432...');
 const remotePool = new Pool({
     host: '159.203.70.5',
     port: 5432,
     user: 'postgres',
     password: 'p0stmu7t1',
     database: 'claropr',
-    connectionTimeoutMillis: 10000
+    connectionTimeoutMillis: 15000,
+    query_timeout: 30000,
+    statement_timeout: 30000,
+    ssl: false,
+    max: 5,
+    idleTimeoutMillis: 30000
+});
+
+remotePool.on('error', (err) => {
+    console.error('🔍 [REMOTE POOL MC] Error en pool:', err);
 });
 
 /**
@@ -38,24 +48,31 @@ export const compareExcelAgainstDB = async (req, res) => {
             let dbData = null;
             let type = 'VALUE_MISMATCH';
 
-            if (mode === 'remote') {
+if (mode === 'remote') {
                 // --- COMPARACIÓN CONTRA SERVIDOR REMOTO (PRODUCCIÓN) ---
                 try {
+                    console.log(`🔍 [REMOTE DB] Conectando a 159.203.70.5:5432 para buscar teléfono: ${phone}, BAN: ${banNumber}`);
+                    const startTime = Date.now();
+                    const remoteRes = await remotePool.query(`
                     SELECT
-                    fechaactivacion as fecha,
-                        ban,
-                        numerocelularactivado as suscriber,
-                        NULL as nombre,
-                        codigovoz as codigo_voz,
+                        v.fechaactivacion as fecha,
+                        v.ban,
+                        CAST(v.numerocelularactivado AS text) as suscriber,
+                        c.nombre as nombre,
+                        v.codigovoz as codigo_voz,
                         NULL as valor,
-                        simcard as simcard,
-                        emai as imei,
+                        v.simcard as simcard,
+                        v.emai as imei,
                         NULL as seguro,
-                        pricecode as price_code
-                        FROM venta
-                        WHERE numerocelularactivado = $1 OR ban = $2
-                        LIMIT 1
-                        `, [phone, banNumber]);
+                        v.pricecode as price_code
+                    FROM venta v
+                    LEFT JOIN clientecredito c ON v.clientecreditoid = c.clientecreditoid
+                    WHERE v.numerocelularactivado = $1 OR v.ban = $2
+                    LIMIT 1
+`, [phone, banNumber]);
+                    
+                    const queryTime = Date.now() - startTime;
+                    console.log(`🔍 [REMOTE DB] Query completada en ${queryTime}ms, resultados: ${remoteRes.rows.length}`);
 
                     if (remoteRes.rows.length === 0) {
                         discrepancies.push({

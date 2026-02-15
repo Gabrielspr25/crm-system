@@ -13,18 +13,21 @@ import VendorsPage from "@/react-app/pages/Vendors";
 
 import CategoriesPage from "@/react-app/pages/Categories";
 import ProductsPage from "@/react-app/pages/Products";
-import CommissionTiers from "@/react-app/pages/CommissionTiers";
 import ProfilePage from "@/react-app/pages/Profile";
 import LoginPage from "@/react-app/pages/Login";
 import ImportadorVisual from "@/react-app/pages/ImportadorVisual";
-import GoalsPage from "@/react-app/pages/Goals";
+import MetasPage from "@/react-app/pages/Metas";
+import GoalsConfigPage from "@/react-app/pages/GoalsConfig";
 import AuditLogPage from "@/react-app/pages/AuditLog";
 import ReferidosPage from "@/react-app/pages/Referidos";
 import CorreosPage from "@/react-app/pages/Correos";
 import TarifasPage from "@/react-app/pages/Tarifas";
+import Campaigns from "@/react-app/pages/Campaigns";
+import CampaignWizard from "@/react-app/pages/CampaignWizard";
+import CampaignDetails from "@/react-app/pages/CampaignDetails";
 import SystemHealthButton from "@/react-app/components/SystemHealthButton";
 import SystemStatus from "@/react-app/pages/SystemStatus";
-import DiscrepanciasPage from "@/react-app/pages/Discrepancias";
+import DiscrepanciasFixedPage from "@/react-app/pages/DiscrepanciasFixed";
 
 
 // Inicializar MSAL fuera del componente
@@ -52,14 +55,17 @@ function ProtectedRoutes() {
         <Route path="/vendedores" element={<VendorsPage />} />
         <Route path="/categorias" element={<CategoriesPage />} />
         <Route path="/productos" element={<ProductsPage />} />
-        <Route path="/comisiones" element={<CommissionTiers />} />
-        <Route path="/metas" element={<GoalsPage />} />
+        <Route path="/metas" element={<MetasPage />} />
+        <Route path="/metas/configurar" element={<GoalsConfigPage />} />
         <Route path="/tarifas" element={<TarifasPage />} />
+        <Route path="/campanas" element={<Campaigns />} />
+        <Route path="/campanas/nueva" element={<CampaignWizard />} />
+        <Route path="/campanas/:id" element={<CampaignDetails />} />
         <Route path="/perfil" element={<ProfilePage />} />
         <Route path="/importador" element={<ImportadorVisual />} />
         <Route path="/historial" element={<AuditLogPage />} />
         <Route path="/system-status" element={<SystemStatus />} />
-        <Route path="/discrepancias" element={<DiscrepanciasPage />} />
+        <Route path="/discrepancias" element={<DiscrepanciasFixedPage />} />
 
       </Routes>
     </ProtectedLayout>

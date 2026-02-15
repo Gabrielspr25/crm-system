@@ -1,0 +1,1316 @@
+[
+  {
+    "fecha": "2026-02-06T19:51:43.586Z",
+    "cliente": "A Y D MULTIPLE SERVICES",
+    "origen": "15445a38-7e0f-4ec8-9e74-c7b5da0e2545",
+    "destino": "69e8e01c-fe01-4b65-ac0d-0a7ab88f85e1",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 5,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:51:44.355Z",
+    "cliente": "ACCOUNTING PLUS",
+    "origen": "56658446-c6f0-4a3d-b480-7e0cc3e8834c",
+    "destino": "1021a043-582a-4805-9af4-6fc3ee4b60ca",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:51:45.130Z",
+    "cliente": "AGROCENTRO LOS TOPOS",
+    "origen": "9b744280-800c-4c6c-8516-6fe07e1d21e0",
+    "destino": "e527633a-7a3f-44f6-b34e-5c0680541da5",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 2,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:51:45.905Z",
+    "cliente": "ALFONSO SANABRIA",
+    "origen": "027e4771-74a2-4e3a-9523-01127bd1648f",
+    "destino": "00ea3000-d717-41f2-8902-111ea8ba7abb",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 5,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:51:46.674Z",
+    "cliente": "ANDRES LOPEZ",
+    "origen": "1bb11967-75d1-43cb-a724-e26837e5b913",
+    "destino": "cf272f14-5c1b-4f3a-9eec-be301d3cd7f3",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 2,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:51:47.434Z",
+    "cliente": "ANTONIO ORTIZ ROQUE",
+    "origen": "641931c6-7f43-46d6-85cb-353c837b7027",
+    "destino": "2d6fb51b-c8c3-4a69-a981-2e88cf6eb1a7",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:51:48.208Z",
+    "cliente": "APOLO BARBER SHOP INC",
+    "origen": "fb14f5c1-0f90-4049-b8f8-bec846859e56",
+    "destino": "2eaaa426-7dc6-4c91-8098-24f6452cdfaf",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 2,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:51:48.972Z",
+    "cliente": "ASOCIACION DE RESIDEN",
+    "origen": "a275fc2f-e87e-47bd-9e1c-03b3f0d5b9c6",
+    "destino": "f0d5aaa9-e790-4aa2-bb6e-bd7ef38c5295",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 2,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:51:49.730Z",
+    "cliente": "ASOCIACIÓN",
+    "origen": "f2281dbe-a231-4b04-86c5-f7d5e287b118",
+    "destino": "29966743-6731-461b-b5e3-34b3446e778e",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:51:50.486Z",
+    "cliente": "ASTRAL LIGHTING CORP",
+    "origen": "c0909e9d-972b-4b5d-9532-99aeaae36ad2",
+    "destino": "917d7537-de1f-4e3c-8009-7a045e3ea2c7",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:51:51.248Z",
+    "cliente": "AUTO PARTS PR",
+    "origen": "e6bdd084-d829-40db-890b-6b887953f6f5",
+    "destino": "e0445976-97ce-42e1-ae25-17b771d2cbe5",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:51:52.019Z",
+    "cliente": "BABY PLANETS",
+    "origen": "1b2ad973-e632-4b9a-a42b-c2b1d3992986",
+    "destino": "3415254b-534e-4225-9bbf-d8d95a97e046",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 5,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:51:52.780Z",
+    "cliente": "BENKAR CONSTRUCTION  DEVELOPMENT",
+    "origen": "d868bd92-389a-4dbd-840b-bbad4d134839",
+    "destino": "68f832f1-ac3c-44dd-a6b8-63383e322d45",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 2,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:51:53.542Z",
+    "cliente": "BERIO HERMANOS",
+    "origen": "671a9a8a-4a56-4d79-be2c-b8ce16c2d57b",
+    "destino": "41aeac5e-57f2-452b-b4b7-4f196ed31455",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 2,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:51:54.301Z",
+    "cliente": "CAPRICO ROOFING INC",
+    "origen": "63ef35ff-5c96-40ac-be19-35e51e6b30c6",
+    "destino": "0d4fcd87-ed79-4d12-abe2-4b64c42fe733",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:51:55.064Z",
+    "cliente": "CARIBBEAN HOSPICE COR",
+    "origen": "b3a02dab-356e-49a3-8bc7-74d1f34ef879",
+    "destino": "31c2f82a-23b0-4f75-9b00-36f351aa01fb",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 7,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:51:55.824Z",
+    "cliente": "CARTEK CARIBE INC",
+    "origen": "ce3fc6b7-655a-4510-84b8-2ed85d7ec392",
+    "destino": "31054cb4-1b6f-4469-925f-0806df46d65b",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:51:56.595Z",
+    "cliente": "CENTRAL PLUS INC",
+    "origen": "560b7aa4-7738-4970-bedd-145dd68924df",
+    "destino": "45626560-33ee-4832-aae4-64c4f65f6d77",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:51:57.364Z",
+    "cliente": "CENTRO AGRICOLA",
+    "origen": "b7e65ddb-c626-4dfd-a32c-38005a902ef8",
+    "destino": "245860c6-93f4-4f99-84b9-e5e34976e7c2",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:51:58.137Z",
+    "cliente": "CENTRO DE EVALUACION  Y TERAPIA DEL SUR ESTE",
+    "origen": "f44c422d-edc5-40a3-853b-092ce14ca5bd",
+    "destino": "b7f14651-4f74-4737-a0be-65a97455da1f",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 5,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:51:58.909Z",
+    "cliente": "CIMA HMO CORP",
+    "origen": "764074ed-e2a2-4c03-a19b-3ebac1ae7d74",
+    "destino": "ac42dabf-14b7-47a9-ba0a-7dd076ab8b01",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 5,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:51:59.669Z",
+    "cliente": "COLEGIO SAN AGUSTIN",
+    "origen": "e63d7db0-4692-4116-9385-60c1888ce5c0",
+    "destino": "e59bc493-be01-416f-ac02-4d5ed524be20",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:00.431Z",
+    "cliente": "COMMUNITY BROADCASTING INC",
+    "origen": "5ebd3d06-37c9-4ebc-8821-6885a26c6a8d",
+    "destino": "0f531092-bcb2-43c9-a626-8e845a54cef9",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:01.190Z",
+    "cliente": "CONDOMINIO PORTOFINO",
+    "origen": "cc47f558-e902-49c6-b1c3-7488cfc32d45",
+    "destino": "7b0e1f5f-efc2-4d8a-b9bd-e4faf3d69899",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:01.959Z",
+    "cliente": "COOPERATIVA DE AHORRO Y CREDITO",
+    "origen": "088b65a7-aa86-42d9-9717-ffbe4329cc67",
+    "destino": "c5e6ed80-1407-4340-831e-f0e05cbdee5b",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 5,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:02.722Z",
+    "cliente": "CORP SULLIVAN FLORES",
+    "origen": "83b357ca-fd07-42f4-a9d6-03cd134d5bd1",
+    "destino": "478fa6fb-f30f-4dde-bdf3-dbb342a5ee79",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 2,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:03.491Z",
+    "cliente": "D ROYAL BRIDE",
+    "origen": "9ed2f015-8c88-4953-93ec-7025b2f37ffa",
+    "destino": "047ade1f-2bc3-4df3-9c1d-37317c3eeaa5",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 3,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:04.261Z",
+    "cliente": "DANNY VALENTIN",
+    "origen": "0f27d81c-6e41-4354-8d0c-424688db2f3f",
+    "destino": "500dbc1b-13f2-4b66-bc04-5706c24ca14e",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:05.026Z",
+    "cliente": "DAVID R ECHAVERRY",
+    "origen": "c5a0662d-a776-4217-bd5a-578cdc651f74",
+    "destino": "ea56b37b-9ec7-4ed5-aa27-c02058039e30",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:05.789Z",
+    "cliente": "DOMINGUEZ ELECTRICAL CONTRACTORS",
+    "origen": "d7f804fc-4113-42d3-ba2f-e99e2f5dee27",
+    "destino": "a10e0f55-656b-4bfc-b5f0-859c563ba60b",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 3,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:06.558Z",
+    "cliente": "EAST WEST GASOLINE",
+    "origen": "38178833-92a6-4a1d-b863-8274580bebd9",
+    "destino": "3e7f3973-b80e-4f00-968f-c8d9356be9fd",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 3,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:07.326Z",
+    "cliente": "EDGARDO G BARRETO",
+    "origen": "c584a76a-9713-46de-b576-76525db894ce",
+    "destino": "a8ae6b0b-ed22-4708-b8ab-30ecf016dc08",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 5,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:08.086Z",
+    "cliente": "ELIZABETH CALDERON",
+    "origen": "dd234ff0-0b5d-411a-992c-ad93e6065505",
+    "destino": "733f16d0-4cfe-4d4f-bec1-04e52f2100f4",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 2,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:08.858Z",
+    "cliente": "ERNESTO JUAN E HIJOS, INC.",
+    "origen": "3405a6c1-5d98-4efd-827a-5b39e6dff27a",
+    "destino": "747b66ac-2672-4415-85e1-e9b2ba2ef8e1",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 9,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:09.620Z",
+    "cliente": "FERRETERIA LA MUNECA",
+    "origen": "1587580b-671c-4e99-a00f-025bd96911aa",
+    "destino": "5230a4e0-b29a-45a9-b8e5-fdd22ac04845",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 11,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:10.378Z",
+    "cliente": "FRAIGCOMAR SOCCER",
+    "origen": "a99db7ad-4d6a-46aa-93c1-ef4c012c8b9b",
+    "destino": "083d6748-70ff-44a3-8356-65499f88f2d5",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:11.145Z",
+    "cliente": "GAMAIRE REFIGERATION",
+    "origen": "4f84ce59-7eff-44c3-86df-b26abff04806",
+    "destino": "291cfdbe-4f87-4bd3-9c8e-6ddf7dbd48a7",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 3,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:11.917Z",
+    "cliente": "GAMO STELL INC",
+    "origen": "bef0b558-67fd-4ce8-a312-672e979444c2",
+    "destino": "90ec0a1f-814b-4dc4-a5a6-245e51a6e50c",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:12.678Z",
+    "cliente": "GASTRONOMIA MEJICANA",
+    "origen": "d1e48acb-cf9c-45ca-952b-4602a7f6e184",
+    "destino": "7dd53ca0-605a-44a8-a50c-bfe55bd10990",
+    "bans_movidos": 0,
+    "suscriptores_movidos": 0,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:13.450Z",
+    "cliente": "GENERAL CONTRACTORS ENGINEERS & PROJECT MANAGMENT",
+    "origen": "835d2a6a-717f-47ef-9a62-278712593ed5",
+    "destino": "1e43b577-08c2-4485-8626-2ffd1094fafe",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 4,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:14.211Z",
+    "cliente": "GENERAL INVESTMENT",
+    "origen": "2ae1ae30-950e-45dc-beb3-1adfaef31ea4",
+    "destino": "ea822ee7-9cd7-4f73-857c-21ffca02e075",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 26,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:14.970Z",
+    "cliente": "HENRYS BY BORINQUEN INC",
+    "origen": "12311914-158a-4d97-83ec-0275ae9d51e8",
+    "destino": "7267a512-6e1e-4d54-9eae-65b9bfc22390",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 4,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:15.734Z",
+    "cliente": "HOGAR SANTA ROSA",
+    "origen": "6a7c3f59-53af-4a76-9005-f1039f5945fc",
+    "destino": "9b91fb0d-23bb-4c32-a2e1-69b59ce656a6",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:16.495Z",
+    "cliente": "HOSPICIO LA MILAGROSA INC.",
+    "origen": "89570490-2494-46f1-b153-cc75e1e54ed0",
+    "destino": "2dc822ab-6d9e-4426-bfe9-5b71981517ac",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 2,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:17.257Z",
+    "cliente": "HR INC RINCON DEL MAR",
+    "origen": "dc05fcaf-ee6d-495e-a412-7e6b97b345ec",
+    "destino": "9377e535-ef9f-4f8c-8aed-cd4ebd524081",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:18.029Z",
+    "cliente": "IGLESIA",
+    "origen": "a9888623-a774-4588-b5d9-123f50582db4",
+    "destino": "fc906ee6-4176-4b39-ae67-c471c32a3524",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:18.797Z",
+    "cliente": "IGLESIA BAUTISTA",
+    "origen": "24daaba4-a184-4c3f-9884-50e4ceeaa89b",
+    "destino": "e1e4337d-2f79-4436-8085-22604a981859",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 2,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:19.560Z",
+    "cliente": "IGLESIA CRISTIANA DISC CRISTO",
+    "origen": "79e10bd8-b225-4add-9541-0833acb162d8",
+    "destino": "c5ae3751-5d6f-45ca-bedd-cf5b062aa3b1",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:20.319Z",
+    "cliente": "INTELLIMED PSC",
+    "origen": "6a491185-938d-43b6-8567-5dc8c4fe1332",
+    "destino": "9556d3dc-b41b-4d72-8476-49ea961da792",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:21.087Z",
+    "cliente": "IQTEK SOLUTIONS",
+    "origen": "0b8fab87-4b28-4c0c-93dc-e832a4e7d382",
+    "destino": "4d4fa9b9-5d88-4bd1-852d-a52057d7d9da",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 5,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:21.853Z",
+    "cliente": "ISABEL PEGUERO",
+    "origen": "a8438245-1728-4e50-bcf8-b7f5ca6e9e6b",
+    "destino": "b510ba6e-667c-4af8-819c-bcd07bcb7dea",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:22.613Z",
+    "cliente": "IT GROUP",
+    "origen": "fab09174-0641-41a9-84f3-352659476b41",
+    "destino": "d2ba63d4-ba7b-4b7f-94b1-aa2f0d4c207e",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 2,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:23.371Z",
+    "cliente": "JEANMARIE AMILL",
+    "origen": "e03ef986-8667-4d1e-a392-4099749b3d88",
+    "destino": "a24055fc-ec22-4d3a-9616-092855cb9a45",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 3,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:24.138Z",
+    "cliente": "JERA ELECTRICAL AGENCY",
+    "origen": "96cd41ab-92dd-49a7-946c-58ad0e4c34c4",
+    "destino": "546848e7-f8ca-4036-beb4-87074e7e42e7",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 2,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:24.909Z",
+    "cliente": "JESUS MORALES",
+    "origen": "2b285ecb-2e04-4eee-ad01-9a9b729df803",
+    "destino": "a3ca37bc-28b0-4df6-b400-a4503b2ec1ae",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:25.668Z",
+    "cliente": "JEWERLYS MAKER 2",
+    "origen": "6cded98e-6d81-4a73-8c6e-5786bf0c7712",
+    "destino": "5746ae4d-08f4-441a-a96e-b545b220c30d",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 2,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:26.431Z",
+    "cliente": "JOSE A CRIADO COLON",
+    "origen": "8476b962-d2e0-4c54-a346-6083a62c49d7",
+    "destino": "0289e80d-7e99-4133-a5b6-ed43a43629b6",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:27.195Z",
+    "cliente": "JOSE SANTOS",
+    "origen": "139709cf-1814-40dc-ab1f-0d8a3143939c",
+    "destino": "52a92317-859b-46ba-b0b8-11a6b663bc52",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:27.954Z",
+    "cliente": "KEILA GRASSAL",
+    "origen": "c7027563-2feb-413c-9c1b-e3b4bbddff0c",
+    "destino": "f331d1e6-99db-4720-a192-a1712f70baf0",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 2,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:28.712Z",
+    "cliente": "LA NUEVA PARADA",
+    "origen": "871a3ef4-abfe-488a-b549-d6b20454c5b0",
+    "destino": "a1d089c4-2f6b-490a-a261-16f7ca61db87",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:29.472Z",
+    "cliente": "LOGAS CORP",
+    "origen": "c92a67ad-f7e0-4f11-9ac4-881197409219",
+    "destino": "7ca3b275-5626-4b52-bdfa-243b5cbdddca",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 2,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:30.234Z",
+    "cliente": "LUIS N NAZARIO MALDONADO CSP",
+    "origen": "02ccbeba-c13a-4c10-a34b-bfd26bdbe190",
+    "destino": "7cc122ad-2faa-49a7-87e6-d326e09e96dc",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:30.999Z",
+    "cliente": "MADEARCO",
+    "origen": "522dc1b7-6ac2-4e44-bc73-56673276e26e",
+    "destino": "96cf3468-3211-4e55-bf03-5f8a3dc5e0cc",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:31.768Z",
+    "cliente": "MARIA DEL C. LOPEZ",
+    "origen": "115e6378-d583-4447-8de3-f8730bf7ffb6",
+    "destino": "19f447ab-f8e9-44b4-9b24-a276f98cf68e",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:32.540Z",
+    "cliente": "MARJOR & SONS INC",
+    "origen": "0938b094-9ae2-40aa-befb-5dacef0c7256",
+    "destino": "7875639b-52dc-4d83-9a31-8700d4cd240b",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:33.300Z",
+    "cliente": "MEDSERV CARIBE CORP",
+    "origen": "2932f243-2a4d-49f9-97f6-2c7acaf5dc21",
+    "destino": "75ecc0d2-e24c-43ab-a562-90828b206158",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 5,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:34.060Z",
+    "cliente": "METRO TAXI CABS",
+    "origen": "8ff00738-c0d8-43bd-9d1a-cd4aeb8218f6",
+    "destino": "de34df97-0888-4229-8890-3334603bd1eb",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:34.830Z",
+    "cliente": "OFI-TEK",
+    "origen": "1c1db55f-6e01-4e70-93e2-3899b52458db",
+    "destino": "c0fc4628-fb22-4667-a6cc-f2bc3f9b138c",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:35.591Z",
+    "cliente": "ONSHELF MEDIA",
+    "origen": "dbabf340-c9e0-4f31-bca9-eecf9501012d",
+    "destino": "a16b3235-8eea-4d9d-aa9f-77329c503f11",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 13,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:36.350Z",
+    "cliente": "OPL ENTERTAINMENT  DBA ORLANDO PACHECO LATORRE",
+    "origen": "6f76f7e0-5550-49f8-995d-45c44d4e3e75",
+    "destino": "6a86b736-0137-4a56-9f02-fe08d5187dc4",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 5,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:37.111Z",
+    "cliente": "ORANGECUTS LLC",
+    "origen": "e36eb02c-a01f-4d45-9433-071631120249",
+    "destino": "40a32476-97f9-459d-aa2f-1b3d60082de0",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:37.868Z",
+    "cliente": "POSTQUAM USA",
+    "origen": "725886ec-86a7-4b18-bf78-bb9124039f93",
+    "destino": "6ed86093-44a0-46d5-ad64-64f31a88ec3f",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 2,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:38.626Z",
+    "cliente": "PRONTO COPY INC",
+    "origen": "4abe6714-c992-4abb-9cb5-eaa4c1497e72",
+    "destino": "5d18bc4b-a6aa-420e-819e-f1426f7cf59e",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:39.388Z",
+    "cliente": "PRUEBALO LLC",
+    "origen": "a0f7f0e7-c6c2-40a3-be3c-52a97ab01d58",
+    "destino": "ca71d10b-6bc3-4969-9945-05897546bfaf",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 4,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:40.148Z",
+    "cliente": "RAMIREZ &  RAMIREZ APPLIANCE INC",
+    "origen": "d0291acc-dac2-49db-bf5c-4f74e3a34735",
+    "destino": "d654e41b-7e35-4fbf-9e1c-4b2651d799c9",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 7,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:40.908Z",
+    "cliente": "RC INSULATION SERVICE INC",
+    "origen": "f0a10c35-3d8f-4b8c-aa33-ac42ef5e3f4d",
+    "destino": "5d0edec7-f16a-4f44-9cec-f762ce47fcce",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 5,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:41.665Z",
+    "cliente": "SAN GERMAN GLASS CORP",
+    "origen": "6f4ff677-c8b5-4e1a-8dc0-84f1ec4cf9f3",
+    "destino": "646d8591-43bd-4ff5-9af2-aeff86119e51",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 5,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:42.420Z",
+    "cliente": "SBM",
+    "origen": "f96b84a6-a895-4b9d-b6d5-200148f1259e",
+    "destino": "ec6120c1-4702-452b-8033-75aef898364c",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 3,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:43.188Z",
+    "cliente": "SOL PARTNERS LLC",
+    "origen": "ce9d2a11-e5f5-498a-bd02-1fb4d1597f3f",
+    "destino": "6ba035cc-3634-4da2-bd50-813fa490c44e",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 5,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:43.945Z",
+    "cliente": "SS INNOVATIONS LLC",
+    "origen": "d22a2305-c240-4936-817a-adf89b725008",
+    "destino": "43651852-22ab-478c-8e3c-9a061a0a1a12",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:44.706Z",
+    "cliente": "SUPERMERCADO LINARES",
+    "origen": "b7c95651-2b75-4fbd-94fc-67581b8a3208",
+    "destino": "65fef0d2-bd06-4473-8625-c4ece185af2d",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:45.463Z",
+    "cliente": "SUPERMERCADOS MORALES",
+    "origen": "58d9d6de-30af-4f1f-9320-1f64b90f4c84",
+    "destino": "e9e51d01-d5b2-423f-9e87-31811d4ccfd7",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 2,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:46.226Z",
+    "cliente": "TIENDA EL ARMY",
+    "origen": "f5f90ab2-dd74-4cd5-b185-67e2e1705d09",
+    "destino": "be451650-1a69-4cc9-83bf-a86bbba8237e",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:46.985Z",
+    "cliente": "TRUENORTH CORP",
+    "origen": "3dcec861-1538-47c1-bf35-3c2e9bf04916",
+    "destino": "7828b934-eddc-4b07-84d1-f6b58ad0774f",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 21,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:47.744Z",
+    "cliente": "UNIDAD LABORAL DE EMP",
+    "origen": "2ba9ad6f-0678-47e0-ab4b-3eb1437b031a",
+    "destino": "a8fe14a2-d373-4416-afa5-4bc78cb9d9be",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 3,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:48.504Z",
+    "cliente": "UNION PUERTORRIQUENA",
+    "origen": "ec2d8755-601f-46e6-a250-a4d004049821",
+    "destino": "18eb7880-6e67-489e-aa0f-1dde759f29ba",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 5,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:49.261Z",
+    "cliente": "WALDEMAR ROSARIO",
+    "origen": "9e999655-c832-44c4-8633-b266eef50bfc",
+    "destino": "b144efaf-413c-4353-8b6d-6e4e7933eccf",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:50.025Z",
+    "cliente": "ZEDNAREH SERVICES STA",
+    "origen": "7cf3dd92-a6ab-4a8f-923b-fea084d92c55",
+    "destino": "fa931ab8-4f29-4bd9-8566-566db65c3229",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 2,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:50.785Z",
+    "cliente": "ZOE CHOCOLATE BY YARA",
+    "origen": "3a7dcad2-bd6f-47e7-8fee-a9a4061c9691",
+    "destino": "afb7703c-1fcb-40f4-8f5e-eecd56e221bb",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:51.557Z",
+    "cliente": "A&M CONTRACT, INC",
+    "origen": "21a9d942-4368-4cdc-b5aa-2f2394f83eb1",
+    "destino": "91907019-7857-44ba-a97f-0c96407beea9",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:52.314Z",
+    "cliente": "A&M CONTRACT, INC",
+    "origen": "8ef2d222-985e-4eaa-a8e7-4f0df3764c78",
+    "destino": "91907019-7857-44ba-a97f-0c96407beea9",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 9,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:53.077Z",
+    "cliente": "AIREKO SERVICES INSTALLATIONS",
+    "origen": "593cafc6-a043-4abc-af10-f0142c6ac0cd",
+    "destino": "9b068698-6921-44b0-a947-a17890d99466",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 3,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:53.844Z",
+    "cliente": "AIREKO SERVICES INSTALLATIONS",
+    "origen": "0a347a5d-4518-429a-9266-e43a5f0e2f06",
+    "destino": "9b068698-6921-44b0-a947-a17890d99466",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 4,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:54.603Z",
+    "cliente": "ARTURO MORALES",
+    "origen": "db17a736-208c-4819-9663-3d961b215796",
+    "destino": "49522ff8-8b24-4aae-a2db-bbc26fb8cf8d",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:55.360Z",
+    "cliente": "ARTURO MORALES",
+    "origen": "8e40438d-0760-4d73-a6e5-b6fab33f3e4f",
+    "destino": "49522ff8-8b24-4aae-a2db-bbc26fb8cf8d",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:56.121Z",
+    "cliente": "ASOCIACION RESIDENTES",
+    "origen": "1adad432-a7b9-4bc7-927e-c0e5e34fa671",
+    "destino": "c886f0c3-9a13-40f6-bf58-f5e47ad7bcd1",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:56.886Z",
+    "cliente": "ASOCIACION RESIDENTES",
+    "origen": "04a13535-4e6a-453e-9dbe-e36ad7c79ad4",
+    "destino": "c886f0c3-9a13-40f6-bf58-f5e47ad7bcd1",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 5,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:57.657Z",
+    "cliente": "ATLANTIS  CARIBBEAN CHEMICAL",
+    "origen": "953c89e7-588a-483e-828f-2123599db88b",
+    "destino": "edf9adce-9831-4301-8f52-d362564934f8",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:58.418Z",
+    "cliente": "ATLANTIS  CARIBBEAN CHEMICAL",
+    "origen": "8fb4e7fa-0a1d-409e-91fc-3a53232cb478",
+    "destino": "edf9adce-9831-4301-8f52-d362564934f8",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:59.184Z",
+    "cliente": "CAC CRESPO BUILDERS",
+    "origen": "1275d5e1-a830-459f-a0e1-f846fce5179f",
+    "destino": "27105fe2-01ea-4e49-a208-f60a9532b2d2",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 2,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:52:59.938Z",
+    "cliente": "CAC CRESPO BUILDERS",
+    "origen": "8fab6dda-7f68-42ab-b8a3-5481748f39e5",
+    "destino": "27105fe2-01ea-4e49-a208-f60a9532b2d2",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 4,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:00.700Z",
+    "cliente": "CLIENTE EDITADO",
+    "origen": "e2ac7334-7eff-4fe5-b318-838ad25d1bb6",
+    "destino": "ae959185-f542-4ff7-a4ae-a02f281f7bd3",
+    "bans_movidos": 0,
+    "suscriptores_movidos": 0,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:01.464Z",
+    "cliente": "CLIENTE EDITADO",
+    "origen": "50dd847d-932c-4063-ba3e-2718a7dcd935",
+    "destino": "ae959185-f542-4ff7-a4ae-a02f281f7bd3",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:02.227Z",
+    "cliente": "DR CLEAN",
+    "origen": "2716b780-fea0-4c9d-8212-a175f8b618f0",
+    "destino": "3d2ffb90-5880-4189-bc90-d75c34ff0b38",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 2,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:02.988Z",
+    "cliente": "DR CLEAN",
+    "origen": "24d831b8-0207-499f-bb0e-60a3bd6119af",
+    "destino": "3d2ffb90-5880-4189-bc90-d75c34ff0b38",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 7,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:03.749Z",
+    "cliente": "DR HECTOR M NATER PRI",
+    "origen": "a258a580-499d-47ee-abd2-575cd38d8745",
+    "destino": "32da6779-c198-4c47-96e1-1873dedc4e1d",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:04.513Z",
+    "cliente": "DR HECTOR M NATER PRI",
+    "origen": "b28ba970-be81-4ba1-b0b4-29430d0dec34",
+    "destino": "32da6779-c198-4c47-96e1-1873dedc4e1d",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:05.277Z",
+    "cliente": "E FRANCO & CO INC",
+    "origen": "f87da128-ebea-4ec9-b276-c98bf67b2f32",
+    "destino": "e66cf7ce-d5b4-4e64-9d2e-7a3ee219f31f",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:06.040Z",
+    "cliente": "E FRANCO & CO INC",
+    "origen": "b07e9b06-1221-4282-a3b4-861cb11451b3",
+    "destino": "e66cf7ce-d5b4-4e64-9d2e-7a3ee219f31f",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 2,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:06.799Z",
+    "cliente": "GLOBAL NET",
+    "origen": "8fcce48c-308e-4de1-bced-403dcb98f4bc",
+    "destino": "911d2941-8a0d-455f-99bf-cdb9b9bdc6c4",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 7,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:07.558Z",
+    "cliente": "GLOBAL NET",
+    "origen": "02bfef67-8535-4a1f-8f0c-9076cec56d28",
+    "destino": "911d2941-8a0d-455f-99bf-cdb9b9bdc6c4",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 5,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:08.330Z",
+    "cliente": "HECTOR L JOY SOBRINO",
+    "origen": "fac03d26-a064-4694-952e-c18288034766",
+    "destino": "6e16d534-e33d-45f9-8f8f-689b1f3044d5",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:09.095Z",
+    "cliente": "HECTOR L JOY SOBRINO",
+    "origen": "7a066fa2-23f4-4151-87d7-3928b8b18291",
+    "destino": "6e16d534-e33d-45f9-8f8f-689b1f3044d5",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:09.857Z",
+    "cliente": "INTERFACE",
+    "origen": "023327a6-d506-4476-9b36-3e2fb25e6ac9",
+    "destino": "9919c1d2-5516-480d-a196-648b2ce13357",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 2,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:10.618Z",
+    "cliente": "INTERFACE",
+    "origen": "0ba8658c-5f68-4a95-91a0-83432afb35d7",
+    "destino": "9919c1d2-5516-480d-a196-648b2ce13357",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 2,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:11.387Z",
+    "cliente": "BML LLC",
+    "origen": "8eb4e6f9-79aa-4137-855c-5a80764bbb26",
+    "destino": "27869cb2-4bb3-4cb3-8c80-718461337a58",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:12.155Z",
+    "cliente": "BML LLC",
+    "origen": "91a2f257-2f40-4ec5-aee2-1751a20e544c",
+    "destino": "27869cb2-4bb3-4cb3-8c80-718461337a58",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 4,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:12.915Z",
+    "cliente": "BML LLC",
+    "origen": "2d0400b3-99ed-4a3c-b89f-8c571515dd82",
+    "destino": "27869cb2-4bb3-4cb3-8c80-718461337a58",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 4,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:13.674Z",
+    "cliente": "COLEGIO DE TECNICO",
+    "origen": "f7018709-e2c0-4630-878c-2f034bd841c3",
+    "destino": "93b2ac99-380c-468d-a932-d554191f306b",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 5,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:14.437Z",
+    "cliente": "COLEGIO DE TECNICO",
+    "origen": "cb6e7d7d-6357-4b26-a4da-ec2314bcfd47",
+    "destino": "93b2ac99-380c-468d-a932-d554191f306b",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 5,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:15.197Z",
+    "cliente": "COLEGIO DE TECNICO",
+    "origen": "dee73531-7a79-43e3-951e-42461e3aaa4f",
+    "destino": "93b2ac99-380c-468d-a932-d554191f306b",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:15.968Z",
+    "cliente": "PV PROPERTIES INC",
+    "origen": "84908ba3-9f50-43f7-a6da-965a440dcada",
+    "destino": "6e45ae16-716c-4674-9779-865cdc3ba51f",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 5,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:16.734Z",
+    "cliente": "PV PROPERTIES INC",
+    "origen": "a412a717-a0a8-461e-8409-9c801f6e35c2",
+    "destino": "6e45ae16-716c-4674-9779-865cdc3ba51f",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 5,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:17.498Z",
+    "cliente": "PV PROPERTIES INC",
+    "origen": "dea1fb8d-c7d9-43f1-9048-26984beb1b76",
+    "destino": "6e45ae16-716c-4674-9779-865cdc3ba51f",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 5,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:18.255Z",
+    "cliente": "VICTOR E RIVERA",
+    "origen": "61d647a8-4727-428d-aa52-db66ad868a57",
+    "destino": "c3230819-f2a9-4b54-863e-20a3189f164e",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 5,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:19.014Z",
+    "cliente": "VICTOR E RIVERA",
+    "origen": "cf6f8704-1fec-487d-9082-899159a8a4c5",
+    "destino": "c3230819-f2a9-4b54-863e-20a3189f164e",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 5,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:19.773Z",
+    "cliente": "VICTOR E RIVERA",
+    "origen": "e92046bc-42c1-41a1-a918-70e4e2075f0b",
+    "destino": "c3230819-f2a9-4b54-863e-20a3189f164e",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 5,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:20.545Z",
+    "cliente": "CLIENTE PARA SEGUIMIENTO",
+    "origen": "51539663-5f50-4096-8483-07c5f67e96de",
+    "destino": "82c956f1-e7fb-4a80-a79b-6759ee2771e6",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:21.305Z",
+    "cliente": "CLIENTE PARA SEGUIMIENTO",
+    "origen": "a2db416a-cda8-438c-b00f-01f85a2b9215",
+    "destino": "82c956f1-e7fb-4a80-a79b-6759ee2771e6",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:22.063Z",
+    "cliente": "CLIENTE PARA SEGUIMIENTO",
+    "origen": "2bb1a9ed-4eb8-4aa6-ab77-b188285e2b24",
+    "destino": "82c956f1-e7fb-4a80-a79b-6759ee2771e6",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:22.820Z",
+    "cliente": "CLIENTE PARA SEGUIMIENTO",
+    "origen": "57fe11af-55d2-4c26-b85e-2b767ae20cda",
+    "destino": "82c956f1-e7fb-4a80-a79b-6759ee2771e6",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:23.581Z",
+    "cliente": "LEVONA INC",
+    "origen": "3fd3ff6f-7149-4109-b7b3-ffaad8e12186",
+    "destino": "f204564b-778e-424c-8914-f713b48a14ea",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 5,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:24.344Z",
+    "cliente": "LEVONA INC",
+    "origen": "78d7b3fc-245e-4705-83af-ed3a9c0172f2",
+    "destino": "f204564b-778e-424c-8914-f713b48a14ea",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 5,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:25.105Z",
+    "cliente": "LEVONA INC",
+    "origen": "4d9e44c6-edc2-4389-b449-62eec7854f89",
+    "destino": "f204564b-778e-424c-8914-f713b48a14ea",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:25.867Z",
+    "cliente": "LEVONA INC",
+    "origen": "5f5131d1-45d8-4a81-bf5a-afbce8b7a31f",
+    "destino": "f204564b-778e-424c-8914-f713b48a14ea",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 5,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:26.629Z",
+    "cliente": "PICERNE DEVELOPMENT",
+    "origen": "361565bb-0207-48b7-a5a0-5780b9117b01",
+    "destino": "f572187c-bb1d-42ad-9860-bcd97151ae1f",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:27.388Z",
+    "cliente": "PICERNE DEVELOPMENT",
+    "origen": "b32a20ee-dec3-4c22-935a-bdbc44629b22",
+    "destino": "f572187c-bb1d-42ad-9860-bcd97151ae1f",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:28.147Z",
+    "cliente": "PICERNE DEVELOPMENT",
+    "origen": "e2d0d6ca-f790-4feb-832c-83484385e0f9",
+    "destino": "f572187c-bb1d-42ad-9860-bcd97151ae1f",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:28.907Z",
+    "cliente": "PICERNE DEVELOPMENT",
+    "origen": "5ec545b9-d660-4542-9d9c-22f2797af836",
+    "destino": "f572187c-bb1d-42ad-9860-bcd97151ae1f",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:29.665Z",
+    "cliente": "PICERNE DEVELOPMENT",
+    "origen": "d82640a8-de26-4dee-b4a5-22d01509d198",
+    "destino": "f572187c-bb1d-42ad-9860-bcd97151ae1f",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:30.429Z",
+    "cliente": "JOHANNA MOTA",
+    "origen": "5623a649-6827-4ca8-bbeb-e4a545dc423a",
+    "destino": "2fac8b5a-5728-461f-a209-e5ee25c847d9",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:31.188Z",
+    "cliente": "JOHANNA MOTA",
+    "origen": "6e33a97f-b00d-4a51-92c7-8f887ad818c9",
+    "destino": "2fac8b5a-5728-461f-a209-e5ee25c847d9",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:31.945Z",
+    "cliente": "JOHANNA MOTA",
+    "origen": "5297aea4-42ce-40c5-a8bb-1c41957e886b",
+    "destino": "2fac8b5a-5728-461f-a209-e5ee25c847d9",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:32.709Z",
+    "cliente": "JOHANNA MOTA",
+    "origen": "4bb695aa-840d-4ca6-bf86-528fb6f6eff0",
+    "destino": "2fac8b5a-5728-461f-a209-e5ee25c847d9",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:33.473Z",
+    "cliente": "JOHANNA MOTA",
+    "origen": "d7cf293e-98d5-45a4-bc6d-e42d30291b87",
+    "destino": "2fac8b5a-5728-461f-a209-e5ee25c847d9",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  },
+  {
+    "fecha": "2026-02-06T19:53:34.245Z",
+    "cliente": "JOHANNA MOTA",
+    "origen": "cdd81ba9-9839-41b2-8021-4439eba9e393",
+    "destino": "2fac8b5a-5728-461f-a209-e5ee25c847d9",
+    "bans_movidos": 1,
+    "suscriptores_movidos": 1,
+    "resultado": "EXITOSA"
+  }
+]

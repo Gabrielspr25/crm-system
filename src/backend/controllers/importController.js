@@ -229,6 +229,13 @@ export const saveImportData = async (req, res) => {
                                 if (existingClient.rows.length > 0) {
                                     clientId = existingClient.rows[0].id;
                                 } else {
+                                    // VALIDACIÓN OBLIGATORIA: No permitir crear cliente sin vendedor
+                                    if (!finalSalespersonId) {
+                                        omitted++;
+                                        omittedReasons.push(`Fila ${processed}: Cliente "${clientName}" no tiene vendedor asignado. Vendor/Salesperson es obligatorio.`);
+                                        continue;
+                                    }
+
                                     const newClient = await client.query(
                                         `INSERT INTO clients (name, owner_name, contact_person, email, phone, additional_phone, cellular, address, city, zip_code, tax_id, salesperson_id, created_at, updated_at)
                                          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())

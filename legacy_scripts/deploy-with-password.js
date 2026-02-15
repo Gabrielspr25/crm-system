@@ -3,6 +3,7 @@ import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import readline from 'readline';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -11,13 +12,24 @@ const execAsync = promisify(exec);
 const SERVER = {
     host: '143.244.191.139',
     user: 'root',
-    password: 'CL@70049ro',
+    password: process.env.CRM_SERVER_PASS,
     path: '/root/VentasProui'
 };
 
 console.log('🚀🚀🚀 DEPLOY AUTOMÁTICO v5.1.37 🚀🚀🚀\n');
 
 async function deploy() {
+    if (!SERVER.password) {
+        const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+        SERVER.password = await new Promise(resolve => {
+            rl.question('🔑 Contraseña no detectada en env. Ingrésala: ', (pwd) => {
+                rl.close();
+                resolve(pwd);
+            });
+        });
+        console.log('\n');
+    }
+
     try {
         console.log('[1/6] Empaquetando...');
         await execAsync('tar -czf project.tar.gz --exclude=node_modules --exclude=dist --exclude=.git .');

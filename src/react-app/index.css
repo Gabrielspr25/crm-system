@@ -5,3 +5,12 @@
 :root {
   font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
 }
+
+/* Ocultar notificaciones molestas de TinyMCE (API key, premium features, etc) */
+.tox-notification,
+.tox-notification--warning,
+.tox-notification--info,
+.tox .tox-notification,
+.tox-notifications-container {
+  display: none !important;
+}

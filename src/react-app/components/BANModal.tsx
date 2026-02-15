@@ -54,6 +54,12 @@ export default function BANModal({ onSave, onClose, ban }: BANModalProps) {
       return;
     }
 
+    // Validación obligatoria de tipo de cuenta
+    if (!formData.account_type || formData.account_type.trim() === '') {
+      setErrorMessage('⚠️ Debe seleccionar un tipo de cuenta (Móvil, Fijo o Convergente). Este campo es obligatorio.');
+      return;
+    }
+
     if (formData.status === 'cancelled' && !formData.cancel_reason) {
       alert('Debes seleccionar una razón de cancelación');
       return;
@@ -155,20 +161,21 @@ export default function BANModal({ onSave, onClose, ban }: BANModalProps) {
           {/* Account Type */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Tipo de Cuenta (Móvil, Fijo, Convergente)
+              Tipo de Cuenta (Móvil, Fijo, Convergente) *
             </label>
             <select
               value={formData.account_type}
               onChange={(e) => setFormData(prev => ({ ...prev, account_type: e.target.value }))}
               className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-800 dark:bg-gray-800 text-gray-100 dark:text-gray-100"
+              required
             >
               <option value="">Seleccionar tipo...</option>
               <option value="Móvil">Móvil</option>
               <option value="Fijo">Fijo</option>
               <option value="Convergente">Convergente</option>
             </select>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-              Selecciona si la cuenta es Móvil, Fija o Convergente
+            <p className="text-xs text-red-400 dark:text-red-400 mt-1 font-medium">
+              ⚠️ Campo obligatorio - debe seleccionar un tipo
             </p>
           </div>
 

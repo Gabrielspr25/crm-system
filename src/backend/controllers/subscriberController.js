@@ -106,3 +106,54 @@ export const updateSubscriber = async (req, res) => {
         serverError(res, error, 'Error actualizando suscriptor');
     }
 };
+
+export const cancelSubscriber = async (req, res) => {
+    const { id } = req.params;
+    const { cancel_reason = null } = req.body || {};
+
+    try {
+        const existing = await query('SELECT id, status FROM subscribers WHERE id = $1', [id]);
+        if (existing.length === 0) {
+            return notFound(res, 'Suscriptor');
+        }
+
+        const result = await query(
+            `UPDATE subscribers
+             SET status = 'cancelado',
+                 cancel_reason = $1,
+                 updated_at = NOW()
+             WHERE id = $2
+             RETURNING *`,
+            [cancel_reason, id]
+        );
+
+        res.json(result[0]);
+    } catch (error) {
+        serverError(res, error, 'Error cancelando suscriptor');
+    }
+};
+
+export const reactivateSubscriber = async (req, res) => {
+    const { id } = req.params;
+
+    try {
+        const existing = await query('SELECT id FROM subscribers WHERE id = $1', [id]);
+        if (existing.length === 0) {
+            return notFound(res, 'Suscriptor');
+        }
+
+        const result = await query(
+            `UPDATE subscribers
+             SET status = 'activo',
+                 cancel_reason = NULL,
+                 updated_at = NOW()
+             WHERE id = $1
+             RETURNING *`,
+            [id]
+        );
+
+        res.json(result[0]);
+    } catch (error) {
+        serverError(res, error, 'Error reactivando suscriptor');
+    }
+};

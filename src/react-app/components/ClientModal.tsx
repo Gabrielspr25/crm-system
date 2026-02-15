@@ -180,6 +180,37 @@ export default function ClientModal({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormMessage(null);
+
+    // Validación obligatoria de vendedor
+    if (!effectiveVendorId) {
+      setFormMessage({ 
+        type: 'error', 
+        text: '⚠️ Debe seleccionar un vendedor asignado. Este campo es obligatorio.' 
+      });
+      return;
+    }
+
+    // VALIDACIÓN: Verificar duplicados por nombre (solo al crear nuevo)
+    if (!client && formData.name.trim()) {
+      try {
+        const checkDuplicate = await authFetch(
+          `/api/clients/check-duplicate?name=${encodeURIComponent(formData.name.trim())}`
+        );
+        const dupData = await checkDuplicate.json();
+
+        if (dupData.exists) {
+          setFormMessage({ 
+            type: 'error', 
+            text: `⚠️ Ya existe un cliente con el nombre "${dupData.existingName}". No se permiten duplicados.` 
+          });
+          return;
+        }
+      } catch (error) {
+        console.error('Error verificando duplicados:', error);
+        // Continuar con el guardado si la verificación falla
+      }
+    }
+
     setIsSaving(true);
 
     try {

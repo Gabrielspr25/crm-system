@@ -18,7 +18,7 @@ Esta habilidad contiene el conocimiento y los procedimientos necesarios para des
 
 ## Procedimiento de Despliegue (Automático)
 
-El método PREFERIDO para desplegar es usar el script de PowerShell `DEPLOY-CON-VALIDACION.ps1`.
+El método PREFERIDO para desplegar es usar el script de PowerShell `DEPLOY.ps1`.
 
 ### Pasos:
 1.  **Incrementar Versión**:
@@ -28,7 +28,7 @@ El método PREFERIDO para desplegar es usar el script de PowerShell `DEPLOY-CON-
 2.  **Ejecutar Script de Despliegue**:
     Desde la terminal de PowerShell en la raíz del proyecto:
     ```powershell
-    powershell -ExecutionPolicy Bypass -File DEPLOY-CON-VALIDACION.ps1
+    powershell -ExecutionPolicy Bypass -File DEPLOY.ps1
     ```
 
 ### ¿Qué hace el script?
