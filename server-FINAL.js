@@ -31,6 +31,7 @@ import salesHistoryRoutes from './src/backend/routes/salesHistoryRoutes.js';
 import campaignRoutes from './src/backend/routes/campaignRoutes.js';
 import trackingRoutes from './src/backend/routes/trackingRoutes.js';
 import goalsRoutes from './src/backend/routes/goalsRoutes.js';
+import tangoRoutes from './src/backend/routes/tangoRoutes.js';
 console.log('🔍 DEBUG: discrepanciasRoutes imported:', typeof discrepanciasRoutes);
 
 const JWT_SECRET = process.env.JWT_SECRET || 'tango_secret_key_2024';
@@ -131,6 +132,7 @@ app.use('/api/sales-history', salesHistoryRoutes);
 app.use('/api/campaigns', campaignRoutes);
 app.use('/api/tracking', trackingRoutes);
 app.use('/api/goals', goalsRoutes);
+app.use('/api/tango', tangoRoutes);
 console.log('🔍 DEBUG: /api/discrepancias routes mounted');
 
 // System Routes - PROTECTED EXTRA
@@ -2109,7 +2111,101 @@ app.post('/api/subscriber-reports/sync-pymes', authenticateRequest, async (req, 
       }
     }
 
-    // 10. Final verification — compare COUNTS (ventas must match exactly)
+    // 10. MIRROR LOGIC — Remove CRM reports/subs that no longer exist in Tango
+    // Collect all Tango BANs from active ventas (already in allBANs)
+    // Also find BANs that exist in CRM (PYMES type) but NOT in Tango anymore
+    let cancelled_reports = 0, cancelled_subs = 0;
+    try {
+      // Find ALL CRM subscriber_reports for PYMES BANs (those in allBANs)
+      const allCrmReports = await crmClient.query(`
+        SELECT sr.subscriber_id, sr.report_month,
+               sr.company_earnings, sr.vendor_commission, sr.paid_amount,
+               s.phone, b.ban_number
+        FROM subscriber_reports sr
+        JOIN subscribers s ON s.id = sr.subscriber_id
+        JOIN bans b ON b.id = s.ban_id
+        WHERE b.ban_number = ANY($1)
+      `, [allBANs]);
+
+      // Build a set of valid (ban|month|count) from Tango
+      const tangoReportKeys = new Map(); // ban|month -> count
+      for (const v of ventas) {
+        const ban = (v.ban || '').trim();
+        const month = v.fechaactivacion ? new Date(v.fechaactivacion) : new Date();
+        const monthStr = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, '0')}-01`;
+        const key = `${ban}|${monthStr}`;
+        tangoReportKeys.set(key, (tangoReportKeys.get(key) || 0) + 1);
+      }
+
+      // Group CRM reports by ban|month
+      const crmByKey = {};
+      for (const r of allCrmReports.rows) {
+        const m = new Date(r.report_month);
+        const monthStr = `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, '0')}-01`;
+        const k = `${r.ban_number}|${monthStr}`;
+        if (!crmByKey[k]) crmByKey[k] = [];
+        crmByKey[k].push(r);
+      }
+
+      // Delete excess CRM reports that don't exist in Tango
+      for (const [key, crmReports] of Object.entries(crmByKey)) {
+        const tangoCount = tangoReportKeys.get(key) || 0;
+        const excess = crmReports.length - tangoCount;
+        if (excess > 0) {
+          // Sort: prioritize deleting reports with NO manual data
+          crmReports.sort((a, b) => {
+            const aManual = (parseFloat(a.company_earnings) || 0) + (parseFloat(a.vendor_commission) || 0) + (parseFloat(a.paid_amount) || 0);
+            const bManual = (parseFloat(b.company_earnings) || 0) + (parseFloat(b.vendor_commission) || 0) + (parseFloat(b.paid_amount) || 0);
+            return aManual - bManual; // delete zero-data first
+          });
+          const toDelete = crmReports.slice(0, excess);
+          for (const del of toDelete) {
+            const manual = (parseFloat(del.company_earnings) || 0) + (parseFloat(del.vendor_commission) || 0) + (parseFloat(del.paid_amount) || 0);
+            if (manual === 0) {
+              // Safe to delete — no manual data (PK is subscriber_id + report_month)
+              await crmClient.query("DELETE FROM subscriber_reports WHERE subscriber_id = $1 AND report_month = $2", [del.subscriber_id, del.report_month]);
+              cancelled_reports++;
+              console.log(`[SYNC-MIRROR] Deleted empty report: BAN=${del.ban_number}, month=${key.split('|')[1]}, sub=${del.subscriber_id}`);
+            } else {
+              console.log(`[SYNC-MIRROR] ⚠ Kept report with manual data ($${manual}): BAN=${del.ban_number}, sub=${del.subscriber_id}`);
+              details.push({ ban: del.ban_number, status: 'kept_manual_data', amount: manual });
+            }
+          }
+        }
+      }
+
+      // Also: find PYMES BANs in CRM that are NOT in Tango active ventas at all
+      // These may have been fully deactivated
+      const orphanResult = await crmClient.query(`
+        SELECT sr.subscriber_id, sr.report_month,
+               sr.company_earnings, sr.vendor_commission, sr.paid_amount,
+               b.ban_number
+        FROM subscriber_reports sr
+        JOIN subscribers s ON s.id = sr.subscriber_id
+        JOIN bans b ON b.id = s.ban_id
+        WHERE b.account_type IN ('UPDATE', 'FIJO')
+          AND b.ban_number != ALL($1)
+          AND (sr.company_earnings IS NULL OR sr.company_earnings = 0)
+          AND (sr.vendor_commission IS NULL OR sr.vendor_commission = 0)
+          AND (sr.paid_amount IS NULL OR sr.paid_amount = 0)
+      `, [allBANs]);
+
+      if (orphanResult.rows.length > 0) {
+        for (const orph of orphanResult.rows) {
+          await crmClient.query("DELETE FROM subscriber_reports WHERE subscriber_id = $1 AND report_month = $2", [orph.subscriber_id, orph.report_month]);
+        }
+        cancelled_reports += orphanResult.rows.length;
+        const orphanBANs = [...new Set(orphanResult.rows.map(r => r.ban_number))];
+        console.log(`[SYNC-MIRROR] Deleted ${orphanResult.rows.length} orphan reports from BANs not in Tango: ${orphanBANs.join(', ')}`);
+        details.push({ status: 'orphans_removed', count: orphanResult.rows.length, bans: orphanBANs });
+      }
+
+    } catch (mirrorErr) {
+      console.error('[SYNC-MIRROR] Error en lógica mirror:', mirrorErr.message);
+      details.push({ status: 'mirror_error', error: mirrorErr.message });
+    }
+
+    // 11. Final verification — compare COUNTS (ventas must match exactly)
     const crmTotal = await crmClient.query(`
       SELECT COUNT(*) as reports
       FROM subscriber_reports WHERE subscriber_id IN (
@@ -2128,13 +2224,30 @@ app.post('/api/subscriber-reports/sync-pymes', authenticateRequest, async (req, 
     console.log(`[SYNC-PYMES] Tango: ${tangoCount} ventas | CRM: ${crmCount} reports | ${match ? '✓ MATCH PERFECTO' : `⚠ DIFF (${tangoCount - crmCount})`}`);
 
     await crmClient.query('COMMIT');
-    console.log(`[SYNC-PYMES] COMMIT OK — ${inserted} reports, ${created_clients} clientes, ${created_bans} BANs, ${created_subs} subs creados`);
+    console.log(`[SYNC-PYMES] COMMIT OK — ${inserted} reports, ${created_clients} clientes, ${created_bans} BANs, ${created_subs} subs creados, ${cancelled_reports} cancelados`);
+
+    // Build comprehensive report
+    const report = {
+      resumen: match
+        ? `✅ SYNC PERFECTO — Tango ${tangoCount} = CRM ${crmCount}`
+        : `⚠️ DIFERENCIA — Tango ${tangoCount} vs CRM ${crmCount} (diff: ${tangoCount - crmCount})`,
+      acciones: [],
+    };
+    if (created_clients > 0) report.acciones.push(`${created_clients} cliente(s) creados`);
+    if (created_bans > 0) report.acciones.push(`${created_bans} BAN(s) creados`);
+    if (created_subs > 0) report.acciones.push(`${created_subs} suscriptor(es) creados`);
+    if (inserted > 0) report.acciones.push(`${inserted} reporte(s) insertados`);
+    if (cancelled_reports > 0) report.acciones.push(`${cancelled_reports} reporte(s) eliminados (mirror)`);
+    if (errors > 0) report.acciones.push(`${errors} error(es)`);
+    if (report.acciones.length === 0) report.acciones.push('Sin cambios necesarios');
 
     res.json({
       success: true,
+      report,
       stats: {
         total_legacy: ventas.length,
         reports_created: inserted,
+        reports_cancelled: cancelled_reports,
         clients_created: created_clients,
         bans_created: created_bans,
         subscribers_created: created_subs,
@@ -2212,7 +2325,26 @@ app.get('/api/subscriber-reports/comparison', authenticateRequest, async (req, r
       match: (tangoMap[month]?.ventas || 0) === (crmMap[month]?.ventas || 0),
     }));
 
-    res.json({ comparison });
+    // 4. Detail: all Tango ventas with BAN, client, date, type
+    const tangoDetailResult = await legacyPool.query(`
+      SELECT v.ventaid, v.ban,
+             COALESCE(cc.nombre, 'SIN NOMBRE') as cliente,
+             v.fechaactivacion as fecha,
+             v.status as linea,
+             vt.nombre as tipo,
+             v.ventatipoid,
+             COALESCE(v.comisionclaro, 0) as comision_empresa,
+             COALESCE(v.comisionvendedor, 0) as comision_vendedor,
+             vd.nombre as vendedor
+      FROM venta v
+      JOIN ventatipo vt ON vt.ventatipoid = v.ventatipoid
+      LEFT JOIN clientecredito cc ON cc.clientecreditoid = v.clientecreditoid
+      LEFT JOIN vendedor vd ON vd.vendedorid = v.vendedorid
+      WHERE v.ventatipoid IN (138, 139, 140, 141) AND v.activo = true
+      ORDER BY v.fechaactivacion DESC, cc.nombre, v.ban
+    `);
+
+    res.json({ comparison, detail: tangoDetailResult.rows });
   } catch (error) {
     console.error('[COMPARISON] Error:', error);
     res.status(500).json({ error: 'Error al comparar datos', details: error.message });

@@ -58,6 +58,7 @@ const navigation: NavItem[] = [
   { name: "Importador", href: "/importador", icon: Upload, roles: ["admin", "supervisor"] },
   { name: "Historial", href: "/historial", icon: FileText, roles: ["admin"] },
   { name: "Discrepancias", href: "/discrepancias", icon: AlertTriangle, roles: ["admin", "supervisor"] },
+  { name: "Tango", href: "/tango", icon: Activity, roles: ["admin"] },
   { name: "Reglas y Procesos", href: "/reglas-procesos", icon: FileText, roles: ["admin", "supervisor"], external: true },
   { name: "Perfil", href: "/perfil", icon: UserCircle2, roles: ["admin", "supervisor", "vendedor"] }
 

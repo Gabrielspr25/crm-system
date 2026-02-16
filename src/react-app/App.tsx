@@ -28,6 +28,7 @@ import CampaignDetails from "@/react-app/pages/CampaignDetails";
 import SystemHealthButton from "@/react-app/components/SystemHealthButton";
 import SystemStatus from "@/react-app/pages/SystemStatus";
 import DiscrepanciasFixedPage from "@/react-app/pages/DiscrepanciasFixed";
+import TangoComparePage from "@/react-app/pages/TangoCompare";
 
 
 // Inicializar MSAL fuera del componente
@@ -66,6 +67,7 @@ function ProtectedRoutes() {
         <Route path="/historial" element={<AuditLogPage />} />
         <Route path="/system-status" element={<SystemStatus />} />
         <Route path="/discrepancias" element={<DiscrepanciasFixedPage />} />
+        <Route path="/tango" element={<TangoComparePage />} />
 
       </Routes>
     </ProtectedLayout>

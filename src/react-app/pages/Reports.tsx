@@ -50,6 +50,8 @@ export default function Reports() {
   const [syncResult, setSyncResult] = useState<any>(null);
   const [showComparison, setShowComparison] = useState(false);
   const [comparisonData, setComparisonData] = useState<any[] | null>(null);
+  const [tangoDetail, setTangoDetail] = useState<any[] | null>(null);
+  const [detailMonthFilter, setDetailMonthFilter] = useState<string>('');
   const [loadingComparison, setLoadingComparison] = useState(false);
 
   const handleShowComparison = async () => {
@@ -59,6 +61,7 @@ export default function Reports() {
       const resp = await authFetch('/api/subscriber-reports/comparison');
       const data = await resp.json();
       setComparisonData(data.comparison || []);
+      setTangoDetail(data.detail || []);
       setShowComparison(true);
     } catch (err: any) {
       alert('Error cargando comparación: ' + err.message);
@@ -74,10 +77,16 @@ export default function Reports() {
       const response = await authFetch('/api/subscriber-reports/sync-pymes', { method: 'POST' });
       const data = await response.json();
       if (data.success) {
-        setSyncResult(data.stats);
+        setSyncResult({ ...data.stats, report: data.report });
         await refetchProspects();
-        // auto-hide after 8s
-        setTimeout(() => setSyncResult(null), 8000);
+        // Auto-show the comparison report after sync
+        try {
+          const resp = await authFetch('/api/subscriber-reports/comparison');
+          const compData = await resp.json();
+          setComparisonData(compData.comparison || []);
+          setTangoDetail(compData.detail || []);
+          setShowComparison(true);
+        } catch (_) { /* ignore comparison load error */ }
       } else {
         alert('Error al sincronizar: ' + (data.error || 'desconocido'));
       }
@@ -319,18 +328,32 @@ export default function Reports() {
 
       {/* Sync Result Banner */}
       {syncResult && (
-        <div className={`${syncResult.totals_match ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-amber-500/10 border-amber-500/30'} border p-4 rounded-2xl animate-in fade-in duration-300`}>
+        <div className={`${syncResult.totals_match ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-amber-500/10 border-amber-500/30'} border p-4 rounded-2xl animate-in fade-in duration-300 relative`}>
+          <button onClick={() => setSyncResult(null)} className="absolute top-2 right-2 text-slate-500 hover:text-white p-1 rounded"><X className="w-4 h-4" /></button>
           <div className="flex items-center gap-3">
             <CheckCircle2 className={`w-5 h-5 ${syncResult.totals_match ? 'text-emerald-400' : 'text-amber-400'}`} />
             <span className="font-bold text-white">Sincronización Tango → CRM completada</span>
             {syncResult.totals_match && <span className="text-xs bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full font-bold">✓ Totales coinciden</span>}
           </div>
+          {/* Resumen principal */}
+          {syncResult.report && (
+            <div className="mt-2 text-sm font-medium text-white">{syncResult.report.resumen}</div>
+          )}
           <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-            <div><span className="text-slate-500">Ventas Tango:</span> <span className="text-white font-bold">{syncResult.total_legacy}</span></div>
-            <div><span className="text-slate-500">Reports CRM:</span> <span className="text-emerald-400 font-bold">{syncResult.reports_created}</span></div>
-            <div><span className="text-slate-500">Tango $:</span> <span className="text-white font-bold">${syncResult.tango_earnings}</span></div>
-            <div><span className="text-slate-500">CRM $:</span> <span className={`font-bold ${syncResult.totals_match ? 'text-emerald-400' : 'text-amber-400'}`}>${syncResult.crm_earnings}</span></div>
+            <div><span className="text-slate-500">Ventas Tango:</span> <span className="text-orange-400 font-bold">{syncResult.tango_ventas}</span></div>
+            <div><span className="text-slate-500">Reports CRM:</span> <span className="text-blue-400 font-bold">{syncResult.crm_reports}</span></div>
+            <div><span className="text-slate-500">Insertados:</span> <span className="text-emerald-400 font-bold">{syncResult.reports_created}</span></div>
+            <div><span className="text-slate-500">Eliminados:</span> <span className="text-red-400 font-bold">{syncResult.reports_cancelled || 0}</span></div>
           </div>
+          {/* Acciones realizadas */}
+          {syncResult.report?.acciones?.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-2 text-xs">
+              {syncResult.report.acciones.map((a: string, i: number) => (
+                <span key={i} className="bg-slate-700/50 text-slate-300 px-2 py-0.5 rounded">{a}</span>
+              ))}
+            </div>
+          )}
+          {/* Creaciones */}
           {(syncResult.clients_created > 0 || syncResult.bans_created > 0 || syncResult.subscribers_created > 0) && (
             <div className="mt-2 flex gap-4 text-xs">
               {syncResult.clients_created > 0 && <span className="text-purple-400">+{syncResult.clients_created} clientes creados</span>}
@@ -338,7 +361,7 @@ export default function Reports() {
               {syncResult.subscribers_created > 0 && <span className="text-cyan-400">+{syncResult.subscribers_created} suscriptores creados</span>}
             </div>
           )}
-          {syncResult.errors > 0 && <div className="mt-1 text-xs text-red-400">{syncResult.errors} errores</div>}
+          {syncResult.errors > 0 && <div className="mt-1 text-xs text-red-400">⚠ {syncResult.errors} error(es) durante el sync</div>}
         </div>
       )}
 
@@ -412,6 +435,98 @@ export default function Reports() {
               </tfoot>
             </table>
           </div>
+
+          {/* Detalle Tango PYMES - cada venta */}
+          {tangoDetail && tangoDetail.length > 0 ? (
+            <div className="border-t border-slate-700">
+              <div className="px-6 py-3 bg-slate-900/40 border-b border-slate-700 flex items-center justify-between">
+                <h3 className="text-sm font-bold text-orange-400">📋 Detalle Ventas Tango PYMES ({(() => {
+                  const filtered = detailMonthFilter ? tangoDetail.filter((v: any) => v.fecha && v.fecha.slice(0,7) === detailMonthFilter) : tangoDetail;
+                  return filtered.length;
+                })()})</h3>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={detailMonthFilter}
+                    onChange={e => setDetailMonthFilter(e.target.value)}
+                    className="bg-slate-800 border border-slate-600 text-white text-xs rounded px-2 py-1 [color-scheme:dark]"
+                  >
+                    <option value="">Todos los meses</option>
+                    {[...new Set(tangoDetail.map((v: any) => v.fecha ? v.fecha.slice(0,7) : ''))].filter(Boolean).sort().map((m: string) => (
+                      <option key={m} value={m}>{new Date(m + '-15').toLocaleDateString('es-ES', {year:'numeric',month:'short'})}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 z-10">
+                    <tr className="bg-slate-900">
+                      <th className="px-3 py-2 text-left text-[10px] font-bold text-slate-400 uppercase">#</th>
+                      <th className="px-3 py-2 text-left text-[10px] font-bold text-slate-400 uppercase">Fecha</th>
+                      <th className="px-3 py-2 text-left text-[10px] font-bold text-slate-400 uppercase">Cliente</th>
+                      <th className="px-3 py-2 text-left text-[10px] font-bold text-slate-400 uppercase">BAN</th>
+                      <th className="px-3 py-2 text-left text-[10px] font-bold text-slate-400 uppercase">Línea</th>
+                      <th className="px-3 py-2 text-left text-[10px] font-bold text-slate-400 uppercase">Tipo</th>
+                      <th className="px-3 py-2 text-right text-[10px] font-bold text-slate-400 uppercase">Com. Empresa</th>
+                      <th className="px-3 py-2 text-right text-[10px] font-bold text-slate-400 uppercase">Com. Vendedor</th>
+                      <th className="px-3 py-2 text-left text-[10px] font-bold text-slate-400 uppercase">Vendedor</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/40">
+                    {(() => {
+                      const filtered = detailMonthFilter 
+                        ? tangoDetail.filter((v: any) => v.fecha && v.fecha.slice(0,7) === detailMonthFilter)
+                        : tangoDetail;
+                      const TIPO_LABELS: Record<number, string> = { 138: 'Update REN', 139: 'Update NEW', 140: 'Fijo REN', 141: 'Fijo NEW' };
+                      return filtered.map((v: any, i: number) => {
+                        const isNew = v.ventatipoid === 139 || v.ventatipoid === 141;
+                        const fecha = v.fecha ? new Date(v.fecha).toLocaleDateString('es-PR', {year:'numeric',month:'short',day:'numeric'}) : '-';
+                        return (
+                          <tr key={v.ventaid} className={`hover:bg-slate-800/40 ${isNew ? 'bg-green-900/5' : ''}`}>
+                            <td className="px-3 py-2 text-slate-500 font-mono">{i+1}</td>
+                            <td className="px-3 py-2 text-slate-300 whitespace-nowrap">{fecha}</td>
+                            <td className="px-3 py-2 text-white font-medium truncate max-w-[200px]">{v.cliente}</td>
+                            <td className="px-3 py-2 text-slate-300 font-mono">{v.ban || '-'}</td>
+                            <td className="px-3 py-2 text-slate-300 font-mono">{v.linea || '-'}</td>
+                            <td className={`px-3 py-2 font-medium ${isNew ? 'text-green-400' : 'text-slate-300'}`}>{TIPO_LABELS[v.ventatipoid] || v.tipo}</td>
+                            <td className="px-3 py-2 text-right text-purple-300 font-mono">${Number(v.comision_empresa || 0).toFixed(2)}</td>
+                            <td className="px-3 py-2 text-right text-blue-300 font-mono">${Number(v.comision_vendedor || 0).toFixed(2)}</td>
+                            <td className="px-3 py-2 text-slate-400 truncate max-w-[120px]">{v.vendedor || '-'}</td>
+                          </tr>
+                        );
+                      });
+                    })()}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t-2 border-slate-600 bg-slate-900/50">
+                      <td colSpan={6} className="px-3 py-2 font-bold text-white text-right">TOTAL</td>
+                      <td className="px-3 py-2 text-right font-black text-purple-300">
+                        ${(() => {
+                          const filtered = detailMonthFilter 
+                            ? tangoDetail.filter((v: any) => v.fecha && v.fecha.slice(0,7) === detailMonthFilter)
+                            : tangoDetail;
+                          return filtered.reduce((s: number, v: any) => s + Number(v.comision_empresa || 0), 0).toLocaleString('es-ES', {minimumFractionDigits:2});
+                        })()}
+                      </td>
+                      <td className="px-3 py-2 text-right font-black text-blue-300">
+                        ${(() => {
+                          const filtered = detailMonthFilter 
+                            ? tangoDetail.filter((v: any) => v.fecha && v.fecha.slice(0,7) === detailMonthFilter)
+                            : tangoDetail;
+                          return filtered.reduce((s: number, v: any) => s + Number(v.comision_vendedor || 0), 0).toLocaleString('es-ES', {minimumFractionDigits:2});
+                        })()}
+                      </td>
+                      <td></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+          ) : (
+            <div className="border-t border-slate-700 px-6 py-4 text-center text-slate-500 text-sm">
+              No se encontró detalle de ventas Tango. Presiona "Sync PYMES Legacy" y luego abre el informe de nuevo.
+            </div>
+          )}
         </div>
       )}
 
