@@ -3,7 +3,6 @@ import { useMemo, useEffect, useState } from "react";
 import type { LucideIcon } from "lucide-react";
 import {
   Users,
-  PhoneCall,
   BarChart3,
   Building2,
   Folder,
@@ -18,18 +17,18 @@ import {
   Mail,
   Layers,
   Activity,
-  DollarSign,
   LayoutDashboard,
   AlertTriangle,
   SendHorizontal,
   Menu,
-  X
+  X,
+  ChevronDown,
+  ChevronRight
 } from "lucide-react";
 
 
 import { useTheme } from "@/react-app/hooks/useTheme";
 import { getCurrentRole, getCurrentUser, clearAuthToken } from "@/react-app/utils/auth";
-import { useApi } from "@/react-app/hooks/useApi";
 import { APP_VERSION } from "@/version";
 
 type NavItem = {
@@ -41,74 +40,30 @@ type NavItem = {
 };
 
 // VERSION: 2025-01-15-CON-IMPORTADOR-VISUAL
+
 const navigation: NavItem[] = [
   { name: "Panel General", href: "/", icon: LayoutDashboard, roles: ["admin", "supervisor", "vendedor"] },
-  { name: "Tareas", href: "/tareas", icon: CheckSquare, roles: ["admin", "supervisor"] },
+  { name: "Tareas", href: "/tareas", icon: CheckSquare, roles: ["admin", "supervisor", "vendedor"] },
   { name: "Clientes", href: "/clientes", icon: Users, roles: ["admin", "supervisor", "vendedor"] },
-  { name: "Seguimiento", href: "/seguimiento", icon: PhoneCall, roles: ["admin", "supervisor", "vendedor"] },
-  { name: "Reportes", href: "/reportes", icon: BarChart3, roles: ["admin", "supervisor", "vendedor"] },
-  { name: "Tarifas", href: "/tarifas", icon: Layers, roles: ["admin", "supervisor", "vendedor"] },
-  { name: "Referidos", href: "/referidos", icon: Users, roles: ["admin", "supervisor", "vendedor"] },
   { name: "Correos", href: "/correos", icon: Mail, roles: ["admin", "supervisor", "vendedor"] },
   { name: "Campañas", href: "/campanas", icon: SendHorizontal, roles: ["admin"] },
   { name: "Vendedores", href: "/vendedores", icon: Building2, roles: ["admin", "supervisor"] },
-  { name: "Categorías", href: "/categorias", icon: Folder, roles: ["admin"] },
   { name: "Productos", href: "/productos", icon: Package, roles: ["admin", "supervisor"] },
+  { name: "Categorías", href: "/categorias", icon: Folder, roles: ["admin"] },
   { name: "Metas", href: "/metas", icon: Target, roles: ["admin", "supervisor"] },
-  { name: "Importador", href: "/importador", icon: Upload, roles: ["admin", "supervisor"] },
+  { name: "Comisiones", href: "/reportes", icon: BarChart3, roles: ["admin", "supervisor", "vendedor"] },
+  { name: "Cognos", href: "/discrepancias", icon: AlertTriangle, roles: ["admin", "supervisor"] },
   { name: "Historial", href: "/historial", icon: FileText, roles: ["admin"] },
-  { name: "Discrepancias", href: "/discrepancias", icon: AlertTriangle, roles: ["admin", "supervisor"] },
+  { name: "Importador", href: "/importador", icon: Upload, roles: ["admin", "supervisor"] },
   { name: "Tango", href: "/tango", icon: Activity, roles: ["admin"] },
   { name: "Reglas y Procesos", href: "/reglas-procesos", icon: FileText, roles: ["admin", "supervisor"], external: true },
   { name: "Perfil", href: "/perfil", icon: UserCircle2, roles: ["admin", "supervisor", "vendedor"] }
-
 ];
+
+const commercialSetupHrefs = new Set(["/vendedores", "/productos", "/categorias"]);
 
 interface LayoutProps {
   children: React.ReactNode;
-}
-
-interface Goal {
-  id: number;
-  vendor_id: number | null;
-  vendor_name: string | null;
-  product_id: number | null;
-  product_name: string | null;
-  period_type: string;
-  period_year: number;
-  period_month: number | null;
-  period_quarter: number | null;
-  target_amount: number;
-  current_amount: number;
-  description: string | null;
-  is_active: number;
-  created_at: string;
-  updated_at: string;
-}
-
-// Función para calcular días laborables (lunes a viernes) restantes en el mes
-function getWorkingDaysRemaining(): number {
-  const today = new Date();
-  const currentYear = today.getFullYear();
-  const currentMonth = today.getMonth();
-
-  // Último día del mes
-  const lastDay = new Date(currentYear, currentMonth + 1, 0);
-
-  let workingDays = 0;
-  const currentDate = new Date(today);
-
-  // Iterar desde hoy hasta el último día del mes
-  while (currentDate <= lastDay) {
-    const dayOfWeek = currentDate.getDay();
-    // 1 = lunes, 5 = viernes
-    if (dayOfWeek >= 1 && dayOfWeek <= 5) {
-      workingDays++;
-    }
-    currentDate.setDate(currentDate.getDate() + 1);
-  }
-
-  return workingDays;
 }
 
 export default function Layout({ children }: LayoutProps) {
@@ -116,64 +71,11 @@ export default function Layout({ children }: LayoutProps) {
   const navigate = useNavigate();
   const { isDark, toggleTheme } = useTheme();
   const role = getCurrentRole() ?? "admin";
+  const roleNormalized = role.trim().toLowerCase();
   const user = useMemo(() => getCurrentUser(), []);
   const userLabel = user?.salespersonName || user?.username || "Usuario";
-  const isVendor = role.toLowerCase() === "vendedor";
-  const [goalFilter, setGoalFilter] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
-
-  // Obtener metas del vendedor para el mes actual
-  const currentYear = new Date().getFullYear();
-  const currentMonth = new Date().getMonth() + 1;
-  const goalsUrl = isVendor ? `/api/goals?period_year=${currentYear}&period_month=${currentMonth}` : '/api/goals?period_year=0&period_month=0';
-  const { data: vendorGoals } = useApi<Goal[]>(goalsUrl, { immediate: isVendor });
-
-  // Calcular resumen de metas por producto
-  const goalsByProduct = useMemo(() => {
-    if (!isVendor || !vendorGoals || vendorGoals.length === 0) {
-      return [];
-    }
-
-    const workingDaysRemaining = getWorkingDaysRemaining();
-
-    // Agrupar metas por producto
-    const productMap = new Map<number, { productName: string; target: number; current: number }>();
-
-    vendorGoals.forEach((goal) => {
-      const productId = goal.product_id || 0;
-      const productName = goal.product_name || 'Sin producto';
-
-      if (!productMap.has(productId)) {
-        productMap.set(productId, {
-          productName,
-          target: 0,
-          current: 0
-        });
-      }
-
-      const product = productMap.get(productId)!;
-      product.target += goal.target_amount;
-      product.current += goal.current_amount;
-    });
-
-    // Convertir a array y calcular métricas por producto
-    return Array.from(productMap.entries()).map(([productId, product]) => {
-      const remaining = product.target - product.current;
-      const dailyGoal = workingDaysRemaining > 0 ? remaining / workingDaysRemaining : 0;
-      const progress = product.target > 0 ? (product.current / product.target) * 100 : 0;
-
-      return {
-        productId,
-        productName: product.productName,
-        target: product.target,
-        current: product.current,
-        remaining,
-        dailyGoal,
-        progress,
-        workingDaysRemaining
-      };
-    });
-  }, [isVendor, vendorGoals]);
+  const [commercialOpen, setCommercialOpen] = useState(true);
 
   // Verificación de versión - CON IMPORTADOR VISUAL
   useEffect(() => {
@@ -182,8 +84,18 @@ export default function Layout({ children }: LayoutProps) {
   }, []);
 
   const filteredNavigation = useMemo(
-    () => navigation.filter((item) => !item.roles || item.roles.includes(role)),
-    [role]
+    () => navigation.filter((item) => !item.roles || item.roles.includes(roleNormalized)),
+    [roleNormalized]
+  );
+
+  const commercialSetupItems = useMemo(
+    () => filteredNavigation.filter((item) => commercialSetupHrefs.has(item.href)),
+    [filteredNavigation]
+  );
+
+  const primaryNavigationItems = useMemo(
+    () => filteredNavigation.filter((item) => !commercialSetupHrefs.has(item.href)),
+    [filteredNavigation]
   );
 
   const handleLogout = () => {
@@ -238,7 +150,7 @@ export default function Layout({ children }: LayoutProps) {
                   {userLabel}
                 </p>
                 <p className="text-xs text-slate-400 dark:text-slate-400">
-                  {role.toUpperCase()}
+                  {roleNormalized.toUpperCase()}
                 </p>
               </div>
             </div>
@@ -248,7 +160,7 @@ export default function Layout({ children }: LayoutProps) {
 
           {/* Navigation */}
           <nav className="flex-1 space-y-1 p-4">
-            {filteredNavigation.map((item) => {
+            {primaryNavigationItems.map((item) => {
               const isActive = location.pathname === item.href;
               const className = `
                 group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200
@@ -272,6 +184,8 @@ export default function Layout({ children }: LayoutProps) {
                   <a
                     key={item.name}
                     href={item.href}
+                    target={item.href.startsWith("http") ? "_blank" : undefined}
+                    rel={item.href.startsWith("http") ? "noopener noreferrer" : undefined}
                     className={className}
                     onClick={() => setSidebarOpen(false)}
                   >
@@ -293,6 +207,62 @@ export default function Layout({ children }: LayoutProps) {
                 </Link>
               );
             })}
+
+            {commercialSetupItems.length > 0 && (
+              <div className="pt-2 mt-2 border-t border-slate-700/70">
+                <button
+                  type="button"
+                  onClick={() => setCommercialOpen((prev) => !prev)}
+                  className={`group w-full flex items-center justify-between px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200 ${commercialSetupHrefs.has(location.pathname)
+                    ? "bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-lg"
+                    : "text-slate-300 dark:text-slate-300 hover:bg-slate-700 dark:hover:bg-slate-700 hover:text-slate-100 dark:hover:text-slate-100"
+                    }`}
+                >
+                  <span className="flex items-center">
+                    <Building2
+                      className={`mr-3 h-5 w-5 transition-colors duration-200 ${commercialSetupHrefs.has(location.pathname)
+                        ? "text-white"
+                        : "text-slate-400 dark:text-slate-400 group-hover:text-slate-300 dark:group-hover:text-slate-300"
+                        }`}
+                    />
+                    Gestion
+                  </span>
+                  {commercialOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                </button>
+
+                {commercialOpen && (
+                  <div className="mt-1 space-y-1 pl-4">
+                    {commercialSetupItems.map((item) => {
+                      const isActive = location.pathname === item.href;
+                      const className = `
+                        group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200
+                        ${isActive
+                          ? "bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-lg"
+                          : "text-slate-300 dark:text-slate-300 hover:bg-slate-700 dark:hover:bg-slate-700 hover:text-slate-100 dark:hover:text-slate-100"
+                        }
+                      `;
+
+                      return (
+                        <Link
+                          key={item.name}
+                          to={item.href}
+                          className={className}
+                          onClick={() => setSidebarOpen(false)}
+                        >
+                          <item.icon
+                            className={`
+                              mr-3 h-4 w-4 transition-colors duration-200
+                              ${isActive ? "text-white" : "text-slate-400 dark:text-slate-400 group-hover:text-slate-300 dark:group-hover:text-slate-300"}
+                            `}
+                          />
+                          {item.name}
+                        </Link>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
           </nav>
 
           {/* Theme Toggle */}
@@ -322,6 +292,17 @@ export default function Layout({ children }: LayoutProps) {
               <Activity className="h-5 w-5 mr-2" />
               Estado del Sistema
             </button>
+
+            <a
+              href="https://ofertas.ss-group.cloud"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="w-full flex items-center justify-center px-3 py-2 text-sm font-medium text-emerald-200 hover:text-white bg-emerald-900/30 hover:bg-emerald-700/70 rounded-lg transition-all duration-200 mb-2"
+              title="Abrir sitio de Ofertas"
+            >
+              <Layers className="h-5 w-5 mr-2" />
+              Ir a Ofertas
+            </a>
             <button
               onClick={handleLogout}
               className="w-full flex items-center justify-center px-3 py-2 text-sm font-medium text-red-300 hover:text-white bg-red-900/30 hover:bg-red-700/70 rounded-lg transition-all duration-200"
