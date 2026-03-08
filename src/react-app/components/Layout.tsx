@@ -57,7 +57,8 @@ const navigation: NavItem[] = [
   { name: "Importador", href: "/importador", icon: Upload, roles: ["admin", "supervisor"] },
   { name: "Tango", href: "/tango", icon: Activity, roles: ["admin"] },
   { name: "Reglas y Procesos", href: "/reglas-procesos", icon: FileText, roles: ["admin", "supervisor"], external: true },
-  { name: "Perfil", href: "/perfil", icon: UserCircle2, roles: ["admin", "supervisor", "vendedor"] }
+  { name: "Perfil", href: "/perfil", icon: UserCircle2, roles: ["admin", "supervisor", "vendedor"] },
+  { name: "Ofertas Web", href: "https://ofertas.ss-group.cloud", icon: Layers, external: true },
 ];
 
 const commercialSetupHrefs = new Set(["/vendedores", "/productos", "/categorias"]);
@@ -159,7 +160,7 @@ export default function Layout({ children }: LayoutProps) {
           {/* Metas del Vendedor removidas - ahora se muestran en Panel General */}
 
           {/* Navigation */}
-          <nav className="flex-1 space-y-1 p-4">
+          <nav className="flex-1 overflow-y-auto space-y-1 p-4">
             {primaryNavigationItems.map((item) => {
               const isActive = location.pathname === item.href;
               const className = `
@@ -292,17 +293,6 @@ export default function Layout({ children }: LayoutProps) {
               <Activity className="h-5 w-5 mr-2" />
               Estado del Sistema
             </button>
-
-            <a
-              href="https://ofertas.ss-group.cloud"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="w-full flex items-center justify-center px-3 py-2 text-sm font-medium text-emerald-200 hover:text-white bg-emerald-900/30 hover:bg-emerald-700/70 rounded-lg transition-all duration-200 mb-2"
-              title="Abrir sitio de Ofertas"
-            >
-              <Layers className="h-5 w-5 mr-2" />
-              Ir a Ofertas
-            </a>
             <button
               onClick={handleLogout}
               className="w-full flex items-center justify-center px-3 py-2 text-sm font-medium text-red-300 hover:text-white bg-red-900/30 hover:bg-red-700/70 rounded-lg transition-all duration-200"
