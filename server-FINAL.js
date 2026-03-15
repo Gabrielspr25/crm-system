@@ -7,12 +7,15 @@ import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const packageJson = require('./package.json');
+const pdfParse = require('pdf-parse');
 import { Pool } from 'pg';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import nodemailer from 'nodemailer';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+import multer from 'multer';
+import { createWorker } from 'tesseract.js';
 import { saveImportData } from './src/backend/controllers/importController.js';
 import { fullSystemCheck } from './src/backend/controllers/healthController.js';
 import { runFullSystemTest } from './src/backend/controllers/systemTestController.js';
@@ -32,12 +35,18 @@ import campaignRoutes from './src/backend/routes/campaignRoutes.js';
 import trackingRoutes from './src/backend/routes/trackingRoutes.js';
 import goalsRoutes from './src/backend/routes/goalsRoutes.js';
 import tangoRoutes from './src/backend/routes/tangoRoutes.js';
+import ocrRoutes from './src/backend/routes/ocrRoutes.js';
+import { getTangoPool } from './src/backend/database/externalPools.js';
 console.log('🔍 DEBUG: discrepanciasRoutes imported:', typeof discrepanciasRoutes);
 
 const JWT_SECRET = process.env.JWT_SECRET || 'tango_secret_key_2024';
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'tango_refresh_secret_key_2024';
 const ACCESS_TOKEN_TTL = '12h';
 const REFRESH_TOKEN_TTL = '7d';
+
+if (!process.env.JWT_SECRET || !process.env.JWT_REFRESH_SECRET) {
+  console.warn('[SECURITY] JWT secrets are using fallback values. Configure JWT_SECRET and JWT_REFRESH_SECRET in environment.');
+}
 
 // ======================================================
 // Configuración base
@@ -66,7 +75,7 @@ app.use((req, res, next) => {
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  max: 5000,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Demasiadas peticiones desde esta IP, intente nuevamente en 15 minutos.' }
@@ -75,6 +84,11 @@ app.use('/api', limiter);
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+const uploadMemory = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024 }
+});
 
 // ======================================================
 // DEBUG: FIX SCHEMA ENDPOINT (EMERGENCY)
@@ -114,12 +128,171 @@ const authenticateRequest = async (req, res, next) => {
   }
 };
 
+const requireRole = (allowedRoles) => (req, res, next) => {
+  const role = req.user?.role;
+  if (!role || !allowedRoles.includes(role)) {
+    return res.status(403).json({ error: 'No tienes permisos para realizar esta acción' });
+  }
+  return next();
+};
+
+const AUDIT_MODULE_LABELS = {
+  auth: 'Autenticacion',
+  clients: 'Clientes',
+  bans: 'BANs',
+  subscribers: 'Suscriptores',
+  'follow-up-prospects': 'Seguimiento',
+  'call-logs': 'Historial de Gestiones',
+  'subscriber-reports': 'Comisiones',
+  'sales-history': 'Historial de Ventas',
+  tasks: 'Tareas',
+  vendors: 'Vendedores',
+  salespeople: 'Vendedores',
+  tariffs: 'Tarifas',
+  tarifas: 'Tarifas',
+  tango: 'Tango',
+  importador: 'Importador',
+  products: 'Productos',
+  email: 'Email',
+  referidos: 'Referidos',
+  goals: 'Metas',
+  pos: 'POS',
+  tracking: 'Tracking',
+  discrepancias: 'Discrepancias',
+  system: 'Sistema'
+};
+
+function getAuditModule(pathname = '') {
+  const parts = String(pathname).split('/').filter(Boolean);
+  const moduleKey = parts[0] === 'api' ? (parts[1] || '') : (parts[0] || '');
+  return {
+    moduleKey: moduleKey || 'general',
+    moduleLabel: AUDIT_MODULE_LABELS[moduleKey] || moduleKey || 'General'
+  };
+}
+
+function getAuditAction(req) {
+  const path = String(req.path || '').toLowerCase();
+  if (path === '/api/login') return 'LOGIN';
+  if (path.includes('/sync')) return 'SINCRONIZAR';
+  if (path.includes('/complete')) return 'COMPLETAR';
+  if (path.includes('/return')) return 'DEVOLVER';
+  if (path.includes('/cancel')) return 'CANCELAR';
+  if (path.includes('/reactivate')) return 'REACTIVAR';
+  if (path.includes('/send')) return 'ENVIAR';
+  if (req.method === 'POST') return 'CREAR';
+  if (req.method === 'PUT' || req.method === 'PATCH') return 'EDITAR';
+  if (req.method === 'DELETE') return 'ELIMINAR';
+  if (req.method === 'GET') return 'VER';
+  return req.method || 'ACCION';
+}
+
+function getAuditEntityName(req) {
+  const body = req.body || {};
+  return body.name
+    || body.company_name
+    || body.client_name
+    || body.ban_number
+    || body.phone
+    || body.username
+    || null;
+}
+
+function getAuditEntityId(req) {
+  const candidate = req.params?.id
+    || req.params?.subscriber_id
+    || req.params?.prospect_id
+    || req.params?.client_id
+    || req.params?.ban_id
+    || req.body?.id
+    || null;
+  const numeric = Number(candidate);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function shouldAuditRequest(req) {
+  if (!req.path.startsWith('/api/')) return false;
+  if (req.method === 'OPTIONS') return false;
+  if (req.path === '/api/health' || req.path === '/api/version' || req.path === '/api/audit-log') return false;
+  if (req.path === '/api/token/refresh') return false;
+  if (req.path === '/api/login') return false;
+
+  if (req.method === 'GET') {
+    return req.path === '/api/subscriber-reports'
+      || req.path === '/api/clients'
+      || req.path === '/api/follow-up-prospects'
+      || req.path === '/api/sales-history'
+      || req.path === '/api/tasks'
+      || req.path === '/api/completed-prospects';
+  }
+
+  return req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH' || req.method === 'DELETE';
+}
+
+function safeAuditDetails(details) {
+  try {
+    return JSON.stringify(details);
+  } catch {
+    return null;
+  }
+}
+
+function getClientIp(req) {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (typeof forwarded === 'string' && forwarded.trim()) {
+    return forwarded.split(',')[0].trim();
+  }
+  return req.ip || req.socket?.remoteAddress || null;
+}
+
+function auditRequestMiddleware(req, res, next) {
+  if (!shouldAuditRequest(req)) {
+    return next();
+  }
+
+  const startedAt = Date.now();
+  res.on('finish', () => {
+    if (res.statusCode < 200 || res.statusCode >= 400) {
+      return;
+    }
+
+    const { moduleKey, moduleLabel } = getAuditModule(req.path);
+    const username = req.user?.username || String(req.body?.username || '').trim() || 'Sistema';
+    const details = safeAuditDetails({
+      module: moduleLabel,
+      module_key: moduleKey,
+      route: req.path,
+      method: req.method,
+      status_code: res.statusCode,
+      duration_ms: Date.now() - startedAt,
+      params: req.params || {},
+      query: req.query || {},
+      target: getAuditEntityName(req)
+    });
+
+    logAudit(
+      Number.isFinite(Number(req.user?.userId)) ? Number(req.user.userId) : null,
+      username,
+      getAuditAction(req),
+      moduleKey,
+      getAuditEntityId(req),
+      getAuditEntityName(req),
+      details,
+      getClientIp(req)
+    );
+  });
+
+  return next();
+}
+
 // APLICAR SEGURIDAD ANTES DE MONTAR RUTAS
 app.use(authenticateRequest);
+app.use(auditRequestMiddleware);
 
 // Rutas de Módulos Específicos
 app.use('/api/referidos', referidosRoutes);
 app.use('/api/tariffs', tarifasRoutes);
+app.use('/api/tarifas', tarifasRoutes);
 app.use('/api/clients', clientRoutes);
 app.use('/api/bans', banRoutes);
 app.use('/api/importador', importRoutes);
@@ -133,6 +306,7 @@ app.use('/api/campaigns', campaignRoutes);
 app.use('/api/tracking', trackingRoutes);
 app.use('/api/goals', goalsRoutes);
 app.use('/api/tango', tangoRoutes);
+app.use('/api/ocr', ocrRoutes);
 console.log('🔍 DEBUG: /api/discrepancias routes mounted');
 
 // System Routes - PROTECTED EXTRA
@@ -362,6 +536,227 @@ const PRODUCT_GOALS_SELECT = `
     LEFT JOIN vendors v ON pg.vendor_id = v.id
 `;
 
+const TASK_STATUSES = new Set(['pending', 'in_progress', 'done']);
+const TASK_PRIORITIES = new Set(['low', 'normal', 'high']);
+const TASK_COLUMN_TYPES = new Set(['text', 'date', 'number', 'select', 'checkbox']);
+let ensureTasksSchemaPromise = null;
+
+function normalizeTaskStatus(value) {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return TASK_STATUSES.has(normalized) ? normalized : 'pending';
+}
+
+function normalizeTaskPriority(value) {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return TASK_PRIORITIES.has(normalized) ? normalized : 'normal';
+}
+
+function normalizeTaskColumnType(value) {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return TASK_COLUMN_TYPES.has(normalized) ? normalized : 'text';
+}
+
+function cleanTaskColumnKey(value) {
+  const base = String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return base.slice(0, 40);
+}
+
+function normalizeTaskCustomFields(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+  const normalized = {};
+  for (const [rawKey, rawValue] of Object.entries(value)) {
+    const key = cleanTaskColumnKey(rawKey);
+    if (!key) continue;
+    if (rawValue === null || typeof rawValue === 'string' || typeof rawValue === 'number' || typeof rawValue === 'boolean') {
+      normalized[key] = rawValue;
+      continue;
+    }
+    normalized[key] = String(rawValue);
+  }
+  return normalized;
+}
+
+function normalizeTaskDate(value) {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+  const text = String(value).trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    return null;
+  }
+  return text;
+}
+
+function normalizeTaskTime(value) {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+  const text = String(value).trim();
+  if (!/^\d{2}:\d{2}(:\d{2})?$/.test(text)) {
+    return null;
+  }
+  return text.slice(0, 5);
+}
+
+function normalizeTaskColumnOptions(value) {
+  if (Array.isArray(value)) {
+    return [...new Set(value.map((item) => String(item).trim()).filter(Boolean))].slice(0, 40);
+  }
+  if (typeof value === 'string') {
+    return [...new Set(value.split(',').map((item) => item.trim()).filter(Boolean))].slice(0, 40);
+  }
+  return [];
+}
+
+function mapTaskDate(value) {
+  if (!value) return null;
+  if (value instanceof Date) {
+    return value.toISOString().slice(0, 10);
+  }
+  return String(value).slice(0, 10);
+}
+
+function mapTaskTimestamp(value) {
+  if (!value) return null;
+  return value instanceof Date ? value.toISOString() : value;
+}
+
+function mapTaskTime(value) {
+  if (!value) return null;
+  return String(value).slice(0, 5);
+}
+
+function mapTaskRow(row) {
+  return {
+    id: Number(row.id),
+    owner_user_id: row.owner_user_id,
+    assigned_user_id: row.assigned_user_id === null || row.assigned_user_id === undefined ? null : String(row.assigned_user_id),
+    assigned_username: row.assigned_username || null,
+    assigned_name: row.assigned_name || null,
+    title: row.title,
+    due_date: mapTaskDate(row.due_date),
+    follow_up_date: mapTaskDate(row.follow_up_date),
+    follow_up_time: mapTaskTime(row.follow_up_time),
+    client_id: row.client_id === null || row.client_id === undefined ? null : Number(row.client_id),
+    client_name: row.client_name,
+    notes: row.notes,
+    status: normalizeTaskStatus(row.status),
+    priority: normalizeTaskPriority(row.priority),
+    custom_fields: normalizeTaskCustomFields(row.custom_fields),
+    completed_at: mapTaskTimestamp(row.completed_at),
+    created_at: mapTaskTimestamp(row.created_at),
+    updated_at: mapTaskTimestamp(row.updated_at)
+  };
+}
+
+function mapTaskColumnRow(row) {
+  return {
+    id: Number(row.id),
+    column_key: row.column_key,
+    label: row.label,
+    data_type: normalizeTaskColumnType(row.data_type),
+    options: normalizeTaskColumnOptions(row.options),
+    sort_order: Number(row.sort_order ?? 0),
+    is_active: Boolean(row.is_active),
+    created_at: mapTaskTimestamp(row.created_at),
+    updated_at: mapTaskTimestamp(row.updated_at)
+  };
+}
+
+async function ensureTasksSchema() {
+  if (ensureTasksSchemaPromise) {
+    return ensureTasksSchemaPromise;
+  }
+
+  ensureTasksSchemaPromise = (async () => {
+    await query(`
+      CREATE TABLE IF NOT EXISTS crm_tasks (
+        id BIGSERIAL PRIMARY KEY,
+        owner_user_id TEXT NOT NULL,
+        assigned_user_id TEXT NULL,
+        title TEXT NOT NULL,
+        due_date DATE NULL,
+        follow_up_date DATE NULL,
+        follow_up_time TIME NULL,
+        client_id BIGINT NULL,
+        client_name TEXT NULL,
+        notes TEXT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        priority TEXT NOT NULL DEFAULT 'normal',
+        custom_fields JSONB NOT NULL DEFAULT '{}'::jsonb,
+        completed_at TIMESTAMPTZ NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT crm_tasks_status_chk CHECK (status IN ('pending', 'in_progress', 'done')),
+        CONSTRAINT crm_tasks_priority_chk CHECK (priority IN ('low', 'normal', 'high'))
+      )
+    `);
+
+    await query(`
+      CREATE INDEX IF NOT EXISTS crm_tasks_owner_idx
+      ON crm_tasks(owner_user_id, status, due_date)
+    `);
+
+    await query(`
+      ALTER TABLE crm_tasks
+      ADD COLUMN IF NOT EXISTS assigned_user_id TEXT NULL
+    `);
+
+    await query(`
+      ALTER TABLE crm_tasks
+      ADD COLUMN IF NOT EXISTS follow_up_date DATE NULL
+    `);
+
+    await query(`
+      ALTER TABLE crm_tasks
+      ADD COLUMN IF NOT EXISTS follow_up_time TIME NULL
+    `);
+
+    await query(`
+      CREATE INDEX IF NOT EXISTS crm_tasks_assigned_idx
+      ON crm_tasks(assigned_user_id, status, due_date)
+    `);
+
+    await query(`
+      CREATE INDEX IF NOT EXISTS crm_tasks_follow_up_idx
+      ON crm_tasks(owner_user_id, follow_up_date, follow_up_time)
+    `);
+
+    await query(`
+      CREATE TABLE IF NOT EXISTS crm_task_columns (
+        id BIGSERIAL PRIMARY KEY,
+        owner_user_id TEXT NOT NULL,
+        column_key TEXT NOT NULL,
+        label TEXT NOT NULL,
+        data_type TEXT NOT NULL DEFAULT 'text',
+        options JSONB NOT NULL DEFAULT '[]'::jsonb,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT crm_task_columns_type_chk CHECK (data_type IN ('text', 'date', 'number', 'select', 'checkbox')),
+        CONSTRAINT crm_task_columns_owner_key_uniq UNIQUE(owner_user_id, column_key)
+      )
+    `);
+
+    await query(`
+      CREATE INDEX IF NOT EXISTS crm_task_columns_owner_idx
+      ON crm_task_columns(owner_user_id, sort_order)
+    `);
+  })().catch((error) => {
+    ensureTasksSchemaPromise = null;
+    throw error;
+  });
+
+  return ensureTasksSchemaPromise;
+}
+
 // ======================================================
 // Rutas de autenticación y salud
 // ======================================================
@@ -382,8 +777,32 @@ app.post('/api/login', async (req, res) => {
       return res.status(401).json({ error: 'Credenciales inválidas' });
     }
 
+    await query(
+      `UPDATE users_auth SET last_login = NOW() WHERE id = $1`,
+      [user.id]
+    );
+
     const payload = sanitizeUserPayload(user);
     const { accessToken, refreshToken } = issueTokens(payload);
+
+    await logAudit(
+      Number.isFinite(Number(payload.userId)) ? Number(payload.userId) : null,
+      payload.username,
+      'LOGIN',
+      'auth',
+      Number.isFinite(Number(payload.userId)) ? Number(payload.userId) : null,
+      payload.salespersonName || payload.username,
+      safeAuditDetails({
+        module: 'Autenticacion',
+        module_key: 'auth',
+        route: '/api/login',
+        method: 'POST',
+        status_code: 200,
+        duration_ms: 0,
+        target: payload.username
+      }),
+      getClientIp(req)
+    );
 
     res.json({
       token: accessToken,
@@ -442,7 +861,7 @@ app.get('/api/version', (_req, res) => {
 // ======================================================
 // Endpoint para limpiar nombres BAN
 // ======================================================
-app.post('/api/admin/clean-names-ban-dev', async (req, res) => {
+app.post('/api/admin/clean-names-ban-dev', requireRole(['admin']), async (req, res) => {
   try {
     console.log('\n🔍 Limpiando nombres/empresas BAN...');
 
@@ -502,6 +921,22 @@ app.post('/api/admin/clean-names-ban-dev', async (req, res) => {
   }
 });
 
+app.get('/api/salespeople', authenticateRequest, async (_req, res) => {
+  try {
+    await ensureSalespeopleCommissionColumn(pool);
+    const salespeopleSchema = await detectSalespeopleSchema(pool);
+    const rows = await query(`
+      SELECT id, name, role,
+             ${salespeopleSchema.hasCommissionPercentage ? 'commission_percentage' : 'NULL::numeric AS commission_percentage'}
+      FROM salespeople
+      ORDER BY name ASC
+    `);
+    res.json(rows);
+  } catch (error) {
+    serverError(res, error, 'Error obteniendo vendedores');
+  }
+});
+
 // Middleware de autenticación aplicado arriba
 
 app.get('/api/me', (req, res) => {
@@ -544,6 +979,508 @@ app.put('/api/me/password', async (req, res) => {
     res.json({ success: true });
   } catch (error) {
     serverError(res, error, 'Error actualizando contraseña');
+  }
+});
+
+// ======================================================
+// Tareas independientes (lista tipo Asana / To Do)
+// ======================================================
+
+app.get('/api/tasks/columns', authenticateRequest, async (req, res) => {
+  const ownerUserId = String(req.user?.userId || '').trim();
+  if (!ownerUserId) {
+    return res.status(401).json({ error: 'Sesion invalida' });
+  }
+
+  try {
+    await ensureTasksSchema();
+    const rows = await query(
+      `SELECT id, column_key, label, data_type, options, sort_order, is_active, created_at, updated_at
+         FROM crm_task_columns
+        WHERE owner_user_id = $1
+          AND is_active = TRUE
+        ORDER BY sort_order ASC, id ASC`,
+      [ownerUserId]
+    );
+    res.json(rows.map(mapTaskColumnRow));
+  } catch (error) {
+    serverError(res, error, 'Error obteniendo columnas de tareas');
+  }
+});
+
+app.post('/api/tasks/columns', authenticateRequest, async (req, res) => {
+  const ownerUserId = String(req.user?.userId || '').trim();
+  if (!ownerUserId) {
+    return res.status(401).json({ error: 'Sesion invalida' });
+  }
+
+  const label = String(req.body?.label || '').trim();
+  const dataType = normalizeTaskColumnType(req.body?.data_type);
+  const options = normalizeTaskColumnOptions(req.body?.options);
+
+  if (!label) {
+    return badRequest(res, 'El nombre de la columna es obligatorio');
+  }
+
+  try {
+    await ensureTasksSchema();
+    const baseKey = cleanTaskColumnKey(req.body?.column_key || label);
+    if (!baseKey) {
+      return badRequest(res, 'Nombre de columna invalido');
+    }
+
+    let nextKey = baseKey;
+    let suffix = 1;
+    // Garantiza key unico por usuario
+    while (true) {
+      const exists = await query(
+        `SELECT 1
+           FROM crm_task_columns
+          WHERE owner_user_id = $1
+            AND column_key = $2
+          LIMIT 1`,
+        [ownerUserId, nextKey]
+      );
+      if (exists.length === 0) break;
+      suffix += 1;
+      nextKey = `${baseKey}_${suffix}`;
+    }
+
+    const nextOrderRows = await query(
+      `SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_order
+         FROM crm_task_columns
+        WHERE owner_user_id = $1`,
+      [ownerUserId]
+    );
+    const sortOrder = Number(nextOrderRows[0]?.next_order ?? 0);
+
+    const rows = await query(
+      `INSERT INTO crm_task_columns (owner_user_id, column_key, label, data_type, options, sort_order, is_active, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6, TRUE, NOW(), NOW())
+       RETURNING id, column_key, label, data_type, options, sort_order, is_active, created_at, updated_at`,
+      [ownerUserId, nextKey, label, dataType, JSON.stringify(options), sortOrder]
+    );
+
+    res.status(201).json(mapTaskColumnRow(rows[0]));
+  } catch (error) {
+    serverError(res, error, 'Error creando columna de tareas');
+  }
+});
+
+app.put('/api/tasks/columns/:id', authenticateRequest, async (req, res) => {
+  const ownerUserId = String(req.user?.userId || '').trim();
+  const columnId = Number(req.params.id);
+  if (!ownerUserId) {
+    return res.status(401).json({ error: 'Sesion invalida' });
+  }
+  if (Number.isNaN(columnId)) {
+    return badRequest(res, 'ID de columna invalido');
+  }
+
+  const updates = [];
+  const values = [ownerUserId, columnId];
+  let index = values.length + 1;
+
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'label')) {
+    const label = String(req.body.label || '').trim();
+    if (!label) return badRequest(res, 'El nombre de la columna no puede estar vacio');
+    updates.push(`label = $${index++}`);
+    values.push(label);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'data_type')) {
+    updates.push(`data_type = $${index++}`);
+    values.push(normalizeTaskColumnType(req.body.data_type));
+  }
+
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'sort_order')) {
+    const sortOrder = Number(req.body.sort_order);
+    updates.push(`sort_order = $${index++}`);
+    values.push(Number.isFinite(sortOrder) ? sortOrder : 0);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'is_active')) {
+    updates.push(`is_active = $${index++}`);
+    values.push(Boolean(req.body.is_active));
+  }
+
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'options')) {
+    updates.push(`options = $${index++}::jsonb`);
+    values.push(JSON.stringify(normalizeTaskColumnOptions(req.body.options)));
+  }
+
+  if (updates.length === 0) {
+    return badRequest(res, 'No hay campos para actualizar');
+  }
+
+  updates.push('updated_at = NOW()');
+
+  try {
+    await ensureTasksSchema();
+    const rows = await query(
+      `UPDATE crm_task_columns
+          SET ${updates.join(', ')}
+        WHERE owner_user_id = $1
+          AND id = $2
+      RETURNING id, column_key, label, data_type, options, sort_order, is_active, created_at, updated_at`,
+      values
+    );
+
+    if (rows.length === 0) {
+      return notFound(res, 'Columna');
+    }
+
+    res.json(mapTaskColumnRow(rows[0]));
+  } catch (error) {
+    serverError(res, error, 'Error actualizando columna de tareas');
+  }
+});
+
+app.delete('/api/tasks/columns/:id', authenticateRequest, async (req, res) => {
+  const ownerUserId = String(req.user?.userId || '').trim();
+  const columnId = Number(req.params.id);
+  if (!ownerUserId) {
+    return res.status(401).json({ error: 'Sesion invalida' });
+  }
+  if (Number.isNaN(columnId)) {
+    return badRequest(res, 'ID de columna invalido');
+  }
+
+  try {
+    await ensureTasksSchema();
+    const rows = await query(
+      `DELETE FROM crm_task_columns
+        WHERE owner_user_id = $1
+          AND id = $2
+      RETURNING column_key`,
+      [ownerUserId, columnId]
+    );
+
+    if (rows.length === 0) {
+      return notFound(res, 'Columna');
+    }
+
+    const columnKey = rows[0].column_key;
+    await query(
+      `UPDATE crm_tasks
+          SET custom_fields = custom_fields - $2,
+              updated_at = NOW()
+        WHERE owner_user_id = $1`,
+      [ownerUserId, columnKey]
+    );
+
+    res.json({ success: true });
+  } catch (error) {
+    serverError(res, error, 'Error eliminando columna de tareas');
+  }
+});
+
+app.get('/api/tasks', authenticateRequest, async (req, res) => {
+  const currentUserId = String(req.user?.userId || '').trim();
+  if (!currentUserId) {
+    return res.status(401).json({ error: 'Sesion invalida' });
+  }
+
+  try {
+    await ensureTasksSchema();
+    const role = String(req.user?.role || '').toLowerCase();
+    const isPrivileged = role === 'admin' || role === 'supervisor';
+    const conditions = [];
+    const params = [];
+
+    if (!isPrivileged) {
+      params.push(currentUserId);
+      conditions.push(`(t.owner_user_id = $${params.length} OR t.assigned_user_id = $${params.length})`);
+    }
+
+    const rawStatus = typeof req.query?.status === 'string' ? req.query.status.trim().toLowerCase() : '';
+    if (TASK_STATUSES.has(rawStatus)) {
+      conditions.push(`t.status = $${params.length + 1}`);
+      params.push(rawStatus);
+    }
+
+    const assignedTo = String(req.query?.assigned_to || '').trim();
+    if (isPrivileged && assignedTo && assignedTo.toLowerCase() !== 'all') {
+      conditions.push(`t.assigned_user_id = $${params.length + 1}`);
+      params.push(String(toDbId(assignedTo)));
+    }
+
+    const q = String(req.query?.q || '').trim();
+    if (q) {
+      conditions.push(`(
+        t.title ILIKE $${params.length + 1}
+        OR COALESCE(t.client_name, '') ILIKE $${params.length + 1}
+        OR COALESCE(t.notes, '') ILIKE $${params.length + 1}
+      )`);
+      params.push(`%${q}%`);
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const rows = await query(
+      `SELECT t.id, t.owner_user_id, t.assigned_user_id, u.username AS assigned_username, sp.name AS assigned_name,
+              t.title, t.due_date, t.follow_up_date, t.follow_up_time, t.client_id, t.client_name, t.notes, t.status, t.priority, t.custom_fields,
+              t.completed_at, t.created_at, t.updated_at
+         FROM crm_tasks t
+         LEFT JOIN users_auth u ON u.id::text = t.assigned_user_id::text
+         LEFT JOIN salespeople sp ON sp.id::text = u.salesperson_id::text
+        ${whereClause}
+        ORDER BY
+          CASE t.status WHEN 'done' THEN 2 WHEN 'in_progress' THEN 1 ELSE 0 END,
+          t.due_date ASC NULLS LAST,
+          t.created_at DESC`,
+      params
+    );
+
+    res.json(rows.map(mapTaskRow));
+  } catch (error) {
+    serverError(res, error, 'Error obteniendo tareas');
+  }
+});
+
+app.get('/api/tasks/assignees', authenticateRequest, async (req, res) => {
+  const currentUserId = String(req.user?.userId || '').trim();
+  if (!currentUserId) {
+    return res.status(401).json({ error: 'Sesion invalida' });
+  }
+
+  try {
+    await ensureTasksSchema();
+    const role = String(req.user?.role || '').toLowerCase();
+    const isPrivileged = role === 'admin' || role === 'supervisor';
+    const rows = await query(
+      `SELECT u.id::text AS user_id, u.username, COALESCE(s.name, u.username) AS display_name, COALESCE(s.role, 'vendedor') AS role
+         FROM users_auth u
+         LEFT JOIN salespeople s ON s.id::text = u.salesperson_id::text
+        ${isPrivileged ? '' : 'WHERE u.id::text = $1'}
+        ORDER BY COALESCE(s.name, u.username) ASC`,
+      isPrivileged ? [] : [currentUserId]
+    );
+    res.json(rows.map((row) => ({
+      user_id: String(row.user_id),
+      username: row.username,
+      display_name: row.display_name,
+      role: String(row.role || 'vendedor').toLowerCase()
+    })));
+  } catch (error) {
+    serverError(res, error, 'Error obteniendo asignables');
+  }
+});
+
+app.post('/api/tasks', authenticateRequest, async (req, res) => {
+  const ownerUserId = String(req.user?.userId || '').trim();
+  if (!ownerUserId) {
+    return res.status(401).json({ error: 'Sesion invalida' });
+  }
+
+  const title = String(req.body?.title || '').trim();
+  if (!title) {
+    return badRequest(res, 'El titulo de la tarea es obligatorio');
+  }
+
+  const dueDate = normalizeTaskDate(req.body?.due_date);
+  const followUpDate = normalizeTaskDate(req.body?.follow_up_date);
+  const followUpTime = normalizeTaskTime(req.body?.follow_up_time);
+  const clientName = String(req.body?.client_name || '').trim() || null;
+  const notes = String(req.body?.notes || '').trim() || null;
+  const status = normalizeTaskStatus(req.body?.status);
+  const priority = normalizeTaskPriority(req.body?.priority);
+  const customFields = normalizeTaskCustomFields(req.body?.custom_fields);
+  const role = String(req.user?.role || '').toLowerCase();
+  const isPrivileged = role === 'admin' || role === 'supervisor';
+
+  let clientId = null;
+  if (req.body?.client_id !== null && req.body?.client_id !== undefined && req.body?.client_id !== '') {
+    const parsedClientId = Number(req.body.client_id);
+    if (!Number.isNaN(parsedClientId)) {
+      clientId = parsedClientId;
+    }
+  }
+
+  let assignedUserId = ownerUserId;
+  if (req.body?.assigned_user_id !== null && req.body?.assigned_user_id !== undefined && req.body?.assigned_user_id !== '') {
+    assignedUserId = String(toDbId(req.body.assigned_user_id));
+  }
+  if (!isPrivileged && !sameId(assignedUserId, ownerUserId)) {
+    return res.status(403).json({ error: 'No tienes permisos para asignar tareas a otros usuarios' });
+  }
+
+  try {
+    await ensureTasksSchema();
+    const assigneeCheck = await query(`SELECT id::text AS id FROM users_auth WHERE id::text = $1`, [assignedUserId]);
+    if (assigneeCheck.length === 0) {
+      return badRequest(res, 'Usuario asignado no existe');
+    }
+
+    const rows = await query(
+      `INSERT INTO crm_tasks (owner_user_id, assigned_user_id, title, due_date, follow_up_date, follow_up_time, client_id, client_name, notes, status, priority, custom_fields, completed_at, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, CASE WHEN $10 = 'done' THEN NOW() ELSE NULL END, NOW(), NOW())
+       RETURNING id, owner_user_id, assigned_user_id, title, due_date, follow_up_date, follow_up_time, client_id, client_name, notes, status, priority, custom_fields, completed_at, created_at, updated_at`,
+      [ownerUserId, assignedUserId, title, dueDate, followUpDate, followUpTime, clientId, clientName, notes, status, priority, JSON.stringify(customFields)]
+    );
+
+    res.status(201).json(mapTaskRow(rows[0]));
+  } catch (error) {
+    serverError(res, error, 'Error creando tarea');
+  }
+});
+
+app.put('/api/tasks/:id', authenticateRequest, async (req, res) => {
+  const currentUserId = String(req.user?.userId || '').trim();
+  const taskId = Number(req.params.id);
+  if (!currentUserId) {
+    return res.status(401).json({ error: 'Sesion invalida' });
+  }
+  if (Number.isNaN(taskId)) {
+    return badRequest(res, 'ID de tarea invalido');
+  }
+  const role = String(req.user?.role || '').toLowerCase();
+  const isPrivileged = role === 'admin' || role === 'supervisor';
+
+  const updates = [];
+  const values = [];
+  let index = 1;
+  let normalizedStatus = null;
+
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'title')) {
+    const title = String(req.body.title || '').trim();
+    if (!title) return badRequest(res, 'El titulo no puede estar vacio');
+    updates.push(`title = $${index++}`);
+    values.push(title);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'due_date')) {
+    updates.push(`due_date = $${index++}`);
+    values.push(normalizeTaskDate(req.body.due_date));
+  }
+
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'follow_up_date')) {
+    updates.push(`follow_up_date = $${index++}`);
+    values.push(normalizeTaskDate(req.body.follow_up_date));
+  }
+
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'follow_up_time')) {
+    updates.push(`follow_up_time = $${index++}`);
+    values.push(normalizeTaskTime(req.body.follow_up_time));
+  }
+
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'client_name')) {
+    const clientName = String(req.body.client_name || '').trim();
+    updates.push(`client_name = $${index++}`);
+    values.push(clientName || null);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'client_id')) {
+    const parsedClientId = Number(req.body.client_id);
+    updates.push(`client_id = $${index++}`);
+    values.push(Number.isNaN(parsedClientId) ? null : parsedClientId);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'assigned_user_id')) {
+    let assignedUserId = null;
+    if (req.body.assigned_user_id !== null && req.body.assigned_user_id !== undefined && req.body.assigned_user_id !== '') {
+      assignedUserId = String(toDbId(req.body.assigned_user_id));
+    }
+
+    if (!isPrivileged && assignedUserId && !sameId(assignedUserId, currentUserId)) {
+      return res.status(403).json({ error: 'No tienes permisos para asignar tareas a otros usuarios' });
+    }
+
+    updates.push(`assigned_user_id = $${index++}`);
+    values.push(assignedUserId || currentUserId);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'notes')) {
+    const notes = String(req.body.notes || '').trim();
+    updates.push(`notes = $${index++}`);
+    values.push(notes || null);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'status')) {
+    normalizedStatus = normalizeTaskStatus(req.body.status);
+    updates.push(`status = $${index++}`);
+    values.push(normalizedStatus);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'priority')) {
+    updates.push(`priority = $${index++}`);
+    values.push(normalizeTaskPriority(req.body.priority));
+  }
+
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'custom_fields')) {
+    updates.push(`custom_fields = $${index++}::jsonb`);
+    values.push(JSON.stringify(normalizeTaskCustomFields(req.body.custom_fields)));
+  }
+
+  if (updates.length === 0) {
+    return badRequest(res, 'No hay campos para actualizar');
+  }
+
+  if (normalizedStatus === 'done') {
+    updates.push(`completed_at = COALESCE(completed_at, NOW())`);
+  } else if (normalizedStatus) {
+    updates.push(`completed_at = NULL`);
+  }
+
+  updates.push('updated_at = NOW()');
+
+  try {
+    await ensureTasksSchema();
+    const whereParts = ['id = $' + index];
+    values.push(taskId);
+    index += 1;
+    if (!isPrivileged) {
+      whereParts.push('(owner_user_id = $' + index + ' OR assigned_user_id = $' + index + ')');
+      values.push(currentUserId);
+      index += 1;
+    }
+
+    const rows = await query(
+      `UPDATE crm_tasks
+          SET ${updates.join(', ')}
+        WHERE ${whereParts.join(' AND ')}
+      RETURNING id, owner_user_id, assigned_user_id, title, due_date, follow_up_date, follow_up_time, client_id, client_name, notes, status, priority, custom_fields, completed_at, created_at, updated_at`,
+      values
+    );
+
+    if (rows.length === 0) {
+      return notFound(res, 'Tarea');
+    }
+
+    res.json(mapTaskRow(rows[0]));
+  } catch (error) {
+    serverError(res, error, 'Error actualizando tarea');
+  }
+});
+
+app.delete('/api/tasks/:id', authenticateRequest, async (req, res) => {
+  const currentUserId = String(req.user?.userId || '').trim();
+  const taskId = Number(req.params.id);
+  if (!currentUserId) {
+    return res.status(401).json({ error: 'Sesion invalida' });
+  }
+  if (Number.isNaN(taskId)) {
+    return badRequest(res, 'ID de tarea invalido');
+  }
+
+  try {
+    await ensureTasksSchema();
+    const role = String(req.user?.role || '').toLowerCase();
+    const isPrivileged = role === 'admin' || role === 'supervisor';
+    const rows = await query(
+      `DELETE FROM crm_tasks
+        WHERE id = $1
+          ${isPrivileged ? '' : 'AND owner_user_id = $2'}
+      RETURNING id`,
+      isPrivileged ? [taskId] : [taskId, currentUserId]
+    );
+
+    if (rows.length === 0) {
+      return notFound(res, 'Tarea');
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    serverError(res, error, 'Error eliminando tarea');
   }
 });
 
@@ -1497,7 +2434,7 @@ app.get('/api/follow-up-prospects', authenticateRequest, async (req, res) => {
     // Construir WHERE clause con filtros
     const conditions = [];
     const params = [];
-    
+
     if (include_completed !== 'true') {
       conditions.push('p.completed_date IS NULL');
     }
@@ -1883,18 +2820,11 @@ app.get('/api/completed-prospects', authenticateRequest, async (req, res) => {
 // ======================================================
 // Sincronizar PYMES desde Tango Legacy (auto-crea clientes/BANs/subscribers faltantes)
 // ======================================================
-app.post('/api/subscriber-reports/sync-pymes', authenticateRequest, async (req, res) => {
-  let legacyPool = null;
+app.post('/api/subscriber-reports/sync-pymes', authenticateRequest, requireRole(['admin', 'supervisor']), async (req, res) => {
+  const legacyPool = getTangoPool();
   const crmClient = await pool.connect();
   try {
-    // 1. Conectar a Tango Legacy
-    legacyPool = new Pool({
-      host: '167.99.12.125', port: 5432, user: 'postgres',
-      password: 'fF00JIRFXc', database: 'claropr',
-      connectionTimeoutMillis: 10000, max: 2,
-    });
-
-    // 2. Traer TODAS las ventas PYMES de Tango (fuente de verdad)
+    // 1. Traer TODAS las ventas PYMES de Tango (fuente de verdad)
     const legacyResult = await legacyPool.query(`
       SELECT v.ventaid, v.ban, v.status as linea,
              COALESCE(v.comisionclaro, 0) as com_empresa,
@@ -2265,23 +3195,15 @@ app.post('/api/subscriber-reports/sync-pymes', authenticateRequest, async (req, 
     res.status(500).json({ error: 'Error al sincronizar PYMES', details: error.message });
   } finally {
     crmClient.release();
-    if (legacyPool) {
-      try { await legacyPool.end(); } catch (e) { /* ignore */ }
-    }
   }
 });
 
 // ======================================================
 // Comparación Tango PYMES vs CRM por mes
-app.get('/api/subscriber-reports/comparison', authenticateRequest, async (req, res) => {
-  let legacyPool = null;
+app.get('/api/subscriber-reports/comparison', authenticateRequest, requireRole(['admin', 'supervisor']), async (req, res) => {
   try {
     // 1. Datos de Tango
-    legacyPool = new Pool({
-      host: '167.99.12.125', port: 5432, user: 'postgres',
-      password: 'fF00JIRFXc', database: 'claropr',
-      connectionTimeoutMillis: 10000, max: 2,
-    });
+    const legacyPool = getTangoPool();
     const tangoResult = await legacyPool.query(`
       SELECT
         TO_CHAR(fechaactivacion, 'YYYY-MM') as month,
@@ -2348,23 +3270,59 @@ app.get('/api/subscriber-reports/comparison', authenticateRequest, async (req, r
   } catch (error) {
     console.error('[COMPARISON] Error:', error);
     res.status(500).json({ error: 'Error al comparar datos', details: error.message });
-  } finally {
-    if (legacyPool) { try { await legacyPool.end(); } catch (e) {} }
   }
 });
 
 // ======================================================
 // Reportes por Suscriptor (mensual)
+function roundMoney(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  return Math.round((numeric + Number.EPSILON) * 100) / 100;
+}
+
+function computeSuggestedVendorCommission(companyEarnings, commissionPercentage) {
+  const earnings = Number(companyEarnings);
+  const percentage = Number(commissionPercentage);
+  if (!Number.isFinite(earnings) || earnings <= 0) return null;
+  if (!Number.isFinite(percentage) || percentage <= 0) return null;
+  return roundMoney((earnings * percentage) / 100);
+}
+
+function normalizeVendorNameKey(value) {
+  return String(value || '').trim().toUpperCase().replace(/\s+/g, ' ');
+}
+
+function buildSubscriberReportDedupKey(row) {
+  const ban = String(row?.ban_number || '').trim();
+  const month = row?.report_month ? String(row.report_month).slice(0, 10) : '';
+  const lineType = String(row?.line_type || '').trim().toUpperCase();
+  const monthlyValue = roundMoney(row?.monthly_value);
+  const companyEarnings = roundMoney(row?.company_earnings);
+  return [ban, month, lineType, monthlyValue ?? '', companyEarnings ?? ''].join('|');
+}
+
 app.get('/api/subscriber-reports', authenticateRequest, async (req, res) => {
   try {
+    await ensureSalespeopleCommissionColumn(pool);
+    await ensureSubscriberReportsWorkflowColumns(pool);
     const reportMonth = normalizeReportMonth(req.query.month);
+    const clientId = req.query.client_id ? String(req.query.client_id).trim() : '';
     const { role, salespersonId } = req.user;
+    const schema = await detectSubscriberSyncSchema(pool);
+    const salespeopleSchema = await detectSalespeopleSchema(pool);
+    const workflowSchema = await detectSubscriberReportsWorkflowSchema(pool);
     const params = [];
     const conditions = [];
 
     if (reportMonth) {
       params.push(reportMonth);
       conditions.push(`sr.report_month = $${params.length}`);
+    }
+
+    if (clientId) {
+      params.push(clientId);
+      conditions.push(`c.id = $${params.length}`);
     }
 
     // Filtrar por vendedor si no es admin
@@ -2378,45 +3336,165 @@ app.get('/api/subscriber-reports', authenticateRequest, async (req, res) => {
     const rows = await query(`
       SELECT
         s.id as subscriber_id,
-        s.phone,
+        s.${quoteIdent(schema.phoneColumn)} as phone,
+        ${schema.hasLineType ? 's.line_type,' : 'NULL AS line_type,'}
+        ${schema.hasTangoVentaId ? 's.tango_ventaid,' : 'NULL AS tango_ventaid,'}
+        ${schema.hasStatus ? 's.status as subscriber_status,' : "'activo' AS subscriber_status,"}
         s.created_at as activation_date,
-        b.ban_number as ban_number,
+        b.${quoteIdent(schema.banNumberColumn)} as ban_number,
+        b.account_type,
         c.id as client_id,
         c.name as client_name,
         c.salesperson_id,
         sp.name as salesperson_name,
+        ${salespeopleSchema.hasCommissionPercentage ? 'sp.commission_percentage as salesperson_commission_percentage,' : 'NULL::numeric AS salesperson_commission_percentage,'}
         s.monthly_value as monthly_value,
         sr.report_month,
         sr.company_earnings,
         sr.vendor_commission,
         sr.paid_amount,
-        sr.paid_date
+        sr.paid_date,
+        ${workflowSchema.hasIsAudited ? 'sr.is_audited,' : 'FALSE AS is_audited,'}
+        ${workflowSchema.hasAuditedAt ? 'sr.audited_at,' : 'NULL AS audited_at,'}
+        ${workflowSchema.hasWithholdingApplies ? 'sr.withholding_applies' : 'TRUE AS withholding_applies'}
       FROM subscriber_reports sr
       JOIN subscribers s ON sr.subscriber_id = s.id
       JOIN bans b ON s.ban_id = b.id
       JOIN clients c ON b.client_id = c.id
       LEFT JOIN salespeople sp ON c.salesperson_id = sp.id
       ${whereClause}
-      ORDER BY c.name, b.ban_number, s.phone
+      ORDER BY c.name, b.${quoteIdent(schema.banNumberColumn)}, s.${quoteIdent(schema.phoneColumn)}
     `, params);
 
-    const mapped = rows.map((row) => ({
+    const vendorProfileSchema = await detectVendorProfileSchema(pool);
+    const vendorCommissionByName = new Map();
+    if (vendorProfileSchema.hasTable) {
+      const vendorNames = [...new Set(
+        rows
+          .map((row) => normalizeVendorNameKey(row.salesperson_name))
+          .filter(Boolean)
+      )];
+
+      if (vendorNames.length > 0) {
+        const vendorRows = await query(`
+          SELECT name, commission_percentage
+          FROM vendors
+          WHERE UPPER(TRIM(name)) = ANY($1)
+        `, [vendorNames]);
+
+        for (const vendorRow of vendorRows) {
+          vendorCommissionByName.set(
+            normalizeVendorNameKey(vendorRow.name),
+            vendorRow.commission_percentage === null || vendorRow.commission_percentage === undefined
+              ? null
+              : Number(vendorRow.commission_percentage)
+          );
+        }
+      }
+    }
+
+    const canonicalTangoKeys = new Set(
+      rows
+        .filter((row) => Number.isFinite(Number(row.tango_ventaid)) && Number(row.tango_ventaid) > 0)
+        .map((row) => buildSubscriberReportDedupKey(row))
+        .filter(Boolean)
+    );
+
+    const visibleRows = rows.filter((row) => {
+      if (Number.isFinite(Number(row.tango_ventaid)) && Number(row.tango_ventaid) > 0) {
+        return true;
+      }
+
+      const normalizedStatus = String(row.subscriber_status || 'activo').trim().toLowerCase();
+      if (!normalizedStatus || normalizedStatus === 'activo' || normalizedStatus === 'active') {
+        return true;
+      }
+
+      const dedupKey = buildSubscriberReportDedupKey(row);
+      return !dedupKey || !canonicalTangoKeys.has(dedupKey);
+    });
+
+    const tangoVentaIds = [...new Set(
+      visibleRows
+        .map((row) => Number(row.tango_ventaid))
+        .filter((value) => Number.isFinite(value) && value > 0)
+    )];
+
+    const saleTypeByVentaId = new Map();
+    if (tangoVentaIds.length > 0) {
+      try {
+        const tangoPool = getTangoPool();
+        const tangoResult = await tangoPool.query(`
+          SELECT ventaid, ventatipoid
+          FROM venta
+          WHERE ventaid = ANY($1::int[])
+        `, [tangoVentaIds]);
+
+        for (const row of tangoResult.rows) {
+          const ventaId = Number(row.ventaid);
+          const ventaTipo = Number(row.ventatipoid);
+          let saleType = null;
+          if (ventaTipo === 138) saleType = 'MOVIL_RENOVACION';
+          else if (ventaTipo === 139) saleType = 'MOVIL_NUEVA';
+          else if (ventaTipo === 140) saleType = 'FIJO_REN';
+          else if (ventaTipo === 141) saleType = 'FIJO_NEW';
+          if (saleType) {
+            saleTypeByVentaId.set(ventaId, saleType);
+          }
+        }
+      } catch (tangoError) {
+        console.warn('[subscriber-reports] No se pudo resolver sale_type desde Tango:', tangoError.message);
+      }
+    }
+
+    const mapped = visibleRows.map((row) => {
+      const profileCommissionPercentage = vendorCommissionByName.get(normalizeVendorNameKey(row.salesperson_name));
+      const commissionPercentage =
+        profileCommissionPercentage !== undefined
+          ? profileCommissionPercentage
+          : (
+              row.salesperson_commission_percentage === null || row.salesperson_commission_percentage === undefined
+                ? null
+                : Number(row.salesperson_commission_percentage)
+            );
+      const storedVendorCommission =
+        row.vendor_commission === null || row.vendor_commission === undefined
+          ? null
+          : Number(row.vendor_commission);
+      const suggestedVendorCommission = computeSuggestedVendorCommission(row.company_earnings, commissionPercentage);
+      const effectiveVendorCommission =
+        storedVendorCommission !== null && storedVendorCommission > 0
+          ? storedVendorCommission
+          : suggestedVendorCommission;
+
+      return {
       subscriber_id: row.subscriber_id,
       phone: row.phone,
+      line_type: row.line_type || null,
+      sale_type: saleTypeByVentaId.get(Number(row.tango_ventaid)) || null,
       activation_date: row.activation_date,
       ban_number: row.ban_number,
+      account_type: row.account_type || null,
       client_id: row.client_id,
       client_name: row.client_name,
       client_business_name: null,
       vendor_id: row.salesperson_id,
       vendor_name: row.salesperson_name,
+      salesperson_commission_percentage: commissionPercentage,
       report_month: row.report_month,
       monthly_value: row.monthly_value === null || row.monthly_value === undefined ? null : Number(row.monthly_value),
       company_earnings: row.company_earnings === null || row.company_earnings === undefined ? null : Number(row.company_earnings),
-      vendor_commission: row.vendor_commission === null || row.vendor_commission === undefined ? null : Number(row.vendor_commission),
+      vendor_commission: storedVendorCommission,
+      suggested_vendor_commission: suggestedVendorCommission,
+      effective_vendor_commission: effectiveVendorCommission,
       paid_amount: row.paid_amount === null || row.paid_amount === undefined ? null : Number(row.paid_amount),
-      paid_date: row.paid_date
-    }));
+      paid_date: row.paid_date,
+      is_paid: Boolean(row.paid_date) || Number(row.paid_amount || 0) > 0,
+      is_audited: Boolean(row.is_audited),
+      audited_at: row.audited_at || null,
+      withholding_applies: row.withholding_applies !== false
+    };
+    });
 
     res.json(mapped);
   } catch (error) {
@@ -2429,7 +3507,12 @@ app.get('/api/subscriber-reports', authenticateRequest, async (req, res) => {
 app.put('/api/subscriber-reports/:subscriber_id', authenticateRequest, async (req, res) => {
   try {
     const { subscriber_id } = req.params;
-    const { report_month, company_earnings, vendor_commission, paid_amount, paid_date } = req.body || {};
+    const { report_month, company_earnings, vendor_commission, paid_amount, paid_date, is_audited, withholding_applies, is_paid } = req.body || {};
+    await ensureSalespeopleCommissionColumn(pool);
+    await ensureSubscriberReportsWorkflowColumns(pool);
+    const salespeopleSchema = await detectSalespeopleSchema(pool);
+    const workflowSchema = await detectSubscriberReportsWorkflowSchema(pool);
+    const vendorProfileSchema = await detectVendorProfileSchema(pool);
 
     const normalizedMonth = normalizeReportMonth(report_month);
     if (!normalizedMonth) {
@@ -2438,7 +3521,8 @@ app.put('/api/subscriber-reports/:subscriber_id', authenticateRequest, async (re
 
     // VALIDACIÓN OBLIGATORIA: Cliente debe tener vendedor real (no admin)
     const clientCheck = await query(`
-      SELECT c.id, c.name, s.name as salesperson_name, s.role as salesperson_role
+      SELECT c.id, c.name, s.name as salesperson_name, s.role as salesperson_role,
+             ${salespeopleSchema.hasCommissionPercentage ? 's.commission_percentage' : 'NULL::numeric'} as salesperson_commission_percentage
       FROM subscribers sub
       JOIN bans b ON sub.ban_id = b.id
       JOIN clients c ON b.client_id = c.id
@@ -2450,13 +3534,31 @@ app.put('/api/subscriber-reports/:subscriber_id', authenticateRequest, async (re
       return res.status(404).json({ error: 'Suscriptor no encontrado' });
     }
 
-    const { name: clientName, salesperson_name, salesperson_role } = clientCheck[0];
+    const { name: clientName, salesperson_name, salesperson_role, salesperson_commission_percentage } = clientCheck[0];
+    let effectiveCommissionPercentage =
+      salesperson_commission_percentage === null || salesperson_commission_percentage === undefined
+        ? null
+        : Number(salesperson_commission_percentage);
+    if (vendorProfileSchema.hasTable && salesperson_name) {
+      const vendorProfileRows = await query(`
+        SELECT commission_percentage
+        FROM vendors
+        WHERE UPPER(TRIM(name)) = UPPER(TRIM($1))
+        LIMIT 1
+      `, [salesperson_name]);
+      if (vendorProfileRows.length > 0 && vendorProfileRows[0].commission_percentage !== null && vendorProfileRows[0].commission_percentage !== undefined) {
+        effectiveCommissionPercentage = Number(vendorProfileRows[0].commission_percentage);
+      }
+    }
+    const normalizedSalesRole = String(salesperson_role || '').trim().toLowerCase();
+    const allowedSalesRoles = new Set(['vendedor', 'supervisor', 'admin']);
 
-    if (!salesperson_role || salesperson_role !== 'vendedor') {
-      return badRequest(res, 
-        `No se puede guardar. El cliente "${clientName}" debe tener un vendedor asignado. ` +
-        `Actualmente asignado a: ${salesperson_name || 'ninguno'} (${salesperson_role || 'sin role'}). ` +
-        `Asigna el cliente a un vendedor real primero.`
+    if (!salesperson_name || !allowedSalesRoles.has(normalizedSalesRole)) {
+      return badRequest(
+        res,
+        `No se puede guardar. El cliente "${clientName}" debe tener un usuario comercial asignado ` +
+        `(vendedor/supervisor/admin). Actualmente asignado a: ${salesperson_name || 'ninguno'} ` +
+        `(${salesperson_role || 'sin role'}).`
       );
     }
 
@@ -2472,34 +3574,113 @@ app.put('/api/subscriber-reports/:subscriber_id', authenticateRequest, async (re
       paid_amount === '' || paid_amount === null || paid_amount === undefined
         ? null
         : parseFloat(paid_amount);
+    const normalizedCompanyEarnings = Number.isNaN(sanitizedCompanyEarnings) ? null : sanitizedCompanyEarnings;
+    const suggestedVendorCommission = computeSuggestedVendorCommission(normalizedCompanyEarnings, effectiveCommissionPercentage);
+    const existingRows = await query(`
+      SELECT *
+      FROM subscriber_reports
+      WHERE subscriber_id = $1 AND report_month = $2::date
+      LIMIT 1
+    `, [subscriber_id, normalizedMonth]);
+    const existingReport = existingRows[0] || null;
+    const existingIsPaid = Boolean(existingReport?.paid_date) || Number(existingReport?.paid_amount || 0) > 0;
+
+    let normalizedVendorCommission = Number.isNaN(sanitizedVendorCommission) ? null : sanitizedVendorCommission;
+    if ((normalizedVendorCommission === null || normalizedVendorCommission === 0) && suggestedVendorCommission !== null) {
+      normalizedVendorCommission = suggestedVendorCommission;
+    }
+
+    let finalVendorCommission = normalizedVendorCommission;
+    let finalPaidAmount = Number.isNaN(sanitizedPaidAmount) ? null : sanitizedPaidAmount;
+    let finalPaidDate = paid_date || null;
+    const shouldMarkPaid = is_paid === true || Boolean(finalPaidDate) || (finalPaidAmount !== null && finalPaidAmount > 0);
+
+    if (existingIsPaid) {
+      finalVendorCommission =
+        existingReport.vendor_commission === null || existingReport.vendor_commission === undefined
+          ? finalVendorCommission
+          : Number(existingReport.vendor_commission);
+      finalPaidAmount =
+        existingReport.paid_amount === null || existingReport.paid_amount === undefined
+          ? finalPaidAmount
+          : Number(existingReport.paid_amount);
+      finalPaidDate = existingReport.paid_date || finalPaidDate;
+    } else if (shouldMarkPaid) {
+      if ((finalVendorCommission === null || finalVendorCommission === undefined) && suggestedVendorCommission !== null) {
+        finalVendorCommission = suggestedVendorCommission;
+      }
+      if ((finalPaidAmount === null || finalPaidAmount === undefined) && finalVendorCommission !== null && finalVendorCommission !== undefined) {
+        finalPaidAmount = finalVendorCommission;
+      }
+      if (!finalPaidDate) {
+        finalPaidDate = new Date().toISOString();
+      }
+    }
+
+    const finalIsAudited =
+      typeof is_audited === 'boolean'
+        ? is_audited
+        : Boolean(existingReport?.is_audited);
+    const finalAuditedAt = finalIsAudited
+      ? (existingReport?.audited_at || new Date().toISOString())
+      : null;
+    const finalWithholdingApplies =
+      typeof withholding_applies === 'boolean'
+        ? withholding_applies
+        : (existingReport?.withholding_applies !== false);
+
+    const columns = [
+      'subscriber_id',
+      'report_month',
+      'company_earnings',
+      'vendor_commission',
+      'paid_amount',
+      'paid_date'
+    ];
+    const values = [
+      subscriber_id,
+      normalizedMonth,
+      normalizedCompanyEarnings,
+      finalVendorCommission,
+      finalPaidAmount,
+      finalPaidDate
+    ];
+    const updates = [
+      'company_earnings = EXCLUDED.company_earnings',
+      'vendor_commission = EXCLUDED.vendor_commission',
+      'paid_amount = EXCLUDED.paid_amount',
+      'paid_date = EXCLUDED.paid_date'
+    ];
+
+    if (workflowSchema.hasIsAudited) {
+      columns.push('is_audited');
+      values.push(finalIsAudited);
+      updates.push('is_audited = EXCLUDED.is_audited');
+    }
+    if (workflowSchema.hasAuditedAt) {
+      columns.push('audited_at');
+      values.push(finalAuditedAt);
+      updates.push('audited_at = EXCLUDED.audited_at');
+    }
+    if (workflowSchema.hasWithholdingApplies) {
+      columns.push('withholding_applies');
+      values.push(finalWithholdingApplies);
+      updates.push('withholding_applies = EXCLUDED.withholding_applies');
+    }
+
+    columns.push('created_at', 'updated_at');
+    const placeholders = values.map((_, index) => index === 1 ? `$${index + 1}::date` : `$${index + 1}`);
 
     const result = await query(`
       INSERT INTO subscriber_reports (
-        subscriber_id,
-        report_month,
-        company_earnings,
-        vendor_commission,
-        paid_amount,
-        paid_date,
-        created_at,
-        updated_at
-      ) VALUES ($1, $2::date, $3, $4, $5, $6, NOW(), NOW())
+        ${columns.join(', ')}
+      ) VALUES (${placeholders.join(', ')}, NOW(), NOW())
       ON CONFLICT (subscriber_id, report_month)
       DO UPDATE SET
-        company_earnings = EXCLUDED.company_earnings,
-        vendor_commission = EXCLUDED.vendor_commission,
-        paid_amount = EXCLUDED.paid_amount,
-        paid_date = EXCLUDED.paid_date,
+        ${updates.join(', ')},
         updated_at = NOW()
       RETURNING *
-    `, [
-      subscriber_id,
-      normalizedMonth,
-      Number.isNaN(sanitizedCompanyEarnings) ? null : sanitizedCompanyEarnings,
-      Number.isNaN(sanitizedVendorCommission) ? null : sanitizedVendorCommission,
-      Number.isNaN(sanitizedPaidAmount) ? null : sanitizedPaidAmount,
-      paid_date || null
-    ]);
+    `, values);
 
     if (result.length === 0) {
       return res.status(404).json({ error: 'Suscriptor no encontrado' });
@@ -2579,7 +3760,6 @@ app.get('/api/clients/:id', async (req, res) => {
 });
 
 // POST /api/clients - Crear nuevo cliente
-// app.post('/api/clients', ...
 
 // PUT /api/clients/:id - Actualizar cliente
 // app.put('/api/clients/:id', ...
@@ -2600,6 +3780,992 @@ app.get('/api/clients/:id', async (req, res) => {
 // ======================================================
 // Endpoints de Suscriptores
 // ======================================================
+
+const VALID_PR_PHONE = /^(787|939|989)\d{7}$/;
+const VALID_PREFIXES = ['787', '939', '989'];
+const OCR_CHAR_MAP = {
+  O: '0',
+  o: '0',
+  I: '1',
+  l: '1',
+  S: '5',
+  s: '5',
+  B: '8',
+  b: '8',
+  Z: '2',
+  z: '2',
+  G: '6',
+  g: '6'
+};
+
+function quoteIdent(identifier) {
+  return `"${String(identifier).replace(/"/g, '""')}"`;
+}
+
+function normalizePlanCodeKey(value) {
+  let cleaned = String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  cleaned = cleaned.replace(/^(ACTIVE|ACTVE|ACIVE|CANCELLED|CANCELED|CANCELADO|INACTIVE|INACTIVO)/i, '');
+  return cleaned;
+}
+
+function normalizeStatus(value) {
+  const raw = String(value || '').toLowerCase();
+  if (raw.includes('cancel')) return 'cancelado';
+  if (raw.includes('actv') || raw.includes('acive') || raw.includes('actve')) return 'activo';
+  if (raw.includes('active') || raw.includes('activo')) return 'activo';
+  return 'activo';
+}
+
+const STATUS_TOKEN_REGEX = /\b(active|actve|acive|activo|canceled|cancelled|cancelado|inactivo)\b/i;
+
+function hasStatusToken(value) {
+  return STATUS_TOKEN_REGEX.test(String(value || ''));
+}
+
+function extractStatusOnlyLine(value) {
+  const cleaned = String(value || '').trim();
+  if (!cleaned) return null;
+  const match = cleaned.match(/^[-|:\s]*(active|actve|acive|activo|canceled|cancelled|cancelado|inactivo)[-|:\s]*$/i);
+  return match ? normalizeStatus(match[1]) : null;
+}
+
+function normalizeOcrChars(value) {
+  return String(value || '')
+    .split('')
+    .map((ch) => OCR_CHAR_MAP[ch] || ch)
+    .join('');
+}
+
+function autocorrectPrefixIfNeeded(digits) {
+  if (!digits || digits.length !== 10) return { phone: null, corrected: false };
+  const prefix = digits.slice(0, 3);
+  if (VALID_PREFIXES.includes(prefix)) {
+    return { phone: digits, corrected: false };
+  }
+
+  let best = null;
+  for (const candidate of VALID_PREFIXES) {
+    let diff = 0;
+    for (let i = 0; i < 3; i += 1) {
+      if (candidate[i] !== prefix[i]) diff += 1;
+    }
+    if (best === null || diff < best.diff) {
+      best = { prefix: candidate, diff };
+    }
+  }
+
+  if (best && best.diff === 1) {
+    return { phone: `${best.prefix}${digits.slice(3)}`, corrected: true };
+  }
+
+  return { phone: null, corrected: false };
+}
+
+function extractStatusFromLine(line) {
+  const match = line.match(STATUS_TOKEN_REGEX);
+  return normalizeStatus(match ? match[1] : 'activo');
+}
+
+function normalizePhoneCandidate(raw) {
+  const cleaned = normalizeOcrChars(String(raw || '').trim());
+  if (!cleaned) return { phone: null, ignored100: false };
+
+  if (/^100[-\s]?\d+/i.test(cleaned)) {
+    return { phone: null, ignored100: true, prefixCorrected: false };
+  }
+
+  let digits = cleaned.replace(/\D/g, '');
+  if (digits.length === 11 && digits.startsWith('1')) {
+    digits = digits.slice(1);
+  }
+
+  if (VALID_PR_PHONE.test(digits)) {
+    return { phone: digits, ignored100: false, prefixCorrected: false };
+  }
+
+  const corrected = autocorrectPrefixIfNeeded(digits);
+  if (corrected.phone && VALID_PR_PHONE.test(corrected.phone)) {
+    return { phone: corrected.phone, ignored100: false, prefixCorrected: corrected.corrected };
+  }
+
+  return { phone: null, ignored100: false, prefixCorrected: false };
+}
+
+function extractPhoneFromLine(line) {
+  const direct = normalizePhoneCandidate(line);
+  if (direct.phone || direct.ignored100) return direct;
+
+  const chunks = line.match(/\d[\d().\-\s]{6,}\d/g) || [];
+  for (const chunk of chunks) {
+    const candidate = normalizePhoneCandidate(chunk);
+    if (candidate.phone || candidate.ignored100) return candidate;
+  }
+
+  const tokens = line.split(/\s+/);
+  for (const token of tokens) {
+    const candidate = normalizePhoneCandidate(token);
+    if (candidate.phone || candidate.ignored100) return candidate;
+  }
+
+  return { phone: null, ignored100: false };
+}
+
+function extractPlanFromLine(line) {
+  const statusMatch = line.match(STATUS_TOKEN_REGEX);
+  const tail = statusMatch
+    ? line.slice((statusMatch.index || 0) + statusMatch[0].length).trim()
+    : line.trim();
+
+  if (!tail) return null;
+  let tailForPlan = tail.replace(new RegExp(STATUS_TOKEN_REGEX, 'gi'), '').trim();
+  const token = (tailForPlan.match(/[A-Za-z0-9_-]{3,}/g) || [])[0] || null;
+  return token ? token.toUpperCase() : null;
+}
+
+function extractPlanFromStandaloneLine(line) {
+  const cleaned = String(line || '').trim();
+  if (!cleaned) return null;
+  if (extractStatusOnlyLine(cleaned)) return null;
+  const phoneCheck = extractPhoneFromLine(cleaned);
+  if (phoneCheck.phone || phoneCheck.ignored100) return null;
+  let cleanedForPlan = cleaned.replace(new RegExp(STATUS_TOKEN_REGEX, 'gi'), '').trim();
+  const token = (cleanedForPlan.match(/[A-Za-z0-9_-]{3,}/g) || [])[0] || null;
+  return token ? token.toUpperCase() : null;
+}
+
+function rowsToClipboardText(rows) {
+  const header = 'Subscriber Type Status Price Plan';
+  const lines = rows
+    .filter((row) => row.subscriber)
+    .map((row) => [row.subscriber, row.type || 'G', row.status || 'Active', row.pricePlan || ''].filter(Boolean).join(' '));
+  return [header, ...lines].join('\n').trim();
+}
+
+function normalizePhoneDigits(digits) {
+  const d = String(digits || '').replace(/\D/g, '');
+  if (d.length === 10) return d;
+  if (d.length === 11 && d.startsWith('1')) return d.slice(1);
+  return null;
+}
+
+function extractPhoneFromOcrLine(line) {
+  const candidates = line.match(/(?:\+?1\s*)?(?:\(?\d{3}\)?[\s\-\.]*)\d{3}[\s\-\.]*\d{4}/g);
+  if (candidates && candidates.length) {
+    for (const candidate of candidates) {
+      const phone = normalizePhoneDigits(candidate);
+      if (phone) return phone;
+    }
+  }
+
+  const longRuns = line.match(/\d[\d\s\-\.]{8,}\d/g);
+  if (longRuns && longRuns.length) {
+    for (const run of longRuns) {
+      const phone = normalizePhoneDigits(run);
+      if (phone) return phone;
+    }
+  }
+  return null;
+}
+
+function parseOcrStatus(tokens) {
+  const joined = tokens.join(' ').toLowerCase();
+  const map = [
+    [/\bactive\b/, 'Active'],
+    [/\bactve\b/, 'Active'],
+    [/\bacive\b/, 'Active'],
+    [/\binactive\b/, 'Inactive'],
+    [/\bcancel(?:led|ed|ado)?\b/, 'Cancelled'],
+    [/\bsuspend(?:ed|ido|ida)?\b/, 'Suspended']
+  ];
+
+  for (const [regex, label] of map) {
+    if (regex.test(joined)) {
+      const restTokens = tokens.filter((token) => !regex.test(token.toLowerCase()));
+      return { status: label, restTokens };
+    }
+  }
+  return { status: '', restTokens: tokens };
+}
+
+function parseLocalOcrText(text) {
+  const lines = String(text || '')
+    .split(/\r?\n/)
+    .map((line) => line.replace(/\t/g, ' ').trim())
+    .filter(Boolean);
+
+  const rows = [];
+  const warnings = [];
+  const seen = new Set();
+
+  for (const line of lines) {
+    const phone = extractPhoneFromOcrLine(line);
+    if (!phone) continue;
+    if (seen.has(phone)) continue;
+    seen.add(phone);
+
+    const lineNoPhone = line
+      .replace(/(?:\+?1\s*)?(?:\(?\d{3}\)?[\s\-\.]*)\d{3}[\s\-\.]*\d{4}/, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const tokens = lineNoPhone.split(' ').filter(Boolean);
+
+    let type = '';
+    if (tokens.length && tokens[0].length <= 3) {
+      type = tokens.shift() || '';
+    }
+
+    const parsedStatus = parseOcrStatus(tokens);
+    const status = parsedStatus.status;
+    const pricePlan = parsedStatus.restTokens.join(' ').trim();
+
+    rows.push({
+      subscriber: phone,
+      type,
+      status,
+      pricePlan,
+      rawLine: line
+    });
+  }
+
+  if (!rows.length) {
+    warnings.push('No se detectaron telefonos de 10 digitos. Sube imagen mas nitida o recortada a la tabla.');
+  }
+
+  return { rows, warnings, lineCount: lines.length };
+}
+
+async function ocrImageBuffer(buffer) {
+  const worker = await createWorker('eng');
+  try {
+    const result = await worker.recognize(buffer);
+    return String(result?.data?.text || '');
+  } finally {
+    await worker.terminate();
+  }
+}
+
+app.post('/api/subscribers/extract-image', authenticateRequest, uploadMemory.single('file'), async (req, res) => {
+  try {
+    let fileBuffer = null;
+    let mime = '';
+
+    if (req.file?.buffer) {
+      fileBuffer = req.file.buffer;
+      mime = String(req.file.mimetype || '').toLowerCase();
+    } else if (req.body?.image_base64) {
+      const rawBase64 = String(req.body.image_base64).trim().replace(/^data:.*;base64,/, '');
+      if (!rawBase64) {
+        return badRequest(res, 'image_base64 invalido');
+      }
+      fileBuffer = Buffer.from(rawBase64, 'base64');
+      mime = String(req.body?.mime_type || 'image/png').toLowerCase();
+    } else {
+      return badRequest(res, 'Archivo requerido (file) o image_base64');
+    }
+
+    let text = '';
+    if (mime.includes('pdf')) {
+      const parsedPdf = await pdfParse(fileBuffer);
+      text = String(parsedPdf?.text || '').trim();
+      if (text.length < 30) {
+        return res.status(422).json({
+          error: 'PDF escaneado sin texto. Exporta/recorta una imagen de la tabla y vuelve a subir.'
+        });
+      }
+    } else {
+      text = await ocrImageBuffer(fileBuffer);
+    }
+
+    const parsed = parseLocalOcrText(text);
+    const rows = parsed.rows.map((row) => ({
+      subscriber: row.subscriber,
+      type: row.type,
+      status: row.status,
+      pricePlan: row.pricePlan
+    }));
+    return res.json({
+      ok: true,
+      rows,
+      text: rowsToClipboardText(rows),
+      warnings: parsed.warnings,
+      debug: {
+        detectedRows: rows.length,
+        parsedLines: parsed.lineCount
+      },
+      provider: 'local-ocr'
+    });
+  } catch (error) {
+    return serverError(res, error, 'Error extrayendo texto con OCR local');
+  }
+});
+
+function parseSubscriberRows(rawText) {
+  const lines = String(rawText || '')
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd());
+
+  const warnings = [];
+  const parsedRows = [];
+  const byPhone = new Map();
+  let ignored100 = 0;
+  let invalid = 0;
+  let duplicateCount = 0;
+
+  const consumed = new Set();
+
+  for (let idx = 0; idx < lines.length; idx += 1) {
+    if (consumed.has(idx)) continue;
+
+    const original = lines[idx];
+    const line = original.trim();
+    if (!line) continue;
+    if (/subscriber/i.test(line) && /status/i.test(line) && /plan/i.test(line)) continue;
+    if (/subscriber\s*list\s*for\s*ban/i.test(line)) continue;
+    if (/please\s+enter/i.test(line)) continue;
+
+    const phoneResult = extractPhoneFromLine(line);
+    if (phoneResult.ignored100) {
+      ignored100 += 1;
+      consumed.add(idx);
+      continue;
+    }
+
+    if (!phoneResult.phone) {
+      // Formato multilinea: estas lineas suelen ser estado/plan de la linea anterior.
+      if (extractStatusOnlyLine(line) || extractPlanFromStandaloneLine(line)) {
+        continue;
+      }
+
+      invalid += 1;
+      warnings.push(`Linea ${idx + 1}: sin telefono valido 787/939/989`);
+      parsedRows.push({
+        line_no: idx + 1,
+        raw_line: line,
+        phone: null,
+        status_norm: null,
+        plan_code: null,
+        action: 'invalid',
+        warning: 'telefono_invalido'
+      });
+      continue;
+    }
+
+    consumed.add(idx);
+
+    const inlineStatus = hasStatusToken(line);
+    let statusNorm = inlineStatus ? extractStatusFromLine(line) : null;
+    let planCode = inlineStatus ? extractPlanFromLine(line) : null;
+
+    if (!statusNorm && idx + 1 < lines.length && !consumed.has(idx + 1)) {
+      const nextLine = lines[idx + 1].trim();
+      const nextStatus = extractStatusOnlyLine(nextLine);
+      if (nextStatus) {
+        statusNorm = nextStatus;
+        consumed.add(idx + 1);
+      }
+    }
+
+    if (!planCode && idx + 1 < lines.length && !consumed.has(idx + 1)) {
+      const nextLine = lines[idx + 1].trim();
+      const nextPlan = extractPlanFromStandaloneLine(nextLine);
+      if (nextPlan) {
+        planCode = nextPlan;
+        consumed.add(idx + 1);
+      }
+    }
+
+    if (!planCode && idx + 2 < lines.length && !consumed.has(idx + 2)) {
+      const nextNextLine = lines[idx + 2].trim();
+      const nextNextPlan = extractPlanFromStandaloneLine(nextNextLine);
+      if (nextNextPlan) {
+        planCode = nextNextPlan;
+        consumed.add(idx + 2);
+      }
+    }
+
+    const row = {
+      line_no: idx + 1,
+      raw_line: line,
+      phone: phoneResult.phone,
+      status_norm: statusNorm || 'activo',
+      plan_code: planCode || null,
+      action: 'pending',
+      warning: phoneResult.prefixCorrected ? 'prefix_autocorrected' : null
+    };
+
+    if (phoneResult.prefixCorrected) {
+      warnings.push(`Linea ${idx + 1}: prefijo corregido por OCR (${row.phone})`);
+    }
+
+    if (byPhone.has(row.phone)) {
+      duplicateCount += 1;
+      const existingRow = byPhone.get(row.phone);
+      const isExistingActive = /activo|active/i.test(existingRow.status_norm);
+      const isNewActive = /activo|active/i.test(row.status_norm);
+
+      if (isExistingActive && !isNewActive) {
+        warnings.push(`Linea ${idx + 1}: repetido ignorado (${row.phone}), se conserva plan Activo anterior`);
+      } else {
+        warnings.push(`Linea ${idx + 1}: duplicado en pegado para ${row.phone}, se reemplaza linea anterior`);
+        byPhone.set(row.phone, row);
+      }
+    } else {
+      byPhone.set(row.phone, row);
+    }
+  }
+
+  const uniqueRows = [...byPhone.values()];
+  return {
+    uniqueRows,
+    allRows: parsedRows.concat(uniqueRows),
+    warnings,
+    stats: {
+      total_lines: lines.length,
+      valid_rows: uniqueRows.length,
+      ignored_100_prefix: ignored100,
+      invalid_lines: invalid,
+      duplicated_in_paste: duplicateCount
+    }
+  };
+}
+
+function resolvePriceFromCatalog(planCode, planCatalog) {
+  if (!planCode) return null;
+  const key = normalizePlanCodeKey(planCode);
+  if (!key) return null;
+
+  if (planCatalog.exact.has(key)) return planCatalog.exact.get(key);
+
+  const candidates = planCatalog.similar.filter((item) => item.key.includes(key) || key.includes(item.key));
+  if (candidates.length === 1) {
+    return candidates[0].price;
+  }
+  return null;
+}
+
+async function detectSubscriberSyncSchema(client) {
+  const [subColsResult, banColsResult] = await Promise.all([
+    client.query(`
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'subscribers'
+    `),
+    client.query(`
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'bans'
+    `)
+  ]);
+
+  const subCols = new Set(subColsResult.rows.map((r) => r.column_name));
+  const banCols = new Set(banColsResult.rows.map((r) => r.column_name));
+
+  const phoneColumn = subCols.has('phone_number')
+    ? 'phone_number'
+    : (subCols.has('phone') ? 'phone' : null);
+  const banNumberColumn = banCols.has('number')
+    ? 'number'
+    : (banCols.has('ban_number') ? 'ban_number' : null);
+
+  if (!phoneColumn || !banNumberColumn) {
+    throw new Error('Schema subscribers/bans incompatible para sync');
+  }
+
+  return {
+    phoneColumn,
+    banNumberColumn,
+    hasLineType: subCols.has('line_type'),
+    hasTangoVentaId: subCols.has('tango_ventaid'),
+    hasPlan: subCols.has('plan'),
+    hasMonthlyValue: subCols.has('monthly_value'),
+    hasStatus: subCols.has('status'),
+    hasCreatedAt: subCols.has('created_at'),
+    hasUpdatedAt: subCols.has('updated_at'),
+    hasCancelReason: subCols.has('cancel_reason')
+  };
+}
+
+async function detectSalespeopleSchema(client) {
+  const result = await client.query(`
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'salespeople'
+  `);
+
+  const cols = new Set(result.rows.map((r) => r.column_name));
+  return {
+    hasCommissionPercentage: cols.has('commission_percentage')
+  };
+}
+
+async function detectVendorProfileSchema(client) {
+  const tableResult = await client.query(`
+    SELECT EXISTS (
+      SELECT 1
+      FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = 'vendors'
+    ) AS exists
+  `);
+
+  return {
+    hasTable: Boolean(tableResult.rows[0]?.exists)
+  };
+}
+
+async function ensureSalespeopleCommissionColumn(client) {
+  try {
+    await client.query(`
+      ALTER TABLE salespeople
+      ADD COLUMN IF NOT EXISTS commission_percentage NUMERIC(5,2) DEFAULT 50.00
+    `);
+  } catch (error) {
+    if (error?.code !== '42501') throw error;
+    console.warn('[schema] Sin permisos para agregar salespeople.commission_percentage; se usará fallback legacy.');
+  }
+}
+
+async function ensureSubscriberReportsWorkflowColumns(client) {
+  try {
+    await client.query(`
+      ALTER TABLE subscriber_reports
+      ADD COLUMN IF NOT EXISTS is_audited BOOLEAN DEFAULT FALSE
+    `);
+    await client.query(`
+      ALTER TABLE subscriber_reports
+      ADD COLUMN IF NOT EXISTS audited_at TIMESTAMP NULL
+    `);
+    await client.query(`
+      ALTER TABLE subscriber_reports
+      ADD COLUMN IF NOT EXISTS withholding_applies BOOLEAN DEFAULT TRUE
+    `);
+  } catch (error) {
+    if (error?.code !== '42501') throw error;
+    console.warn('[schema] Sin permisos para agregar columnas workflow en subscriber_reports; se usará fallback.');
+  }
+}
+
+async function detectSubscriberReportsWorkflowSchema(client) {
+  const result = await client.query(`
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'subscriber_reports'
+  `);
+
+  const cols = new Set(result.rows.map((r) => r.column_name));
+  return {
+    hasIsAudited: cols.has('is_audited'),
+    hasAuditedAt: cols.has('audited_at'),
+    hasWithholdingApplies: cols.has('withholding_applies')
+  };
+}
+
+async function loadPlanCatalog(client) {
+  const catalog = { exact: new Map(), similar: [] };
+  try {
+    const result = await client.query(`
+      SELECT code, alpha_code, price
+      FROM plans
+      WHERE COALESCE(is_active, true) = true
+    `);
+
+    for (const row of result.rows) {
+      const price = row.price !== null ? Number(row.price) : null;
+      if (price === null || Number.isNaN(price)) continue;
+
+      const codeKey = normalizePlanCodeKey(row.code);
+      const alphaKey = normalizePlanCodeKey(row.alpha_code);
+
+      if (codeKey) {
+        catalog.exact.set(codeKey, price);
+        catalog.similar.push({ key: codeKey, price });
+      }
+      if (alphaKey) {
+        catalog.exact.set(alphaKey, price);
+        catalog.similar.push({ key: alphaKey, price });
+      }
+    }
+  } catch (_err) {
+    // plans table is optional for this sync, keep monthly_value unresolved when unavailable
+  }
+
+  // Fallback Tango: tipoplan.codigovoz -> rate/precio/price
+  try {
+    const legacyDB = getTangoPool(); // Usar la BD externa que sí tiene tipoplan
+    const tipoplanColsResult = await legacyDB.query(`
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'tipoplan'
+    `);
+    const tipoplanCols = new Set(tipoplanColsResult.rows.map((r) => String(r.column_name || '').toLowerCase()));
+
+    if (tipoplanCols.has('codigovoz')) {
+      const candidatePriceCols = ['rate', 'precio', 'price', 'renta', 'monthly_value'];
+      const priceCol = candidatePriceCols.find((col) => tipoplanCols.has(col));
+
+      if (priceCol) {
+        const result = await legacyDB.query(`
+          SELECT codigovoz, ${quoteIdent(priceCol)} AS price
+          FROM tipoplan
+          WHERE codigovoz IS NOT NULL
+        `);
+
+        for (const row of result.rows) {
+          const key = normalizePlanCodeKey(row.codigovoz);
+          if (!key) continue;
+
+          const rawPrice = row.price;
+          if (rawPrice === null || rawPrice === undefined || rawPrice === '') continue;
+          const parsedPrice = Number(String(rawPrice).replace(/[^0-9.-]/g, ''));
+          if (Number.isNaN(parsedPrice)) continue;
+
+          // Preferir catalogo local plans. tipoplan solo fallback.
+          if (!catalog.exact.has(key)) {
+            catalog.exact.set(key, parsedPrice);
+          }
+          catalog.similar.push({ key, price: parsedPrice });
+        }
+      }
+    }
+  } catch (_err) {
+    // tipoplan is optional
+    console.warn("[WARNING] Fail to load tipoplan from tango pool:", _err.message);
+  }
+
+  return catalog;
+}
+
+app.post('/api/subscribers/paste-sync', authenticateRequest, async (req, res) => {
+  const {
+    ban_id = null,
+    ban_number = null,
+    clipboard_text = '',
+    dry_run = false,
+    rows = null
+  } = req.body || {};
+
+  const rawFromRows = Array.isArray(rows)
+    ? rows
+      .map((row) => {
+        const subscriber = row?.subscriber || row?.phone || row?.phone_number || '';
+        const status = row?.status || '';
+        const plan = row?.pricePlan || row?.plan || '';
+        return `${subscriber} ${status} ${plan}`.trim();
+      })
+      .join('\n')
+    : '';
+
+  const rawText = String(clipboard_text || rawFromRows || '').trim();
+  if (!rawText) {
+    return badRequest(res, 'clipboard_text es obligatorio');
+  }
+  if (!ban_id && !ban_number) {
+    return badRequest(res, 'Debes enviar ban_id o ban_number');
+  }
+
+  const parsed = parseSubscriberRows(rawText);
+  const stats = {
+    total_lines: parsed.stats.total_lines,
+    valid_rows: parsed.stats.valid_rows,
+    ignored_100_prefix: parsed.stats.ignored_100_prefix,
+    invalid_lines: parsed.stats.invalid_lines,
+    duplicated_in_paste: parsed.stats.duplicated_in_paste,
+    conflicts_other_ban: 0,
+    inserted: 0,
+    updated: 0,
+    canceled: 0,
+    deleted: 0,
+    unchanged: 0,
+    set_active: 0,
+    set_cancelled: 0
+  };
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const schema = await detectSubscriberSyncSchema(client);
+    const phoneExpr = `NULLIF(regexp_replace(COALESCE(s.${quoteIdent(schema.phoneColumn)}::text, ''), '[^0-9]', '', 'g'), '')`;
+
+    const banNumberSql = quoteIdent(schema.banNumberColumn);
+    const banQuery = ban_id
+      ? `SELECT id, ${banNumberSql} AS ban_number FROM bans WHERE id = $1 LIMIT 1`
+      : `SELECT id, ${banNumberSql} AS ban_number FROM bans WHERE TRIM(${banNumberSql}::text) = TRIM($1::text) LIMIT 1`;
+    const banParam = ban_id || ban_number;
+    const banResult = await client.query(banQuery, [banParam]);
+    if (banResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return notFound(res, 'BAN');
+    }
+    const ban = banResult.rows[0];
+
+    const planCatalog = await loadPlanCatalog(client);
+    const incomingPhones = parsed.uniqueRows.map((row) => row.phone).filter(Boolean);
+
+    const existingBanResult = await client.query(`
+      SELECT
+        s.id,
+        s.ban_id,
+        s.${quoteIdent(schema.phoneColumn)} AS phone_value,
+        ${schema.hasPlan ? 's.plan,' : 'NULL AS plan,'}
+        ${schema.hasStatus ? 's.status,' : "NULL AS status,"}
+        ${schema.hasMonthlyValue ? 's.monthly_value,' : 'NULL AS monthly_value,'}
+        ${phoneExpr} AS phone_norm
+      FROM subscribers s
+      WHERE s.ban_id = $1
+    `, [ban.id]);
+
+    const existingByPhone = new Map();
+    for (const row of existingBanResult.rows) {
+      if (row.phone_norm) {
+        existingByPhone.set(String(row.phone_norm), row);
+      }
+    }
+
+    const globalByPhone = new Map();
+    if (incomingPhones.length > 0) {
+      const globalResult = await client.query(`
+        SELECT
+          s.id,
+          s.ban_id,
+          ${phoneExpr} AS phone_norm
+        FROM subscribers s
+        WHERE ${phoneExpr} = ANY($1::text[])
+      `, [incomingPhones]);
+
+      for (const row of globalResult.rows) {
+        const key = String(row.phone_norm || '');
+        if (!key) continue;
+        if (!globalByPhone.has(key)) globalByPhone.set(key, []);
+        globalByPhone.get(key).push(row);
+      }
+    }
+
+    const missingPlans = new Set();
+    for (const row of parsed.uniqueRows) {
+      const desiredPlan = row.plan_code || null;
+      if (desiredPlan && resolvePriceFromCatalog(desiredPlan, planCatalog) === null) {
+        missingPlans.add(desiredPlan);
+      }
+    }
+
+    if (missingPlans.size > 0) {
+      const missingList = Array.from(missingPlans).join(', ');
+      parsed.warnings.push(`🛑 ALERTA: Los planes "${missingList}" no existen en el sistema. Se procesarán sin precio. Créalos después en la pestaña "Constructor Tarifas".`);
+    }
+
+    const previewRows = [];
+    for (const row of parsed.uniqueRows) {
+      const current = existingByPhone.get(row.phone);
+      const desiredStatus = normalizeStatus(row.status_norm);
+      const desiredPlan = row.plan_code || null;
+      const resolvedPrice = resolvePriceFromCatalog(desiredPlan, planCatalog);
+
+      if (current) {
+        existingByPhone.delete(row.phone);
+        const currentStatus = normalizeStatus(current.status);
+        const currentPlan = current.plan ? String(current.plan) : null;
+        const currentPhone = current.phone_value ? String(current.phone_value).replace(/\D/g, '') : '';
+        const currentMonthly = current.monthly_value !== null ? Number(current.monthly_value) : null;
+        const needsStatus = currentStatus !== desiredStatus;
+        const needsPlan = schema.hasPlan && desiredPlan !== null && currentPlan !== desiredPlan;
+        const needsPhone = currentPhone !== row.phone;
+        const needsMonthly = schema.hasMonthlyValue && resolvedPrice !== null && currentMonthly !== resolvedPrice;
+        const hasChanges = needsStatus || needsPlan || needsPhone || needsMonthly;
+
+        let action = 'unchanged';
+        if (hasChanges) action = desiredStatus === 'cancelado' ? 'cancel_existing' : 'update_existing';
+
+        previewRows.push({
+          ...row,
+          action,
+          warning: null
+        });
+
+        if (!hasChanges) {
+          stats.unchanged += 1;
+          continue;
+        }
+
+        if (action === 'cancel_existing') {
+          stats.canceled += 1;
+          stats.set_cancelled += 1;
+        } else {
+          stats.updated += 1;
+          stats.set_active += 1;
+        }
+
+        if (!dry_run) {
+          const setParts = [];
+          const values = [];
+          let idx = 1;
+
+          setParts.push(`${quoteIdent(schema.phoneColumn)} = $${idx}`);
+          values.push(row.phone);
+          idx += 1;
+
+          if (schema.hasStatus) {
+            setParts.push(`status = $${idx}`);
+            values.push(desiredStatus);
+            idx += 1;
+          }
+          if (schema.hasPlan) {
+            setParts.push(`plan = $${idx}`);
+            values.push(desiredPlan);
+            idx += 1;
+          }
+          if (schema.hasMonthlyValue && resolvedPrice !== null) {
+            setParts.push(`monthly_value = $${idx}`);
+            values.push(resolvedPrice);
+            idx += 1;
+          }
+          if (schema.hasCancelReason) {
+            setParts.push(`cancel_reason = $${idx}`);
+            values.push(desiredStatus === 'cancelado' ? 'Cancelado via pegado masivo' : null);
+            idx += 1;
+          }
+          if (schema.hasUpdatedAt) {
+            setParts.push('updated_at = NOW()');
+          }
+
+          values.push(current.id);
+          await client.query(
+            `UPDATE subscribers SET ${setParts.join(', ')} WHERE id = $${idx}`,
+            values
+          );
+        }
+        continue;
+      }
+
+      const globalMatches = globalByPhone.get(row.phone) || [];
+      const conflictRow = globalMatches.find((item) => String(item.ban_id) !== String(ban.id));
+      if (conflictRow) {
+        stats.conflicts_other_ban += 1;
+        previewRows.push({
+          ...row,
+          action: 'conflict_other_ban',
+          warning: `telefono ya existe en otro BAN (${conflictRow.ban_id})`
+        });
+        continue;
+      }
+
+      const insertStatus = desiredStatus;
+      previewRows.push({
+        ...row,
+        action: insertStatus === 'cancelado' ? 'insert_cancelado' : 'insert_new',
+        warning: null
+      });
+
+      if (insertStatus === 'cancelado') {
+        stats.canceled += 1;
+        stats.set_cancelled += 1;
+      } else {
+        stats.inserted += 1;
+        stats.set_active += 1;
+      }
+
+      if (!dry_run) {
+        const cols = ['ban_id', schema.phoneColumn];
+        const valuesSql = ['$1', '$2'];
+        const values = [ban.id, row.phone];
+        let idx = 3;
+
+        if (schema.hasStatus) {
+          cols.push('status');
+          valuesSql.push(`$${idx}`);
+          values.push(insertStatus);
+          idx += 1;
+        }
+        if (schema.hasPlan) {
+          cols.push('plan');
+          valuesSql.push(`$${idx}`);
+          values.push(desiredPlan);
+          idx += 1;
+        }
+        if (schema.hasMonthlyValue && resolvedPrice !== null) {
+          cols.push('monthly_value');
+          valuesSql.push(`$${idx}`);
+          values.push(resolvedPrice);
+          idx += 1;
+        }
+        if (schema.hasCancelReason) {
+          cols.push('cancel_reason');
+          valuesSql.push(`$${idx}`);
+          values.push(insertStatus === 'cancelado' ? 'Cancelado via pegado masivo' : null);
+          idx += 1;
+        }
+        if (schema.hasCreatedAt) {
+          cols.push('created_at');
+          valuesSql.push('NOW()');
+        }
+        if (schema.hasUpdatedAt) {
+          cols.push('updated_at');
+          valuesSql.push('NOW()');
+        }
+
+        await client.query(
+          `INSERT INTO subscribers (${cols.map((col) => quoteIdent(col)).join(', ')})
+           VALUES (${valuesSql.join(', ')})`,
+          values
+        );
+      }
+    }
+
+    const rowsToDelete = Array.from(existingByPhone.values());
+    for (const rowToDelete of rowsToDelete) {
+      previewRows.push({
+        phone: rowToDelete.phone_value || '',
+        status_norm: rowToDelete.status || '',
+        plan_code: rowToDelete.plan || '',
+        action: 'delete_existing',
+        warning: 'no existe en la imagen procesada'
+      });
+      stats.deleted = (stats.deleted || 0) + 1;
+
+      if (!dry_run) {
+        await client.query('DELETE FROM subscribers WHERE id = $1', [rowToDelete.id]);
+      }
+    }
+
+    if (dry_run) {
+      await client.query('ROLLBACK');
+    } else {
+      // Sync the BAN status so that the BAN goes to cancelled tab if all its subscribers are cancelled.
+      await client.query(`
+        UPDATE bans 
+        SET status = CASE 
+          WHEN (
+            SELECT COUNT(*) 
+            FROM subscribers 
+            WHERE ban_id = bans.id
+          ) > 0 AND (
+            SELECT COUNT(*) 
+            FROM subscribers 
+            WHERE ban_id = bans.id 
+              AND LOWER(status) NOT IN ('cancelado', 'cancelled', 'inactivo')
+          ) = 0 THEN 'C'
+          ELSE 'A'
+        END,
+        updated_at = NOW()
+        WHERE id = $1
+      `, [ban.id]);
+
+      await client.query('COMMIT');
+    }
+
+    return res.json({
+      ok: true,
+      dry_run: Boolean(dry_run),
+      stats,
+      rows: previewRows,
+      warnings: parsed.warnings
+    });
+  } catch (error) {
+    try { await client.query('ROLLBACK'); } catch (_e) { /* ignore */ }
+    return serverError(res, error, 'Error procesando pegado masivo de suscriptores');
+  } finally {
+    client.release();
+  }
+});
 
 // GET /api/subscribers - Obtener suscriptores
 app.get('/api/subscribers', authenticateRequest, async (req, res) => {
@@ -2805,6 +4971,87 @@ app.delete('/api/admin/clean-database', authenticateRequest, async (req, res) =>
 app.get('/api/health/full', fullSystemCheck);
 app.get('/api/system-test/full', runFullSystemTest);
 
+// GET /api/audit-log - Obtener historial de auditoría (SOLO ADMIN)
+app.get('/api/audit-log', async (req, res) => {
+  try {
+    if (req.user?.role !== 'admin') {
+      return res.status(403).json({ error: 'Acceso denegado. Solo administradores.' });
+    }
+
+    const limit = parseInt(req.query.limit) || 100;
+    const offset = parseInt(req.query.offset) || 0;
+    const action = req.query.action;
+    const entityType = req.query.entity_type;
+    const userId = req.query.user_id;
+    const username = req.query.username;
+
+    let whereConditions = [];
+    let params = [];
+    let paramCount = 1;
+
+    if (action) {
+      whereConditions.push(`action = $${paramCount++} `);
+      params.push(action);
+    }
+    if (entityType) {
+      whereConditions.push(`entity_type = $${paramCount++} `);
+      params.push(entityType);
+    }
+    if (userId) {
+      whereConditions.push(`user_id = $${paramCount++} `);
+      params.push(parseInt(userId));
+    }
+    if (username) {
+      whereConditions.push(`LOWER(COALESCE(username, '')) LIKE $${paramCount++} `);
+      params.push(`%${String(username).toLowerCase()}%`);
+    }
+
+    const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')} ` : '';
+
+    params.push(limit, offset);
+    const rows = await query(
+      `SELECT * FROM audit_log ${whereClause} ORDER BY created_at DESC LIMIT $${paramCount++} OFFSET $${paramCount++} `,
+      params
+    );
+
+    const countResult = await query(`SELECT COUNT(*) as total FROM audit_log ${whereClause} `, params.slice(0, -2));
+    const total = parseInt(countResult[0].total);
+
+    res.json({
+      logs: rows,
+      total,
+      limit,
+      offset
+    });
+  } catch (error) {
+    serverError(res, error, 'Error obteniendo historial de auditoría');
+  }
+});
+
+// GET /api/audit-log/users - Lista de usuarios para filtros de auditoría
+app.get('/api/audit-log/users', async (req, res) => {
+  try {
+    if (req.user?.role !== 'admin') {
+      return res.status(403).json({ error: 'Acceso denegado. Solo administradores.' });
+    }
+
+    const rows = await query(`
+      SELECT username
+      FROM (
+        SELECT DISTINCT username FROM users_auth
+        UNION
+        SELECT DISTINCT username FROM audit_log WHERE username IS NOT NULL
+      ) u
+      WHERE username IS NOT NULL AND TRIM(username) <> ''
+      ORDER BY username
+    `);
+
+    res.json(rows.map((row) => row.username));
+  } catch (error) {
+    serverError(res, error, 'Error obteniendo usuarios de auditoría');
+  }
+});
+
 // ======================================================
 // SPA Fallback
 // ======================================================
@@ -2837,10 +5084,12 @@ const server = app.listen(PORT, () => {
 // Función helper para registrar eventos
 async function logAudit(userId, username, action, entityType, entityId, entityName, details, ipAddress = null) {
   try {
+    const safeUserId = Number.isFinite(Number(userId)) ? Number(userId) : null;
+    const safeEntityId = Number.isFinite(Number(entityId)) ? Number(entityId) : null;
     await query(
       `INSERT INTO audit_log(user_id, username, action, entity_type, entity_id, entity_name, details, ip_address)
 VALUES($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [userId, username, action, entityType, entityId, entityName, details, ipAddress]
+      [safeUserId, username, action, entityType, safeEntityId, entityName, details, ipAddress]
     );
   } catch (error) {
     console.error('❌ Error registrando auditoría:', error);
@@ -2860,6 +5109,7 @@ app.get('/api/audit-log', async (req, res) => {
     const action = req.query.action;
     const entityType = req.query.entity_type;
     const userId = req.query.user_id;
+    const username = req.query.username;
 
     let whereConditions = [];
     let params = [];
@@ -2876,6 +5126,10 @@ app.get('/api/audit-log', async (req, res) => {
     if (userId) {
       whereConditions.push(`user_id = $${paramCount++} `);
       params.push(parseInt(userId));
+    }
+    if (username) {
+      whereConditions.push(`LOWER(COALESCE(username, '')) LIKE $${paramCount++} `);
+      params.push(`%${String(username).toLowerCase()}%`);
     }
 
     const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')} ` : '';
@@ -2957,3 +5211,4 @@ app.get('/api/completed-prospects', authenticateRequest, (req, res) => {
 server.timeout = 3600000;
 server.keepAliveTimeout = 3600000;
 server.headersTimeout = 3600000;
+
