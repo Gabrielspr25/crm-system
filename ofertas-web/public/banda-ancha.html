@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Claro Business — Banda Ancha / Internet PYMES</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+
+<!-- Header -->
+<header class="header">
+    <div class="header-inner">
+        <div class="brand">
+            <div class="brand-logo">CLARO</div>
+            <div class="brand-text">
+                <h1>Banda Ancha / Internet — Estructura de Negocios</h1>
+                <span class="brand-rev">PYMES / Corporativo · GPON Fibra + Cobre/VRAD · Vigente 2024-2026</span>
+            </div>
+        </div>
+        <div class="header-actions">
+            <div class="search-box">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <input type="text" id="searchInput" placeholder="Buscar plan, velocidad, código...">
+            </div>
+            <button class="dark-toggle" id="darkToggle" title="Modo Noche">
+                <span class="dark-toggle-icon" id="darkIcon">🌙</span>
+            </button>
+        </div>
+    </div>
+</header>
+
+<!-- Navigation -->
+<nav class="nav-bar">
+    <div class="nav-inner">
+        <a href="index.html" class="nav-link">📞 Planes Fijos</a>
+        <a href="movil.html" class="nav-link">📱 Planes Móviles</a>
+        <a href="banda-ancha.html" class="nav-link active">💻 Banda Ancha</a>
+    </div>
+</nav>
+
+<!-- Sticky Filters -->
+<div class="filters-bar">
+    <div class="filters-inner">
+        <div class="filter-group">
+            <label>Tecnología:</label>
+            <button class="filter-btn active" data-tech="all">Todas</button>
+            <button class="filter-btn" data-tech="GPON"><span class="dot dot-gpon"></span> GPON Fibra</button>
+            <button class="filter-btn" data-tech="COBRE/VRAD"><span class="dot dot-cobre"></span> Cobre/VRAD</button>
+        </div>
+        <div class="filter-group">
+            <label>Categoría:</label>
+            <select id="categoryFilter">
+                <option value="all">Todas las categorías</option>
+            </select>
+        </div>
+        <div class="stats" id="stats">Mostrando todos los planes</div>
+    </div>
+</div>
+
+<!-- Main Container -->
+<div class="container">
+
+    <!-- Quick Reference -->
+    <div class="quick-ref" id="quickRef">
+        <div class="quick-ref-header" onclick="document.getElementById('quickRef').classList.toggle('collapsed')">
+            <h2>📋 Referencia Rápida — Internet Empresarial</h2>
+            <span class="toggle-icon">▼</span>
+        </div>
+        <div class="quick-ref-body">
+            <div class="ref-cards">
+                <div class="ref-card ref-no-contract">
+                    <div class="ref-card-title">Sin Contrato (0 meses)</div>
+                    <div class="ref-card-discount">$120</div>
+                    <div class="ref-card-detail">Instalación completa. Sin compromiso.</div>
+                </div>
+                <div class="ref-card ref-12m">
+                    <div class="ref-card-title">Contrato 12 Meses</div>
+                    <div class="ref-card-discount">$60</div>
+                    <div class="ref-card-detail">50% descuento en instalación.</div>
+                </div>
+                <div class="ref-card ref-24m">
+                    <div class="ref-card-title">Contrato 24 Meses</div>
+                    <div class="ref-card-discount">$0</div>
+                    <div class="ref-card-detail">Instalación GRATIS. Penalidad $260.</div>
+                </div>
+            </div>
+
+            <div class="ref-cards" style="margin-top:14px;">
+                <div class="ref-card" style="background:#eff6ff;border-color:#93c5fd;">
+                    <div class="ref-card-title">GPON = Fibra Óptica</div>
+                    <div class="ref-card-discount" style="color:#2563eb;font-size:16px;">30MB → 1GB</div>
+                    <div class="ref-card-detail">Velocidad simétrica. Ideal para negocios. Hasta 1 Gbps.</div>
+                </div>
+                <div class="ref-card" style="background:#fffbeb;border-color:#fde68a;">
+                    <div class="ref-card-title">Cobre / VRAD</div>
+                    <div class="ref-card-discount" style="color:#d97706;font-size:16px;">5M → 100M</div>
+                    <div class="ref-card-detail">Disponible en más áreas. Velocidades asimétricas (bajada/subida).</div>
+                </div>
+                <div class="ref-card" style="background:#f0fdf4;border-color:#86efac;">
+                    <div class="ref-card-title">2Play = Internet + Voz</div>
+                    <div class="ref-card-discount" style="color:#16a34a;font-size:16px;">Todo Incluido</div>
+                    <div class="ref-card-detail">Todos los planes incluyen Voz Ilimitada PR/US. Es como 2Play automático.</div>
+                </div>
+            </div>
+
+            <div class="ref-glossary">
+                <h3>Glosario Internet</h3>
+                <div class="glossary-grid">
+                    <div><strong>MB</strong> = Megabits por segundo (velocidad)</div>
+                    <div><strong>GB</strong> = Gigabit por segundo (1000 MB)</div>
+                    <div><strong>GPON</strong> = Fibra Óptica (más rápida, más estable)</div>
+                    <div><strong>COBRE/VRAD</strong> = Tecnología DSL vectorizada</div>
+                    <div><strong>2Play</strong> = Internet + Voz en un solo plan</div>
+                    <div><strong>3Play</strong> = Internet + Voz + TV</div>
+                    <div><strong>BUNDLE</strong> = Paquete de múltiples líneas con descuento</div>
+                    <div><strong>p/l</strong> = Precio "por línea" del bundle</div>
+                    <div><strong>BMS</strong> = Business Mono Speaker (1 línea)</div>
+                    <div><strong>BML</strong> = Business Multi Line (multilínea)</div>
+                    <div><strong>ADD</strong> = Línea Adicional bajo un plan existente</div>
+                    <div><strong>PRUS ILIM</strong> = Voz Ilimitada Puerto Rico y US</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Promo -->
+    <div class="promo-banner">
+        <div class="promo-icon">⚡</div>
+        <div class="promo-text">
+            <strong>Contrato 24 meses = Instalación GRATIS</strong> en todos los planes GPON y Cobre/VRAD · Penalidad por cancelación temprana: $260
+        </div>
+    </div>
+
+    <!-- Plans Container -->
+    <div id="plansContainer"></div>
+
+    <!-- No results -->
+    <div id="noResults" class="no-results" style="display:none">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+        <h3>No se encontraron planes</h3>
+        <p>Intenta con otro término de búsqueda o cambia los filtros</p>
+    </div>
+</div>
+
+<footer class="footer">
+    <p>Claro Puerto Rico — Banda Ancha Negocios · Herramienta interna para vendedores</p>
+</footer>
+
+<script src="banda-ancha-data.js"></script>
+</body>
+</html>
