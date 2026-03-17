@@ -91,6 +91,49 @@ body {
 }
 .search-box input::placeholder { color: rgba(255,255,255,0.7); }
 
+/* ===== NAV BAR ===== */
+.nav-bar {
+    background: #1e293b;
+    border-bottom: 1px solid #334155;
+}
+.nav-inner {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 0 24px;
+    display: flex;
+    gap: 0;
+}
+.nav-link {
+    padding: 10px 20px;
+    color: #94a3b8;
+    text-decoration: none;
+    font-size: 13px;
+    font-weight: 600;
+    border-bottom: 3px solid transparent;
+    transition: all 0.15s;
+}
+.nav-link:hover {
+    color: white;
+    background: rgba(255,255,255,0.05);
+}
+.nav-link.active {
+    color: white;
+    border-bottom-color: #DA291C;
+}
+.nav-link.disabled {
+    color: #475569;
+    pointer-events: none;
+    cursor: default;
+}
+.nav-link.disabled small {
+    font-size: 10px;
+    font-weight: 400;
+}
+body.dark .nav-bar { background: #0a0f1a; border-color: #1e293b; }
+body.dark .nav-link { color: #64748b; }
+body.dark .nav-link:hover { color: #e2e8f0; }
+body.dark .nav-link.active { color: #e2e8f0; border-bottom-color: #DC2626; }
+
 /* ===== FILTERS BAR ===== */
 .filters-bar {
     background: white;
@@ -356,6 +399,204 @@ body {
 .cat-valores-agregados .category-header   { background: linear-gradient(135deg, #475569, #334155); color: white; }
 .cat-bonos .category-header               { background: linear-gradient(135deg, #16a34a, #15803d); color: white; }
 
+/* Mobile Category Color Themes */
+.cat-movil-basico .category-header  { background: linear-gradient(135deg, #6366f1, #4f46e5); color: white; }
+.cat-movil-red .category-header     { background: linear-gradient(135deg, #DC2626, #b91c1c); color: white; }
+.cat-movil-sf .category-header      { background: linear-gradient(135deg, #2563eb, #1d4ed8); color: white; }
+.cat-movil-multi .category-header   { background: linear-gradient(135deg, #059669, #047857); color: white; }
+.cat-movil-ofertas .category-header { background: linear-gradient(135deg, #d97706, #b45309); color: white; }
+
+/* ===== PROMO BANNER ===== */
+.promo-banner {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    background: linear-gradient(135deg, #eff6ff, #dbeafe);
+    border: 2px solid #93c5fd;
+    border-radius: 12px;
+    padding: 16px 20px;
+    margin-bottom: 24px;
+}
+.promo-icon { font-size: 32px; flex-shrink: 0; }
+.promo-text { font-size: 14px; color: #1e3a5f; line-height: 1.5; }
+.promo-text strong { color: #1e40af; }
+
+body.dark .promo-banner {
+    background: linear-gradient(135deg, #172554, #1e3a5f);
+    border-color: #1e40af;
+}
+body.dark .promo-text { color: #93c5fd; }
+body.dark .promo-text strong { color: #60a5fa; }
+
+/* ===== PLAN CARDS (mobile page) ===== */
+.cat-description {
+    padding: 0 20px 10px;
+    font-size: 13px;
+    color: #64748b;
+}
+body.dark .cat-description { color: #64748b; }
+
+.plan-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 16px;
+    padding: 0 20px 20px;
+}
+
+.plan-card {
+    background: #fafbfc;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    padding: 16px;
+    transition: transform 0.15s, box-shadow 0.15s;
+}
+.plan-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+}
+
+.plan-card.destacado {
+    border-color: #fbbf24;
+    background: #fffbeb;
+}
+.plan-card.premium {
+    border-color: #DA291C;
+    background: linear-gradient(135deg, #fef2f2, #fff1f2);
+    box-shadow: 0 0 0 1px rgba(218,41,28,0.1);
+}
+
+/* Card header */
+.card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+.card-code {
+    font-family: 'Courier New', monospace;
+    font-size: 11px;
+    font-weight: 700;
+    color: #64748b;
+    background: #f1f5f9;
+    padding: 2px 8px;
+    border-radius: 4px;
+}
+.card-badge {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 4px;
+}
+.premium-badge { background: #fef2f2; color: #DC2626; border: 1px solid #fecaca; }
+.dest-badge { background: #fffbeb; color: #b45309; border: 1px solid #fde68a; }
+
+.card-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: #1e293b;
+    margin-bottom: 6px;
+}
+
+.card-price-row {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+    margin-bottom: 14px;
+}
+.card-price {
+    font-size: 28px;
+    font-weight: 800;
+    color: #DA291C;
+}
+.card-period {
+    font-size: 13px;
+    color: #64748b;
+    font-weight: 500;
+}
+.card-ppl {
+    font-size: 12px;
+    color: #059669;
+    font-weight: 600;
+    margin-left: 6px;
+}
+
+/* Card features list */
+.card-features {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 12px;
+}
+.feat {
+    display: grid;
+    grid-template-columns: 20px 70px 1fr;
+    gap: 6px;
+    align-items: start;
+    font-size: 12px;
+}
+.feat-icon { text-align: center; font-size: 13px; }
+.feat-label {
+    font-weight: 700;
+    color: #64748b;
+    text-transform: uppercase;
+    font-size: 10px;
+    letter-spacing: 0.3px;
+    padding-top: 1px;
+}
+.feat-val {
+    color: #334155;
+    font-weight: 500;
+}
+.feat-val.hotspot-val {
+    color: #059669;
+    font-weight: 700;
+}
+
+/* Card note */
+.card-note {
+    padding-top: 10px;
+    border-top: 1px solid #e2e8f0;
+    font-size: 12px;
+    color: #92400e;
+    font-style: italic;
+    line-height: 1.4;
+}
+
+/* ===== DARK MODE — Plan Cards ===== */
+body.dark .plan-card {
+    background: #162032;
+    border-color: #334155;
+}
+body.dark .plan-card:hover {
+    box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+}
+body.dark .plan-card.destacado {
+    border-color: #854d0e;
+    background: #1a2030;
+}
+body.dark .plan-card.premium {
+    border-color: #991b1b;
+    background: linear-gradient(135deg, #1a1020, #200f0f);
+    box-shadow: 0 0 0 1px rgba(218,41,28,0.15);
+}
+body.dark .card-code {
+    color: #94a3b8;
+    background: #0f172a;
+}
+body.dark .premium-badge { background: #2d1b1b; color: #f87171; border-color: #7f1d1d; }
+body.dark .dest-badge { background: #2d2611; color: #fbbf24; border-color: #78350f; }
+body.dark .card-title { color: #f1f5f9; }
+body.dark .card-price { color: #f87171; }
+body.dark .card-period { color: #64748b; }
+body.dark .card-ppl { color: #34d399; }
+body.dark .feat-label { color: #64748b; }
+body.dark .feat-val { color: #cbd5e1; }
+body.dark .feat-val.hotspot-val { color: #34d399; }
+body.dark .card-note {
+    border-color: #334155;
+    color: #fbbf24;
+}
+
 /* ===== TABLE ===== */
 .category-body {
     overflow-x: auto;
@@ -559,6 +800,11 @@ body {
     .cell-price { font-size: 13px; }
     .ref-cards { grid-template-columns: 1fr; }
     .glossary-grid { grid-template-columns: 1fr; }
+    .plan-cards { grid-template-columns: 1fr; padding: 0 12px 12px; }
+    .card-price { font-size: 24px; }
+    .feat { grid-template-columns: 20px 60px 1fr; }
+    .promo-banner { flex-direction: column; text-align: center; }
+    .nav-link { padding: 8px 12px; font-size: 12px; }
 }
 
 /* ===== DARK MODE TOGGLE ===== */

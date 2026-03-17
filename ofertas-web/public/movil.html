@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Claro Business — Planes Móviles PYMES</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+
+<!-- Header -->
+<header class="header">
+    <div class="header-inner">
+        <div class="brand">
+            <div class="brand-logo">CLARO</div>
+            <div class="brand-text">
+                <h1>Planes Móviles — Estructura de Negocios</h1>
+                <span class="brand-rev">PYMES / Corporativo · Vigente 2024-2026</span>
+            </div>
+        </div>
+        <div class="header-actions">
+            <div class="search-box">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <input type="text" id="searchInput" placeholder="Buscar plan, código, precio...">
+            </div>
+            <button class="dark-toggle" id="darkToggle" title="Modo Noche">
+                <span class="dark-toggle-icon" id="darkIcon">🌙</span>
+            </button>
+        </div>
+    </div>
+</header>
+
+<!-- Navigation -->
+<nav class="nav-bar">
+    <div class="nav-inner">
+        <a href="index.html" class="nav-link">📞 Planes Fijos</a>
+        <a href="movil.html" class="nav-link active">📱 Planes Móviles</a>
+        <a href="#" class="nav-link disabled">💻 Banda Ancha <small>(próximamente)</small></a>
+    </div>
+</nav>
+
+<!-- Sticky Filters -->
+<div class="filters-bar">
+    <div class="filters-inner">
+        <div class="filter-group">
+            <label>Categoría:</label>
+            <select id="categoryFilter">
+                <option value="all">Todas las categorías</option>
+            </select>
+        </div>
+        <div class="stats" id="stats">Mostrando todos los planes</div>
+    </div>
+</div>
+
+<!-- Main Container -->
+<div class="container">
+
+    <!-- Quick Reference -->
+    <div class="quick-ref" id="quickRef">
+        <div class="quick-ref-header" onclick="document.getElementById('quickRef').classList.toggle('collapsed')">
+            <h2>📋 Referencia Rápida — Planes Móviles Business</h2>
+            <span class="toggle-icon">▼</span>
+        </div>
+        <div class="quick-ref-body">
+            <div class="ref-cards">
+                <div class="ref-card" style="background:#fef2f2;border-color:#fca5a5;">
+                    <div class="ref-card-title">Business RED</div>
+                    <div class="ref-card-discount" style="color:#DC2626;font-size:16px;">Plus · Extreme · Supreme</div>
+                    <div class="ref-card-detail">Planes individuales desde $50. Sin reducción de velocidad. Hotspot 10-100GB.</div>
+                </div>
+                <div class="ref-card" style="background:#eff6ff;border-color:#93c5fd;">
+                    <div class="ref-card-title">Claro Sin Fronteras</div>
+                    <div class="ref-card-discount" style="color:#2563eb;font-size:16px;">18+ Países</div>
+                    <div class="ref-card-detail">PR, US, MX, CA, RD, AR, UY, PY, PA, GT, NI, HN, CR, PE, CL, CO, SV, BR, EC</div>
+                </div>
+                <div class="ref-card" style="background:#f0fdf4;border-color:#86efac;">
+                    <div class="ref-card-title">Multilíneas</div>
+                    <div class="ref-card-discount" style="color:#16a34a;font-size:16px;">Hasta 10 Líneas</div>
+                    <div class="ref-card-detail">Desde $35/línea. Permite Móvil + Banda Ancha. Ahorro significativo en volumen.</div>
+                </div>
+            </div>
+            <div class="ref-glossary">
+                <h3>Glosario Móvil</h3>
+                <div class="glossary-grid">
+                    <div><strong>PUJ</strong> = Política de Uso Justo (data a máx velocidad)</div>
+                    <div><strong>Hotspot</strong> = Compartir data del celular vía WiFi</div>
+                    <div><strong>LD</strong> = Larga Distancia</div>
+                    <div><strong>RM</strong> = Roaming</div>
+                    <div><strong>BA</strong> = Banda Ancha (permite usar plan como internet)</div>
+                    <div><strong>VOLTE</strong> = Voz sobre LTE (llamadas HD)</div>
+                    <div><strong>Trade-In</strong> = Entregar equipo viejo por crédito</div>
+                    <div><strong>Portabilidad</strong> = Mantener número al cambiar de operador</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bono de Portabilidad destacado -->
+    <div class="promo-banner">
+        <div class="promo-icon">🎁</div>
+        <div class="promo-text">
+            <strong>Bono Portabilidad PYMES:</strong> Convergentes $150 · No Convergentes $150 (2+ líneas) o $50 (1 línea) — Planes desde $45
+        </div>
+    </div>
+
+    <!-- Plans Container -->
+    <div id="plansContainer"></div>
+
+    <!-- No results -->
+    <div id="noResults" class="no-results" style="display:none">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+        <h3>No se encontraron planes</h3>
+        <p>Intenta con otro término de búsqueda o cambia los filtros</p>
+    </div>
+</div>
+
+<footer class="footer">
+    <p>Claro Puerto Rico — Planes Móviles Negocios · Herramienta interna para vendedores</p>
+</footer>
+
+<script src="movil-data.js"></script>
+</body>
+</html>
