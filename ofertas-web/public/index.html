@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Claro Business — Catálogo de Planes PYMES</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+
+<!-- Header -->
+<header class="header">
+    <div class="header-inner">
+        <div class="brand">
+            <div class="brand-logo">CLARO</div>
+            <div class="brand-text">
+                <h1>Catálogo de Planes — Estructura de Negocios</h1>
+                <span class="brand-rev">REV. 02.26.2024 · PYMES / Corporativo</span>
+            </div>
+        </div>
+        <div class="header-actions">
+            <div class="search-box">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <input type="text" id="searchInput" placeholder="Buscar plan, código, alfa code...">
+            </div>
+            <button class="dark-toggle" id="darkToggle" title="Modo Noche">
+                <span class="dark-toggle-icon" id="darkIcon">🌙</span>
+            </button>
+        </div>
+    </div>
+</header>
+
+<!-- Sticky Filters -->
+<div class="filters-bar">
+    <div class="filters-inner">
+        <div class="filter-group">
+            <label>Tecnología:</label>
+            <button class="filter-btn active" data-tech="all">Todas</button>
+            <button class="filter-btn" data-tech="COBRE/VRAD">
+                <span class="dot dot-cobre"></span>COBRE/VRAD
+            </button>
+            <button class="filter-btn" data-tech="GPON">
+                <span class="dot dot-gpon"></span>GPON
+            </button>
+        </div>
+        <div class="filter-group">
+            <label>Categoría:</label>
+            <select id="categoryFilter">
+                <option value="all">Todas las categorías</option>
+            </select>
+        </div>
+        <div class="stats" id="stats">Mostrando todos los planes</div>
+    </div>
+</div>
+
+<!-- Main Container -->
+<div class="container">
+
+    <!-- Quick Reference: OSADÍA Contracts -->
+    <div class="quick-ref" id="quickRef">
+        <div class="quick-ref-header" onclick="document.getElementById('quickRef').classList.toggle('collapsed')">
+            <h2>📋 Referencia Rápida — Contratos OSADÍA y Glosario</h2>
+            <span class="toggle-icon">▼</span>
+        </div>
+        <div class="quick-ref-body">
+            <div class="ref-cards">
+                <div class="ref-card ref-no-contract">
+                    <div class="ref-card-title">Sin Contrato</div>
+                    <div class="ref-card-discount">0% desc.</div>
+                    <div class="ref-card-detail">Paga instalación y activación completa</div>
+                </div>
+                <div class="ref-card ref-12m">
+                    <div class="ref-card-title">Contrato 12 Meses</div>
+                    <div class="ref-card-code">Código: 3254</div>
+                    <div class="ref-card-discount">50% desc.</div>
+                    <div class="ref-card-detail">Mitad de instalación y activación</div>
+                </div>
+                <div class="ref-card ref-24m">
+                    <div class="ref-card-title">Contrato 24 Meses</div>
+                    <div class="ref-card-code">Código: 3255</div>
+                    <div class="ref-card-discount">100% desc.</div>
+                    <div class="ref-card-detail">¡Instalación y activación GRATIS!</div>
+                </div>
+            </div>
+            <div class="ref-glossary">
+                <h3>Glosario de Términos</h3>
+                <div class="glossary-grid">
+                    <div><strong>BMS</strong> = Basic Multi-line Service (Línea Principal)</div>
+                    <div><strong>BML</strong> = Business Multi-Line (Línea Adicional)</div>
+                    <div><strong>LP</strong> = Línea Principal</div>
+                    <div><strong>LADD / L.ADD</strong> = Línea Adicional</div>
+                    <div><strong>ILIM</strong> = Minutos Ilimitados</div>
+                    <div><strong>PR</strong> = Puerto Rico · <strong>US</strong> = Estados Unidos</div>
+                    <div><strong>GPON</strong> = Fibra Óptica (más rápida, mejor)</div>
+                    <div><strong>COBRE/VRAD</strong> = Cobre / VDSL vectorizado</div>
+                    <div><strong>PQT</strong> = Paquete (bundle de líneas)</div>
+                    <div><strong>2Play</strong> = Internet + Voz en un solo plan</div>
+                    <div><strong>OTC</strong> = One-Time Charge (cargo único)</div>
+                    <div><strong>Jack</strong> = Activación del conector telefónico</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Plans Container (rendered by JS) -->
+    <div id="plansContainer"></div>
+
+    <!-- No results -->
+    <div id="noResults" class="no-results" style="display:none">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+        <h3>No se encontraron planes</h3>
+        <p>Intenta con otro término de búsqueda o cambia los filtros</p>
+    </div>
+</div>
+
+<footer class="footer">
+    <p>Claro Puerto Rico — Estructura de Negocios Vigente @2024 · Herramienta interna para vendedores</p>
+</footer>
+
+<script src="script.js"></script>
+</body>
+</html>
