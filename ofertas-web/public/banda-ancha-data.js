@@ -1,827 +1,598 @@
 // ============================================================
-// CLARO BUSINESS — BANDA ANCHA / INTERNET PYMES
-// Planes 2Play (Internet + Voz), Bundles, 3Play
-// Datos del boletín de estructura de negocios
+// CLARO BUSINESS — INTERNET INALÁMBRICO, CLARO OFICINA & IoT
+// Boletín INT Go, Claro Oficina y IoT — ene 2026 CORP
 // ============================================================
 
 const CATEGORIES = [
   {
-    id: 'gpon-internet',
-    name: 'Internet GPON — Fibra Óptica (30MB a 1GB)',
-    icon: '🌐',
+    id: 'int-go',
+    name: 'Internet On The Go — MiFi Portátil (LTE)',
+    icon: '📡',
     cssClass: 'cat-ba-gpon',
-    description: 'Fibra óptica GPON. Todos incluyen Voz Ilimitada PR/US (2Play). Velocidades simétricas.',
+    description: 'MiFi portátil con SIM Card regular. Solo datos, velocidades LTE. Cobertura PR y USA. Pospago con contrato 2 años, BYOP o Financiamiento 12/24m.',
   },
   {
-    id: 'cobre-internet',
-    name: 'Internet Cobre/VRAD (5M a 100M)',
-    icon: '🔌',
-    cssClass: 'cat-ba-cobre',
-    description: 'Tecnología DSL. Todos incluyen Voz Ilimitada PR/US (2Play). Velocidades asimétricas (bajada/subida).',
-  },
-  {
-    id: 'bundles-2l',
-    name: 'Bundles 2 Líneas — Internet + Voz',
-    icon: '📦',
+    id: 'int-go-backup',
+    name: 'INT Go Backup — Planes Especiales Convergentes',
+    icon: '🔄',
     cssClass: 'cat-ba-bundle2',
-    description: '2 líneas de voz ilimitada + Internet en un solo paquete. Precio total del bundle.',
+    description: 'Planes de respaldo para clientes existentes de Internet Fijo o Cloud. Requiere al menos 1 servicio activo. Ya son convergentes (no tienen doble de datos).',
   },
   {
-    id: 'bundles-3l',
-    name: 'Bundles 3 Líneas — Internet + Voz',
-    icon: '📦',
-    cssClass: 'cat-ba-bundle3',
-    description: '3 líneas de voz ilimitada + Internet. Ahorro significativo por volumen.',
-  },
-  {
-    id: 'bundles-4l',
-    name: 'Bundles 4 Líneas — Internet + Voz',
-    icon: '📦',
-    cssClass: 'cat-ba-bundle4',
-    description: '4 líneas de voz ilimitada + Internet. Máximo ahorro para oficinas.',
-  },
-  {
-    id: '3play',
-    name: '3Play — Internet + Voz + TV',
-    icon: '📺',
+    id: 'claro-oficina',
+    name: 'Claro Oficina — Internet Fijo Inalámbrico + Voz',
+    icon: '🏢',
     cssClass: 'cat-ba-3play',
-    description: 'Triple Play: Internet GPON + Voz Ilimitada + ClaroTV. Todo en uno.',
+    description: 'Internet fijo inalámbrico vía LTE con Voz VoLTE. Plug & play, sin instalación técnica. Para uso fijo en dirección registrada. Solo PR. Velocidades hasta 30Mbps.',
   },
   {
-    id: 'lineas-add',
-    name: 'Líneas Adicionales 2Play',
-    icon: '➕',
+    id: 'hogar-voz',
+    name: 'Hogar Voz — Solo Voz (Sin Internet)',
+    icon: '📞',
     cssClass: 'cat-ba-add',
-    description: 'Líneas de voz adicionales bajo un plan 2Play existente. Requiere plan base.',
+    description: 'Plan de voz inalámbrica solamente. Puede usar datos a granel hasta tope de $50. Para clientes que necesitan línea fija sin internet dedicado.',
+  },
+  {
+    id: 'iot',
+    name: 'IoT / Telemetría — Machine-to-Machine',
+    icon: '⚙️',
+    cssClass: 'cat-ba-bundle3',
+    description: 'Planes de datos para equipos M2M y telemetría. Solo PR. Contrato mínimo 1 año. Al consumir datos, servicio se bloquea hasta próximo ciclo. SIM card $4.99.',
+  },
+  {
+    id: 'apn',
+    name: 'APN Privado — Conexión Dedicada',
+    icon: '🔒',
+    cssClass: 'cat-ba-bundle4',
+    description: 'APN privado para conexiones dedicadas con IP estático. Requiere formulario del Dpto. de Ingeniería. Implementación toma ~2 semanas.',
+  },
+  {
+    id: 'equipos-intgo',
+    name: 'Equipos MiFi — Internet On The Go',
+    icon: '📶',
+    cssClass: 'cat-ba-cobre',
+    description: 'Módems MiFi portátiles disponibles para Internet On The Go. Precios varían por nivel de plan. Financiamiento 12/24/30/36 meses.',
+  },
+  {
+    id: 'equipos-oficina',
+    name: 'Equipos Router — Claro Oficina',
+    icon: '🖧',
+    cssClass: 'cat-ba-gpon',
+    description: 'Módems/Routers para Claro Oficina. Incluyen puerto RJ11 para voz analógica. SIM IMEI Lock (casada al equipo). Financiamiento disponible.',
+  },
+  {
+    id: 'tablets',
+    name: 'Tablets — Disponibles con Planes',
+    icon: '📱',
+    cssClass: 'cat-ba-bundle2',
+    description: 'Tablets disponibles para activar con planes INT Go o Claro Oficina. Precios con financiamiento y por nivel de plan.',
   },
 ];
 
 const PLANS = [
-  // ========== GPON FIBRA ÓPTICA ==========
+  // ========== INTERNET ON THE GO — MiFi Portátil ==========
   {
-    cat: 'gpon-internet',
-    code: 'A879',
-    name: 'GPON Internet 30MB + Voz Ilimitada',
-    speed: '30 MB',
-    alfa: 'G-BPRU30M',
-    tech: 'GPON',
-    price: '$47.99',
-    voz: 'Ilimitada PR/US',
-    install: [120, 60, 0],
-    activation: [40, 20, 0],
-    penalty: 260,
-    nota: 'Plan básico GPON',
+    cat: 'int-go',
+    code: 'BAIC009',
+    name: 'INT Go 25GB — Regular',
+    data: '25GB',
+    dataConv: '50GB',
+    codeConv: 'BAIL009D',
+    speed: 'LTE',
+    tech: 'LTE',
+    price: '$30.00',
+    tipo: 'Solo Datos',
+    puj: '128Kbps',
+    cobertura: 'PR y USA',
+    contrato: '2 años / BYOP / Financ. 12-24m',
+    nota: 'Plan básico INT Go · 50GB si convergente',
   },
   {
-    cat: 'gpon-internet',
-    code: 'A880',
-    name: 'GPON Internet 50MB + Voz Ilimitada',
-    speed: '50 MB',
-    alfa: 'G-BPRU50M',
-    tech: 'GPON',
-    price: '$49.99',
-    voz: 'Ilimitada PR/US',
-    install: [120, 60, 0],
-    activation: [40, 20, 0],
-    penalty: 260,
-    nota: 'Solo $2 más que 30MB',
-  },
-  {
-    cat: 'gpon-internet',
-    code: 'A881',
-    name: 'GPON Internet 100MB + Voz Ilimitada',
-    speed: '100 MB',
-    alfa: 'G-BPRU100M',
-    tech: 'GPON',
-    price: '$54.99',
-    voz: 'Ilimitada PR/US',
-    install: [120, 60, 0],
-    activation: [40, 20, 0],
-    penalty: 260,
-    nota: 'Ideal para oficinas pequeñas',
+    cat: 'int-go',
+    code: 'BAIC010',
+    name: 'INT Go 75GB — Regular',
+    data: '75GB',
+    dataConv: '150GB',
+    codeConv: 'BAIC012',
+    speed: 'LTE',
+    tech: 'LTE',
+    price: '$40.00',
+    tipo: 'Solo Datos',
+    puj: '128Kbps',
+    cobertura: 'PR y USA',
+    contrato: '2 años / BYOP / Financ. 12-24m',
+    nota: '🔥 Popular · 150GB si convergente · 50% desc. RG1000 en 24m',
     destacado: true,
   },
   {
-    cat: 'gpon-internet',
-    code: 'A882',
-    name: 'GPON Internet 150MB + Voz Ilimitada',
-    speed: '150 MB',
-    alfa: 'G-BPRU150M',
-    tech: 'GPON',
-    price: '$64.99',
-    voz: 'Ilimitada PR/US',
-    install: [120, 60, 0],
-    activation: [40, 20, 0],
-    penalty: 260,
-    nota: 'Buena velocidad para 5-10 usuarios',
+    cat: 'int-go',
+    code: 'BAIC011',
+    name: 'INT Go 125GB — Regular',
+    data: '125GB',
+    dataConv: '250GB',
+    codeConv: 'BAIL011D',
+    speed: 'LTE',
+    tech: 'LTE',
+    price: '$50.00',
+    tipo: 'Solo Datos',
+    puj: '128Kbps',
+    cobertura: 'PR y USA',
+    contrato: '2 años / BYOP / Financ. 12-24m',
+    nota: '⭐ Mejor plan · 250GB si convergente · RG1000 GRATIS en 24m',
+    destacado: true,
+  },
+
+  // ========== INT GO BACKUP — Convergentes/Fijo/Cloud ==========
+  {
+    cat: 'int-go-backup',
+    code: 'BAIC017',
+    name: 'INT Go Backup 5GB',
+    data: '5GB',
+    speed: 'LTE',
+    tech: 'LTE',
+    price: '$9.99',
+    tipo: 'Solo Datos',
+    puj: '128Kbps',
+    cobertura: 'PR y USA',
+    contrato: '2 años / BYOP / Financ. 12-24m',
+    nota: 'Plan backup · Requiere Internet Fijo o Cloud activo · Ya es convergente',
   },
   {
-    cat: 'gpon-internet',
-    code: 'A883',
-    name: 'GPON Internet 200MB + Voz Ilimitada',
-    speed: '200 MB',
-    alfa: 'G-BPRU200M',
-    tech: 'GPON',
-    price: '$67.99',
-    voz: 'Ilimitada PR/US',
-    install: [120, 60, 0],
-    activation: [40, 20, 0],
-    penalty: 260,
-    nota: 'Solo $3 más que 150MB',
+    cat: 'int-go-backup',
+    code: 'BAIC018',
+    name: 'INT Go Backup 10GB',
+    data: '10GB',
+    speed: 'LTE',
+    tech: 'LTE',
+    price: '$15.00',
+    tipo: 'Solo Datos',
+    puj: '128Kbps',
+    cobertura: 'PR y USA',
+    contrato: '2 años / BYOP / Financ. 12-24m',
+    nota: 'Plan backup · Requiere Internet Fijo o Cloud activo · Ya es convergente',
   },
+
+  // ========== CLARO OFICINA — Fijo Inalámbrico + Voz ==========
   {
-    cat: 'gpon-internet',
-    code: 'A884',
-    name: 'GPON Internet 300MB + Voz Ilimitada',
-    speed: '300 MB',
-    alfa: 'G-BPRU300M',
-    tech: 'GPON',
-    price: '$74.99',
-    voz: 'Ilimitada PR/US',
-    install: [120, 60, 40],
-    activation: [40, 0, 0],
-    penalty: 260,
-    nota: '🔥 Popular para PYMES medianas',
+    cat: 'claro-oficina',
+    code: 'HOCV003V',
+    name: 'Claro Oficina — Voz + Internet 30Mbps (Regular)',
+    data: '150GB',
+    speed: '30 Mbps',
+    tech: 'LTE',
+    price: '$50.00',
+    tipo: 'Voz + Datos',
+    voz: 'Ilimitada PR/US + LD a EE.UU.',
+    puj: '2Mbps',
+    cobertura: 'Solo PR',
+    contrato: '2 años / BYOP / Financ. 12-36m',
+    nota: 'Cliente que solo tiene Claro Oficina · PCD R402X GRATIS desde $30 · CG890 GRATIS en $50',
     destacado: true,
   },
   {
-    cat: 'gpon-internet',
-    code: 'A885',
-    name: 'GPON Internet 350MB + Voz Ilimitada',
-    speed: '350 MB',
-    alfa: 'G-BPRU350M',
-    tech: 'GPON',
+    cat: 'claro-oficina',
+    code: 'HOCV003DV',
+    name: 'Claro Oficina — Voz + Internet 30Mbps (Convergente)',
+    data: '300GB',
+    speed: '30 Mbps',
+    tech: 'LTE',
+    price: '$50.00',
+    tipo: 'Voz + Datos',
+    voz: 'Ilimitada PR/US + LD a EE.UU.',
+    puj: '2Mbps',
+    cobertura: 'Solo PR',
+    contrato: '2 años / BYOP / Financ. 12-36m',
+    nota: '⭐ DOBLE DATA · Cliente tiene otro servicio de Claro · 300GB vs 150GB',
+    destacado: true,
+  },
+
+  // ========== HOGAR VOZ — Solo Voz ==========
+  {
+    cat: 'hogar-voz',
+    code: 'VOZVLHOG',
+    name: 'Hogar Voz — Voz Ilimitada PR y USA',
+    speed: '—',
+    tech: 'LTE',
+    price: '$19.99',
+    tipo: 'Solo Voz',
+    voz: 'Ilimitada PR/US + LD a EE.UU.',
+    cobertura: 'Solo PR',
+    contrato: 'Pospago',
+    nota: 'Incluye Correo de Voz, ID, Esp., Conferencia, Transferencia. Datos a granel hasta $50',
+  },
+
+  // ========== IoT / TELEMETRÍA ==========
+  {
+    cat: 'iot',
+    code: 'BAC100',
+    name: 'IoT 100MB',
+    data: '100MB',
+    speed: 'LTE',
+    tech: 'IoT',
+    price: '$2.99',
+    tipo: 'Solo Datos M2M',
+    cobertura: 'Solo PR',
+    contrato: 'Mínimo 1 año',
+    nota: 'Plan básico telemetría · Se bloquea al agotar datos (no throttle)',
+  },
+  {
+    cat: 'iot',
+    code: 'BAC250',
+    name: 'IoT 250MB',
+    data: '250MB',
+    speed: 'LTE',
+    tech: 'IoT',
+    price: '$3.99',
+    tipo: 'Solo Datos M2M',
+    cobertura: 'Solo PR',
+    contrato: 'Mínimo 1 año',
+    nota: 'Telemetría · Se bloquea al agotar datos',
+  },
+  {
+    cat: 'iot',
+    code: 'BAC500',
+    name: 'IoT 500MB',
+    data: '500MB',
+    speed: 'LTE',
+    tech: 'IoT',
+    price: '$5.99',
+    tipo: 'Solo Datos M2M',
+    cobertura: 'Solo PR',
+    contrato: 'Mínimo 1 año',
+    nota: 'Telemetría · Se bloquea al agotar datos',
+  },
+  {
+    cat: 'iot',
+    code: 'BAC1GB',
+    name: 'IoT 1GB',
+    data: '1GB',
+    speed: 'LTE',
+    tech: 'IoT',
+    price: '$9.99',
+    tipo: 'Solo Datos M2M',
+    cobertura: 'Solo PR',
+    contrato: 'Mínimo 1 año',
+    nota: '🔥 Plan máximo IoT estándar · Se bloquea al agotar datos · Para uso adicional hasta $30 extra (por matriz)',
+    destacado: true,
+  },
+
+  // ========== APN PRIVADO ==========
+  {
+    cat: 'apn',
+    code: 'APN-PRIV',
+    name: 'APN Privado — Conexión Dedicada',
+    speed: '—',
+    tech: 'IoT',
+    price: '$499.99',
+    priceNote: 'pago único',
+    tipo: 'Servicio',
+    cobertura: 'Solo PR',
+    contrato: 'Requiere propuesta formal',
+    nota: 'IP estático · Rango de IPs · URLs específicos · Tramitar con Ing. Rosa Nazario · Implementación ~2 semanas',
+  },
+
+  // ========== EQUIPOS MiFi — INTERNET ON THE GO ==========
+  {
+    cat: 'equipos-intgo',
+    code: '32788H',
+    name: 'Franklin RT410 MiFi',
+    speed: '4G LTE Cat 4',
+    tech: 'LTE',
     price: '$99.99',
-    voz: 'Ilimitada PR/US',
-    install: [120, 60, 40],
-    activation: [40, 0, 0],
-    penalty: 260,
-    nota: 'Alta velocidad',
-  },
-  {
-    cat: 'gpon-internet',
-    code: 'A886',
-    name: 'GPON Internet 450MB + Voz Ilimitada',
-    speed: '450 MB',
-    alfa: 'G-BPRU450M',
-    tech: 'GPON',
-    price: '$104.99',
-    voz: 'Ilimitada PR/US',
-    install: [120, 60, 0],
-    activation: [40, 20, 0],
-    penalty: 260,
-    nota: 'Solo $5 más que 350MB',
-  },
-  {
-    cat: 'gpon-internet',
-    code: 'C474',
-    name: 'GPON Internet 500MB + Voz Ilimitada',
-    speed: '500 MB',
-    alfa: 'G-B500MPRU',
-    tech: 'GPON',
-    price: '$134.99',
-    voz: 'Ilimitada PR/US',
-    install: [120, 60, 0],
-    activation: [40, 20, 0],
-    penalty: 260,
-    nota: '🔥 Medio Gigabit',
+    priceNote: 'regular',
+    tipo: 'MiFi Portátil',
+    specs: 'DL 150Mbps · WiFi 2.4/5GHz · 15 dispositivos · Batería 9hrs (3000mAh) · 27hrs standby',
+    materialSAP: '7010844',
+    financ: { m12: '$8.33', m24: '$4.17', m30: '$3.33', m36: '$2.78' },
+    preciosPlan: [
+      { plan: '$9', code: 'CLE09A', precio: '$99.99' },
+      { plan: '$14', code: 'CLE14A', precio: '$99.99' },
+      { plan: '$19', code: 'CLE19A', precio: '$41.99' },
+      { plan: '$29', code: 'CLE29A', precio: '$0.00' },
+      { plan: '$30+', code: 'CLE39A+', precio: '$0.00' },
+    ],
+    ofertas: 'GRATIS en financ. 24m en plan desde $30 (convergente, code FIOF24). $41.99 en planes < $30 convergente (FIGU24/36).',
+    nota: '🔥 MiFi económico · GRATIS para convergentes desde $30',
     destacado: true,
   },
   {
-    cat: 'gpon-internet',
-    code: 'A887',
-    name: 'GPON Internet 500MB + Voz Ilimitada (Alt)',
-    speed: '500 MB',
-    alfa: 'G-BPRU500M',
-    tech: 'GPON',
-    price: '$174.99',
-    voz: 'Ilimitada PR/US',
-    install: [120, 60, 0],
-    activation: [40, 20, 0],
-    penalty: 260,
-    nota: 'Código alterno para 500MB',
-  },
-  {
-    cat: 'gpon-internet',
-    code: 'C475',
-    name: 'GPON Internet 650MB + Voz Ilimitada',
-    speed: '650 MB',
-    alfa: 'G-BPRU650M',
-    tech: 'GPON',
-    price: '$159.99',
-    voz: 'Ilimitada PR/US',
-    install: [120, 60, 0],
-    activation: [40, 20, 0],
-    penalty: 260,
-    nota: 'Alta capacidad empresarial',
-  },
-  {
-    cat: 'gpon-internet',
-    code: 'A888',
-    name: 'GPON Internet 650MB + Voz Ilimitada (Alt)',
-    speed: '650 MB',
-    alfa: 'G-BPRU650M',
-    tech: 'GPON',
-    price: '$184.99',
-    voz: 'Ilimitada PR/US',
-    install: [120, 60, 0],
-    activation: [40, 20, 0],
-    penalty: 260,
-    nota: 'Código alterno para 650MB',
-  },
-  {
-    cat: 'gpon-internet',
-    code: 'C476',
-    name: 'GPON Internet 1GB + Voz Ilimitada',
-    speed: '1 GB',
-    alfa: 'G-B1GBPRU',
-    tech: 'GPON',
-    price: '$174.99',
-    voz: 'Ilimitada PR/US',
-    install: [120, 60, 0],
-    activation: [40, 20, 0],
-    penalty: 260,
-    nota: '⭐ MÁXIMA VELOCIDAD · 1 Gigabit',
-    premium: true,
-  },
-  {
-    cat: 'gpon-internet',
-    code: 'A889',
-    name: 'GPON Internet 1GB + Voz Ilimitada (Alt)',
-    speed: '1 GB',
-    alfa: 'G-BPRU1GB',
-    tech: 'GPON',
-    price: '$199.99',
-    voz: 'Ilimitada PR/US',
-    install: [120, 60, 0],
-    activation: [40, 20, 0],
-    penalty: 260,
-    nota: '⭐ Código alterno 1 Gigabit',
-    premium: true,
-  },
-
-  // ========== COBRE / VRAD ==========
-  {
-    cat: 'cobre-internet',
-    code: 'A870',
-    name: 'Internet 5M/1M + Voz Ilimitada',
-    speed: '5M / 1M',
-    alfa: 'BPRU5M',
-    tech: 'COBRE/VRAD',
-    price: '$29.99',
-    voz: 'Ilimitada PR/US',
-    install: [120, 60, 0],
-    activation: [40, 20, 0],
-    penalty: 260,
-    nota: 'Plan básico cobre — uso ligero',
-  },
-  {
-    cat: 'cobre-internet',
-    code: 'A871',
-    name: 'Internet 8M/1M + Voz Ilimitada',
-    speed: '8M / 1M',
-    alfa: 'BPRU8M',
-    tech: 'COBRE/VRAD',
-    price: '$32.99',
-    voz: 'Ilimitada PR/US',
-    install: [120, 60, 0],
-    activation: [40, 20, 0],
-    penalty: 260,
-    nota: 'Navegación y correo electrónico',
-  },
-  {
-    cat: 'cobre-internet',
-    code: 'A872',
-    name: 'Internet 10M/1M + Voz Ilimitada',
-    speed: '10M / 1M',
-    alfa: 'BPRU10M',
-    tech: 'COBRE/VRAD',
-    price: '$35.99',
-    voz: 'Ilimitada PR/US',
-    install: [120, 60, 0],
-    activation: [40, 20, 0],
-    penalty: 260,
-    nota: 'Buen balance para 1-3 usuarios',
-  },
-  {
-    cat: 'cobre-internet',
-    code: 'A873',
-    name: 'Internet 16M/1M + Voz Ilimitada',
-    speed: '16M / 1M',
-    alfa: 'BPRU16M',
-    tech: 'COBRE/VRAD',
-    price: '$38.99',
-    voz: 'Ilimitada PR/US',
-    install: [120, 60, 0],
-    activation: [40, 20, 0],
-    penalty: 260,
-    nota: 'Suficiente para video conferencias',
-  },
-  {
-    cat: 'cobre-internet',
-    code: 'A874',
-    name: 'Internet 20M/1M + Voz Ilimitada — COBRE',
-    speed: '20M / 1M',
-    alfa: 'BPRU20M1',
-    tech: 'COBRE/VRAD',
-    price: '$44.99',
-    voz: 'Ilimitada PR/US',
-    install: [120, 60, 0],
-    activation: [40, 20, 0],
-    penalty: 260,
-    nota: 'Subida 1M (tecnología cobre puro)',
-  },
-  {
-    cat: 'cobre-internet',
-    code: 'A875',
-    name: 'Internet 20M/3M + Voz Ilimitada — VRAD',
-    speed: '20M / 3M',
-    alfa: 'BPRU20M3',
-    tech: 'COBRE/VRAD',
-    price: '$44.99',
-    voz: 'Ilimitada PR/US',
-    install: [120, 60, 0],
-    activation: [40, 20, 0],
-    penalty: 260,
-    nota: '🔥 VRAD: mejor subida (3M) que cobre',
+    cat: 'equipos-intgo',
+    code: '32328H',
+    name: 'Franklin RG1000 5G MiFi',
+    speed: '5G/4G',
+    tech: '5G',
+    price: '$399.99',
+    priceNote: 'regular',
+    tipo: 'MiFi 5G Portátil',
+    specs: 'WiFi 6 · Batería 5000mAh · Conexión 5G + 4G dual',
+    materialSAP: '7009571',
+    financ: { m12: '$33.33', m24: '$16.67', m30: '$13.33', m36: '$11.11' },
+    preciosPlan: [
+      { plan: '$9', code: 'CLE09A', precio: '$399.99' },
+      { plan: '$14', code: 'CLE14A', precio: '$399.99' },
+      { plan: '$19', code: 'CLE19A', precio: '$399.99' },
+      { plan: '$29', code: 'CLE29A', precio: '$299.99' },
+      { plan: '$39', code: 'CLE39A', precio: '$249.99' },
+      { plan: '$49', code: 'CLE49A', precio: '$199.99' },
+      { plan: '$59', code: 'CLE59A', precio: '$199.99' },
+      { plan: '$69', code: 'CLE69A', precio: '$199.99' },
+    ],
+    ofertas: 'GRATIS en financ. 24m en plan desde $50. 50% descuento en plan $40.',
+    nota: '⭐ MiFi 5G · GRATIS en planes $50+',
     destacado: true,
   },
   {
-    cat: 'cobre-internet',
-    code: 'A876',
-    name: 'Internet 30M/3M + Voz Ilimitada',
-    speed: '30M / 3M',
-    alfa: 'BPRU30M',
-    tech: 'COBRE/VRAD',
-    price: '$47.99',
-    voz: 'Ilimitada PR/US',
-    install: [120, 60, 0],
-    activation: [40, 20, 0],
-    penalty: 260,
-    nota: 'Buena velocidad para oficinas',
+    cat: 'equipos-intgo',
+    code: '33638H',
+    name: 'Franklin JEXstream RG2100 5G MiFi',
+    speed: '5G Cat 20',
+    tech: '5G',
+    price: '$299.99',
+    priceNote: 'regular',
+    tipo: 'MiFi 5G Portátil',
+    specs: '5G NR Sub-6 · LTE Cat 20 · WiFi 6 · 30 dispositivos · Batería 5000mAh · USB-C · Pantalla 2.4" color',
+    materialSAP: '7013126',
+    financ: { m12: '$25.00', m24: '$12.50', m30: '$10.00', m36: '$8.33' },
+    preciosPlan: [
+      { plan: '$9', code: 'CLE09A', precio: '$299.99' },
+      { plan: '$14', code: 'CLE14A', precio: '$299.99' },
+      { plan: '$19', code: 'CLE19A', precio: '$299.99' },
+      { plan: '$29', code: 'CLE29A', precio: '$299.99' },
+      { plan: '$39', code: 'CLE39A', precio: '$139.99' },
+      { plan: '$49', code: 'CLE49A', precio: '$99.99' },
+      { plan: '$59', code: 'CLE59A', precio: '$99.99' },
+      { plan: '$69', code: 'CLE69A', precio: '$0.00' },
+    ],
+    nota: 'MiFi 5G alternativo · Pantalla a color · GRATIS en plan $69+',
   },
   {
-    cat: 'cobre-internet',
-    code: 'A877',
-    name: 'Internet 50M/5M + Voz Ilimitada',
-    speed: '50M / 5M',
-    alfa: 'BPRU50M',
-    tech: 'COBRE/VRAD',
-    price: '$49.99',
-    voz: 'Ilimitada PR/US',
-    install: [120, 60, 0],
-    activation: [40, 20, 0],
-    penalty: 260,
-    nota: '🔥 Mejor relación precio/velocidad Cobre',
-    destacado: true,
+    cat: 'equipos-intgo',
+    code: '33556H',
+    name: 'Netgear M6 Pro MiFi',
+    speed: '5G',
+    tech: '5G',
+    price: '$599.99',
+    priceNote: 'regular',
+    tipo: 'MiFi 5G Premium',
+    materialSAP: '7006669',
+    financ: { m12: '$50.00', m24: '$25.00', m30: '$20.00', m36: '$16.67' },
+    nota: 'MiFi premium · Sin subsidios por plan · Financiamiento disponible',
   },
   {
-    cat: 'cobre-internet',
-    code: 'A878',
-    name: 'Internet 100M/15M + Voz Ilimitada',
-    speed: '100M / 15M',
-    alfa: 'BPRU100M',
-    tech: 'COBRE/VRAD',
+    cat: 'equipos-intgo',
+    code: '31642H-FIOF',
+    name: 'Franklin R910 MiFi (Convergente)',
+    speed: '4G LTE',
+    tech: 'LTE',
     price: '$54.99',
-    voz: 'Ilimitada PR/US',
-    install: [120, 60, 0],
-    activation: [40, 20, 0],
-    penalty: 260,
-    nota: '⭐ Máxima velocidad Cobre/VRAD',
-    premium: true,
+    priceNote: 'solo convergente (FIOF)',
+    tipo: 'MiFi Portátil',
+    materialSAP: '7008216',
+    financ: { m12: '$4.58', m24: '$2.29', m30: '$1.83', m36: '$1.53' },
+    nota: 'Solo para clientes convergentes · Precio especial FIOF',
   },
 
-  // ========== BUNDLES 2 LÍNEAS ==========
+  // ========== EQUIPOS ROUTER — CLARO OFICINA ==========
   {
-    cat: 'bundles-2l',
-    code: 'A878',
-    name: '100M/15M + 2 Líneas Voz (COBRE)',
-    speed: '100M / 15M',
-    alfa: '—',
-    tech: 'COBRE/VRAD',
-    price: '$79.99',
-    voz: 'Ilimitada PR/US × 2 líneas',
-    install: ['$120 p/l', '$60 p/l', '$0'],
-    activation: ['$40 p/l', '$20 p/l', '$0'],
-    penalty: '$260+$200 p/l',
-    nota: 'Bundle 2 líneas Cobre',
-    isBundle: true,
-    lines: 2,
-  },
-  {
-    cat: 'bundles-2l',
-    code: 'A881',
-    name: 'GPON 100MB + 2 Líneas Voz',
-    speed: '100 MB',
-    alfa: '—',
-    tech: 'GPON',
-    price: '$79.99',
-    voz: 'Ilimitada PR/US × 2 líneas',
-    install: ['$120 p/l', '$60 p/l', '$0'],
-    activation: ['$40 p/l', '$20 p/l', '$0'],
-    penalty: '$260+$200 p/l',
-    nota: 'Bundle 2 líneas GPON',
-    isBundle: true,
-    lines: 2,
-  },
-  {
-    cat: 'bundles-2l',
-    code: 'A882',
-    name: 'GPON 150MB + 2 Líneas Voz',
-    speed: '150 MB',
-    alfa: '—',
-    tech: 'GPON',
-    price: '$89.99',
-    voz: 'Ilimitada PR/US × 2 líneas',
-    install: ['$120 p/l', '$60 p/l', '$0'],
-    activation: ['$40 p/l', '$20 p/l', '$0'],
-    penalty: '$260+$200 p/l',
-    nota: 'Bundle 2 líneas 150MB',
-    isBundle: true,
-    lines: 2,
-  },
-  {
-    cat: 'bundles-2l',
-    code: 'A883',
-    name: 'GPON 200MB + 2 Líneas Voz',
-    speed: '200 MB',
-    alfa: '—',
-    tech: 'GPON',
-    price: '$92.99',
-    voz: 'Ilimitada PR/US × 2 líneas',
-    install: ['$120 p/l', '$60 p/l', '$0'],
-    activation: ['$40 p/l', '$20 p/l', '$0'],
-    penalty: '$260+$200 p/l',
-    nota: 'Bundle 2 líneas 200MB',
-    isBundle: true,
-    lines: 2,
-  },
-  {
-    cat: 'bundles-2l',
-    code: 'A884',
-    name: 'GPON 300MB + 2 Líneas Voz',
-    speed: '300 MB',
-    alfa: '—',
-    tech: 'GPON',
+    cat: 'equipos-oficina',
+    code: '33578H',
+    name: 'PCD R402X Black Router',
+    speed: '4.5G Cat 12',
+    tech: 'LTE',
     price: '$99.99',
-    voz: 'Ilimitada PR/US × 2 líneas',
-    install: ['$120 p/l', '$60 p/l', '$0'],
-    activation: ['$40 p/l', '$20 p/l', '$0'],
-    penalty: '$260+$200 p/l',
-    nota: '🔥 300MB + 2 líneas por $100',
-    isBundle: true,
-    lines: 2,
+    priceNote: 'regular',
+    tipo: 'Router Fijo (Voz + Datos)',
+    specs: 'DL 400Mbps · WiFi 2.4/5GHz MIMO 2×2 · 2× RJ45 · 1× RJ11 (voz) · 2 antenas externas · 32 dispositivos',
+    materialSAP: '7012893',
+    financ: { m12: '$8.33', m24: '$4.17', m30: '$3.33', m36: '$2.78' },
+    preciosPlan: [
+      { plan: '$9', code: 'CLE09A', precio: '$99.99' },
+      { plan: '$14', code: 'CLE14A', precio: '$99.99' },
+      { plan: '$19', code: 'CLE19A', precio: '$0.00' },
+      { plan: '$29+', code: 'CLE29A+', precio: '$0.00' },
+    ],
+    ofertas: 'GRATIS en Claro Oficina con financ. 24m en plan desde $30.',
+    nota: '🔥 Router principal Claro Oficina · GRATIS desde $30 · Puerto RJ11 para teléfono',
     destacado: true,
   },
   {
-    cat: 'bundles-2l',
-    code: 'A885',
-    name: 'GPON 350MB + 2 Líneas Voz',
-    speed: '350 MB',
-    alfa: '—',
-    tech: 'GPON',
-    price: '$124.99',
-    voz: 'Ilimitada PR/US × 2 líneas',
-    install: ['$120 p/l', '$60 p/l', '$0'],
-    activation: ['$40 p/l', '$20 p/l', '$0'],
-    penalty: '$260+$200 p/l',
-    nota: 'Bundle 2 líneas 350MB',
-    isBundle: true,
-    lines: 2,
-  },
-  {
-    cat: 'bundles-2l',
-    code: 'A886',
-    name: 'GPON 450MB + 2 Líneas Voz',
-    speed: '450 MB',
-    alfa: '—',
-    tech: 'GPON',
-    price: '$129.99',
-    voz: 'Ilimitada PR/US × 2 líneas',
-    install: ['$120 p/l', '$60 p/l', '$0'],
-    activation: ['$40 p/l', '$20 p/l', '$0'],
-    penalty: '$260+$200 p/l',
-    nota: 'Bundle 2 líneas 450MB',
-    isBundle: true,
-    lines: 2,
-  },
-  {
-    cat: 'bundles-2l',
-    code: 'C474',
-    name: 'GPON 500MB + 2 Líneas Voz',
-    speed: '500 MB',
-    alfa: '—',
-    tech: 'GPON',
-    price: '$159.99',
-    voz: 'Ilimitada PR/US × 2 líneas',
-    install: ['$120 p/l', '$60 p/l', '$0'],
-    activation: ['$40 p/l', '$20 p/l', '$0'],
-    penalty: '$260+$200 p/l',
-    nota: '🔥 Medio gigabit + 2 líneas',
-    isBundle: true,
-    lines: 2,
-    destacado: true,
-  },
-  {
-    cat: 'bundles-2l',
-    code: 'C475',
-    name: 'GPON 650MB + 2 Líneas Voz',
-    speed: '650 MB',
-    alfa: '—',
-    tech: 'GPON',
-    price: '$184.99',
-    voz: 'Ilimitada PR/US × 2 líneas',
-    install: ['$120 p/l', '$60 p/l', '$0'],
-    activation: ['$40 p/l', '$20 p/l', '$0'],
-    penalty: '$260+$200 p/l',
-    nota: 'Bundle 2 líneas 650MB',
-    isBundle: true,
-    lines: 2,
-  },
-  {
-    cat: 'bundles-2l',
-    code: 'C476',
-    name: 'GPON 1GB + 2 Líneas Voz',
-    speed: '1 GB',
-    alfa: '—',
-    tech: 'GPON',
-    price: '$199.99',
-    voz: 'Ilimitada PR/US × 2 líneas',
-    install: ['$120 p/l', '$60 p/l', '$0'],
-    activation: ['$40 p/l', '$20 p/l', '$0'],
-    penalty: '$260+$200 p/l',
-    nota: '⭐ Máxima velocidad + 2 líneas',
-    isBundle: true,
-    lines: 2,
-    premium: true,
-  },
-
-  // ========== BUNDLES 3 LÍNEAS ==========
-  {
-    cat: 'bundles-3l',
-    code: 'A883',
-    name: 'GPON 200MB + 3 Líneas Voz',
-    speed: '200 MB',
-    alfa: '—',
-    tech: 'GPON',
-    price: '$117.99',
-    voz: 'Ilimitada PR/US × 3 líneas',
-    install: ['$120 p/l', '$60 p/l', '$0'],
-    activation: ['$40 p/l', '$20 p/l', '$0'],
-    penalty: '$260+$200 p/l',
-    nota: 'Bundle 3 líneas 200MB',
-    isBundle: true,
-    lines: 3,
-  },
-  {
-    cat: 'bundles-3l',
-    code: 'A884',
-    name: 'GPON 300MB + 3 Líneas Voz',
-    speed: '300 MB',
-    alfa: '—',
-    tech: 'GPON',
-    price: '$124.99',
-    voz: 'Ilimitada PR/US × 3 líneas',
-    install: ['$120 p/l', '$60 p/l', '$0'],
-    activation: ['$40 p/l', '$20 p/l', '$0'],
-    penalty: '$260+$200 p/l',
-    nota: '🔥 Buena relación precio-beneficio',
-    isBundle: true,
-    lines: 3,
-    destacado: true,
-  },
-  {
-    cat: 'bundles-3l',
-    code: 'A885',
-    name: 'GPON 350MB + 3 Líneas Voz',
-    speed: '350 MB',
-    alfa: '—',
-    tech: 'GPON',
-    price: '$149.99',
-    voz: 'Ilimitada PR/US × 3 líneas',
-    install: ['$120 p/l', '$60 p/l', '$0'],
-    activation: ['$40 p/l', '$20 p/l', '$0'],
-    penalty: '$260+$200 p/l',
-    nota: 'Bundle 3 líneas 350MB',
-    isBundle: true,
-    lines: 3,
-  },
-
-  // ========== BUNDLES 4 LÍNEAS ==========
-  {
-    cat: 'bundles-4l',
-    code: 'A886',
-    name: 'GPON 450MB + 4 Líneas Voz',
-    speed: '450 MB',
-    alfa: '—',
-    tech: 'GPON',
-    price: '$179.99',
-    voz: 'Ilimitada PR/US × 4 líneas',
-    install: ['$120 p/l', '$60 p/l', '$0'],
-    activation: ['$40 p/l', '$20 p/l', '$0'],
-    penalty: '$260+$200 p/l',
-    nota: 'Bundle 4 líneas 450MB',
-    isBundle: true,
-    lines: 4,
-  },
-  {
-    cat: 'bundles-4l',
-    code: 'A887',
-    name: 'GPON 500MB + 4 Líneas Voz',
-    speed: '500 MB',
-    alfa: '—',
-    tech: 'GPON',
+    cat: 'equipos-oficina',
+    code: '33348H',
+    name: 'Franklin JEXstream CG890 5G Router',
+    speed: '5G Cat 20',
+    tech: '5G',
     price: '$249.99',
-    voz: 'Ilimitada PR/US × 4 líneas',
-    install: ['$120 p/l', '$60 p/l', '$0'],
-    activation: ['$40 p/l', '$20 p/l', '$0'],
-    penalty: '$260+$200 p/l',
-    nota: '🔥 500MB + 4 líneas completas',
-    isBundle: true,
-    lines: 4,
+    priceNote: 'regular ($299.99 en prepago)',
+    tipo: 'Router Fijo 5G (Voz + Datos)',
+    specs: '5G/4G dual · Qualcomm X62 · WiFi 6 · 1× RJ45 · 1× RJ11 (voz) · 32 dispositivos · Batería backup 4000mAh',
+    materialSAP: '7012279',
+    financ: { m12: '$20.83', m24: '$10.42', m30: '$8.33', m36: '$6.94' },
+    preciosPlan: [
+      { plan: '$9', code: 'CLE09A', precio: '$299.99' },
+      { plan: '$14', code: 'CLE14A', precio: '$299.99' },
+      { plan: '$19', code: 'CLE19A', precio: '$299.99' },
+      { plan: '$29', code: 'CLE29A', precio: '$299.99' },
+      { plan: '$39', code: 'CLE39A', precio: '$199.99' },
+      { plan: '$49', code: 'CLE49A', precio: '$99.99' },
+      { plan: '$59', code: 'CLE59A', precio: '$0.00' },
+      { plan: '$69', code: 'CLE69A', precio: '$0.00' },
+    ],
+    ofertas: 'GRATIS en Claro Oficina plan $50 con financ. 24m. Subsidios: Plan $35-39.99 → $130, Plan $40-49.99 → $250.',
+    nota: '⭐ Router 5G premium · GRATIS en plan $50 · Batería backup · Puerto RJ11 voz',
     destacado: true,
   },
   {
-    cat: 'bundles-4l',
-    code: 'A888',
-    name: 'GPON 650MB + 4 Líneas Voz',
-    speed: '650 MB',
-    alfa: '—',
-    tech: 'GPON',
-    price: '$259.99',
-    voz: 'Ilimitada PR/US × 4 líneas',
-    install: ['$120 p/l', '$60 p/l', '$0'],
-    activation: ['$40 p/l', '$20 p/l', '$0'],
-    penalty: '$260+$200 p/l',
-    nota: 'Bundle 4 líneas 650MB',
-    isBundle: true,
-    lines: 4,
-  },
-  {
-    cat: 'bundles-4l',
-    code: 'A889',
-    name: 'GPON 1GB + 4 Líneas Voz',
-    speed: '1 GB',
-    alfa: '—',
-    tech: 'GPON',
-    price: '$274.99',
-    voz: 'Ilimitada PR/US × 4 líneas',
-    install: ['$120 p/l', '$60 p/l', '$0'],
-    activation: ['$40 p/l', '$20 p/l', '$0'],
-    penalty: '$260+$200 p/l',
-    nota: '⭐ MÁXIMO · 1 Gigabit + 4 líneas',
-    isBundle: true,
-    lines: 4,
-    premium: true,
+    cat: 'equipos-oficina',
+    code: '32042H',
+    name: 'Netgear MR1100 Router/MiFi',
+    speed: '4G LTE',
+    tech: 'LTE',
+    price: '$309.99',
+    priceNote: 'regular',
+    tipo: 'Router/MiFi',
+    materialSAP: '7009082',
+    financ: { m12: '$25.83', m24: '$12.92', m30: '$10.33', m36: '$8.61' },
+    preciosPlan: [
+      { plan: '$9', code: 'CLE09A', precio: '$309.99' },
+      { plan: '$14', code: 'CLE14A', precio: '$249.99' },
+      { plan: '$19', code: 'CLE19A', precio: '$229.99' },
+      { plan: '$29', code: 'CLE29A', precio: '$189.99' },
+      { plan: '$39', code: 'CLE39A', precio: '$149.99' },
+      { plan: '$49', code: 'CLE49A', precio: '$149.99' },
+      { plan: '$59', code: 'CLE59A', precio: '$69.99' },
+      { plan: '$69', code: 'CLE69A', precio: '$29.99' },
+    ],
+    nota: 'Router LTE alta gama · Precios decrecientes por plan',
   },
 
-  // ========== 3PLAY — INTERNET + VOZ + TV ==========
+  // ========== TABLETS ==========
   {
-    cat: '3play',
-    code: 'I100V',
-    name: 'Internet 100MB + Voz Ilimitada + TV',
-    speed: '100 MB',
-    alfa: 'GPON100V',
-    tech: 'GPON',
-    price: '$54.99',
-    voz: 'Ilimitada PR/US',
-    tv: 'Combinable con ClaroTV+',
-    install: [200, 100, 0],
-    activation: [null, null, null],
-    penalty: 300,
-    nota: 'Base 3Play — agregar plan TV por separado',
+    cat: 'tablets',
+    code: '31985H',
+    name: 'Samsung Galaxy S6 Lite Gray',
+    speed: 'WiFi + Cell',
+    tech: 'LTE',
+    price: '$359.99',
+    priceNote: 'regular',
+    tipo: 'Tablet',
+    materialSAP: '7008978',
+    financ: { m12: '$30.00', m24: '$15.00', m30: '$12.00', m36: '$10.00' },
+    preciosPlan: [
+      { plan: '$9', code: 'CLE09A', precio: '$359.99' },
+      { plan: '$14', code: 'CLE14A', precio: '$299.99' },
+      { plan: '$19', code: 'CLE19A', precio: '$279.99' },
+      { plan: '$29', code: 'CLE29A', precio: '$239.99' },
+      { plan: '$39', code: 'CLE39A', precio: '$199.99' },
+      { plan: '$49', code: 'CLE49A', precio: '$119.99' },
+      { plan: '$59', code: 'CLE59A', precio: '$89.99' },
+      { plan: '$69', code: 'CLE69A', precio: '$79.99' },
+    ],
+    nota: 'También disponible en Blue (31986H)',
   },
   {
-    cat: '3play',
-    code: 'I300V',
-    name: 'Internet 300MB + Voz Ilimitada + TV',
-    speed: '300 MB',
-    alfa: 'GPON300V',
-    tech: 'GPON',
-    price: '$79.99',
-    voz: 'Ilimitada PR/US',
-    tv: 'Combinable con ClaroTV+',
-    install: [200, 100, 0],
-    activation: [null, null, null],
-    penalty: 300,
-    nota: '🔥 300MB Triple Play',
-    destacado: true,
+    cat: 'tablets',
+    code: '32527H',
+    name: 'Apple iPad Air 5th Gen WiFi+Cell (Space Gray)',
+    speed: 'WiFi + Cell',
+    tech: 'LTE',
+    price: '$809.99',
+    priceNote: 'regular',
+    tipo: 'Tablet',
+    materialSAP: '7010250',
+    financ: { m12: '$67.50', m24: '$33.75', m30: '$27.00', m36: '$22.50' },
+    preciosPlan: [
+      { plan: '$9', code: 'CLE09A', precio: '$849.99' },
+      { plan: '$14', code: 'CLE14A', precio: '$779.99' },
+      { plan: '$19', code: 'CLE19A', precio: '$759.99' },
+      { plan: '$29', code: 'CLE29A', precio: '$719.99' },
+      { plan: '$39', code: 'CLE39A', precio: '$679.99' },
+      { plan: '$49', code: 'CLE49A', precio: '$649.99' },
+      { plan: '$59', code: 'CLE59A', precio: '$599.99' },
+      { plan: '$69', code: 'CLE69A', precio: '$559.99' },
+    ],
+    nota: 'También disponible en Starlight (32528H) y Blue (32530H)',
   },
   {
-    cat: '3play',
-    code: 'I500V',
-    name: 'Internet 500MB + Voz Ilimitada + TV',
-    speed: '500 MB',
-    alfa: 'GPON500V',
-    tech: 'GPON',
-    price: '$99.99',
-    voz: 'Ilimitada PR/US',
-    tv: 'Combinable con ClaroTV+',
-    install: [200, 100, 0],
-    activation: [null, null, null],
-    penalty: 300,
-    nota: '⭐ PREMIUM Triple Play · Medio Gigabit',
-    premium: true,
+    cat: 'tablets',
+    code: '33676H',
+    name: 'Samsung Galaxy Tab S10 FE 128GB',
+    speed: 'WiFi + Cell',
+    tech: 'LTE',
+    price: '$574.99',
+    priceNote: 'regular',
+    tipo: 'Tablet',
+    materialSAP: '7013109',
+    financ: { m12: '$47.92', m24: '$23.96', m30: '$19.17', m36: '$15.97' },
+    nota: 'Tablet Samsung nueva generación',
   },
   {
-    cat: '3play',
-    code: 'T100TV',
-    name: '3Play 100MB + Voz + TV Esencial',
-    speed: '100 MB',
-    alfa: '3P100E',
-    tech: 'GPON',
-    price: '$89.99',
-    voz: 'Ilimitada PR/US',
-    tv: 'ClaroTV+ Esencial incluido',
-    install: [250, 125, 0],
-    activation: [null, null, null],
-    penalty: 450,
-    nota: 'Todo incluido: Internet + Voz + TV Esencial',
-    destacado: true,
+    cat: 'tablets',
+    code: '32739H',
+    name: 'Apple iPad 10th Gen WiFi+Cell 256GB (Silver)',
+    speed: 'WiFi + Cell',
+    tech: 'LTE',
+    price: '$579.99',
+    priceNote: 'regular',
+    tipo: 'Tablet',
+    materialSAP: '7010743',
+    financ: { m12: '$48.33', m24: '$24.17', m30: '$19.33', m36: '$16.11' },
+    preciosPlan: [
+      { plan: '$9', code: 'CLE09A', precio: '$699.99' },
+      { plan: '$14', code: 'CLE14A', precio: '$649.99' },
+      { plan: '$19', code: 'CLE19A', precio: '$639.99' },
+      { plan: '$29', code: 'CLE29A', precio: '$609.99' },
+      { plan: '$39', code: 'CLE39A', precio: '$579.99' },
+      { plan: '$49', code: 'CLE49A', precio: '$519.99' },
+      { plan: '$59', code: 'CLE59A', precio: '$489.99' },
+    ],
+    nota: 'También disponible en Blue (32740H)',
   },
   {
-    cat: '3play',
-    code: 'T300TV',
-    name: '3Play 300MB + Voz + TV Super',
-    speed: '300 MB',
-    alfa: '3P300S',
-    tech: 'GPON',
-    price: '$114.99',
-    voz: 'Ilimitada PR/US',
-    tv: 'ClaroTV+ Super incluido',
-    install: [250, 125, 0],
-    activation: [null, null, null],
-    penalty: 450,
-    nota: '⭐ PREMIUM · Todo incluido con TV Super',
-    premium: true,
-  },
-
-  // ========== LÍNEAS ADICIONALES 2PLAY ==========
-  {
-    cat: 'lineas-add',
-    code: '7107',
-    name: 'Línea ADD BMS — Cobre/VRAD',
-    speed: '—',
-    alfa: 'B2PBMSAD',
-    tech: 'COBRE/VRAD',
-    price: '$25.00',
-    voz: 'Ilimitada PR/US',
-    install: [60, 30, 0],
-    activation: [40, 20, 0],
-    penalty: 200,
-    nota: 'Línea adicional Mono Speaker · Requiere plan 2Play base',
+    cat: 'tablets',
+    code: '32741H',
+    name: 'Apple iPad Pro 11" WiFi+Cell 256GB (Gray)',
+    speed: 'WiFi + Cell',
+    tech: 'LTE',
+    price: '$1,099.99',
+    priceNote: 'regular',
+    tipo: 'Tablet Premium',
+    materialSAP: '7010742',
+    financ: { m12: '$91.67', m24: '$45.83', m30: '$36.67', m36: '$30.56' },
+    preciosPlan: [
+      { plan: '$9', code: 'CLE09A', precio: '$699.99' },
+      { plan: '$14', code: 'CLE14A', precio: '$649.99' },
+      { plan: '$19', code: 'CLE19A', precio: '$639.99' },
+      { plan: '$29', code: 'CLE29A', precio: '$609.99' },
+      { plan: '$39', code: 'CLE39A', precio: '$579.99' },
+      { plan: '$49', code: 'CLE49A', precio: '$549.99' },
+      { plan: '$59', code: 'CLE59A', precio: '$519.99' },
+      { plan: '$69', code: 'CLE69A', precio: '$489.99' },
+    ],
+    nota: 'iPad Pro premium · Grandes descuentos por plan',
   },
   {
-    cat: 'lineas-add',
-    code: '7108',
-    name: 'Línea ADD BML — Cobre/VRAD',
-    speed: '—',
-    alfa: 'B2PBMLAD',
-    tech: 'COBRE/VRAD',
-    price: '$25.00',
-    voz: 'Ilimitada PR/US',
-    install: [65, 32.50, 0],
-    activation: [null, null, null],
-    penalty: 200,
-    nota: 'Línea adicional Multi Line · Requiere plan 2Play base',
-  },
-  {
-    cat: 'lineas-add',
-    code: 'A169',
-    name: 'Línea ADD BMS — GPON',
-    speed: '—',
-    alfa: 'G-BMSADD2P',
-    tech: 'GPON',
-    price: '$25.00',
-    voz: 'Ilimitada PR/US',
-    install: [60, 30, 0],
-    activation: [40, 20, 0],
-    penalty: 200,
-    nota: 'Línea adicional Mono Speaker GPON · Requiere plan 2Play base',
-  },
-  {
-    cat: 'lineas-add',
-    code: 'A170',
-    name: 'Línea ADD BML — GPON',
-    speed: '—',
-    alfa: 'G-BMLADD2P',
-    tech: 'GPON',
-    price: '$25.00',
-    voz: 'Ilimitada PR/US',
-    install: [65, 32.50, 0],
-    activation: [null, null, null],
-    penalty: 200,
-    nota: 'Línea adicional Multi Line GPON · Requiere plan 2Play base',
+    cat: 'tablets',
+    code: '32747H',
+    name: 'Samsung Galaxy Tab A8 64GB',
+    speed: 'WiFi + Cell',
+    tech: 'LTE',
+    price: '$369.99',
+    priceNote: 'regular',
+    tipo: 'Tablet',
+    materialSAP: '7010779',
+    financ: { m12: '$30.83', m24: '$15.42', m30: '$12.33', m36: '$10.28' },
+    preciosPlan: [
+      { plan: '$9', code: 'CLE09A', precio: '$369.99' },
+      { plan: '$14', code: 'CLE14A', precio: '$299.99' },
+      { plan: '$19', code: 'CLE19A', precio: '$279.99' },
+      { plan: '$29', code: 'CLE29A', precio: '$239.99' },
+      { plan: '$39', code: 'CLE39A', precio: '$199.99' },
+      { plan: '$49', code: 'CLE49A', precio: '$149.99' },
+      { plan: '$59', code: 'CLE59A', precio: '$119.99' },
+      { plan: '$69', code: 'CLE69A', precio: '$79.99' },
+    ],
+    nota: 'Tablet económica Samsung · Buenos descuentos',
   },
 ];
 
 
 // ============================================================
-// RENDERING — Card layout for internet plans
+// BOOSTERS INFO (for reference in cards)
+// ============================================================
+const BOOSTERS = [
+  { data: '500MB', price: '$4.99' },
+  { data: '1GB', price: '$9.99' },
+  { data: '3GB', price: '$19.99' },
+  { data: '5GB', price: '$24.99' },
+];
+
+
+// ============================================================
+// RENDERING — Card layout for wireless plans
 // ============================================================
 
 let currentCategory = 'all';
-let currentTech = 'all';
+let currentTipo = 'all';
 let currentSearch = '';
 
 function matchesSearch(plan, search) {
@@ -832,28 +603,25 @@ function matchesSearch(plan, search) {
     plan.name.toLowerCase().includes(s) ||
     plan.price.toLowerCase().includes(s) ||
     (plan.speed && plan.speed.toLowerCase().includes(s)) ||
-    (plan.alfa && plan.alfa.toLowerCase().includes(s)) ||
+    (plan.data && plan.data.toLowerCase().includes(s)) ||
+    (plan.tipo && plan.tipo.toLowerCase().includes(s)) ||
     (plan.nota && plan.nota.toLowerCase().includes(s)) ||
-    (plan.tech && plan.tech.toLowerCase().includes(s))
+    (plan.tech && plan.tech.toLowerCase().includes(s)) ||
+    (plan.specs && plan.specs.toLowerCase().includes(s)) ||
+    (plan.ofertas && plan.ofertas.toLowerCase().includes(s))
   );
 }
 
-function matchesTech(plan) {
-  if (currentTech === 'all') return true;
-  return plan.tech === currentTech;
+function matchesTipo(plan) {
+  if (currentTipo === 'all') return true;
+  if (currentTipo === 'IoT') return plan.tech === 'IoT';
+  return plan.tech === currentTipo;
 }
 
 function highlightText(text, search) {
   if (!search || !text) return text || '';
   const regex = new RegExp(`(${search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
   return text.replace(regex, '<mark>$1</mark>');
-}
-
-function formatCost(val) {
-  if (val === null || val === undefined) return '<span class="cost-na">—</span>';
-  if (typeof val === 'string') return val;
-  if (val === 0) return '<span class="cost-free">GRATIS</span>';
-  return '$' + val.toFixed(2);
 }
 
 function renderPlans() {
@@ -866,7 +634,7 @@ function renderPlans() {
     if (currentCategory !== 'all' && currentCategory !== cat.id) return;
 
     const catPlans = PLANS.filter(p =>
-      p.cat === cat.id && matchesSearch(p, currentSearch) && matchesTech(p)
+      p.cat === cat.id && matchesSearch(p, currentSearch) && matchesTipo(p)
     );
     if (catPlans.length === 0) return;
     totalVisible += catPlans.length;
@@ -884,23 +652,26 @@ function renderPlans() {
 
     html += `<div class="plan-cards">`;
     catPlans.forEach(plan => {
-      const isPremium = plan.premium;
+      const isEquipo = plan.cat.startsWith('equipos') || plan.cat === 'tablets';
       const isDestacado = plan.destacado;
-      const cardClass = isPremium ? 'plan-card premium' : (isDestacado ? 'plan-card destacado' : 'plan-card');
+      const cardClass = isDestacado ? 'plan-card destacado' : 'plan-card';
 
       html += `<div class="${cardClass}">`;
 
       // Card Header
       html += `<div class="card-header">`;
       html += `<span class="card-code">${highlightText(plan.code, currentSearch)}</span>`;
-      const techClass = plan.tech === 'GPON' ? 'tech-gpon' : 'tech-cobre';
+      const techClass = plan.tech === '5G' ? 'tech-gpon' : (plan.tech === 'IoT' ? 'tech-cobre' : 'tech-lte');
       html += `<span class="tech-badge ${techClass}">${plan.tech}</span>`;
-      if (isPremium) html += `<span class="card-badge premium-badge">⭐ PREMIUM</span>`;
-      else if (isDestacado) html += `<span class="card-badge dest-badge">🔥 TOP</span>`;
+      if (isDestacado) html += `<span class="card-badge dest-badge">🔥 TOP</span>`;
       html += `</div>`;
 
-      // Speed highlight
-      if (plan.speed && plan.speed !== '—') {
+      // Speed/data highlight
+      if (plan.data && !isEquipo) {
+        html += `<div class="speed-badge">${plan.data}`;
+        if (plan.dataConv) html += ` <span style="font-size:12px;opacity:.7;">/ ${plan.dataConv} conv.</span>`;
+        html += `</div>`;
+      } else if (plan.speed && plan.speed !== '—') {
         html += `<div class="speed-badge">${plan.speed}</div>`;
       }
 
@@ -908,51 +679,74 @@ function renderPlans() {
       html += `<div class="card-title">${highlightText(plan.name, currentSearch)}</div>`;
       html += `<div class="card-price-row">`;
       html += `<span class="card-price">${plan.price}</span>`;
-      html += `<span class="card-period">/mes</span>`;
-      if (plan.isBundle) html += `<span class="card-ppl">(${plan.lines} líneas)</span>`;
+      html += `<span class="card-period">/${plan.priceNote || 'mes'}</span>`;
       html += `</div>`;
 
       // Card Features
       html += `<div class="card-features">`;
-      html += `<div class="feat"><span class="feat-icon">📞</span><span class="feat-label">Voz</span><span class="feat-val">${plan.voz}</span></div>`;
-      if (plan.alfa && plan.alfa !== '—') {
-        html += `<div class="feat"><span class="feat-icon">🏷️</span><span class="feat-label">Alfa</span><span class="feat-val" style="font-family:monospace;font-size:11px;">${highlightText(plan.alfa, currentSearch)}</span></div>`;
+      html += `<div class="feat"><span class="feat-icon">📋</span><span class="feat-label">Tipo</span><span class="feat-val">${plan.tipo}</span></div>`;
+
+      if (plan.voz) {
+        html += `<div class="feat"><span class="feat-icon">📞</span><span class="feat-label">Voz</span><span class="feat-val">${plan.voz}</span></div>`;
       }
-      if (plan.tv) {
-        html += `<div class="feat"><span class="feat-icon">📺</span><span class="feat-label">TV</span><span class="feat-val">${plan.tv}</span></div>`;
+      if (plan.cobertura) {
+        html += `<div class="feat"><span class="feat-icon">🌎</span><span class="feat-label">Cobertura</span><span class="feat-val">${plan.cobertura}</span></div>`;
+      }
+      if (plan.puj) {
+        html += `<div class="feat"><span class="feat-icon">⚠️</span><span class="feat-label">PUJ</span><span class="feat-val">Reduce a ${plan.puj}</span></div>`;
+      }
+      if (plan.contrato) {
+        html += `<div class="feat"><span class="feat-icon">📝</span><span class="feat-label">Contrato</span><span class="feat-val">${plan.contrato}</span></div>`;
+      }
+      if (plan.codeConv) {
+        html += `<div class="feat"><span class="feat-icon">🔗</span><span class="feat-label">Code Conv.</span><span class="feat-val" style="font-family:monospace;font-size:11px;">${plan.codeConv}</span></div>`;
+      }
+      if (plan.specs) {
+        html += `<div class="feat"><span class="feat-icon">⚙️</span><span class="feat-label">Specs</span><span class="feat-val" style="font-size:11px;">${plan.specs}</span></div>`;
+      }
+      if (plan.materialSAP) {
+        html += `<div class="feat"><span class="feat-icon">🏷️</span><span class="feat-label">SAP</span><span class="feat-val" style="font-family:monospace;">${plan.materialSAP}</span></div>`;
       }
       html += `</div>`;
 
-      // Installation costs table
-      html += `<div class="install-grid">`;
-      html += `<div class="install-header">`;
-      html += `<span>0 meses</span><span>12 meses</span><span>24 meses</span>`;
-      html += `</div>`;
-
-      html += `<div class="install-row">`;
-      html += `<span class="install-label">Instalación</span>`;
-      if (Array.isArray(plan.install)) {
-        plan.install.forEach(v => {
-          html += `<span class="install-val">${formatCost(v)}</span>`;
-        });
+      // Financing table for equipment
+      if (plan.financ) {
+        html += `<div class="install-grid">`;
+        html += `<div class="install-header" style="grid-template-columns:80px repeat(4, 1fr);">`;
+        html += `<span style="display:block;">Financ.</span><span>12m</span><span>24m</span><span>30m</span><span>36m</span>`;
+        html += `</div>`;
+        html += `<div class="install-row" style="grid-template-columns:80px repeat(4, 1fr);">`;
+        html += `<span class="install-label">Plazo/mes</span>`;
+        html += `<span class="install-val">${plan.financ.m12}</span>`;
+        html += `<span class="install-val">${plan.financ.m24}</span>`;
+        html += `<span class="install-val">${plan.financ.m30}</span>`;
+        html += `<span class="install-val">${plan.financ.m36}</span>`;
+        html += `</div>`;
+        html += `</div>`;
       }
-      html += `</div>`;
 
-      if (plan.activation && plan.activation.some(v => v !== null)) {
-        html += `<div class="install-row">`;
-        html += `<span class="install-label">Activación</span>`;
-        plan.activation.forEach(v => {
-          html += `<span class="install-val">${formatCost(v)}</span>`;
+      // Price by plan tier table
+      if (plan.preciosPlan && plan.preciosPlan.length > 0) {
+        html += `<div class="install-grid" style="margin-top:8px;">`;
+        html += `<div class="install-header" style="grid-template-columns:1fr 1fr;">`;
+        html += `<span>Plan</span><span>Precio Equipo</span>`;
+        html += `</div>`;
+        plan.preciosPlan.forEach(pp => {
+          const isFree = pp.precio === '$0.00';
+          html += `<div class="install-row" style="grid-template-columns:1fr 1fr;">`;
+          html += `<span class="install-val" style="font-size:11px;font-family:monospace;">${pp.plan} (${pp.code})</span>`;
+          html += `<span class="install-val ${isFree ? 'cost-free' : ''}">${isFree ? 'GRATIS' : pp.precio}</span>`;
+          html += `</div>`;
         });
         html += `</div>`;
       }
 
-      html += `<div class="install-row penalty-row">`;
-      html += `<span class="install-label">Penalidad</span>`;
-      const penStr = typeof plan.penalty === 'number' ? '$' + plan.penalty.toFixed(2) : plan.penalty;
-      html += `<span class="install-val penalty-val" style="grid-column:span 3;">${penStr}</span>`;
-      html += `</div>`;
-      html += `</div>`;
+      // Equipment offers
+      if (plan.ofertas) {
+        html += `<div class="card-note" style="background:#f0fdf4;border-left:3px solid #16a34a;padding:8px 10px;margin-top:8px;font-size:12px;">`;
+        html += `<strong>💰 Oferta:</strong> ${plan.ofertas}`;
+        html += `</div>`;
+      }
 
       // Note
       if (plan.nota) {
@@ -965,13 +759,32 @@ function renderPlans() {
     html += `</div></div>`;
   });
 
+  // Add boosters info after INT Go categories
+  if (currentCategory === 'all' || currentCategory === 'int-go') {
+    html += `<div class="category-section cat-ba-add">`;
+    html += `<div class="category-header" onclick="this.parentElement.classList.toggle('collapsed')">`;
+    html += `<h2><span class="category-icon">🚀</span> Boosters — Paquetes Adicionales de Datos <span class="category-count">${BOOSTERS.length}</span></h2>`;
+    html += `<span class="category-toggle">▼</span>`;
+    html += `</div>`;
+    html += `<div class="category-body">`;
+    html += `<p class="cat-description">Paquetes booster disponibles para INT Go y Claro Oficina. Comprar a través del coordinador de servicio vía MiClaro en SIF. También: Roaming diario $10.00/día (DIARIO10).</p>`;
+    html += `<div class="plan-cards">`;
+    BOOSTERS.forEach(b => {
+      html += `<div class="plan-card">`;
+      html += `<div class="speed-badge">${b.data}</div>`;
+      html += `<div class="card-price-row"><span class="card-price">${b.price}</span><span class="card-period">/paquete</span></div>`;
+      html += `</div>`;
+    });
+    html += `</div></div></div>`;
+  }
+
   container.innerHTML = html;
   noResults.style.display = totalVisible === 0 ? 'block' : 'none';
 
   document.getElementById('stats').textContent =
     totalVisible === PLANS.length
-      ? `Mostrando ${totalVisible} planes`
-      : `Mostrando ${totalVisible} de ${PLANS.length} planes`;
+      ? `Mostrando ${totalVisible} planes/equipos`
+      : `Mostrando ${totalVisible} de ${PLANS.length} planes/equipos`;
 }
 
 
@@ -994,12 +807,12 @@ function init() {
     renderPlans();
   });
 
-  // Tech filter buttons
-  document.querySelectorAll('.filter-btn[data-tech]').forEach(btn => {
+  // Tipo filter buttons
+  document.querySelectorAll('.filter-btn[data-tipo]').forEach(btn => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('.filter-btn[data-tech]').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.filter-btn[data-tipo]').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
-      currentTech = btn.dataset.tech;
+      currentTipo = btn.dataset.tipo;
       renderPlans();
     });
   });

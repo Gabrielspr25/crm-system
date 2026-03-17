@@ -796,6 +796,11 @@ body.dark .card-note {
     color: #1e40af;
     border: 1px solid #93c5fd;
 }
+.tech-lte {
+    background: #dbeafe;
+    color: #1e40af;
+    border: 1px solid #93c5fd;
+}
 
 /* Price */
 .cell-price {

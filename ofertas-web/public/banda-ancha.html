@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Claro Business — Banda Ancha / Internet PYMES</title>
+    <title>Claro Business — Internet Inalámbrico, Claro Oficina &amp; IoT</title>
     <link rel="stylesheet" href="style.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -16,14 +16,14 @@
         <div class="brand">
             <div class="brand-logo">CLARO</div>
             <div class="brand-text">
-                <h1>Banda Ancha / Internet — Estructura de Negocios</h1>
-                <span class="brand-rev">PYMES / Corporativo · GPON Fibra + Cobre/VRAD · Vigente 2024-2026</span>
+                <h1>Internet Inalámbrico · Claro Oficina · IoT</h1>
+                <span class="brand-rev">INT Go · Claro Oficina · IoT/Telemetría · Corporativo · Vigente ene 2026</span>
             </div>
         </div>
         <div class="header-actions">
             <div class="search-box">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                <input type="text" id="searchInput" placeholder="Buscar plan, velocidad, código...">
+                <input type="text" id="searchInput" placeholder="Buscar plan, equipo, código...">
             </div>
             <button class="dark-toggle" id="darkToggle" title="Modo Noche">
                 <span class="dark-toggle-icon" id="darkIcon">🌙</span>
@@ -37,7 +37,7 @@
     <div class="nav-inner">
         <a href="index.html" class="nav-link">📞 Planes Fijos</a>
         <a href="movil.html" class="nav-link">📱 Planes Móviles</a>
-        <a href="banda-ancha.html" class="nav-link active">💻 Banda Ancha</a>
+        <a href="banda-ancha.html" class="nav-link active">📡 Inalámbrico / IoT</a>
     </div>
 </nav>
 
@@ -45,10 +45,11 @@
 <div class="filters-bar">
     <div class="filters-inner">
         <div class="filter-group">
-            <label>Tecnología:</label>
-            <button class="filter-btn active" data-tech="all">Todas</button>
-            <button class="filter-btn" data-tech="GPON"><span class="dot dot-gpon"></span> GPON Fibra</button>
-            <button class="filter-btn" data-tech="COBRE/VRAD"><span class="dot dot-cobre"></span> Cobre/VRAD</button>
+            <label>Tipo:</label>
+            <button class="filter-btn active" data-tipo="all">Todos</button>
+            <button class="filter-btn" data-tipo="LTE"><span class="dot" style="background:#3b82f6;"></span> LTE/4G</button>
+            <button class="filter-btn" data-tipo="5G"><span class="dot" style="background:#8b5cf6;"></span> 5G</button>
+            <button class="filter-btn" data-tipo="IoT"><span class="dot" style="background:#10b981;"></span> IoT</button>
         </div>
         <div class="filter-group">
             <label>Categoría:</label>
@@ -66,61 +67,61 @@
     <!-- Quick Reference -->
     <div class="quick-ref" id="quickRef">
         <div class="quick-ref-header" onclick="document.getElementById('quickRef').classList.toggle('collapsed')">
-            <h2>📋 Referencia Rápida — Internet Empresarial</h2>
+            <h2>📋 Referencia Rápida — Internet Inalámbrico &amp; IoT</h2>
             <span class="toggle-icon">▼</span>
         </div>
         <div class="quick-ref-body">
             <div class="ref-cards">
-                <div class="ref-card ref-no-contract">
-                    <div class="ref-card-title">Sin Contrato (0 meses)</div>
-                    <div class="ref-card-discount">$120</div>
-                    <div class="ref-card-detail">Instalación completa. Sin compromiso.</div>
+                <div class="ref-card" style="background:#eff6ff;border-color:#93c5fd;">
+                    <div class="ref-card-title">Internet On The Go</div>
+                    <div class="ref-card-discount" style="color:#2563eb;font-size:16px;">MiFi Portátil</div>
+                    <div class="ref-card-detail">MiFi LTE portátil · Solo datos · PR y USA · Desde $30/mes</div>
                 </div>
-                <div class="ref-card ref-12m">
-                    <div class="ref-card-title">Contrato 12 Meses</div>
-                    <div class="ref-card-discount">$60</div>
-                    <div class="ref-card-detail">50% descuento en instalación.</div>
+                <div class="ref-card" style="background:#faf5ff;border-color:#c4b5fd;">
+                    <div class="ref-card-title">Claro Oficina</div>
+                    <div class="ref-card-discount" style="color:#7c3aed;font-size:16px;">Fijo Inalámbrico</div>
+                    <div class="ref-card-detail">Router LTE fijo · Voz + Internet · Hasta 30Mbps · $50/mes</div>
                 </div>
-                <div class="ref-card ref-24m">
-                    <div class="ref-card-title">Contrato 24 Meses</div>
-                    <div class="ref-card-discount">$0</div>
-                    <div class="ref-card-detail">Instalación GRATIS. Penalidad $260.</div>
+                <div class="ref-card" style="background:#f0fdf4;border-color:#86efac;">
+                    <div class="ref-card-title">IoT / Telemetría</div>
+                    <div class="ref-card-discount" style="color:#16a34a;font-size:16px;">Machine-to-Machine</div>
+                    <div class="ref-card-detail">Datos telemetría · Solo PR · Desde $2.99/mes · Contrato 1 año</div>
                 </div>
             </div>
 
             <div class="ref-cards" style="margin-top:14px;">
-                <div class="ref-card" style="background:#eff6ff;border-color:#93c5fd;">
-                    <div class="ref-card-title">GPON = Fibra Óptica</div>
-                    <div class="ref-card-discount" style="color:#2563eb;font-size:16px;">30MB → 1GB</div>
-                    <div class="ref-card-detail">Velocidad simétrica. Ideal para negocios. Hasta 1 Gbps.</div>
+                <div class="ref-card ref-no-contract">
+                    <div class="ref-card-title">Convergente = Doble Data</div>
+                    <div class="ref-card-discount" style="font-size:18px;">×2</div>
+                    <div class="ref-card-detail">Cliente con otro servicio Claro (móvil/fijo) recibe el doble de datos</div>
                 </div>
-                <div class="ref-card" style="background:#fffbeb;border-color:#fde68a;">
-                    <div class="ref-card-title">Cobre / VRAD</div>
-                    <div class="ref-card-discount" style="color:#d97706;font-size:16px;">5M → 100M</div>
-                    <div class="ref-card-detail">Disponible en más áreas. Velocidades asimétricas (bajada/subida).</div>
+                <div class="ref-card ref-12m">
+                    <div class="ref-card-title">Velocidad reducida (PUJ)</div>
+                    <div class="ref-card-discount" style="font-size:16px;">128Kbps</div>
+                    <div class="ref-card-detail">INT Go: Al agotar datos, velocidad baja a 128Kbps hasta próximo ciclo</div>
                 </div>
-                <div class="ref-card" style="background:#f0fdf4;border-color:#86efac;">
-                    <div class="ref-card-title">2Play = Internet + Voz</div>
-                    <div class="ref-card-discount" style="color:#16a34a;font-size:16px;">Todo Incluido</div>
-                    <div class="ref-card-detail">Todos los planes incluyen Voz Ilimitada PR/US. Es como 2Play automático.</div>
+                <div class="ref-card ref-24m">
+                    <div class="ref-card-title">Financiamiento 24m</div>
+                    <div class="ref-card-discount">GRATIS</div>
+                    <div class="ref-card-detail">Equipos gratis en planes desde $30+ con financiamiento 24 meses</div>
                 </div>
             </div>
 
             <div class="ref-glossary">
-                <h3>Glosario Internet</h3>
+                <h3>Glosario</h3>
                 <div class="glossary-grid">
-                    <div><strong>MB</strong> = Megabits por segundo (velocidad)</div>
-                    <div><strong>GB</strong> = Gigabit por segundo (1000 MB)</div>
-                    <div><strong>GPON</strong> = Fibra Óptica (más rápida, más estable)</div>
-                    <div><strong>COBRE/VRAD</strong> = Tecnología DSL vectorizada</div>
-                    <div><strong>2Play</strong> = Internet + Voz en un solo plan</div>
-                    <div><strong>3Play</strong> = Internet + Voz + TV</div>
-                    <div><strong>BUNDLE</strong> = Paquete de múltiples líneas con descuento</div>
-                    <div><strong>p/l</strong> = Precio "por línea" del bundle</div>
-                    <div><strong>BMS</strong> = Business Mono Speaker (1 línea)</div>
-                    <div><strong>BML</strong> = Business Multi Line (multilínea)</div>
-                    <div><strong>ADD</strong> = Línea Adicional bajo un plan existente</div>
-                    <div><strong>PRUS ILIM</strong> = Voz Ilimitada Puerto Rico y US</div>
+                    <div><strong>INT Go</strong> = Internet On The Go (MiFi portátil)</div>
+                    <div><strong>Claro Oficina</strong> = Internet fijo inalámbrico + Voz</div>
+                    <div><strong>IoT</strong> = Internet of Things / Telemetría M2M</div>
+                    <div><strong>MiFi</strong> = Router WiFi portátil con batería</div>
+                    <div><strong>FWA</strong> = Fixed Wireless Access (inalámbrico fijo)</div>
+                    <div><strong>VoLTE</strong> = Voz sobre LTE (alta calidad)</div>
+                    <div><strong>PUJ</strong> = Política de Uso Justo (throttle al agotar datos)</div>
+                    <div><strong>BYOP</strong> = Bring Your Own Phone (sin contrato)</div>
+                    <div><strong>Convergente</strong> = Cliente con 2+ servicios Claro</div>
+                    <div><strong>SIM IMEI Lock</strong> = SIM casada al equipo (no transferible)</div>
+                    <div><strong>FIUP24</strong> = Price code financiamiento 24 meses</div>
+                    <div><strong>APN</strong> = Access Point Name (punto de acceso datos)</div>
                 </div>
             </div>
         </div>
@@ -128,9 +129,10 @@
 
     <!-- Promo -->
     <div class="promo-banner">
-        <div class="promo-icon">⚡</div>
+        <div class="promo-icon">📡</div>
         <div class="promo-text">
-            <strong>Contrato 24 meses = Instalación GRATIS</strong> en todos los planes GPON y Cobre/VRAD · Penalidad por cancelación temprana: $260
+            <strong>Equipos GRATIS en financiamiento 24m:</strong>
+            Franklin RT410 en INT Go desde $30 · Franklin RG1000 en INT Go desde $50 · PCD R402X en Claro Oficina desde $30 · CG890 en Claro Oficina $50
         </div>
     </div>
 
@@ -146,7 +148,7 @@
 </div>
 
 <footer class="footer">
-    <p>Claro Puerto Rico — Banda Ancha Negocios · Herramienta interna para vendedores</p>
+    <p>Claro Puerto Rico — Internet Inalámbrico, Claro Oficina &amp; IoT · Boletín ene 2026 · Herramienta interna para vendedores</p>
 </footer>
 
 <script src="banda-ancha-data.js"></script>
