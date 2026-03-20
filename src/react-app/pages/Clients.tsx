@@ -1,7 +1,7 @@
-﻿// VERSION: 2025-01-15-T16-FINAL-V5.1.37-PRODUCTION
+// VERSION: 2025-01-15-T16-FINAL-V5.1.37-PRODUCTION
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router";
-import { Plus, Search, Edit, Users, Building, Phone, Mail, MapPin, Hash, Calendar, Trash2, UserPlus, Download, FileSpreadsheet, FileText, Check, X, Package, BarChart3, Sparkles, Send, Merge, Save, FileDown, ShoppingCart, ArrowRightLeft } from "lucide-react";
+import { Plus, Search, Edit, Users, Building, Phone, Mail, MapPin, Hash, Calendar, Trash2, UserPlus, Download, FileSpreadsheet, FileText, Check, X, Package, BarChart3, Sparkles, Send, Merge, Save, FileDown, ShoppingCart, ArrowRightLeft, Undo2, Upload, Mic } from "lucide-react";
 import { useApi } from "../hooks/useApi";
 import { authFetch, getCurrentUser } from "@/react-app/utils/auth";
 import { APP_VERSION, BUILD_LABEL } from "@/version";
@@ -12,6 +12,7 @@ import SalesHistoryTab from "../components/SalesHistoryTab";
 import OfferGenerator from "../components/OfferGenerator";
 import EmailModal from "../components/EmailModal";
 import ComparativaModal from "../components/ComparativaModal";
+import BanPasteSubscribersModal from "../components/BanPasteSubscribersModal";
 import * as XLSX from 'xlsx';
 
 interface Client {
@@ -88,6 +89,40 @@ interface Subscriber {
   is_active: number;
   created_at: string;
   updated_at: string;
+}
+
+const REAL_PR_PHONE_REGEX = /^(787|939|989)\d{7}$/;
+
+function normalizePhoneDigits(value: string | null | undefined): string {
+  return String(value || '').replace(/\D/g, '');
+}
+
+function isPlaceholderSubscriberPhone(phone: string | null | undefined): boolean {
+  return /^(FIJO|LINEA|SIN-TEL)-/i.test(String(phone || '').trim());
+}
+
+function shouldHidePlaceholderSubscriber(subscriber: Subscriber, allSubscribers: Subscriber[]): boolean {
+  if (!isPlaceholderSubscriberPhone(subscriber.phone)) return false;
+
+  const plan = String(subscriber.plan || '').trim().toUpperCase();
+  const monthlyValue = subscriber.monthly_value ?? null;
+  const contractEndDate = subscriber.contract_end_date ? String(subscriber.contract_end_date).slice(0, 10) : null;
+
+  return allSubscribers.some((other) => {
+    if (other.id === subscriber.id) return false;
+    if (isPlaceholderSubscriberPhone(other.phone)) return false;
+
+    const phoneDigits = normalizePhoneDigits(other.phone);
+    if (!REAL_PR_PHONE_REGEX.test(phoneDigits)) return false;
+
+    const otherPlan = String(other.plan || '').trim().toUpperCase();
+    const otherMonthlyValue = other.monthly_value ?? null;
+    const otherContractEndDate = other.contract_end_date ? String(other.contract_end_date).slice(0, 10) : null;
+
+    return otherPlan === plan
+      && otherMonthlyValue === monthlyValue
+      && otherContractEndDate === contractEndDate;
+  });
 }
 
 type ClientStatus = 'overdue' | 'expired' | 'critical' | 'warning' | 'good' | 'no-date';
@@ -168,6 +203,7 @@ interface ClientRowSummary {
   base?: string | null;
   notes?: string | null;
   subscribersDetail?: { ban_number: string; phone: string; status?: string }[] | null;
+  activeSubscribers?: number;
 }
 
 interface ClientDetail {
@@ -195,7 +231,17 @@ interface FollowUpProspect {
   vendor_id: number | null;
   is_active?: boolean | number | null;
   is_completed?: boolean | number | null;
+  completed_date?: string | null;
 }
+
+const isProspectActive = (prospect: FollowUpProspect | any): boolean => {
+  if (!prospect || prospect.completed_date != null) return false;
+  const raw = prospect.is_active;
+  if (raw === null || raw === undefined) return true;
+  if (typeof raw === 'boolean') return raw;
+  const normalized = String(raw).trim().toLowerCase();
+  return normalized === '1' || normalized === 'true' || normalized === 't';
+};
 
 const computeSubscriberTiming = (contractEndDate: string | null) => {
   if (!contractEndDate) {
@@ -271,6 +317,7 @@ const getStatusBadge = (status: ClientStatus, days: number, createdAt?: string |
 
 // V3.5 FINAL FIX - 2025-01-15 - Tab configuration and version display
 export default function Clients() {
+  const navigate = useNavigate();
   const UNIQUE_BUILD_ID = APP_VERSION;
 
   console.log("🚀🚀🚀 ============================================");
@@ -280,7 +327,6 @@ export default function Clients() {
   console.log("🚀 Runtime:", new Date().toISOString());
   console.log("🚀🚀🚀 ============================================");
 
-  const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedMonth, setSelectedMonth] = useState<string>(""); // Nuevo: filtro de mes
   const [selectedBanType, setSelectedBanType] = useState<string>(""); // Nuevo: filtro tipo de BAN
@@ -291,7 +337,7 @@ export default function Clients() {
   const [showSubscriberModal, setShowSubscriberModal] = useState(false);
   const [showClientDetailModal, setShowClientDetailModal] = useState(false);
   const [loadingClientDetail, setLoadingClientDetail] = useState(false);
-  const [clientDetailInitialTab, setClientDetailInitialTab] = useState<'info' | 'bans' | 'history' | 'calls' | 'comparativas' | 'ventas'>('bans');
+  const [clientDetailInitialTab, setClientDetailInitialTab] = useState<'info' | 'bans' | 'history' | 'comparativas' | 'ventas'>('bans');
   const [editingClient, setEditingClient] = useState<Client | null>(null);
   const [selectedClientId, setSelectedClientId] = useState<number | null>(null);
   const [selectedBanId, setSelectedBanId] = useState<number | null>(null);
@@ -375,7 +421,7 @@ export default function Clients() {
 
   const clientHasActiveFollowUp = useCallback((clientId: number) => {
     return (prospects || []).some(
-      (p) => p.client_id === clientId && p.completed_date == null
+      (p) => p.client_id === clientId && isProspectActive(p)
     );
   }, [prospects]);
 
@@ -429,7 +475,7 @@ export default function Clients() {
         for (const client of clients) {
           // Check if this client is being followed
           const clientProspects = followUpProspects.filter((p) => p.client_id === client.id);
-          const activeProspect = clientProspects.find((p) => p.completed_date == null);
+          const activeProspect = clientProspects.find((p) => isProspectActive(p));
           const completedProspectExists = !activeProspect && clientProspects.some((p) => p.completed_date != null);
 
           const isBeingFollowed = Boolean(activeProspect);
@@ -785,6 +831,7 @@ export default function Clients() {
         ...base,
         totalBans,
         totalSubscribers,
+        activeSubscribers: Number((clientFromBackend as any)?.active_subscriber_count || 0),
         primaryBanNumber: primary?.banNumber || (allBanNumbers.length > 0 ? allBanNumbers[0] : (base.includesBan ? '-' : 'N/A')),
         primarySubscriberPhone: primary?.subscriberPhone || (base.includesBan && subscriberPhones.size > 0 ? Array.from(subscriberPhones)[0] : (base.includesBan ? '-' : 'N/A')),
         primaryContractEndDate: primary?.contractEndDate || null,
@@ -873,11 +920,11 @@ export default function Clients() {
   const cancelledClients = filteredClients.filter(item => item.hasCancelledBans);
 
   // Contadores para tabs (usar stats del backend si están disponibles, sino calcular localmente)
-  const activeClientsCount = clientStats?.active_count ?? clientSummaries.filter(item => !item.hasCancelledBans && !item.isIncomplete).length;
-  const cancelledClientsCount = clientStats?.cancelled_count ?? clientSummaries.filter(item => item.hasCancelledBans).length;
-  const followingClientsCount = clientStats?.following_count ?? clientSummaries.filter(item => item.isBeingFollowed && !item.wasCompleted && !item.hasCancelledBans && !item.isIncomplete).length;
-  const completedClientsCount = clientStats?.completed_count ?? clientSummaries.filter(item => item.wasCompleted && !item.hasCancelledBans && !item.isIncomplete).length;
-  const incompleteClientsCount = clientStats?.incomplete_count ?? clientSummaries.filter(item => item.isIncomplete).length;
+  const activeClientsCount = clientStats?.active_count != null ? Number(clientStats.active_count) : clientSummaries.filter(item => !item.hasCancelledBans && !item.isIncomplete).length;
+  const cancelledClientsCount = clientStats?.cancelled_count != null ? Number(clientStats.cancelled_count) : clientSummaries.filter(item => item.hasCancelledBans).length;
+  const followingClientsCount = clientStats?.following_count != null ? Number(clientStats.following_count) : clientSummaries.filter(item => item.isBeingFollowed && !item.wasCompleted && !item.hasCancelledBans && !item.isIncomplete).length;
+  const completedClientsCount = clientStats?.completed_count != null ? Number(clientStats.completed_count) : clientSummaries.filter(item => item.wasCompleted && !item.hasCancelledBans && !item.isIncomplete).length;
+  const incompleteClientsCount = clientStats?.incomplete_count != null ? Number(clientStats.incomplete_count) : clientSummaries.filter(item => item.isIncomplete).length;
 
   // Total de todos los clientes (para verificación)
   const totalAllClients = clientSummaries.length;
@@ -894,18 +941,55 @@ export default function Clients() {
   console.log('🧮 Suma verificación:', activeClientsCount + cancelledClientsCount + incompleteClientsCount);
   console.log('🔍 ===== FIN ESTADÍSTICAS =====');
 
+  const getClientPriorityDate = (item: ClientRowSummary) => {
+    const dateValue = item.primaryContractEndDate || item.primarySubscriberCreatedAt || item.lastActivity || null;
+    if (!dateValue) return Number.POSITIVE_INFINITY;
+    const timestamp = new Date(dateValue).getTime();
+    return Number.isFinite(timestamp) ? timestamp : Number.POSITIVE_INFINITY;
+  };
+
   // Al usar backend filtering, filteredClients ya contiene solo lo que queremos
   // Sin embargo, mantenemos la lógica de búsqueda sobre los resultados retornados
   const clientsForTab = [...filteredClients].sort((a, b) => {
+    // 0) Los clientes vendidos/completados siempre van al final.
+    if (a.wasCompleted !== b.wasCompleted) {
+      return a.wasCompleted ? 1 : -1;
+    }
+
+    // Orden por defecto del pool:
+    // 1) Clientes no vendidos con la fecha más atrasada primero.
+    // 2) Si empatan, mayor volumen (suscriptores activos).
+    // 3) Luego actividad más reciente.
+    if (!sortOrder) {
+      const priorityDateA = getClientPriorityDate(a);
+      const priorityDateB = getClientPriorityDate(b);
+      if (priorityDateA !== priorityDateB) return priorityDateA - priorityDateB;
+
+      const activeSubsA = Number((a as any).activeSubscribers || 0);
+      const activeSubsB = Number((b as any).activeSubscribers || 0);
+      if (activeSubsA !== activeSubsB) return activeSubsB - activeSubsA;
+
+      const totalSubsA = Number(a.totalSubscribers || 0);
+      const totalSubsB = Number(b.totalSubscribers || 0);
+      if (totalSubsA !== totalSubsB) return totalSubsB - totalSubsA;
+
+      const lastA = a.lastActivity ? new Date(a.lastActivity).getTime() : 0;
+      const lastB = b.lastActivity ? new Date(b.lastActivity).getTime() : 0;
+      return lastB - lastA;
+    }
+
     if (sortOrder === 'expiry_asc') {
-      // Vencidos más antiguos primero (sin fecha al final)
-      const dateA = a.primaryContractEndDate ? new Date(a.primaryContractEndDate).getTime() : Infinity;
-      const dateB = b.primaryContractEndDate ? new Date(b.primaryContractEndDate).getTime() : Infinity;
+      // Fecha más atrasada primero (sin fecha al final)
+      const dateA = getClientPriorityDate(a);
+      const dateB = getClientPriorityDate(b);
       return dateA - dateB;
     }
     if (sortOrder === 'expiry_desc') {
-      const dateA = a.primaryContractEndDate ? new Date(a.primaryContractEndDate).getTime() : -Infinity;
-      const dateB = b.primaryContractEndDate ? new Date(b.primaryContractEndDate).getTime() : -Infinity;
+      const dateA = getClientPriorityDate(a);
+      const dateB = getClientPriorityDate(b);
+      if (!Number.isFinite(dateA) && !Number.isFinite(dateB)) return 0;
+      if (!Number.isFinite(dateA)) return 1;
+      if (!Number.isFinite(dateB)) return -1;
       return dateB - dateA;
     }
     if (sortOrder === 'name_asc') return (a.clientName || '').localeCompare(b.clientName || '');
@@ -976,9 +1060,9 @@ export default function Clients() {
 
       await Promise.all([refetchProspects(), refetchClients()]);
 
-      // Redirigir al módulo de Seguimiento
-      console.log('🔄 Redirigiendo a módulo Seguimiento');
-      navigate('/seguimiento');
+      // Mantener al usuario en Clientes y refrescar vista
+      console.log('🔄 Cliente enviado a seguimiento dentro del módulo Clientes');
+      setActiveTab('following');
     } catch (error) {
       console.error('Error sending client to follow-up:', error);
       notify('error', error instanceof Error ? error.message : 'No fue posible enviar el cliente a seguimiento.');
@@ -1129,7 +1213,7 @@ export default function Clients() {
     }
   };
 
-  const handleViewClientDetail = async (clientId: number, initialTab: 'info' | 'bans' | 'history' | 'calls' | 'comparativas' | 'ventas' = 'bans') => {
+  const handleViewClientDetail = async (clientId: number, initialTab: 'info' | 'bans' | 'history' | 'comparativas' | 'ventas' = 'bans') => {
     try {
       setLoadingClientDetail(true);
       setClientDetailInitialTab(initialTab); // Establecer la pestaña inicial
@@ -1537,6 +1621,81 @@ export default function Clients() {
     }
   };
 
+  useEffect(() => {
+    const currentUrl = new URL(window.location.href);
+    const clientIdParam = currentUrl.searchParams.get('open_client_id');
+    if (!clientIdParam) return;
+
+    const parsedClientId = Number(clientIdParam);
+    if (!Number.isInteger(parsedClientId) || parsedClientId <= 0) {
+      notify('error', 'ID de cliente inválido para abrir detalle.');
+      currentUrl.searchParams.delete('open_client_id');
+      window.history.replaceState({}, '', `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`);
+      return;
+    }
+
+    handleViewClientDetail(parsedClientId, 'history');
+    currentUrl.searchParams.delete('open_client_id');
+    window.history.replaceState({}, '', `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`);
+  }, []);
+
+  const handleDeleteBanFromClientModal = async (banId: number, banNumber: string) => {
+    try {
+      const confirmed = window.confirm(
+        `¿Eliminar BAN ${banNumber}?\n\nSe eliminarán también sus suscriptores asociados.`
+      );
+      if (!confirmed) return;
+
+      const response = await authFetch(`/api/bans/${banId}`, { method: 'DELETE' });
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ error: 'Error al eliminar el BAN' }));
+        notify('error', error.error || 'Error al eliminar el BAN.');
+        return;
+      }
+
+      notify('success', `BAN ${banNumber} eliminado correctamente.`);
+      if (selectedClientId) {
+        await loadClientBANs(selectedClientId);
+      }
+      await refetchClients();
+    } catch (error) {
+      console.error('Error deleting BAN from client modal:', error);
+      notify('error', 'No fue posible eliminar el BAN.');
+    }
+  };
+
+  const handleCancelSubscriberFromClientModal = async (
+    subscriberId: number,
+    phone: string,
+    _banId: number
+  ) => {
+    const reason = window.prompt(`Razón de cancelación para ${phone} (opcional):`);
+    if (reason === null) return;
+
+    try {
+      const response = await authFetch(`/api/subscribers/${subscriberId}/cancel`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cancel_reason: reason || null }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ error: 'Error al cancelar suscriptor' }));
+        notify('error', error.error || 'No fue posible cancelar el suscriptor.');
+        return;
+      }
+
+      notify('success', `Línea ${phone} cancelada correctamente.`);
+      if (selectedClientId) {
+        await loadClientBANs(selectedClientId);
+      }
+      await refetchClients();
+    } catch (error) {
+      console.error('Error cancelling subscriber from client modal:', error);
+      notify('error', 'No fue posible cancelar el suscriptor.');
+    }
+  };
+
   const handleClientModalClose = () => {
     if (pendingBanClientId !== null) {
       notify('error', 'Debes registrar al menos un BAN y un suscriptor antes de cerrar el cliente.');
@@ -1839,6 +1998,13 @@ export default function Clients() {
             <Plus className="w-5 h-5" />
             Nuevo Cliente
           </button>
+          <button
+            onClick={() => navigate('/voz-cliente')}
+            className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
+          >
+            <Mic className="w-5 h-5" />
+            Cliente Voz
+          </button>
         </div>
       </div>
 
@@ -2122,11 +2288,13 @@ export default function Clients() {
                       </span>
                     </td>
                     <td className="px-4 py-4 whitespace-nowrap text-center">
-                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${item.hasCancelledBans
-                        ? 'bg-red-900/40 text-red-100 border border-red-500/30'
-                        : 'bg-emerald-900/40 text-emerald-100 border border-emerald-500/30'
+                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${item.isBeingFollowed
+                        ? 'bg-amber-900/40 text-amber-100 border border-amber-500/30'
+                        : item.hasCancelledBans
+                          ? 'bg-red-900/40 text-red-100 border border-red-500/30'
+                          : 'bg-emerald-900/40 text-emerald-100 border border-emerald-500/30'
                         }`}>
-                        {item.hasCancelledBans ? 'Cancelado' : 'Activo'}
+                        {item.isBeingFollowed ? 'En seguimiento' : item.hasCancelledBans ? 'Cancelado' : 'Activo'}
                       </span>
                     </td>
                     <td className="px-4 py-4 whitespace-nowrap text-left">
@@ -2255,6 +2423,14 @@ export default function Clients() {
             setSelectedBanId(banId);
             setShowSubscriberModal(true);
           }}
+          onDeleteBAN={handleDeleteBanFromClientModal}
+          onCancelSubscriber={handleCancelSubscriberFromClientModal}
+          onRefreshBANs={async () => {
+            if (selectedClientId) {
+              await loadClientBANs(selectedClientId);
+            }
+            await refetchClients();
+          }}
           banRequirementPending={pendingBanClientId !== null && ((editingClient?.id ?? null) === pendingBanClientId)}
         />
       )}
@@ -2376,8 +2552,8 @@ export default function Clients() {
             }}
             onFollowUpUpdated={async () => {
               await refetchProspects();
-              // Redirigir al módulo de Seguimiento
-              navigate('/seguimiento');
+              // Mantener navegación en módulo Clientes
+              setActiveTab('following');
             }}
             onEditSubscriber={(subscriber, banId) => {
               setEditingSubscriber(subscriber);
@@ -2556,17 +2732,19 @@ function ClientManagementModal({
   onRefreshClient?: () => Promise<void>;
   onFollowUpUpdated?: () => Promise<void> | void;
   clientHasActiveFollowUp: (clientId: number) => boolean;
-  initialTab?: 'info' | 'bans' | 'history' | 'calls' | 'comparativas' | 'ventas';
+  initialTab?: 'info' | 'bans' | 'history' | 'comparativas' | 'ventas';
 }) {
-  const [activeTab, setActiveTab] = useState<'info' | 'bans' | 'history' | 'calls' | 'comparativas' | 'ventas'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'info' | 'bans' | 'history' | 'comparativas' | 'ventas'>(initialTab);
   const [showBANForm, setShowBANForm] = useState(false);
   const [showEmailModal, setShowEmailModal] = useState(false);
   const [showComparativaModal, setShowComparativaModal] = useState(false);
+  const [pasteTargetBAN, setPasteTargetBAN] = useState<{ id: number; banNumber: string } | null>(null);
   const [editingBAN, setEditingBAN] = useState<BAN | null>(null);
   const [formMessage, setFormMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const [isSendingToFollowUp, setIsSendingToFollowUp] = useState(false);
+  const [isReturningToPool, setIsReturningToPool] = useState(false);
   const [isEditingClient, setIsEditingClient] = useState(false);
-  const [subscriberSubTabs, setSubscriberSubTabs] = useState<Record<string, 'activas' | 'canceladas'>>({});
+  const [subscriberSubTabs, setSubscriberSubTabs] = useState<Record<string, 'activas' | 'no_renueva' | 'canceladas'>>({});
 
   // === COMPARATIVAS STATE ===
   interface OfferRow {
@@ -2663,6 +2841,13 @@ function ClientManagementModal({
       if (res.ok) {
         setSavedActualId(subId);
         setTimeout(() => setSavedActualId(null), 2000);
+        const notes = [
+          `Línea ${sub?.phone || subId} actualizada en modal de cliente.`,
+          `Plan: ${edits.plan || 'Sin plan'}`,
+          `Mensualidad: ${edits.cost || '0'}`,
+          `Vencimiento: ${edits.expiry || 'Sin fecha'}`,
+        ].join(' | ');
+        await recordGestionLog(notes);
         // Refresh client data
         if (onRefreshClient) await onRefreshClient();
         setEditingActual(prev => { const n = { ...prev }; delete n[subId]; return n; });
@@ -2725,7 +2910,7 @@ function ClientManagementModal({
     setSavedComparativas(updated);
   };
   // === END COMPARATIVAS STATE ===
-  const [vendorsList, setVendorsList] = useState<{id: string; name: string; role: string}[]>([]);
+  const [vendorsList, setVendorsList] = useState<{ id: string; name: string; role: string; vendorId: number | null }[]>([]);
   const [editClientData, setEditClientData] = useState({
     name: client.name || '',
     business_name: client.business_name || '',
@@ -2742,17 +2927,45 @@ function ClientManagementModal({
     cellular: (client as any).cellular || '',
     additional_phone: (client as any).additional_phone || '',
     salesperson_id: (client as any).salesperson_id || '',
+    vendor_id: null as number | null,
   });
 
   // Cargar lista de vendedores para el dropdown
   useEffect(() => {
     const loadVendors = async () => {
       try {
-        const res = await authFetch('/api/vendors');
-        if (res.ok) {
-          const data = await res.json();
-          setVendorsList(data);
+        // Fuente principal: salespeople (UUID) para guardar clients.salesperson_id correctamente
+        const salespeopleRes = await authFetch('/api/salespeople');
+        if (salespeopleRes.ok) {
+          const salespeople = await salespeopleRes.json();
+          const normalizedSalespeople = (Array.isArray(salespeople) ? salespeople : [])
+            .map((s: any) => ({
+              id: s?.id ? String(s.id) : '',
+              name: String(s?.name || 'Sin nombre'),
+              role: String(s?.role || 'vendedor'),
+              vendorId: null as number | null,
+            }))
+            .filter((s: any) => Boolean(s.id));
+
+          if (normalizedSalespeople.length > 0) {
+            setVendorsList(normalizedSalespeople);
+            return;
+          }
         }
+
+        // Fallback: vendors con mapeo a salesperson_id
+        const res = await authFetch('/api/vendors');
+        if (!res.ok) return;
+        const data = await res.json();
+        const normalized = (Array.isArray(data) ? data : [])
+          .map((v: any) => ({
+            id: v?.salesperson_id ? String(v.salesperson_id) : '',
+            name: String(v?.salesperson_name || v?.name || 'Sin nombre'),
+            role: String(v?.salesperson_role || v?.role || 'vendedor'),
+            vendorId: typeof v?.id === 'number' ? v.id : (Number.isFinite(Number(v?.id)) ? Number(v.id) : null),
+          }))
+          .filter((v: any) => Boolean(v.id));
+        setVendorsList(normalized);
       } catch (e) {
         console.error('Error loading vendors:', e);
       }
@@ -2835,6 +3048,157 @@ function ClientManagementModal({
       setFormMessage({ type: 'error', text: error instanceof Error ? error.message : 'No fue posible enviar a seguimiento.' });
     } finally {
       setIsSendingToFollowUp(false);
+    }
+  };
+
+  const handleReturnToPoolFromDetail = async () => {
+    const note = prompt('Nota obligatoria para devolver este cliente al pool:');
+    if (note === null) return;
+
+    const trimmedNote = note.trim();
+    if (!trimmedNote) {
+      setFormMessage({ type: 'error', text: 'Debes escribir una nota para devolver el cliente al pool.' });
+      return;
+    }
+
+    if (!confirm(`¿Devolver "${client.business_name || client.name}" al pool?`)) {
+      return;
+    }
+
+    setIsReturningToPool(true);
+    try {
+      const response = await authFetch('/api/follow-up-prospects?include_completed=true');
+      if (!response.ok) {
+        throw new Error('No se pudo cargar el seguimiento activo del cliente.');
+      }
+
+      const data = await response.json();
+      const prospects = Array.isArray(data) ? data : [];
+      const activeProspect = prospects.find((p: any) => String(p.client_id) === String(client.id) && isProspectActive(p));
+
+      if (!activeProspect?.id) {
+        throw new Error('No se encontró seguimiento activo para este cliente.');
+      }
+
+      const marker = `--- DEVUELTO A POOL (${new Date().toLocaleDateString('es-PR')}) ---\n${trimmedNote}`;
+      await authFetch(`/api/follow-up-prospects/${activeProspect.id}`, {
+        method: 'PUT',
+        json: {
+          notes: activeProspect.notes ? `${activeProspect.notes}\n\n${marker}` : marker
+        }
+      });
+
+      // Registrar la nota en historial de gestiones cuando exista endpoint.
+      try {
+        await authFetch('/api/call-logs', {
+          method: 'POST',
+          json: {
+            follow_up_id: activeProspect.id,
+            call_date: new Date().toISOString(),
+            notes: `DEVUELTO A POOL: ${trimmedNote}`,
+            outcome: 'devuelto_pool',
+            step_completed: false,
+            step_id: null,
+          },
+        });
+      } catch (error) {
+        console.warn('No se pudo registrar call-log de devolución:', error);
+      }
+
+      let returnResp = await authFetch(`/api/follow-up-prospects/${activeProspect.id}/return`, {
+        method: 'PUT',
+      });
+
+      if (!returnResp.ok && returnResp.status === 404) {
+        returnResp = await authFetch(`/api/follow-up-prospects/${activeProspect.id}`, {
+          method: 'PUT',
+          json: { is_active: 0 }
+        });
+      }
+
+      if (!returnResp.ok) {
+        const errorPayload = await returnResp.json().catch(() => null);
+        throw new Error(errorPayload?.error || 'No fue posible devolver el cliente al pool.');
+      }
+
+      const unassignResp = await authFetch(`/api/clients/${client.id}`, {
+        method: 'PUT',
+        json: { salesperson_id: null }
+      });
+      if (!unassignResp.ok) {
+        console.warn('No se pudo desasignar vendedor al devolver al pool.');
+      }
+
+      setFormMessage({ type: 'success', text: 'Cliente devuelto al pool con nota.' });
+      if (onFollowUpUpdated) {
+        await onFollowUpUpdated();
+      }
+      if (onRefreshClient) {
+        await onRefreshClient();
+      }
+    } catch (error) {
+      setFormMessage({ type: 'error', text: error instanceof Error ? error.message : 'No se pudo devolver al pool.' });
+    } finally {
+      setIsReturningToPool(false);
+    }
+  };
+
+  const ensureFollowUpProspectId = async (): Promise<number | null> => {
+    try {
+      const response = await authFetch('/api/follow-up-prospects?include_completed=true');
+      if (response.ok) {
+        const data = await response.json();
+        const prospects = Array.isArray(data) ? data : [];
+        const clientProspects = prospects.filter((p: any) => String(p.client_id) === String(client.id));
+        const active = clientProspects.find((p: any) => isProspectActive(p));
+        if (active?.id) return active.id;
+
+        const latest = [...clientProspects].sort((a: any, b: any) => {
+          const ad = new Date(a.updated_at || a.created_at || 0).getTime();
+          const bd = new Date(b.updated_at || b.created_at || 0).getTime();
+          return bd - ad;
+        })[0];
+        if (latest?.id) return latest.id;
+      }
+
+      const createResponse = await authFetch('/api/follow-up-prospects', {
+        method: 'POST',
+        json: { client_id: client.id },
+      });
+      if (createResponse.ok) {
+        const created = await createResponse.json().catch(() => null);
+        if (created?.id) return created.id;
+      }
+
+      const retry = await authFetch('/api/follow-up-prospects?include_completed=true');
+      if (!retry.ok) return null;
+      const retryData = await retry.json();
+      const retryProspects = Array.isArray(retryData) ? retryData : [];
+      const clientProspectsRetry = retryProspects.filter((p: any) => String(p.client_id) === String(client.id));
+      return clientProspectsRetry[0]?.id ?? null;
+    } catch (error) {
+      console.error('Error buscando/creando seguimiento para historial:', error);
+      return null;
+    }
+  };
+
+  const recordGestionLog = async (notes: string) => {
+    try {
+      const prospectId = await ensureFollowUpProspectId();
+      if (!prospectId) return;
+      await authFetch('/api/call-logs', {
+        method: 'POST',
+        json: {
+          follow_up_id: prospectId,
+          call_date: new Date().toISOString(),
+          notes,
+          outcome: 'actualizacion',
+          step_completed: false,
+          step_id: null,
+        },
+      });
+    } catch (error) {
+      console.error('Error guardando gestión automática:', error);
     }
   };
 
@@ -3102,6 +3466,8 @@ function ClientManagementModal({
         return;
       }
 
+      const reasonText = reason && reason.trim() ? ` | Razón: ${reason.trim()}` : '';
+      await recordGestionLog(`Línea ${phone} cancelada.${reasonText}`);
       setFormMessage({ type: 'success', text: `Línea ${phone} cancelada.` });
       // Switch to cancelled tab for this BAN
       setSubscriberSubTabs(prev => ({ ...prev, [banId]: 'canceladas' }));
@@ -3111,26 +3477,65 @@ function ClientManagementModal({
     }
   };
 
+  const handleMarkNoRenewNow = async (subscriberId: number, phone: string, banId: string) => {
+    const note = prompt(`Nota obligatoria para "No renueva ahora" en ${phone}:`);
+    if (note === null) return;
+    if (!note.trim()) {
+      setFormMessage({ type: 'error', text: 'Debes escribir una nota para marcar "No renueva ahora".' });
+      return;
+    }
+
+    try {
+      const response = await authFetch(`/api/subscribers/${subscriberId}/no-renueva-ahora`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ note: note.trim() }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Error al marcar la línea.' }));
+        setFormMessage({ type: 'error', text: errorData.error || 'Error al marcar la línea.' });
+        return;
+      }
+
+      await recordGestionLog(`Línea ${phone} marcada como "No renueva ahora". Nota: ${note.trim()}`);
+      setFormMessage({ type: 'success', text: `Línea ${phone} marcada como "No renueva ahora".` });
+      setSubscriberSubTabs(prev => ({ ...prev, [banId]: 'no_renueva' }));
+      if (onRefreshClient) await onRefreshClient();
+    } catch {
+      setFormMessage({ type: 'error', text: 'Error de conexión al marcar la línea.' });
+    }
+  };
+
   const handleReactivateSubscriber = async (subscriberId: number, phone: string, banId: string) => {
     if (!confirm(`¿Reactivar la línea ${phone}?`)) return;
     
     try {
-      const response = await authFetch(`/api/subscribers/${subscriberId}/reactivate`, {
+      let response = await authFetch(`/api/subscribers/${subscriberId}/renewal`, {
         method: 'PUT',
       });
+
+      if (!response.ok && response.status === 404) {
+        response = await authFetch(`/api/subscribers/${subscriberId}/pending-renewal`, {
+          method: 'PUT',
+        });
+      }
 
       if (!response.ok) {
         setFormMessage({ type: 'error', text: 'Error al reactivar la línea.' });
         return;
       }
 
-      setFormMessage({ type: 'success', text: `Línea ${phone} reactivada.` });
+      await recordGestionLog(`Línea ${phone} devuelta a "Por renovar".`);
+      setFormMessage({ type: 'success', text: `Línea ${phone} devuelta a "Por renovar".` });
       setSubscriberSubTabs(prev => ({ ...prev, [banId]: 'activas' }));
       if (onRefreshClient) await onRefreshClient();
     } catch {
       setFormMessage({ type: 'error', text: 'Error de conexión al reactivar.' });
     }
   };
+
+  const hasActiveFollowUpInModal = clientHasActiveFollowUp(client.id);
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -3140,31 +3545,50 @@ function ClientManagementModal({
           <div>
             <h2 className="text-2xl font-bold text-white">{client.business_name || client.name}</h2>
             <p className="text-gray-300 mt-1">Gestión completa del cliente</p>
+            <div className="mt-2 flex items-center gap-2">
+              <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border ${hasActiveFollowUpInModal
+                ? 'bg-amber-900/40 text-amber-100 border-amber-500/30'
+                : 'bg-gray-800/60 text-gray-300 border-gray-600/50'
+                }`}>
+                {hasActiveFollowUpInModal ? 'En seguimiento' : 'No está en seguimiento'}
+              </span>
+              {client.vendor_name && (
+                <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border bg-blue-900/30 text-blue-100 border-blue-500/30">
+                  Vendedor: {client.vendor_name}
+                </span>
+              )}
+            </div>
           </div>
           <div className="flex items-center space-x-3">
-            {(() => {
-              const hasActiveFollowUp = clientHasActiveFollowUp(client.id);
-
-              // No mostrar el botón si el cliente ya está en seguimiento
-              if (hasActiveFollowUp) {
-                return null;
-              }
-
-              return (
-                <button
-                  onClick={handleSendToFollowUpFromDetail}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${!isSendingToFollowUp
-                    ? 'bg-green-600 hover:bg-green-700 text-white'
+            {!hasActiveFollowUpInModal && (
+              <button
+                onClick={handleSendToFollowUpFromDetail}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${!isSendingToFollowUp
+                  ? 'bg-green-600 hover:bg-green-700 text-white'
+                  : 'bg-gray-700 text-gray-400 cursor-not-allowed'
+                  }`}
+                title="Enviar a seguimiento"
+                disabled={isSendingToFollowUp}
+              >
+                <UserPlus className="w-4 h-4" />
+                {isSendingToFollowUp ? 'Enviando...' : 'Enviar a Seguimiento'}
+              </button>
+            )}
+            {hasActiveFollowUpInModal && (
+              <button
+                onClick={handleReturnToPoolFromDetail}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${
+                  !isReturningToPool
+                    ? 'bg-orange-600 hover:bg-orange-700 text-white'
                     : 'bg-gray-700 text-gray-400 cursor-not-allowed'
-                    }`}
-                  title="Enviar a seguimiento"
-                  disabled={isSendingToFollowUp}
-                >
-                  <UserPlus className="w-4 h-4" />
-                  {isSendingToFollowUp ? 'Enviando...' : 'Enviar a Seguimiento'}
-                </button>
-              );
-            })()}
+                }`}
+                title="Devolver al pool"
+                disabled={isReturningToPool}
+              >
+                <Undo2 className="w-4 h-4" />
+                {isReturningToPool ? 'Devolviendo...' : 'Devolver al Pool'}
+              </button>
+            )}
             <button
               onClick={onClose}
               className="text-gray-400 hover:text-white text-2xl p-2 hover:bg-gray-800 rounded-lg transition-colors"
@@ -3215,16 +3639,7 @@ function ClientManagementModal({
               : 'text-gray-400 hover:text-white hover:bg-gray-750'
               }`}
           >
-            Historial
-          </button>
-          <button
-            onClick={() => setActiveTab('calls')}
-            className={`px-6 py-3 text-sm font-medium transition-colors ${activeTab === 'calls'
-              ? 'text-blue-400 border-b-2 border-blue-400 bg-gray-750'
-              : 'text-gray-400 hover:text-white hover:bg-gray-750'
-              }`}
-          >
-            Llamadas y Fechas
+            Historial de Gestiones
           </button>
           <button
             onClick={() => setShowComparativaModal(true)}
@@ -3248,6 +3663,15 @@ function ClientManagementModal({
           >
             <ShoppingCart className="w-3.5 h-3.5" />
             Ventas
+          </button>
+          <button
+            onClick={() => setActiveTab('tareas')}
+            className={`px-6 py-3 text-sm font-medium transition-colors flex items-center gap-1.5 ${activeTab === 'tareas'
+              ? 'text-purple-400 border-b-2 border-purple-400 bg-gray-750'
+              : 'text-gray-400 hover:text-white hover:bg-gray-750'
+              }`}
+          >
+            📋 Tareas
           </button>
         </div>
 
@@ -3377,6 +3801,7 @@ function ClientManagementModal({
                             cellular: (client as any).cellular || '',
                             additional_phone: (client as any).additional_phone || '',
                             salesperson_id: (client as any).salesperson_id || '',
+                            vendor_id: null,
                           });
                         }}
                         className="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors"
@@ -3533,7 +3958,14 @@ function ClientManagementModal({
                       <label className="block text-sm font-medium text-gray-300 mb-2">Vendedor Asignado</label>
                       <select
                         value={editClientData.salesperson_id}
-                        onChange={(e) => setEditClientData({ ...editClientData, salesperson_id: e.target.value })}
+                        onChange={(e) => {
+                          const selected = vendorsList.find(v => v.id === e.target.value);
+                          setEditClientData({
+                            ...editClientData,
+                            salesperson_id: e.target.value,
+                            vendor_id: selected?.vendorId ?? null,
+                          });
+                        }}
                         className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500"
                       >
                         <option value="">Sin asignar</option>
@@ -3763,15 +4195,18 @@ function ClientManagementModal({
 
               <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-2">
                 {client.bans.length > 0 ? (
-                  client.bans.map((ban) => (
+                  client.bans.map((ban) => {
+                    const visibleSubscribers = (ban.subscribers || []).filter((s: Subscriber) => !shouldHidePlaceholderSubscriber(s, ban.subscribers || []));
+                    const activeSubscribersCount = visibleSubscribers.filter((s: Subscriber) => s.status !== 'cancelado' && s.status !== 'cancelled').length;
+                    return (
                     <div key={ban.id} className="bg-gray-800 rounded-lg p-3 border border-gray-600 shadow-sm">
                       {/* BAN Header */}
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center space-x-2">
+                      <div className="flex flex-wrap items-start justify-between gap-2 mb-2">
+                        <div className="flex items-center space-x-2 min-w-0">
                           <div className="p-1 bg-blue-100 dark:bg-blue-900/50 rounded">
                             <Hash className="w-3 h-3 text-blue-600 dark:text-blue-400" />
                           </div>
-                          <div className="flex items-center gap-2">
+                          <div className="flex flex-wrap items-center gap-2 min-w-0">
                             <h4 className="text-sm font-semibold text-white">BAN: {ban.ban_number}</h4>
                             {ban.account_type && (
                               <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-blue-900/40 text-blue-200 border border-blue-500/30">
@@ -3791,37 +4226,55 @@ function ClientManagementModal({
                             )}
                           </div>
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center justify-end gap-2 shrink-0">
+                          <button
+                            onClick={() => setPasteTargetBAN({ id: ban.id, banNumber: ban.ban_number })}
+                            className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 whitespace-nowrap"
+                            title="Subir imagen/PDF o pegar lista de suscriptores"
+                          >
+                            <Upload className="w-4 h-4" />
+                            Subir/Pegar
+                          </button>
                           <button
                             onClick={() => setEditingBAN(ban)}
-                            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5"
+                            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 whitespace-nowrap"
                             title="Editar BAN"
                           >
                             <Edit className="w-4 h-4" />
                             Editar
                           </button>
-                          <button
-                            onClick={() => handleDeleteBAN(ban.id)}
-                            className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5"
-                            title="Eliminar BAN"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                            Eliminar
-                          </button>
+                          {activeSubscribersCount === 0 ? (
+                            <button
+                              onClick={() => handleDeleteBAN(ban.id)}
+                              className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 whitespace-nowrap"
+                              title="Eliminar BAN"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                              Eliminar
+                            </button>
+                          ) : (
+                            <span className="px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-700 text-gray-400 border border-gray-600 whitespace-nowrap">
+                              Tiene líneas activas
+                            </span>
+                          )}
                         </div>
                       </div>
 
                       {/* Subscribers Section */}
-                      {ban.subscribers && ban.subscribers.length > 0 ? (
+                      {visibleSubscribers.length > 0 ? (
                         (() => {
-                          const activeSubs = ban.subscribers.filter((s: Subscriber) => s.status !== 'cancelado' && s.status !== 'cancelled');
-                          const cancelledSubs = ban.subscribers.filter((s: Subscriber) => s.status === 'cancelado' || s.status === 'cancelled');
+                          // Mostrar TODAS las líneas activas (incluye vigentes y vencidas).
+                          const activeSubs = visibleSubscribers.filter((s: Subscriber) => {
+                            return s.status !== 'cancelado' && s.status !== 'cancelled' && s.status !== 'no_renueva_ahora';
+                          });
+                          const noRenewSubs = visibleSubscribers.filter((s: Subscriber) => s.status === 'no_renueva_ahora');
+                          const cancelledSubs = visibleSubscribers.filter((s: Subscriber) => s.status === 'cancelado' || s.status === 'cancelled');
                           const currentSubTab = subscriberSubTabs[ban.id] || 'activas';
-                          const subsToShow = currentSubTab === 'activas' ? activeSubs : cancelledSubs;
+                          const subsToShow = currentSubTab === 'activas' ? activeSubs : currentSubTab === 'no_renueva' ? noRenewSubs : cancelledSubs;
 
                           return (
                             <div className="space-y-2">
-                              {/* Sub-tabs: Activas / Canceladas */}
+                              {/* Sub-tabs: Activas / No renueva ahora / Canceladas */}
                               <div className="flex items-center gap-2">
                                 <button
                                   onClick={() => setSubscriberSubTabs(prev => ({ ...prev, [ban.id]: 'activas' }))}
@@ -3829,6 +4282,13 @@ function ClientManagementModal({
                                 >
                                   <Phone className="w-3 h-3" />
                                   Activas ({activeSubs.length})
+                                </button>
+                                <button
+                                  onClick={() => setSubscriberSubTabs(prev => ({ ...prev, [ban.id]: 'no_renueva' }))}
+                                  className={`flex items-center gap-1 px-3 py-1 rounded-lg text-xs font-medium transition-all ${currentSubTab === 'no_renueva' ? 'bg-amber-600 text-white shadow-lg shadow-amber-900/30' : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200'}`}
+                                >
+                                  <Calendar className="w-3 h-3" />
+                                  No renueva ahora ({noRenewSubs.length})
                                 </button>
                                 <button
                                   onClick={() => setSubscriberSubTabs(prev => ({ ...prev, [ban.id]: 'canceladas' }))}
@@ -3842,12 +4302,12 @@ function ClientManagementModal({
                               {/* List */}
                               <div className="space-y-1">
                                 {subsToShow.length > 0 ? subsToShow.map((subscriber: Subscriber) => (
-                                  <div key={subscriber.id} className={`rounded p-2 ${currentSubTab === 'canceladas' ? 'bg-gray-800/60 border border-red-900/20' : 'bg-gray-700'}`}>
+                                  <div key={subscriber.id} className={`rounded p-2 ${currentSubTab === 'canceladas' ? 'bg-gray-800/60 border border-red-900/20' : currentSubTab === 'no_renueva' ? 'bg-gray-800/60 border border-amber-900/20' : 'bg-gray-700'}`}>
                                     <div className="flex justify-between items-center">
                                       <div className="flex items-center space-x-3 text-xs flex-1">
                                         <div className="flex items-center space-x-1">
                                           <Phone className="w-3 h-3 text-gray-400" />
-                                          <span className={`font-mono ${currentSubTab === 'canceladas' ? 'text-gray-400 line-through' : 'text-white'}`}>{subscriber.phone}</span>
+                                          <span className={`font-mono ${currentSubTab === 'canceladas' ? 'text-gray-400 line-through' : currentSubTab === 'no_renueva' ? 'text-amber-200' : 'text-white'}`}>{subscriber.phone}</span>
                                         </div>
 
                                         {subscriber.plan && (
@@ -3858,7 +4318,7 @@ function ClientManagementModal({
                                           <div className={`font-semibold ${currentSubTab === 'canceladas' ? 'text-gray-500' : 'text-green-400'}`}>${subscriber.monthly_value}/mes</div>
                                         )}
 
-                                        {/* Expiry badge - only for active */}
+                                        {/* Expiry badge - only for pending renewal */}
                                         {currentSubTab === 'activas' && (() => {
                                           const { status, days } = computeSubscriberTiming(subscriber.contract_end_date);
                                           const badge = getStatusBadge(status, days, subscriber.created_at);
@@ -3875,6 +4335,13 @@ function ClientManagementModal({
                                             </div>
                                           );
                                         })()}
+
+                                        {/* Note for no renew now */}
+                                        {currentSubTab === 'no_renueva' && subscriber.cancel_reason && (
+                                          <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-900/40 text-amber-100 border border-amber-500/30">
+                                            {subscriber.cancel_reason}
+                                          </span>
+                                        )}
 
                                         {/* Cancel reason for cancelled */}
                                         {currentSubTab === 'canceladas' && subscriber.cancel_reason && (
@@ -3894,11 +4361,35 @@ function ClientManagementModal({
                                               Editar
                                             </button>
                                             <button
+                                              onClick={() => handleMarkNoRenewNow(subscriber.id, subscriber.phone, String(ban.id))}
+                                              className="bg-amber-600 hover:bg-amber-700 text-white px-2 py-1 rounded text-xs transition-colors flex items-center gap-1"
+                                            >
+                                              <Calendar className="w-3 h-3" />
+                                              No renueva ahora
+                                            </button>
+                                            <button
                                               onClick={() => handleCancelSubscriber(subscriber.id, subscriber.phone, String(ban.id))}
                                               className="bg-orange-600 hover:bg-orange-700 text-white px-2 py-1 rounded text-xs transition-colors flex items-center gap-1"
                                             >
                                               <X className="w-3 h-3" />
                                               Cancelar
+                                            </button>
+                                          </>
+                                        ) : currentSubTab === 'no_renueva' ? (
+                                          <>
+                                            <button
+                                              onClick={() => handleReactivateSubscriber(subscriber.id, subscriber.phone, String(ban.id))}
+                                              className="bg-emerald-600 hover:bg-emerald-700 text-white px-2 py-1 rounded text-xs transition-colors flex items-center gap-1"
+                                            >
+                                              <Check className="w-3 h-3" />
+                                              Volver a renovar
+                                            </button>
+                                            <button
+                                              onClick={() => handleEditSubscriber(subscriber, ban.id)}
+                                              className="bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded text-xs transition-colors flex items-center gap-1"
+                                            >
+                                              <Edit className="w-3 h-3" />
+                                              Editar
                                             </button>
                                           </>
                                         ) : (
@@ -3924,7 +4415,7 @@ function ClientManagementModal({
                                   </div>
                                 )) : (
                                   <div className="text-center py-3 text-gray-500 text-xs">
-                                    {currentSubTab === 'activas' ? 'No hay líneas activas' : 'No hay líneas canceladas'}
+                                    {currentSubTab === 'activas' ? 'No hay líneas activas' : currentSubTab === 'no_renueva' ? 'No hay líneas marcadas como "No renueva ahora"' : 'No hay líneas canceladas'}
                                   </div>
                                 )}
                               </div>
@@ -3960,9 +4451,10 @@ function ClientManagementModal({
                           </button>
                         </div>
                       )}
-                      </div>
-                    ))
-                  ) : (
+                    </div>
+                    );
+                  })
+                ) : (
                     <div className="text-center py-8 bg-gray-800/50 rounded-lg border-2 border-dashed border-gray-600">
                       <Hash className="mx-auto h-12 w-12 text-gray-600 mb-3" />
                       <h3 className="text-base font-medium text-gray-300 mb-2">Este cliente no tiene BANs asignados</h3>
@@ -3980,16 +4472,9 @@ function ClientManagementModal({
           )}
 
           {activeTab === 'history' && (
-            <SalesHistoryTab clientId={client.id} />
-          )}
-
-          {activeTab === 'calls' && (
-            <div className="text-center py-12">
-              <Phone className="mx-auto h-12 w-12 text-gray-600" />
-              <h3 className="mt-2 text-lg font-medium text-gray-300">Llamadas y Fechas</h3>
-              <p className="mt-1 text-sm text-gray-500">
-                Próximamente: Registro de llamadas, fechas importantes y seguimiento
-              </p>
+            <div className="space-y-4">
+              <FollowUpGestionesTab clientId={client.id} />
+              <SalesHistoryTab clientId={client.id} />
             </div>
           )}
 
@@ -4301,13 +4786,12 @@ function ClientManagementModal({
 
           {/* ====== TAB VENTAS ====== */}
           {activeTab === 'ventas' && (
-            <div className="text-center py-12">
-              <ShoppingCart className="mx-auto h-12 w-12 text-gray-600" />
-              <h3 className="mt-2 text-lg font-medium text-gray-300">Ventas del Cliente</h3>
-              <p className="mt-1 text-sm text-gray-500">
-                Próximamente: Ventas sincronizadas desde Tango para este cliente
-              </p>
-            </div>
+            <ClientSalesReportsTab clientId={client.id} />
+          )}
+
+          {/* ====== TAB TAREAS ====== */}
+          {activeTab === 'tareas' && (
+            <TasksPanelClient client={client} />
           )}
         </div>
 
@@ -4357,6 +4841,638 @@ function ClientManagementModal({
           onRefreshClient={onRefreshClient}
         />
       )}
+
+      <BanPasteSubscribersModal
+        isOpen={Boolean(pasteTargetBAN)}
+        banId={pasteTargetBAN?.id ?? null}
+        banNumber={pasteTargetBAN?.banNumber ?? null}
+        onClose={() => setPasteTargetBAN(null)}
+        onSuccess={async (syncResult) => {
+          const rows = Array.isArray((syncResult as any)?.rows) ? (syncResult as any).rows : [];
+          const stats = (syncResult as any)?.stats || {};
+          const warningsCount = Array.isArray((syncResult as any)?.warnings) ? (syncResult as any).warnings.length : 0;
+          const movedSameClientCount = rows.filter((row: any) =>
+            row?.reason_code === 'moved_same_client_ban' || row?.reason_code === 'would_move_same_client_ban'
+          ).length;
+          const ignoredOtherClientCount = rows.filter((row: any) =>
+            row?.reason_code === 'ignored_exists_other_client_ban'
+          ).length;
+
+          const summaryText =
+            `Sync BAN ${pasteTargetBAN?.banNumber || '-'}: ` +
+            `insertadas ${Number(stats?.inserted || 0)}, ` +
+            `actualizadas ${Number(stats?.updated || 0)}, ` +
+            `movidas mismo cliente ${movedSameClientCount}, ` +
+            `ignoradas otro cliente ${ignoredOtherClientCount}, ` +
+            `canceladas ${Number(stats?.set_cancelled || 0)}, ` +
+            `activas ${Number(stats?.set_active || 0)}.` +
+            (warningsCount > 0 ? ` Alertas: ${warningsCount}.` : '');
+          setFormMessage({ type: warningsCount > 0 ? 'info' : 'success', text: summaryText });
+
+          if (pasteTargetBAN) {
+            const setCancelled = Number(syncResult?.stats?.set_cancelled || 0);
+            const setActive = Number(syncResult?.stats?.set_active || 0);
+            if (setCancelled > 0) {
+              setSubscriberSubTabs(prev => ({ ...prev, [pasteTargetBAN.id]: 'canceladas' }));
+            } else if (setActive > 0) {
+              setSubscriberSubTabs(prev => ({ ...prev, [pasteTargetBAN.id]: 'activas' }));
+            }
+          }
+          if (onRefreshClient) {
+            await onRefreshClient();
+          }
+        }}
+      />
+    </div>
+  );
+}
+
+function FollowUpGestionesTab({ clientId }: { clientId: number | string }) {
+  const [loading, setLoading] = useState(true);
+  const [prospects, setProspects] = useState<any[]>([]);
+  const [logsByProspect, setLogsByProspect] = useState<Record<number, any[]>>({});
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        setLoading(true);
+        const resp = await authFetch('/api/follow-up-prospects?include_completed=true');
+        if (!resp.ok) throw new Error('No se pudieron cargar las gestiones.');
+        const data = await resp.json();
+        const filtered = (Array.isArray(data) ? data : []).filter((p: any) => String(p.client_id) === String(clientId));
+        setProspects(filtered);
+
+        const logsEntries = await Promise.all(
+          filtered.map(async (p: any) => {
+            try {
+              const logsResp = await authFetch(`/api/call-logs/${p.id}`);
+              if (!logsResp.ok) return [p.id, []] as const;
+              const logs = await logsResp.json();
+              return [p.id, Array.isArray(logs) ? logs : []] as const;
+            } catch {
+              return [p.id, []] as const;
+            }
+          })
+        );
+        setLogsByProspect(Object.fromEntries(logsEntries));
+      } catch (error) {
+        console.error('Error cargando historial de gestiones:', error);
+        setProspects([]);
+        setLogsByProspect({});
+      } finally {
+        setLoading(false);
+      }
+    };
+    load();
+  }, [clientId]);
+
+  const formatDateTime = (value?: string | null) => {
+    if (!value) return '-';
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return '-';
+    return d.toLocaleString('es-PR', { dateStyle: 'medium', timeStyle: 'short' });
+  };
+
+  if (loading) {
+    return (
+      <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
+        <p className="text-sm text-gray-400">Cargando historial de gestiones...</p>
+      </div>
+    );
+  }
+
+  if (prospects.length === 0) {
+    return (
+      <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
+        <h3 className="text-sm font-semibold text-gray-200 mb-2">Historial de Gestiones</h3>
+        <p className="text-xs text-gray-400">No hay gestiones registradas en seguimiento para este cliente.</p>
+      </div>
+    );
+  }
+
+  const sortedProspects = [...prospects].sort((a, b) => {
+    const ad = new Date(a.updated_at || a.created_at || 0).getTime();
+    const bd = new Date(b.updated_at || b.created_at || 0).getTime();
+    return bd - ad;
+  });
+
+  return (
+    <div className="bg-gray-800 border border-gray-700 rounded-lg p-4 space-y-4">
+      <h3 className="text-sm font-semibold text-gray-200">Historial de Gestiones</h3>
+      {sortedProspects.map((p) => {
+        const logs = logsByProspect[p.id] || [];
+        return (
+          <div key={p.id} className="rounded-lg border border-gray-700 bg-gray-900/50 p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="text-sm text-white font-medium">{p.company_name || 'Cliente'}</div>
+              <span className={`text-[10px] px-2 py-0.5 rounded-full ${p.completed_date ? 'bg-emerald-900/40 text-emerald-200 border border-emerald-500/30' : 'bg-blue-900/40 text-blue-200 border border-blue-500/30'}`}>
+                {p.completed_date ? 'Completado' : 'En gestión'}
+              </span>
+            </div>
+            <div className="text-xs text-gray-400">
+              Actualizado: {formatDateTime(p.updated_at)} | Completado: {formatDateTime(p.completed_date)}
+            </div>
+            {p.notes && (
+              <div className="text-xs text-gray-300 bg-gray-800 rounded p-2 whitespace-pre-wrap">{p.notes}</div>
+            )}
+            {logs.length > 0 && (
+              <div className="space-y-1">
+                <div className="text-xs text-gray-400">Llamadas y pasos</div>
+                {logs.slice(0, 5).map((log: any) => (
+                  <div key={log.id} className="text-xs text-gray-300 border border-gray-700 rounded p-2 bg-gray-800/70">
+                    <span className="text-gray-400">{formatDateTime(log.call_date)}</span>
+                    {log.step_name ? <span className="ml-2 text-blue-300">{log.step_name}</span> : null}
+                    {log.notes ? <div className="mt-1">{log.notes}</div> : null}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ClientSalesReportsTab({ clientId }: { clientId: number | string }) {
+  const [loading, setLoading] = useState(true);
+  const [rows, setRows] = useState<any[]>([]);
+  const [pendingRows, setPendingRows] = useState<any[]>([]);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setLoading(true);
+      setSyncMessage(null);
+
+      const reportsResponse = await authFetch(`/api/subscriber-reports?client_id=${encodeURIComponent(String(clientId))}`);
+      if (!reportsResponse.ok) throw new Error('No se pudieron cargar ventas del cliente.');
+      const reportsData = await reportsResponse.json();
+      const reportRows = Array.isArray(reportsData) ? reportsData : [];
+      setRows(reportRows);
+
+      if (reportRows.length > 0) {
+        setPendingRows([]);
+        return;
+      }
+
+      const [subsResponse, bansResponse] = await Promise.all([
+        authFetch(`/api/subscribers?client_id=${encodeURIComponent(String(clientId))}`),
+        authFetch(`/api/bans?client_id=${encodeURIComponent(String(clientId))}`),
+      ]);
+
+      if (!subsResponse.ok || !bansResponse.ok) {
+        setPendingRows([]);
+        return;
+      }
+
+      const subscribersData = await subsResponse.json();
+      const bansData = await bansResponse.json();
+      const subscribers = Array.isArray(subscribersData) ? subscribersData : [];
+      const bans = Array.isArray(bansData) ? bansData : [];
+      const banById = new Map<string, string>(bans.map((b: any) => [String(b.id), b.ban_number || '-']));
+
+      const pending = subscribers
+        .filter((s: any) => {
+          const status = String(s.status || 'activo').toLowerCase();
+          return status !== 'cancelado' && status !== 'cancelled';
+        })
+        .map((s: any) => ({
+          subscriber_id: s.id,
+          phone: s.phone || '-',
+          ban_number: banById.get(String(s.ban_id)) || '-',
+          status: s.status || 'activo',
+          monthly_value: s.monthly_value,
+          note: s.cancel_reason || null,
+        }))
+        .sort((a: any, b: any) => {
+          const byBan = String(a.ban_number).localeCompare(String(b.ban_number));
+          if (byBan !== 0) return byBan;
+          return String(a.phone).localeCompare(String(b.phone));
+        });
+
+      setPendingRows(pending);
+    } catch (error) {
+      console.error('Error cargando ventas del cliente:', error);
+      setRows([]);
+      setPendingRows([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [clientId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const formatMoney = (value: any) => {
+    const n = Number(value || 0);
+    return new Intl.NumberFormat('es-PR', { style: 'currency', currency: 'USD' }).format(Number.isFinite(n) ? n : 0);
+  };
+
+  const formatMonth = (month: string | null) => {
+    if (!month) return 'Sin mes';
+    const d = new Date(month);
+    if (Number.isNaN(d.getTime())) return month;
+    return d.toLocaleDateString('es-PR', { year: 'numeric', month: 'short' });
+  };
+
+  const statusLabel = (status: string) => {
+    const normalized = String(status || 'activo').toLowerCase();
+    if (normalized === 'no_renueva_ahora') return 'No renueva ahora';
+    if (normalized === 'cancelado' || normalized === 'cancelled') return 'Cancelada';
+    if (normalized === 'activo') return 'Por renovar';
+    return status || 'Activo';
+  };
+
+  const handleSyncTango = async () => {
+    try {
+      setSyncing(true);
+      setSyncMessage({ type: 'info', text: 'Sincronizando Tango, espera un momento...' });
+      const response = await authFetch('/api/tango/sync', { method: 'POST' });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(payload?.error || 'No se pudo sincronizar Tango.');
+      }
+      const merged = Number(payload?.stats?.subscribers_merged || 0);
+      const updated = Number(payload?.stats?.subscribers_updated || 0);
+      setSyncMessage({
+        type: 'success',
+        text: merged > 0
+          ? `Sincronización completada. Actualizadas ${updated} líneas y corregidos ${merged} duplicados.`
+          : 'Sincronización de Tango completada.',
+      });
+      await load();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Error sincronizando Tango.';
+      setSyncMessage({ type: 'error', text: message });
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="text-center py-12">
+        <p className="text-sm text-gray-400">Cargando ventas del cliente...</p>
+      </div>
+    );
+  }
+
+  if (rows.length === 0 && pendingRows.length === 0) {
+    return (
+      <div className="space-y-4">
+        <div className="text-center py-12">
+          <ShoppingCart className="mx-auto h-12 w-12 text-gray-600" />
+          <h3 className="mt-2 text-lg font-medium text-gray-300">Ventas del Cliente</h3>
+          <p className="mt-1 text-sm text-gray-500">
+            No hay reportes de venta para este cliente en el período sincronizado.
+          </p>
+        </div>
+        <div className="flex justify-center">
+          <button
+            onClick={handleSyncTango}
+            disabled={syncing}
+            className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            {syncing ? 'Sincronizando...' : 'Sincronizar Tango'}
+          </button>
+        </div>
+        {syncMessage && (
+          <div className={`text-xs rounded-md border px-3 py-2 ${
+            syncMessage.type === 'success'
+              ? 'bg-emerald-900/20 text-emerald-300 border-emerald-700/40'
+              : syncMessage.type === 'error'
+                ? 'bg-red-900/20 text-red-300 border-red-700/40'
+                : 'bg-blue-900/20 text-blue-300 border-blue-700/40'
+          }`}>
+            {syncMessage.text}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm text-gray-300 font-medium">Ventas y sincronización</h3>
+        <button
+          onClick={handleSyncTango}
+          disabled={syncing}
+          className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium disabled:opacity-60 disabled:cursor-not-allowed"
+        >
+          {syncing ? 'Sincronizando...' : 'Sincronizar Tango'}
+        </button>
+      </div>
+
+      {syncMessage && (
+        <div className={`text-xs rounded-md border px-3 py-2 ${
+          syncMessage.type === 'success'
+            ? 'bg-emerald-900/20 text-emerald-300 border-emerald-700/40'
+            : syncMessage.type === 'error'
+              ? 'bg-red-900/20 text-red-300 border-red-700/40'
+              : 'bg-blue-900/20 text-blue-300 border-blue-700/40'
+        }`}>
+          {syncMessage.text}
+        </div>
+      )}
+
+      {rows.length === 0 && pendingRows.length > 0 && (
+        <div className="rounded-lg border border-amber-700/40 bg-amber-900/15 p-3 space-y-3">
+          <div className="text-xs text-amber-200">
+            Este cliente no tiene reportes en comisiones todavía. Mostrando líneas del CRM pendientes de sincronización Tango.
+          </div>
+          <div className="overflow-x-auto rounded-lg border border-gray-700">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-800 border-b border-gray-700">
+                <tr>
+                  <th className="px-3 py-2 text-left text-gray-300">BAN</th>
+                  <th className="px-3 py-2 text-left text-gray-300">Línea</th>
+                  <th className="px-3 py-2 text-left text-gray-300">Estado CRM</th>
+                  <th className="px-3 py-2 text-right text-gray-300">Mensualidad</th>
+                  <th className="px-3 py-2 text-left text-gray-300">Nota</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-700 bg-gray-900">
+                {pendingRows.map((r) => (
+                  <tr key={`pending-${r.subscriber_id}`} className="hover:bg-gray-800/70">
+                    <td className="px-3 py-2 text-gray-200 font-mono">{r.ban_number}</td>
+                    <td className="px-3 py-2 text-gray-200 font-mono">{r.phone}</td>
+                    <td className="px-3 py-2 text-amber-300">{statusLabel(r.status)}</td>
+                    <td className="px-3 py-2 text-right text-green-300">{formatMoney(r.monthly_value)}</td>
+                    <td className="px-3 py-2 text-gray-400">{r.note || '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {rows.length > 0 && (
+      <div className="overflow-x-auto rounded-lg border border-gray-700">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-800 border-b border-gray-700">
+            <tr>
+              <th className="px-3 py-2 text-left text-gray-300">Mes</th>
+              <th className="px-3 py-2 text-left text-gray-300">BAN</th>
+              <th className="px-3 py-2 text-left text-gray-300">Línea</th>
+              <th className="px-3 py-2 text-right text-gray-300">Empresa($)</th>
+              <th className="px-3 py-2 text-right text-gray-300">Comisión($)</th>
+              <th className="px-3 py-2 text-right text-gray-300">Pagado($)</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-700 bg-gray-900">
+            {rows.map((r) => (
+              <tr key={`${r.subscriber_id}-${r.report_month}`} className="hover:bg-gray-800/70">
+                <td className="px-3 py-2 text-gray-200">{formatMonth(r.report_month)}</td>
+                <td className="px-3 py-2 text-gray-200 font-mono">{r.ban_number || '-'}</td>
+                <td className="px-3 py-2 text-gray-200 font-mono">{r.phone || '-'}</td>
+                <td className="px-3 py-2 text-right text-emerald-300">{formatMoney(r.company_earnings)}</td>
+                <td className="px-3 py-2 text-right text-blue-300">{formatMoney(r.vendor_commission)}</td>
+                <td className="px-3 py-2 text-right text-amber-300">{formatMoney(r.paid_amount)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      )}
+    </div>
+  );
+}
+
+function InteractiveChecklist({ task, onUpdate }: { task: any; onUpdate: () => void }) {
+  const lines = (task.notes || "").split("\n");
+  const hasAnyChecklist = lines.some((l: string) => l.startsWith('[x] ') || l.startsWith('[ ] '));
+
+  const toggleLine = async (index: number) => {
+    const newLines = [...lines];
+    let line = newLines[index];
+    if (line.startsWith("[x] ")) {
+      line = "[ ] " + line.slice(4);
+    } else if (line.startsWith("[ ] ")) {
+      line = "[x] " + line.slice(4);
+    } else {
+      line = "[x] " + line;
+    }
+    newLines[index] = line;
+    const updatedNotes = newLines.join("\n");
+    
+    try {
+      await authFetch(`/api/tasks/${task.id}`, { method: "PUT", json: { notes: updatedNotes } });
+      onUpdate();
+    } catch {
+      alert("Error al actualizar la nota");
+    }
+  };
+
+  if (!hasAnyChecklist) {
+    return <p className="text-xs text-gray-400 mt-1.5 bg-gray-900/50 p-2 rounded whitespace-pre-line break-words">{task.notes}</p>;
+  }
+
+  return (
+    <div className="mt-1.5 bg-gray-900/50 p-2 rounded flex flex-col gap-1.5">
+      {lines.map((l: string, i: number) => {
+        const isChecked = l.startsWith("[x] ");
+        const isEmptyCheck = l.startsWith("[ ] ");
+        const hasPrefix = isChecked || isEmptyCheck;
+        const text = hasPrefix ? l.slice(4) : l;
+
+        if (hasPrefix) {
+          return (
+            <label key={i} className="flex items-start gap-2 cursor-pointer group">
+              <input type="checkbox" checked={isChecked} onChange={() => toggleLine(i)} className="mt-0.5 w-3.5 h-3.5 rounded border-gray-600 bg-gray-800 text-purple-600 focus:ring-purple-500" />
+              <span className={`text-xs flex-1 break-words transition-colors ${isChecked ? "text-gray-500 line-through" : "text-gray-300"}`}>{text}</span>
+            </label>
+          );
+        }
+        
+        return <p key={i} className="text-xs text-gray-400 break-words">{l}</p>;
+      })}
+    </div>
+  );
+}
+
+function TasksPanelClient({ client }: { client: any }) {
+  const [tasks, setTasks] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [formData, setFormData] = useState({
+    title: "",
+    due_date: "",
+    priority: "normal",
+    notes: ""
+  });
+  const [msg, setMsg] = useState<{type:"success"|"error";text:string}|null>(null);
+
+  const clientId = client.id;
+  const clientName = client.business_name || client.name;
+
+  useEffect(() => {
+    loadTasks();
+  }, [clientId]);
+
+  const loadTasks = async () => {
+    setLoading(true);
+    try {
+      const params = clientId ? `client_id=${clientId}` : "";
+      const res = await authFetch(`/api/tasks${params ? "?" + params : ""}`);
+      const data = await res.json();
+      const arr = Array.isArray(data) ? data : (data.tasks || []);
+      const relevant = clientId
+        ? arr.filter((t: any) => String(t.client_id) === String(clientId))
+        : [];
+      setTasks(relevant);
+    } catch { setTasks([]); }
+    finally { setLoading(false); }
+  };
+
+  const handleCreate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formData.title.trim()) return;
+    setSaving(true);
+    try {
+      const body: any = {
+        title: formData.title.trim(),
+        priority: formData.priority,
+        notes: formData.notes.trim() || null,
+        due_date: formData.due_date || null,
+        client_id: clientId,
+        client_name: clientName,
+        status: "pending"
+      };
+      const res = await authFetch("/api/tasks", { method: "POST", json: body });
+      if (!res.ok) throw new Error("Error");
+      setMsg({ type: "success", text: "Tarea creada y visible en el módulo de Tareas ✓" });
+      setFormData({ title: "", due_date: "", priority: "normal", notes: "" });
+      setShowForm(false);
+      await loadTasks();
+      setTimeout(() => setMsg(null), 3000);
+    } catch {
+      setMsg({ type: "error", text: "Error al crear la tarea" });
+    } finally { setSaving(false); }
+  };
+
+  const handleToggle = async (task: any) => {
+    const newStatus = task.status === "done" ? "pending" : "done";
+    try {
+      await authFetch(`/api/tasks/${task.id}`, { method: "PUT", json: { status: newStatus } });
+      await loadTasks();
+    } catch { alert("Error al actualizar tarea"); }
+  };
+
+  const priorityColors: Record<string, string> = {
+    low: "bg-gray-700 text-gray-300",
+    normal: "bg-blue-900/40 text-blue-300",
+    high: "bg-red-900/40 text-red-300"
+  };
+
+  const priorityLabel: Record<string, string> = { low: "Baja", normal: "Normal", high: "Alta" };
+
+  return (
+    <div className="flex-1 flex flex-col bg-gray-900 overflow-hidden h-full rounded-lg border border-gray-700">
+      <div className="px-6 py-3 border-b border-gray-800 flex justify-between items-center bg-gray-800/30">
+        <div>
+          <h3 className="text-sm font-semibold text-gray-200">Tareas vinculadas a <span className="text-purple-400">{clientName}</span></h3>
+          <p className="text-xs text-gray-500 mt-0.5">Estas tareas también aparecen en el módulo de Tareas</p>
+        </div>
+        <button
+          onClick={() => setShowForm(v => !v)}
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-medium transition-colors"
+        >
+          <Plus className="w-3.5 h-3.5" /> Nueva Tarea
+        </button>
+      </div>
+      {msg && (
+        <div className={`mx-4 mt-3 px-4 py-2 rounded-lg text-xs border ${msg.type === "success" ? "bg-green-900/30 border-green-700/40 text-green-300" : "bg-red-900/30 border-red-700/40 text-red-300"}`}>
+          {msg.text}
+        </div>
+      )}
+      {showForm && (
+        <form onSubmit={handleCreate} className="mx-4 mt-3 p-4 bg-gray-800/50 rounded-xl border border-purple-900/30 space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-gray-400 uppercase font-medium block mb-1">Título *</label>
+              <input
+                type="text"
+                value={formData.title}
+                onChange={e => setFormData(p => ({...p, title: e.target.value}))}
+                placeholder="Ej: Enviar propuesta, Llamar gerente..."
+                className="w-full px-3 py-1.5 bg-gray-900 border border-gray-700 rounded-lg text-white text-sm focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                autoFocus
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-xs text-gray-400 uppercase font-medium block mb-1">Fecha límite</label>
+                <input
+                  type="date"
+                  value={formData.due_date}
+                  onChange={e => setFormData(p => ({...p, due_date: e.target.value}))}
+                  className="w-full px-3 py-1.5 bg-gray-900 border border-gray-700 rounded-lg text-white text-sm focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 uppercase font-medium block mb-1">Prioridad</label>
+                <select
+                  value={formData.priority}
+                  onChange={e => setFormData(p => ({...p, priority: e.target.value}))}
+                  className="w-full px-3 py-1.5 bg-gray-900 border border-gray-700 rounded-lg text-white text-sm focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                >
+                  <option value="low">Baja</option>
+                  <option value="normal">Normal</option>
+                  <option value="high">Alta</option>
+                </select>
+              </div>
+            </div>
+          </div>
+          <div>
+            <label className="text-xs text-gray-400 uppercase font-medium block mb-1">Notas (opcional)</label>
+            <textarea
+              value={formData.notes}
+              onChange={e => setFormData(p => ({...p, notes: e.target.value}))}
+              className="w-full px-3 py-1.5 bg-gray-900 border border-gray-700 rounded-lg text-white text-sm focus:ring-2 focus:ring-purple-500 focus:border-transparent resize-none"
+              rows={2}
+            />
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" onClick={() => setShowForm(false)} className="px-3 py-1.5 text-xs text-gray-400 hover:text-white transition-colors">Cancelar</button>
+            <button type="submit" disabled={saving} className="px-4 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-medium transition-colors disabled:opacity-50">Guardar Tarea</button>
+          </div>
+        </form>
+      )}
+      <div className="flex-1 overflow-y-auto p-4 space-y-2">
+        {loading ? (
+          <div className="text-center py-8 text-gray-500 text-sm">Cargando tareas...</div>
+        ) : tasks.length === 0 ? (
+          <div className="text-center py-8">
+            <Check className="w-10 h-10 text-gray-700 mx-auto mb-2" />
+            <p className="text-gray-400 text-sm">No hay tareas para este cliente.</p>
+          </div>
+        ) : (
+          tasks.map(task => (
+            <div key={task.id} className={`flex items-start gap-3 p-3 rounded-lg border transition-all ${task.status === "done" ? "bg-green-900/10 border-green-900/30 opacity-60" : "bg-gray-800/40 border-gray-700 hover:bg-gray-800/60"}`}>
+              <button onClick={() => handleToggle(task)} className={`mt-0.5 w-5 h-5 rounded flex items-center justify-center border transition-colors ${task.status === "done" ? "bg-green-600 border-green-600 text-white" : "border-gray-500 bg-transparent hover:border-gray-400"}`}>
+                {task.status === "done" && <Check className="w-3.5 h-3.5" />}
+              </button>
+              <div className="flex-1 min-w-0">
+                <div className="flex justify-between items-start gap-2">
+                  <p className={`text-sm font-medium ${task.status === "done" ? "text-gray-400 line-through" : "text-gray-200"}`}>{task.title}</p>
+                  <div className="flex gap-2 shrink-0">
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-medium ${priorityColors[task.priority || "normal"]}`}>{priorityLabel[task.priority || "normal"]}</span>
+                    {task.due_date && <span className="px-2 py-0.5 rounded text-[10px] bg-gray-800 text-gray-300 border border-gray-700 whitespace-nowrap">Vence: {new Date(task.due_date).toLocaleDateString()}</span>}
+                  </div>
+                </div>
+                {task.notes && <InteractiveChecklist task={task} onUpdate={loadTasks} />}
+                <div className="text-[10px] text-gray-500 mt-2">Creado: {new Date(task.created_at).toLocaleString()}</div>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
     </div>
   );
 }

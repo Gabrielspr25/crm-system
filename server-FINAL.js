@@ -1215,6 +1215,12 @@ app.get('/api/tasks', authenticateRequest, async (req, res) => {
       params.push(`%${q}%`);
     }
 
+    const clientId = req.query?.client_id;
+    if (clientId !== undefined && clientId !== null && String(clientId).trim() !== '') {
+      conditions.push(`t.client_id::text = $${params.length + 1}`);
+      params.push(String(clientId).trim());
+    }
+
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
     const rows = await query(
       `SELECT t.id, t.owner_user_id, t.assigned_user_id, u.username AS assigned_username, sp.name AS assigned_name,
@@ -1290,10 +1296,7 @@ app.post('/api/tasks', authenticateRequest, async (req, res) => {
 
   let clientId = null;
   if (req.body?.client_id !== null && req.body?.client_id !== undefined && req.body?.client_id !== '') {
-    const parsedClientId = Number(req.body.client_id);
-    if (!Number.isNaN(parsedClientId)) {
-      clientId = parsedClientId;
-    }
+    clientId = req.body.client_id; // Leave it as a string/number (UUID/bigint compatible)
   }
 
   let assignedUserId = ownerUserId;
@@ -1370,9 +1373,8 @@ app.put('/api/tasks/:id', authenticateRequest, async (req, res) => {
   }
 
   if (Object.prototype.hasOwnProperty.call(req.body || {}, 'client_id')) {
-    const parsedClientId = Number(req.body.client_id);
     updates.push(`client_id = $${index++}`);
-    values.push(Number.isNaN(parsedClientId) ? null : parsedClientId);
+    values.push((req.body.client_id === null || req.body.client_id === '') ? null : req.body.client_id);
   }
 
   if (Object.prototype.hasOwnProperty.call(req.body || {}, 'assigned_user_id')) {
