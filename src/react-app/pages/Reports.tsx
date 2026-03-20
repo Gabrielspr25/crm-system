@@ -1,12 +1,16 @@
 
-import { useState, useMemo, Fragment } from "react";
-import { DollarSign, Search, Save, CheckCircle2, RefreshCw, ChevronDown, ChevronRight, Building2, Users, Receipt, Wallet, BarChart3, X } from "lucide-react";
-import { useApi } from "../hooks/useApi";
+import { useState, useMemo, Fragment, useEffect, useCallback } from "react";
+import { DollarSign, Search, Save, CheckCircle2, RefreshCw, ChevronDown, ChevronRight, Building2, Users, Receipt, Wallet, BarChart3, X, AlertTriangle } from "lucide-react";
 import { authFetch, getCurrentUser } from "@/react-app/utils/auth";
 
 interface SubscriberReport {
   subscriber_id: string;
   phone: string;
+  line_type?: string | null;
+  sale_type?: string | null;
+  salesperson_commission_percentage?: number | null;
+  suggested_vendor_commission?: number | null;
+  effective_vendor_commission?: number | null;
   monthly_value: number | null;
   activation_date: string;
   report_month: string;
@@ -21,6 +25,98 @@ interface SubscriberReport {
   vendor_commission?: number | null;
   paid_amount?: number | null;
   paid_date?: string | null;
+  is_paid?: boolean;
+  paid_at?: string | null;
+  is_audited?: boolean;
+  audited_at?: string | null;
+  withholding_applies?: boolean;
+  products?: {
+    prospect_id: number;
+    fijo_ren: number; fijo_new: number; movil_nueva: number; movil_renovacion: number;
+    claro_tv: number; cloud: number; mpls: number;
+    completed_date: string | null; notes: string | null;
+  } | null;
+}
+
+function formatSaleTypeLabel(accountType?: string | null, lineType?: string | null, saleType?: string | null): string {
+  const exact = String(saleType || '').trim().toUpperCase();
+  if (exact === 'FIJO_REN') return 'Fijo REN';
+  if (exact === 'FIJO_NEW') return 'Fijo NEW';
+  if (exact === 'MOVIL_RENOVACION') return 'Móvil REN';
+  if (exact === 'MOVIL_NUEVA') return 'Móvil NEW';
+
+  const account = String(accountType || '').trim().toUpperCase().replace(/^CONVERGENTE$/, 'MOVIL');
+  const line = String(lineType || '').trim().toUpperCase();
+  const isRen = line === 'REN';
+
+  if (account === 'FIJO' || account === 'FIXED') {
+    return isRen ? 'Fijo REN' : 'Fijo NEW';
+  }
+  if (account === 'PYMES' || account === 'UPDATE' || account === 'MOVIL' || account === 'MÓVIL' || account === 'MOBILE') {
+    return isRen ? 'Móvil REN' : 'Móvil NEW';
+  }
+  if (line === 'REN') return 'REN';
+  if (line === 'NEW') return 'NEW';
+  return 'Sin tipo';
+}
+
+function resolveLineProducts(rows: SubscriberReport[]) {
+  const counts = {
+    fijo_ren: 0,
+    fijo_new: 0,
+    movil_nueva: 0,
+    movil_renovacion: 0,
+  };
+
+  rows.forEach((row) => {
+    const saleType = String(row.sale_type || '').trim().toUpperCase();
+    if (saleType === 'FIJO_REN') {
+      counts.fijo_ren += 1;
+      return;
+    }
+    if (saleType === 'FIJO_NEW') {
+      counts.fijo_new += 1;
+      return;
+    }
+    if (saleType === 'MOVIL_RENOVACION') {
+      counts.movil_renovacion += 1;
+      return;
+    }
+    if (saleType === 'MOVIL_NUEVA') {
+      counts.movil_nueva += 1;
+      return;
+    }
+
+    const account = String(row.account_type || '').trim().toUpperCase().replace(/^CONVERGENTE$/, 'MOVIL');
+    const phone = String(row.phone || '').trim().toUpperCase();
+    const lineType = String(row.line_type || '').trim().toUpperCase();
+    const isRen = lineType === 'REN';
+    const isFijo = account === 'FIJO' || account === 'FIXED' || phone.startsWith('FIJO-');
+    const isMovil = account === 'PYMES' || account === 'UPDATE' || account === 'MOVIL' || account === 'MÃ“VIL' || account === 'MOBILE';
+
+    if (isFijo) {
+      if (isRen) counts.fijo_ren += 1;
+      else counts.fijo_new += 1;
+    } else if (isMovil) {
+      if (isRen) counts.movil_renovacion += 1;
+      else counts.movil_nueva += 1;
+    }
+  });
+
+  return counts;
+}
+
+function roundMoney(value?: number | null): number | null {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return null;
+  return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+}
+
+function calculateSuggestedVendorCommission(companyEarnings?: number | null, commissionPercentage?: number | null): number | null {
+  const earnings = Number(companyEarnings);
+  const percentage = Number(commissionPercentage);
+  if (!Number.isFinite(earnings) || earnings <= 0) return null;
+  if (!Number.isFinite(percentage) || percentage <= 0) return null;
+  return roundMoney((earnings * percentage) / 100);
 }
 
 export default function Reports() {
@@ -33,26 +129,100 @@ export default function Reports() {
   const effectiveView = isAdmin ? viewMode : 'vendedor';
 
   // Estados para edicion manual
-  const reportUrl = selectedMonth
-    ? `/api/subscriber-reports?month=${selectedMonth}`
-    : "/api/subscriber-reports";
-
   const [editingVendorComm, setEditingVendorComm] = useState<Record<string, string>>({});
   const [editingCompanyEarn, setEditingCompanyEarn] = useState<Record<string, string>>({});
   const [editingPaidAmount, setEditingPaidAmount] = useState<Record<string, string>>({});
   const [savingStatus, setSavingStatus] = useState<Record<string, boolean>>({});
 
-  const { data: reportRows, loading: loadingProspects, refetch: refetchProspects } = useApi<SubscriberReport[]>(reportUrl);
-  const { data: vendors } = useApi<any[]>("/api/vendors");
+  // Cargar datos directamente con useEffect (sin useApi para evitar problemas de memoización)
+  const [reportRows, setReportRows] = useState<SubscriberReport[] | null>(null);
+  const [loadingProspects, setLoadingProspects] = useState(false);
 
-  // Estado para sync PYMES
-  const [syncing, setSyncing] = useState(false);
-  const [syncResult, setSyncResult] = useState<any>(null);
+  const fetchReports = useCallback(async (month: string) => {
+    setLoadingProspects(true);
+    try {
+      const url = month ? `/api/subscriber-reports?month=${month}` : '/api/subscriber-reports';
+      console.log('[Reports] Fetching:', url);
+      const resp = await authFetch(url);
+      if (resp.ok) {
+        const data = await resp.json();
+        console.log('[Reports] Got', data.length, 'rows for month', month);
+        setReportRows(data);
+      } else {
+        console.error('[Reports] Error:', resp.status);
+        setReportRows([]);
+      }
+    } catch (err) {
+      console.error('[Reports] Fetch error:', err);
+      setReportRows([]);
+    } finally {
+      setLoadingProspects(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchReports(selectedMonth);
+  }, [selectedMonth, fetchReports]);
+
+  const refetchProspects = useCallback(() => fetchReports(selectedMonth), [selectedMonth, fetchReports]);
+
+  useEffect(() => {
+    const handleRefresh = () => {
+      void refetchProspects();
+    };
+    window.addEventListener("modal-refresh", handleRefresh);
+    window.addEventListener("refreshReports", handleRefresh);
+    return () => {
+      window.removeEventListener("modal-refresh", handleRefresh);
+      window.removeEventListener("refreshReports", handleRefresh);
+    };
+  }, [refetchProspects]);
+
+  // Derivar vendedores únicos de los datos del reporte (vendor_id es UUID de salespeople)
+  const reportVendors = useMemo(() => {
+    if (!reportRows) return [];
+    const map = new Map<string, string>();
+    for (const row of reportRows) {
+      if (row.vendor_id && row.vendor_name) {
+        map.set(String(row.vendor_id), row.vendor_name);
+      }
+    }
+    return Array.from(map.entries())
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [reportRows]);
+
   const [showComparison, setShowComparison] = useState(false);
   const [comparisonData, setComparisonData] = useState<any[] | null>(null);
   const [tangoDetail, setTangoDetail] = useState<any[] | null>(null);
   const [detailMonthFilter, setDetailMonthFilter] = useState<string>('');
   const [loadingComparison, setLoadingComparison] = useState(false);
+
+  // ── Sync Tango → CRM ──
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<{ stats: any; alerts: { level: string; ban: string; msg: string }[] } | null>(null);
+
+  const handleSyncTango = async () => {
+    if (syncing) return;
+    if (!confirm('¿Sincronizar ventas de Tango → CRM?\nTango es la fuente de verdad.')) return;
+    setSyncing(true);
+    setSyncResult(null);
+    try {
+      const resp = await authFetch('/api/tango/sync', { method: 'POST' });
+      const data = await resp.json();
+      if (data.success) {
+        setSyncResult({ stats: data.stats, alerts: data.alerts || [] });
+        refetchProspects();
+      } else {
+        alert('Error en sync: ' + (data.error || 'desconocido'));
+        if (data.stats) setSyncResult({ stats: data.stats, alerts: data.alerts || [] });
+      }
+    } catch (err: any) {
+      alert('Error de red: ' + err.message);
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const handleShowComparison = async () => {
     if (showComparison) { setShowComparison(false); return; }
@@ -70,35 +240,12 @@ export default function Reports() {
     }
   };
 
-  const handleSyncPymes = async () => {
-    setSyncing(true);
-    setSyncResult(null);
-    try {
-      const response = await authFetch('/api/subscriber-reports/sync-pymes', { method: 'POST' });
-      const data = await response.json();
-      if (data.success) {
-        setSyncResult({ ...data.stats, report: data.report });
-        await refetchProspects();
-        // Auto-show the comparison report after sync
-        try {
-          const resp = await authFetch('/api/subscriber-reports/comparison');
-          const compData = await resp.json();
-          setComparisonData(compData.comparison || []);
-          setTangoDetail(compData.detail || []);
-          setShowComparison(true);
-        } catch (_) { /* ignore comparison load error */ }
-      } else {
-        alert('Error al sincronizar: ' + (data.error || 'desconocido'));
-      }
-    } catch (err: any) {
-      alert('Error de conexión al sincronizar: ' + err.message);
-    } finally {
-      setSyncing(false);
-    }
-  };
-
   const filteredRows = useMemo(() => {
     if (!reportRows) return [];
+    console.log('[Reports] filteredRows: selectedVendor=', selectedVendor, '| searchTerm=', searchTerm, '| reportRows.length=', reportRows.length);
+    if (reportRows.length > 0) {
+      console.log('[Reports] Sample row vendor_id:', reportRows[0].vendor_id, '| vendor_name:', reportRows[0].vendor_name, '| report_month:', reportRows[0].report_month);
+    }
 
     return reportRows
       .filter((row) => {
@@ -118,12 +265,26 @@ export default function Reports() {
         client: row.client_business_name || row.client_name || 'Sin nombre',
         vendor_name: row.vendor_name || 'Desconocido',
         phone: row.phone,
+        line_type: row.line_type || null,
+        sale_type: row.sale_type || null,
+        account_type: row.account_type || null,
         ban_number: row.ban_number,
+        activation_date: row.activation_date,
         monthly_value: row.monthly_value ?? null,
         company_earnings: row.company_earnings ?? null,
         vendor_commission: row.vendor_commission ?? null,
+        suggested_vendor_commission: row.suggested_vendor_commission ?? null,
+        effective_vendor_commission: row.effective_vendor_commission ?? null,
+        salesperson_commission_percentage: row.salesperson_commission_percentage ?? null,
         paid_amount: row.paid_amount ?? null,
-        report_month: row.report_month
+        paid_date: row.paid_date ?? null,
+        is_paid: Boolean(row.is_paid),
+        paid_at: row.paid_at ?? null,
+        is_audited: Boolean(row.is_audited),
+        audited_at: row.audited_at ?? null,
+        withholding_applies: row.withholding_applies !== false,
+        report_month: row.report_month,
+        products: row.products || null
       }));
   }, [reportRows, selectedVendor, searchTerm]);
 
@@ -139,7 +300,22 @@ export default function Reports() {
           subscribers: [],
           totalEarnings: 0,
           totalCommission: 0,
-          totalPaid: 0
+          totalPaid: 0,
+          totalMensualidad: 0,
+          latestCaseDate: null as string | null,
+          products: row.products || null,
+          lineProducts: {
+            fijo_ren: 0,
+            fijo_new: 0,
+            movil_nueva: 0,
+            movil_renovacion: 0,
+            claro_tv: 0,
+            cloud: 0,
+            mpls: 0,
+            completed_date: null,
+            notes: null,
+            prospect_id: 0
+          }
         });
       }
       const g = map.get(key);
@@ -147,12 +323,61 @@ export default function Reports() {
       g.totalEarnings += Number(row.company_earnings || 0);
       g.totalCommission += Number(row.vendor_commission || 0);
       g.totalPaid += Number(row.paid_amount || 0);
+      g.totalMensualidad += Number(row.monthly_value || 0);
+      const rowDate = row.report_month || row.activation_date || null;
+      if (rowDate && (!g.latestCaseDate || new Date(rowDate) > new Date(g.latestCaseDate))) {
+        g.latestCaseDate = rowDate;
+      }
+      if (!g.products && row.products) g.products = row.products;
+
+      // Fallback real: contar productos desde líneas sincronizadas de Tango/CRM.
+      const account = String(row.account_type || '').trim().toUpperCase().replace(/^CONVERGENTE$/, 'MOVIL');
+      const phone = String(row.phone || '').trim().toUpperCase();
+      const lineType = String(row.line_type || '').trim().toUpperCase();
+      const isRen = lineType === 'REN';
+      const isFijo = account === 'FIJO' || account === 'FIXED' || phone.startsWith('FIJO-');
+      const isMovil = account === 'PYMES' || account === 'UPDATE' || account === 'MOVIL' || account === 'MÓVIL' || account === 'MOBILE';
+      if (isFijo) {
+        if (isRen) g.lineProducts.fijo_ren += 1;
+        else g.lineProducts.fijo_new += 1;
+      } else if (isMovil) {
+        if (isRen) g.lineProducts.movil_renovacion += 1;
+        else g.lineProducts.movil_nueva += 1;
+      }
     }
-    return Array.from(map.values()).sort((a, b) => a.client.localeCompare(b.client));
+    return Array.from(map.values())
+      .map((g: any) => {
+        const resolvedLineProducts = resolveLineProducts(g.subscribers || []);
+        return {
+          ...g,
+          lineProducts: resolvedLineProducts,
+        // Siempre mostrar conteo real de líneas vendidas; conservar campos manuales si existen.
+        products: g.products
+          ? {
+              ...g.products,
+              fijo_ren: resolvedLineProducts.fijo_ren,
+              fijo_new: resolvedLineProducts.fijo_new,
+              movil_nueva: resolvedLineProducts.movil_nueva,
+              movil_renovacion: resolvedLineProducts.movil_renovacion,
+            }
+          : resolvedLineProducts
+        };
+      })
+      .sort((a: any, b: any) => {
+        const ad = a.latestCaseDate ? new Date(a.latestCaseDate).getTime() : 0;
+        const bd = b.latestCaseDate ? new Date(b.latestCaseDate).getTime() : 0;
+        return bd - ad;
+      });
   }, [filteredRows]);
 
   // Accordion state: expanded client keys
   const [expandedClients, setExpandedClients] = useState<Set<string>>(new Set());
+
+  // Alerta: reportes sin vendedor
+  const noVendorRows = useMemo(() => {
+    if (!reportRows) return [];
+    return reportRows.filter(r => !r.vendor_id || !r.vendor_name);
+  }, [reportRows]);
   const toggleClient = (key: string) => {
     setExpandedClients(prev => {
       const next = new Set(prev);
@@ -164,6 +389,57 @@ export default function Reports() {
   const collapseAll = () => setExpandedClients(new Set());
 
   const [saveSuccess, setSaveSuccess] = useState<Record<string, boolean>>({});
+  const [rowActionBusy, setRowActionBusy] = useState<Record<string, boolean>>({});
+  
+  // Product editing state (per client_id)
+  const [editingProducts, setEditingProducts] = useState<Record<string, Record<string, string>>>({});
+  const [savingProducts, setSavingProducts] = useState<Record<string, boolean>>({});
+  const [productSaveSuccess, setProductSaveSuccess] = useState<Record<string, boolean>>({});
+
+  const handleProductChange = (clientKey: string, field: string, value: string) => {
+    setEditingProducts(prev => ({
+      ...prev,
+      [clientKey]: { ...(prev[clientKey] || {}), [field]: value }
+    }));
+  };
+
+  const handleSaveProducts = async (clientKey: string, prospectId: number, currentProducts: any) => {
+    setSavingProducts(prev => ({ ...prev, [clientKey]: true }));
+    try {
+      const edits = editingProducts[clientKey] || {};
+      const body: any = {
+        fijo_ren: edits.fijo_ren !== undefined ? parseInt(edits.fijo_ren) || 0 : currentProducts.fijo_ren,
+        fijo_new: edits.fijo_new !== undefined ? parseInt(edits.fijo_new) || 0 : currentProducts.fijo_new,
+        movil_nueva: edits.movil_nueva !== undefined ? parseInt(edits.movil_nueva) || 0 : currentProducts.movil_nueva,
+        movil_renovacion: edits.movil_renovacion !== undefined ? parseInt(edits.movil_renovacion) || 0 : currentProducts.movil_renovacion,
+        claro_tv: edits.claro_tv !== undefined ? parseInt(edits.claro_tv) || 0 : currentProducts.claro_tv,
+        cloud: edits.cloud !== undefined ? parseInt(edits.cloud) || 0 : currentProducts.cloud,
+        mpls: edits.mpls !== undefined ? parseInt(edits.mpls) || 0 : currentProducts.mpls,
+      };
+      const resp = await authFetch(`/api/follow-up-prospects/${prospectId}`, { method: 'PUT', json: body });
+      if (!resp.ok) throw new Error('Error saving products');
+      setProductSaveSuccess(prev => ({ ...prev, [clientKey]: true }));
+      setEditingProducts(prev => { const n = { ...prev }; delete n[clientKey]; return n; });
+      await refetchProspects();
+      setTimeout(() => setProductSaveSuccess(prev => ({ ...prev, [clientKey]: false })), 2000);
+    } catch (err) {
+      console.error('Error saving products:', err);
+      alert('Error al guardar productos');
+    } finally {
+      setSavingProducts(prev => ({ ...prev, [clientKey]: false }));
+    }
+  };
+
+  const readApiError = async (response: Response, fallback: string) => {
+    try {
+      const data = await response.json();
+      if (data?.error) return String(data.error);
+      if (data?.message) return String(data.message);
+    } catch {
+      // ignore parse errors and use fallback
+    }
+    return `${fallback} (HTTP ${response.status})`;
+  };
 
   const handleSave = async (rowId: string) => {
     setSavingStatus(prev => ({ ...prev, [rowId]: true }));
@@ -177,9 +453,19 @@ export default function Reports() {
         ? new Date(original.report_month).toISOString().slice(0, 7)
         : selectedMonth;
 
+      const effectiveCompanyEarn = editingCompanyEarn[rowId] !== undefined
+        ? (editingCompanyEarn[rowId] === "" ? null : parseFloat(editingCompanyEarn[rowId]))
+        : original.company_earnings;
+      const suggestedVendorComm = calculateSuggestedVendorCommission(
+        typeof effectiveCompanyEarn === 'number' && !isNaN(effectiveCompanyEarn) ? effectiveCompanyEarn : null,
+        original.salesperson_commission_percentage ?? null
+      );
+
       const newVendorComm = editingVendorComm[rowId] !== undefined
         ? (editingVendorComm[rowId] === "" ? null : parseFloat(editingVendorComm[rowId]))
-        : original.vendor_commission;
+        : ((original.vendor_commission != null && Number(original.vendor_commission) > 0)
+            ? original.vendor_commission
+            : suggestedVendorComm);
 
       const newCompanyEarn = editingCompanyEarn[rowId] !== undefined
         ? (editingCompanyEarn[rowId] === "" ? null : parseFloat(editingCompanyEarn[rowId]))
@@ -202,7 +488,7 @@ export default function Reports() {
       });
 
       if (!response.ok) {
-        throw new Error("Error en respuesta del servidor");
+        throw new Error(await readApiError(response, "Error en respuesta del servidor"));
       }
 
       // exito visual
@@ -223,16 +509,204 @@ export default function Reports() {
 
     } catch (error) {
       console.error("Error saving:", error);
-      alert("Error al guardar cambios. Verifique la consola.");
+      alert(error instanceof Error ? error.message : "Error al guardar cambios. Verifique la consola.");
     } finally {
       setSavingStatus(prev => ({ ...prev, [rowId]: false }));
     }
   };
 
+  const handleMarkPaid = async (rowId: string) => {
+    const original = reportRows?.find(r => r.subscriber_id === rowId);
+    if (!original) return;
+    setRowActionBusy(prev => ({ ...prev, [rowId]: true }));
+    try {
+      const reportMonth = original.report_month
+        ? new Date(original.report_month).toISOString().slice(0, 7)
+        : selectedMonth;
+      const currentCompanyEarn = editingCompanyEarn[rowId] !== undefined
+        ? (editingCompanyEarn[rowId] === '' ? null : parseFloat(editingCompanyEarn[rowId]))
+        : original.company_earnings;
+      const currentVendorCommission = editingVendorComm[rowId] !== undefined
+        ? (editingVendorComm[rowId] === '' ? null : parseFloat(editingVendorComm[rowId]))
+        : (
+            original.vendor_commission
+            ?? calculateSuggestedVendorCommission(currentCompanyEarn, original.salesperson_commission_percentage)
+          );
+      const vendorCommission = Number(
+        currentVendorCommission
+        ?? original.effective_vendor_commission
+        ?? calculateSuggestedVendorCommission(currentCompanyEarn, original.salesperson_commission_percentage)
+        ?? 0
+      );
+      const paidAmount = vendorCommission > 0 ? vendorCommission : Number(original.paid_amount || 0);
+      const resp = await authFetch(`/api/subscriber-reports/${rowId}`, {
+        method: 'PUT',
+        json: {
+          report_month: reportMonth,
+          vendor_commission: currentVendorCommission,
+          company_earnings: currentCompanyEarn,
+          paid_amount: paidAmount,
+          paid_date: new Date().toISOString(),
+          is_paid: true
+        }
+      });
+      if (!resp.ok) throw new Error(await readApiError(resp, 'No se pudo marcar como pagado'));
+      await refetchProspects();
+    } catch (err) {
+      console.error('Error mark paid:', err);
+      alert(err instanceof Error ? err.message : 'Error al marcar pagado');
+    } finally {
+      setRowActionBusy(prev => ({ ...prev, [rowId]: false }));
+    }
+  };
+
+  const handleToggleAudited = async (rowId: string, currentAudited: boolean) => {
+    const original = reportRows?.find(r => r.subscriber_id === rowId);
+    if (!original) return;
+    setRowActionBusy(prev => ({ ...prev, [rowId]: true }));
+    try {
+      const reportMonth = original.report_month
+        ? new Date(original.report_month).toISOString().slice(0, 7)
+        : selectedMonth;
+      const currentCompanyEarn = editingCompanyEarn[rowId] !== undefined
+        ? (editingCompanyEarn[rowId] === '' ? null : parseFloat(editingCompanyEarn[rowId]))
+        : original.company_earnings;
+      const currentVendorCommission = editingVendorComm[rowId] !== undefined
+        ? (editingVendorComm[rowId] === '' ? null : parseFloat(editingVendorComm[rowId]))
+        : (
+            original.vendor_commission
+            ?? calculateSuggestedVendorCommission(currentCompanyEarn, original.salesperson_commission_percentage)
+          );
+      const currentPaidAmount = editingPaidAmount[rowId] !== undefined
+        ? (editingPaidAmount[rowId] === '' ? null : parseFloat(editingPaidAmount[rowId]))
+        : original.paid_amount;
+      const resp = await authFetch(`/api/subscriber-reports/${rowId}`, {
+        method: 'PUT',
+        json: {
+          report_month: reportMonth,
+          vendor_commission: currentVendorCommission,
+          company_earnings: currentCompanyEarn,
+          paid_amount: currentPaidAmount,
+          paid_date: original.paid_date,
+          is_audited: !currentAudited
+        }
+      });
+      if (!resp.ok) throw new Error(await readApiError(resp, 'No se pudo actualizar auditado'));
+      await refetchProspects();
+    } catch (err) {
+      console.error('Error toggle audited:', err);
+      alert(err instanceof Error ? err.message : 'Error al actualizar auditado');
+    } finally {
+      setRowActionBusy(prev => ({ ...prev, [rowId]: false }));
+    }
+  };
+
+  const handleToggleWithholding = async (rowId: string, currentApplies: boolean) => {
+    const original = filteredRows.find(r => r.id === rowId);
+    if (!original) return;
+    setRowActionBusy(prev => ({ ...prev, [rowId]: true }));
+    try {
+      const reportMonth = original.report_month
+        ? new Date(original.report_month).toISOString().slice(0, 7)
+        : selectedMonth;
+      const currentCompanyEarn = editingCompanyEarn[rowId] !== undefined
+        ? (editingCompanyEarn[rowId] === '' ? null : parseFloat(editingCompanyEarn[rowId]))
+        : original.company_earnings;
+      const currentVendorCommission = editingVendorComm[rowId] !== undefined
+        ? (editingVendorComm[rowId] === '' ? null : parseFloat(editingVendorComm[rowId]))
+        : (
+            original.vendor_commission
+            ?? calculateSuggestedVendorCommission(currentCompanyEarn, original.salesperson_commission_percentage)
+          );
+      const currentPaidAmount = editingPaidAmount[rowId] !== undefined
+        ? (editingPaidAmount[rowId] === '' ? null : parseFloat(editingPaidAmount[rowId]))
+        : original.paid_amount;
+
+      const resp = await authFetch(`/api/subscriber-reports/${rowId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          report_month: reportMonth,
+          vendor_commission: currentVendorCommission,
+          company_earnings: currentCompanyEarn,
+          paid_amount: currentPaidAmount,
+          paid_date: original.paid_date,
+          withholding_applies: !currentApplies
+        })
+      });
+      if (!resp.ok) throw new Error(await readApiError(resp, 'No se pudo actualizar retención'));
+      await refetchProspects();
+    } catch (err) {
+      console.error('Error toggle withholding:', err);
+      alert(err instanceof Error ? err.message : 'Error al actualizar retención');
+    } finally {
+      setRowActionBusy(prev => ({ ...prev, [rowId]: false }));
+    }
+  };
+
+  const getCurrentCompanyEarnings = useCallback((row: {
+    id: string;
+    company_earnings?: number | null;
+  }) => {
+    if (editingCompanyEarn[row.id] !== undefined) {
+      const rawValue = editingCompanyEarn[row.id];
+      if (rawValue === '') return null;
+      const parsed = parseFloat(rawValue);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    return row.company_earnings ?? null;
+  }, [editingCompanyEarn]);
+
+  const getEffectiveVendorCommission = useCallback((row: {
+    id: string;
+    vendor_commission?: number | null;
+    company_earnings?: number | null;
+    salesperson_commission_percentage?: number | null;
+    suggested_vendor_commission?: number | null;
+    effective_vendor_commission?: number | null;
+  }) => {
+    if (editingVendorComm[row.id] !== undefined) {
+      const parsed = parseFloat(editingVendorComm[row.id]);
+      return Number.isFinite(parsed) ? parsed : 0;
+    }
+    if (row.vendor_commission != null && Number(row.vendor_commission) > 0) {
+      return Number(row.vendor_commission);
+    }
+    const currentCompanyEarn = getCurrentCompanyEarnings(row);
+    return Number(
+      row.effective_vendor_commission
+      ?? calculateSuggestedVendorCommission(currentCompanyEarn, row.salesperson_commission_percentage)
+      ?? row.suggested_vendor_commission
+      ?? 0
+    );
+  }, [editingVendorComm, getCurrentCompanyEarnings]);
+
+  const getVendorCommissionInputValue = useCallback((row: {
+    id: string;
+    vendor_commission?: number | null;
+    company_earnings?: number | null;
+    salesperson_commission_percentage?: number | null;
+    suggested_vendor_commission?: number | null;
+    effective_vendor_commission?: number | null;
+  }) => {
+    if (editingVendorComm[row.id] !== undefined) {
+      return editingVendorComm[row.id];
+    }
+    const currentCompanyEarn = getCurrentCompanyEarnings(row);
+    const effectiveValue = row.vendor_commission != null && Number(row.vendor_commission) > 0
+      ? Number(row.vendor_commission)
+      : (
+          row.effective_vendor_commission
+          ?? calculateSuggestedVendorCommission(currentCompanyEarn, row.salesperson_commission_percentage)
+          ?? row.suggested_vendor_commission
+        );
+    return effectiveValue != null ? String(effectiveValue) : '';
+  }, [editingVendorComm, getCurrentCompanyEarnings]);
+
   const totals = useMemo(() => {
     return filteredRows.reduce((acc, row) => {
       const earn = editingCompanyEarn[row.id] !== undefined ? (parseFloat(editingCompanyEarn[row.id]) || 0) : (row.company_earnings || 0);
-      const comm = editingVendorComm[row.id] !== undefined ? (parseFloat(editingVendorComm[row.id]) || 0) : (row.vendor_commission || 0);
+      const comm = getEffectiveVendorCommission(row);
       const paid = editingPaidAmount[row.id] !== undefined ? (parseFloat(editingPaidAmount[row.id]) || 0) : (row.paid_amount || 0);
       return {
         company_earnings: acc.company_earnings + earn,
@@ -240,17 +714,58 @@ export default function Reports() {
         paid_amount: acc.paid_amount + paid
       };
     }, { company_earnings: 0, vendor_commission: 0, paid_amount: 0 });
-  }, [filteredRows, editingCompanyEarn, editingVendorComm, editingPaidAmount]);
+  }, [filteredRows, editingCompanyEarn, editingPaidAmount, getEffectiveVendorCommission]);
 
   // Resumen para vista vendedor
   const vendorTotals = useMemo(() => {
-    const totalComm = totals.vendor_commission;
-    const retention = parseFloat((totalComm * 0.10).toFixed(2));
+    const totalComm = filteredRows.reduce((acc, row) => {
+      const comm = getEffectiveVendorCommission(row);
+      return acc + comm;
+    }, 0);
+    const retentionBase = filteredRows.reduce((acc, row) => {
+      const comm = getEffectiveVendorCommission(row);
+      return acc + (row.withholding_applies !== false ? comm : 0);
+    }, 0);
+    const retention = parseFloat((retentionBase * 0.10).toFixed(2));
     const net = parseFloat((totalComm - retention).toFixed(2));
     const paid = totals.paid_amount;
     const pending = parseFloat((net - paid).toFixed(2));
     return { totalComm, retention, net, paid, pending };
-  }, [totals]);
+  }, [totals, filteredRows, editingVendorComm]);
+
+  const retentionPanel = useMemo(() => {
+    const byVendor = new Map<string, { vendor: string; totalComm: number; retention: number; net: number; paid: number; pending: number }>();
+    for (const row of filteredRows) {
+      const vendorName = row.vendor_name || 'Desconocido';
+      const comm = getEffectiveVendorCommission(row);
+      const paid = editingPaidAmount[row.id] !== undefined ? (parseFloat(editingPaidAmount[row.id]) || 0) : (row.paid_amount || 0);
+      const retention = row.withholding_applies !== false ? parseFloat((comm * 0.10).toFixed(2)) : 0;
+      const net = parseFloat((comm - retention).toFixed(2));
+      const current = byVendor.get(vendorName) || { vendor: vendorName, totalComm: 0, retention: 0, net: 0, paid: 0, pending: 0 };
+      current.totalComm += comm;
+      current.retention += retention;
+      current.net += net;
+      current.paid += paid;
+      byVendor.set(vendorName, current);
+    }
+    const rows = Array.from(byVendor.values())
+      .map((r) => ({
+        ...r,
+        retention: parseFloat(r.retention.toFixed(2)),
+        net: parseFloat(r.net.toFixed(2)),
+        pending: parseFloat((r.net - r.paid).toFixed(2))
+      }))
+      .sort((a, b) => b.retention - a.retention);
+
+    const totalComm = rows.reduce((acc, r) => acc + r.totalComm, 0);
+    const retention = rows.reduce((acc, r) => acc + r.retention, 0);
+    const net = rows.reduce((acc, r) => acc + r.net, 0);
+    const paid = rows.reduce((acc, r) => acc + r.paid, 0);
+    const pending = parseFloat((net - paid).toFixed(2));
+    return { rows, totalComm, retention, net, paid, pending };
+  }, [filteredRows, editingPaidAmount, getEffectiveVendorCommission]);
+
+  const tableColSpan = isAdmin ? 14 : 13;
 
   if (loadingProspects) return <div className="p-10 text-white">Cargando reportes...</div>;
 
@@ -260,10 +775,10 @@ export default function Reports() {
         <div>
           <h1 className="text-3xl font-bold text-white flex items-center gap-3">
             <DollarSign className="w-8 h-8 text-emerald-500" />
-            Reporte de Comisiones 2.0
+            Comisiones y Ventas
           </h1>
           <p className="text-slate-400 mt-1">
-            {effectiveView === 'empresa' ? 'Vista empresa: Ganancia, comisión y pagos por suscriptor' : 'Vista vendedor: Comisiones, retención y neto'}
+            {effectiveView === 'empresa' ? 'Productos negociados, ganancia empresa, comisión vendedor y pagos' : 'Comisiones, retención y neto por vendedor'}
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -295,21 +810,6 @@ export default function Reports() {
           )}
           {isAdmin && (
           <button
-            onClick={handleSyncPymes}
-            disabled={syncing}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm transition-all ${
-              syncing
-                ? 'bg-purple-900/40 text-purple-300 cursor-wait'
-                : 'bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-900/30 hover:shadow-purple-800/40'
-            }`}
-            title="Sincroniza comisionclaro de ventas PYMES desde Tango Legacy"
-          >
-            <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
-            {syncing ? 'Sincronizando...' : 'Sync PYMES Legacy'}
-          </button>
-          )}
-          {isAdmin && (
-          <button
             onClick={handleShowComparison}
             disabled={loadingComparison}
             className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm transition-all ${
@@ -323,45 +823,79 @@ export default function Reports() {
             {loadingComparison ? 'Cargando...' : showComparison ? 'Cerrar Informe' : 'Informe Tango vs CRM'}
           </button>
           )}
+          {isAdmin && (
+          <button
+            onClick={handleSyncTango}
+            disabled={syncing}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm transition-all bg-purple-700 hover:bg-purple-600 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Sincronizar ventas Tango → CRM"
+          >
+            <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
+            {syncing ? 'Sincronizando...' : 'Sync Tango'}
+          </button>
+          )}
         </div>
       </div>
 
-      {/* Sync Result Banner */}
+      {/* Resultado del Sync Tango → CRM */}
       {syncResult && (
-        <div className={`${syncResult.totals_match ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-amber-500/10 border-amber-500/30'} border p-4 rounded-2xl animate-in fade-in duration-300 relative`}>
-          <button onClick={() => setSyncResult(null)} className="absolute top-2 right-2 text-slate-500 hover:text-white p-1 rounded"><X className="w-4 h-4" /></button>
-          <div className="flex items-center gap-3">
-            <CheckCircle2 className={`w-5 h-5 ${syncResult.totals_match ? 'text-emerald-400' : 'text-amber-400'}`} />
-            <span className="font-bold text-white">Sincronización Tango → CRM completada</span>
-            {syncResult.totals_match && <span className="text-xs bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full font-bold">✓ Totales coinciden</span>}
+        <div className="bg-slate-800/70 border border-purple-500/40 p-5 rounded-2xl animate-in fade-in duration-300 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <RefreshCw className="w-5 h-5 text-purple-400" />
+              <span className="font-bold text-purple-200 text-lg">Sync Tango → CRM completado</span>
+            </div>
+            <button onClick={() => setSyncResult(null)} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
           </div>
-          {/* Resumen principal */}
-          {syncResult.report && (
-            <div className="mt-2 text-sm font-medium text-white">{syncResult.report.resumen}</div>
-          )}
-          <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-            <div><span className="text-slate-500">Ventas Tango:</span> <span className="text-orange-400 font-bold">{syncResult.tango_ventas}</span></div>
-            <div><span className="text-slate-500">Reports CRM:</span> <span className="text-blue-400 font-bold">{syncResult.crm_reports}</span></div>
-            <div><span className="text-slate-500">Insertados:</span> <span className="text-emerald-400 font-bold">{syncResult.reports_created}</span></div>
-            <div><span className="text-slate-500">Eliminados:</span> <span className="text-red-400 font-bold">{syncResult.reports_cancelled || 0}</span></div>
+          {/* Stats row */}
+          <div className="flex flex-wrap gap-3 text-xs">
+            <span className="bg-purple-900/40 text-purple-200 px-3 py-1.5 rounded-lg border border-purple-500/20 font-bold">
+              Tango: {syncResult.stats.tango_ventas} ventas
+            </span>
+            {syncResult.stats.clients_created > 0 && <span className="bg-green-900/40 text-green-200 px-3 py-1.5 rounded-lg border border-green-500/20">+{syncResult.stats.clients_created} clientes</span>}
+            {syncResult.stats.bans_created > 0 && <span className="bg-green-900/40 text-green-200 px-3 py-1.5 rounded-lg border border-green-500/20">+{syncResult.stats.bans_created} BANs</span>}
+            {syncResult.stats.subscribers_created > 0 && <span className="bg-green-900/40 text-green-200 px-3 py-1.5 rounded-lg border border-green-500/20">+{syncResult.stats.subscribers_created} subscribers</span>}
+            {syncResult.stats.subscribers_updated > 0 && <span className="bg-yellow-900/40 text-yellow-200 px-3 py-1.5 rounded-lg border border-yellow-500/20">↻ {syncResult.stats.subscribers_updated} actualizados</span>}
+            <span className="bg-blue-900/40 text-blue-200 px-3 py-1.5 rounded-lg border border-blue-500/20">📊 {syncResult.stats.reports_upserted} reportes</span>
+            {syncResult.stats.errors > 0 && <span className="bg-red-900/40 text-red-200 px-3 py-1.5 rounded-lg border border-red-500/20 font-bold">❌ {syncResult.stats.errors} errores</span>}
           </div>
-          {/* Acciones realizadas */}
-          {syncResult.report?.acciones?.length > 0 && (
-            <div className="mt-2 flex flex-wrap gap-2 text-xs">
-              {syncResult.report.acciones.map((a: string, i: number) => (
-                <span key={i} className="bg-slate-700/50 text-slate-300 px-2 py-0.5 rounded">{a}</span>
+          {/* Alerts by level */}
+          {syncResult.alerts.length > 0 && (
+            <div className="space-y-1 max-h-64 overflow-y-auto pr-2">
+              {syncResult.alerts.filter(a => a.level === 'warn' && (a.msg.includes('actualizado') || a.msg.includes('vinculado') || a.msg.includes('creado'))).map((a, i) => (
+                <div key={`w${i}`} className="flex items-start gap-2 text-xs bg-yellow-900/20 border border-yellow-500/20 rounded px-3 py-1.5">
+                  <span className="text-yellow-400 font-bold shrink-0">🟡</span>
+                  {a.ban && <span className="text-yellow-300 font-mono shrink-0">[{a.ban}]</span>}
+                  <span className="text-yellow-200">{a.msg}</span>
+                </div>
+              ))}
+              {syncResult.alerts.filter(a => a.level === 'info').map((a, i) => (
+                <div key={`i${i}`} className="flex items-start gap-2 text-xs bg-green-900/20 border border-green-500/20 rounded px-3 py-1.5">
+                  <span className="text-green-400 font-bold shrink-0">🟢</span>
+                  {a.ban && <span className="text-green-300 font-mono shrink-0">[{a.ban}]</span>}
+                  <span className="text-green-200">{a.msg}</span>
+                </div>
               ))}
             </div>
           )}
-          {/* Creaciones */}
-          {(syncResult.clients_created > 0 || syncResult.bans_created > 0 || syncResult.subscribers_created > 0) && (
-            <div className="mt-2 flex gap-4 text-xs">
-              {syncResult.clients_created > 0 && <span className="text-purple-400">+{syncResult.clients_created} clientes creados</span>}
-              {syncResult.bans_created > 0 && <span className="text-blue-400">+{syncResult.bans_created} BANs creados</span>}
-              {syncResult.subscribers_created > 0 && <span className="text-cyan-400">+{syncResult.subscribers_created} suscriptores creados</span>}
-            </div>
-          )}
-          {syncResult.errors > 0 && <div className="mt-1 text-xs text-red-400">⚠ {syncResult.errors} error(es) durante el sync</div>}
+        </div>
+      )}
+
+      {/* Alerta: Reportes sin vendedor */}
+      {noVendorRows.length > 0 && (
+        <div className="bg-red-500/10 border border-red-500/30 p-4 rounded-2xl animate-in fade-in duration-300">
+          <div className="flex items-center gap-3">
+            <AlertTriangle className="w-5 h-5 text-red-400" />
+            <span className="font-bold text-red-300">⚠ {noVendorRows.length} reporte{noVendorRows.length > 1 ? 's' : ''} sin vendedor asignado</span>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2 text-xs">
+            {noVendorRows.slice(0, 10).map((r, i) => (
+              <span key={i} className="bg-red-900/30 text-red-200 px-2 py-1 rounded border border-red-500/20">
+                {r.client_business_name || r.client_name || 'Sin nombre'} — {r.phone || r.ban_number || '?'}
+              </span>
+            ))}
+            {noVendorRows.length > 10 && <span className="text-red-400 font-bold">+{noVendorRows.length - 10} más</span>}
+          </div>
         </div>
       )}
 
@@ -577,7 +1111,7 @@ export default function Reports() {
             </p>
           </div>
           <div className="bg-red-500/10 border border-red-500/20 p-4 rounded-2xl">
-            <p className="text-red-500 text-xs font-bold uppercase tracking-wider">Retención 10%</p>
+            <p className="text-red-500 text-xs font-bold uppercase tracking-wider">Retención Aplicada 10%</p>
             <p className="text-2xl font-black text-red-400 mt-1">
               -${vendorTotals.retention.toLocaleString('es-ES', { minimumFractionDigits: 2 })}
             </p>
@@ -594,6 +1128,65 @@ export default function Reports() {
               ${vendorTotals.paid.toLocaleString('es-ES', { minimumFractionDigits: 2 })}
             </p>
           </div>
+        </div>
+      )}
+
+      {isAdmin && (
+        <div className="bg-slate-800/40 border border-slate-700 rounded-2xl p-5 space-y-4">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+            <h3 className="text-sm font-bold text-slate-300 uppercase tracking-wider">Panel Total de Retenciones</h3>
+            <span className="text-xs text-slate-400">Regla actual: 10% por caso marcado como retiene</span>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            <div className="bg-blue-500/10 border border-blue-500/20 p-3 rounded-xl">
+              <p className="text-[10px] uppercase font-bold text-blue-400">Comisiones</p>
+              <p className="text-lg font-black text-blue-300">${retentionPanel.totalComm.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</p>
+            </div>
+            <div className="bg-red-500/10 border border-red-500/20 p-3 rounded-xl">
+              <p className="text-[10px] uppercase font-bold text-red-400">Retención</p>
+              <p className="text-lg font-black text-red-300">-${retentionPanel.retention.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</p>
+            </div>
+            <div className="bg-cyan-500/10 border border-cyan-500/20 p-3 rounded-xl">
+              <p className="text-[10px] uppercase font-bold text-cyan-400">Neto</p>
+              <p className="text-lg font-black text-cyan-300">${retentionPanel.net.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</p>
+            </div>
+            <div className="bg-amber-500/10 border border-amber-500/20 p-3 rounded-xl">
+              <p className="text-[10px] uppercase font-bold text-amber-400">Pagado</p>
+              <p className="text-lg font-black text-amber-300">${retentionPanel.paid.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</p>
+            </div>
+            <div className="bg-slate-700/60 border border-slate-600 p-3 rounded-xl">
+              <p className="text-[10px] uppercase font-bold text-slate-300">Pendiente</p>
+              <p className="text-lg font-black text-white">${retentionPanel.pending.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</p>
+            </div>
+          </div>
+          {retentionPanel.rows.length > 0 && (
+            <div className="overflow-x-auto border border-slate-700 rounded-xl">
+              <table className="w-full text-xs">
+                <thead className="bg-slate-900/60">
+                  <tr>
+                    <th className="px-3 py-2 text-left text-slate-400 uppercase">Vendedor</th>
+                    <th className="px-3 py-2 text-right text-blue-400 uppercase">Comisión</th>
+                    <th className="px-3 py-2 text-right text-red-400 uppercase">Retención</th>
+                    <th className="px-3 py-2 text-right text-cyan-400 uppercase">Neto</th>
+                    <th className="px-3 py-2 text-right text-amber-400 uppercase">Pagado</th>
+                    <th className="px-3 py-2 text-right text-slate-300 uppercase">Pendiente</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60">
+                  {retentionPanel.rows.map((r) => (
+                    <tr key={r.vendor} className="hover:bg-slate-800/40">
+                      <td className="px-3 py-2 text-white font-semibold">{r.vendor}</td>
+                      <td className="px-3 py-2 text-right text-blue-300 font-mono">${r.totalComm.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
+                      <td className="px-3 py-2 text-right text-red-300 font-mono">-${r.retention.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
+                      <td className="px-3 py-2 text-right text-cyan-300 font-mono">${r.net.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
+                      <td className="px-3 py-2 text-right text-amber-300 font-mono">${r.paid.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
+                      <td className="px-3 py-2 text-right text-white font-mono">${r.pending.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 
@@ -617,7 +1210,7 @@ export default function Reports() {
             className="bg-slate-800 border border-slate-700 text-white rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-emerald-500 transition-all min-w-[150px]"
           >
             <option value="">Todos</option>
-            {vendors?.map(v => <option key={v.id} value={String(v.id)}>{v.name}</option>)}
+            {reportVendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
           </select>
           ) : (
           <div className="bg-slate-800 border border-slate-700 text-emerald-400 rounded-xl px-3 py-2 font-bold text-sm">
@@ -640,182 +1233,256 @@ export default function Reports() {
         </div>
       </div>
 
-      {/* Main Accordion Table */}
-      <div className="space-y-2">
-        {/* Expand/Collapse All */}
-        <div className="flex items-center justify-between px-1">
-          <div className="text-xs text-slate-500">
+      {/* Main Flat Table */}
+      <div className="bg-gray-900 rounded-xl shadow-lg border border-gray-800 overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
+          <div className="text-sm text-slate-400">
             <span className="font-bold text-white">{groupedClients.length}</span> clientes · <span className="font-bold text-white">{filteredRows.length}</span> ventas
             {effectiveView === 'empresa' && <> · <span className="font-bold text-emerald-400">{groupedClients.filter(g => g.totalEarnings > 0 && (g.totalEarnings - g.totalPaid) <= 0).length}</span> pagados</>}
           </div>
-          <div className="flex gap-2">
-            <button onClick={expandAll} className="text-xs text-slate-400 hover:text-white transition-colors px-2 py-1 rounded hover:bg-slate-800">Expandir todo</button>
-            <button onClick={collapseAll} className="text-xs text-slate-400 hover:text-white transition-colors px-2 py-1 rounded hover:bg-slate-800">Colapsar todo</button>
-          </div>
         </div>
+        <div className="overflow-x-auto">
+          <table className="w-full table-auto">
+            <thead className="bg-gray-800 border-b border-gray-700">
+              <tr>
+                <th className="px-3 py-2 text-left text-xs font-medium text-gray-400 uppercase">Empresa</th>
+                <th className="px-3 py-2 text-left text-xs font-medium text-gray-400 uppercase">Vendedor</th>
+                <th className="px-1 py-2 text-center text-[10px] font-medium text-gray-400 uppercase">Fijo Ren</th>
+                <th className="px-1 py-2 text-center text-[10px] font-medium text-gray-400 uppercase">Fijo New</th>
+                <th className="px-1 py-2 text-center text-[10px] font-medium text-gray-400 uppercase">Móvil New</th>
+                <th className="px-1 py-2 text-center text-[10px] font-medium text-gray-400 uppercase">Móvil Ren</th>
+                <th className="px-1 py-2 text-center text-[10px] font-medium text-gray-400 uppercase">ClaroTV</th>
+                <th className="px-1 py-2 text-center text-[10px] font-medium text-gray-400 uppercase">Cloud</th>
+                <th className="px-1 py-2 text-center text-[10px] font-medium text-gray-400 uppercase">MPLS</th>
+                <th className="px-2 py-2 text-center text-[10px] font-medium text-purple-400 uppercase">Completado</th>
+                <th className="px-2 py-2 text-center text-[10px] font-medium text-gray-400 uppercase">Mensualidad</th>
+                {isAdmin && (
+                  <th className="px-2 py-2 text-center text-[10px] font-medium text-emerald-400 uppercase bg-emerald-500/5">Empresa($)</th>
+                )}
+                <th className="px-2 py-2 text-center text-[10px] font-medium text-blue-400 uppercase bg-blue-500/5">Comisión($)</th>
+                <th className="px-2 py-2 text-center text-[10px] font-medium text-amber-400 uppercase">Ventas</th>
+              </tr>
+            </thead>
+            <tbody className="bg-gray-900 divide-y divide-gray-800">
+              {groupedClients.map(group => {
+                const key = group.client_id || group.client;
+                const isExpanded = expandedClients.has(key);
+                const prods = group.products;
 
-        {groupedClients.map(group => {
-          const key = group.client_id || group.client;
-          const isExpanded = expandedClients.has(key);
-          const clientBalance = effectiveView === 'empresa'
-            ? (group.totalEarnings - group.totalPaid)
-            : (group.totalCommission - group.totalPaid);
-          const isPagado = effectiveView === 'empresa'
-            ? (group.totalEarnings > 0 && clientBalance <= 0)
-            : (group.totalCommission > 0 && clientBalance <= 0);
+                return (
+                  <Fragment key={key}>
+                    {/* Client Row */}
+                    <tr className="hover:bg-gray-800 transition-colors cursor-pointer" onClick={() => toggleClient(key)}>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        <div className="text-sm font-bold text-gray-200">{group.client}</div>
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        <span className="text-sm font-bold text-blue-400">{group.vendor_name}</span>
+                      </td>
+                      {/* Product fields - editable for admin */}
+                      {['fijo_ren', 'fijo_new', 'movil_nueva', 'movil_renovacion', 'claro_tv', 'cloud', 'mpls'].map(field => {
+                        const val = editingProducts[key]?.[field] !== undefined 
+                          ? editingProducts[key][field] 
+                          : (prods ? (prods as any)[field] || 0 : 0);
+                        const numVal = parseFloat(String(val)) || 0;
+                        const hasValue = numVal > 0;
+                        return (
+                          <td key={field} className={`px-1 py-2 text-center ${hasValue ? 'border border-green-500 bg-green-900/20' : ''}`}>
+                            {isAdmin && !!prods?.prospect_id ? (
+                              <input
+                                type="number" min="0"
+                                className="w-14 bg-gray-800 border border-gray-700 rounded text-center text-xs font-bold text-gray-300 px-1 py-1 outline-none focus:ring-1 focus:ring-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                value={val}
+                                onClick={(e) => e.stopPropagation()}
+                                onChange={(e) => handleProductChange(key, field, e.target.value)}
+                              />
+                            ) : (
+                              <span className="text-xs text-gray-300">{numVal.toFixed(2)}</span>
+                            )}
+                          </td>
+                        );
+                      })}
+                      {/* Completado */}
+                      <td className="px-2 py-2 text-center whitespace-nowrap">
+                        <span className="text-xs text-purple-300">
+                          {prods?.completed_date
+                            ? new Date(prods.completed_date).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' })
+                            : '-'}
+                        </span>
+                      </td>
+                      {/* Mensualidad */}
+                      <td className="px-2 py-2 text-center whitespace-nowrap">
+                        <span className="text-xs text-gray-300">
+                          {group.totalMensualidad > 0 ? `$${group.totalMensualidad.toLocaleString('es-ES', { minimumFractionDigits: 2 })}` : '-'}
+                        </span>
+                      </td>
+                      {/* Empresa($) */}
+                      {isAdmin && (
+                        <td className="px-2 py-2 text-center whitespace-nowrap bg-emerald-500/5">
+                          <span className="text-xs font-bold text-emerald-400">
+                            {group.totalEarnings > 0 ? `$${group.totalEarnings.toLocaleString('es-ES', { minimumFractionDigits: 2 })}` : <span className="text-gray-600">0</span>}
+                          </span>
+                        </td>
+                      )}
+                      {/* Comisión($) */}
+                      <td className="px-2 py-2 text-center whitespace-nowrap bg-blue-500/5">
+                        <span className="text-xs font-bold text-blue-400">
+                          {group.totalCommission > 0 ? `$${group.totalCommission.toLocaleString('es-ES', { minimumFractionDigits: 2 })}` : <span className="text-gray-600">0</span>}
+                        </span>
+                      </td>
+                      {/* Ventas count */}
+                      <td className="px-2 py-2 text-center whitespace-nowrap">
+                        <span className="px-2 py-1 bg-orange-500/20 text-orange-300 rounded text-xs font-bold">
+                          {group.subscribers.length} ventas
+                        </span>
+                      </td>
+                    </tr>
 
-          return (
-            <div key={key} className={`border rounded-2xl overflow-hidden transition-all ${isPagado ? 'bg-emerald-950/20 border-emerald-800/40' : 'bg-slate-900/50 border-slate-800'}`}>
-              {/* Accordion Header */}
-              <button
-                onClick={() => toggleClient(key)}
-                className="w-full px-5 py-4 flex items-center gap-4 hover:bg-slate-800/40 transition-colors cursor-pointer group"
-              >
-                <div className="flex-shrink-0 text-slate-400 group-hover:text-white transition-colors">
-                  {isExpanded ? <ChevronDown className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
-                </div>
-                <div className={`flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center ${isPagado ? 'bg-emerald-500/20' : 'bg-emerald-500/10'}`}>
-                  {isPagado ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : <Building2 className="w-4 h-4 text-emerald-400" />}
-                </div>
-                <div className="flex-1 text-left min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-white font-bold text-sm truncate">{group.client}</span>
-                    {isPagado && <span className="text-[9px] bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded-full font-bold uppercase">Pagado</span>}
-                  </div>
-                  <div className="flex items-center gap-3 mt-0.5">
-                    <span className="text-[10px] text-slate-500 uppercase tracking-wider font-medium">{group.vendor_name}</span>
-                    <span className="flex items-center gap-1 text-[10px] text-slate-400">
-                      <Users className="w-3 h-3" /> {group.subscribers.length} ventas
-                    </span>
-                  </div>
-                </div>
-                <div className="flex items-center gap-6 flex-shrink-0">
-                  {effectiveView === 'empresa' && (
-                    <div className="text-right">
-                      <div className="text-[10px] text-slate-500 uppercase font-bold">Empresa</div>
-                      <div className="text-sm font-black text-emerald-400">${group.totalEarnings.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</div>
-                    </div>
-                  )}
-                  <div className="text-right">
-                    <div className="text-[10px] text-slate-500 uppercase font-bold">Comisión</div>
-                    <div className="text-sm font-black text-blue-400">${group.totalCommission.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-[10px] text-slate-500 uppercase font-bold">Pagado</div>
-                    <div className="text-sm font-black text-amber-400">${group.totalPaid.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</div>
-                  </div>
-                  {effectiveView === 'empresa' && (
-                    <div className="text-right">
-                      <div className="text-[10px] text-slate-500 uppercase font-bold">Balance</div>
-                      <div className={`text-sm font-black ${clientBalance <= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                        ${clientBalance.toLocaleString('es-ES', { minimumFractionDigits: 2 })}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </button>
+                    {/* Save products button row - only if editing */}
+                    {isAdmin && !!prods?.prospect_id && editingProducts[key] && (
+                      <tr className="bg-gray-800/50">
+                        <td colSpan={tableColSpan} className="px-3 py-1 text-right">
+                          <button
+                            onClick={() => handleSaveProducts(key, prods.prospect_id, prods)}
+                            disabled={savingProducts[key]}
+                            className={`px-3 py-1 rounded text-xs font-bold transition-all ${
+                              productSaveSuccess[key]
+                                ? 'bg-green-600 text-white'
+                                : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                            }`}
+                          >
+                            {savingProducts[key] ? 'Guardando...' : productSaveSuccess[key] ? '✓ Guardado' : 'Guardar Productos'}
+                          </button>
+                        </td>
+                      </tr>
+                    )}
 
-              {/* Accordion Body */}
-              {isExpanded && (
-                <div className="border-t border-slate-800">
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse min-w-[900px]">
-                      <thead>
-                        <tr className="bg-slate-800/30">
-                          <th className="px-5 py-2 text-[10px] font-bold text-slate-500 uppercase w-[120px]">BAN</th>
-                          <th className="px-3 py-2 text-[10px] font-bold text-slate-500 uppercase w-[140px]">Teléfono</th>
-                          <th className="px-3 py-2 text-[10px] font-bold text-slate-500 uppercase text-right w-[100px]">Mensualidad</th>
-                          {effectiveView === 'empresa' && <th className="px-4 py-2 text-[10px] font-black text-emerald-500 uppercase text-center bg-emerald-500/5 border-l border-slate-800 w-[140px]">Ganancia ($)</th>}
-                          <th className="px-4 py-2 text-[10px] font-black text-blue-500 uppercase text-center bg-blue-500/5 border-l border-slate-800 w-[140px]">Comisión ($)</th>
-                          <th className="px-4 py-2 text-[10px] font-black text-amber-500 uppercase text-center bg-amber-500/5 border-l border-slate-800 w-[140px]">Pagado ($)</th>
-                          {isAdmin && <th className="px-3 py-2 text-[10px] font-black text-slate-500 uppercase text-center w-[60px]"></th>}
+                    {/* Expanded subscriber rows */}
+                    {isExpanded && group.subscribers.map(row => {
+                      const isEditing = editingVendorComm[row.id] !== undefined
+                        || editingCompanyEarn[row.id] !== undefined
+                        || editingPaidAmount[row.id] !== undefined;
+
+                      return (
+                        <tr key={row.id} className="bg-slate-800/30 hover:bg-slate-800/50 transition-colors">
+                          <td colSpan={2} className="px-6 py-2">
+                            <div className="flex items-center gap-3">
+                              <span className="text-xs text-slate-400 font-mono">BAN: {row.ban_number || '-'}</span>
+                              {(row.phone || '').includes('SIN-TEL') || (row.phone || '').includes('LINEA-') || !row.phone
+                                ? <span className="text-xs text-red-400 font-bold font-mono">⚠ SIN TELÉFONO</span>
+                                : <span className="text-xs text-slate-300 font-mono">{row.phone}</span>
+                              }
+                              <span className="text-[10px] font-semibold uppercase rounded px-2 py-0.5 bg-cyan-950/70 text-cyan-300 border border-cyan-700/60">
+                                {formatSaleTypeLabel(row.account_type, row.line_type, row.sale_type)}
+                              </span>
+                            </div>
+                          </td>
+                          <td colSpan={7}></td>
+                          <td className="px-2 py-2 text-center">
+                            <span className="text-xs text-slate-500">—</span>
+                          </td>
+                          {/* Mensualidad per subscriber */}
+                          <td className="px-2 py-2 text-center">
+                            <span className="text-xs font-bold text-white">
+                              {row.monthly_value != null ? `$${Number(row.monthly_value).toLocaleString('es-ES', { minimumFractionDigits: 2 })}` : '-'}
+                            </span>
+                          </td>
+                          {/* Empresa($) editable */}
+                          {isAdmin && (
+                            <td className="px-2 py-2 text-center bg-emerald-500/5">
+                              <input type="number" step="0.01"
+                                className={`w-20 bg-gray-800 border text-center font-bold text-emerald-400 text-xs px-1 py-1 outline-none transition-all rounded ${editingCompanyEarn[row.id] !== undefined ? 'border-emerald-500 ring-1 ring-emerald-500/20' : 'border-gray-700'}`}
+                                value={editingCompanyEarn[row.id] !== undefined ? editingCompanyEarn[row.id] : (row.company_earnings ?? '')}
+                                onChange={(e) => setEditingCompanyEarn(prev => ({ ...prev, [row.id]: e.target.value }))}
+                                disabled={Boolean(row.is_paid)}
+                              />
+                            </td>
+                          )}
+                          {/* Comisión($) editable */}
+                          <td className="px-2 py-2 text-center bg-blue-500/5">
+                            {isAdmin ? (
+                              <input type="number" step="0.01"
+                                className={`w-20 bg-gray-800 border text-center font-bold text-blue-400 text-xs px-1 py-1 outline-none transition-all rounded ${editingVendorComm[row.id] !== undefined ? 'border-blue-500 ring-1 ring-blue-500/20' : 'border-gray-700'}`}
+                                value={getVendorCommissionInputValue(row)}
+                                onChange={(e) => setEditingVendorComm(prev => ({ ...prev, [row.id]: e.target.value }))}
+                                title={row.salesperson_commission_percentage ? `Auto ${row.salesperson_commission_percentage}% de Empresa($)` : 'Comision editable'}
+                                disabled={Boolean(row.is_paid)}
+                              />
+                            ) : (
+                              <span className="text-xs font-bold text-blue-400">{`$${getEffectiveVendorCommission(row).toFixed(2)}`}</span>
+                            )}
+                          </td>
+                          {/* Save button */}
+                          <td className="px-2 py-2 text-center">
+                            {isAdmin && (
+                              <div className="flex flex-col items-center gap-1">
+                                <button
+                                  onClick={() => handleSave(row.id)}
+                                  disabled={savingStatus[row.id] || saveSuccess[row.id] || rowActionBusy[row.id] || Boolean(row.is_paid)}
+                                  className={`p-1 rounded transition-all ${saveSuccess[row.id]
+                                    ? 'bg-green-600 text-white'
+                                    : isEditing
+                                      ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                                      : 'bg-slate-800 text-slate-500 opacity-30 hover:opacity-100'
+                                  }`}
+                                  title={isEditing ? "Guardar" : "Re-guardar"}
+                                >
+                                  {savingStatus[row.id] ? (
+                                    <div className="w-3 h-3 border-2 border-white border-t-transparent animate-spin rounded-full" />
+                                  ) : saveSuccess[row.id] ? (
+                                    <CheckCircle2 size={12} />
+                                  ) : (
+                                    <Save size={12} />
+                                  )}
+                                </button>
+                                <button
+                                  onClick={() => handleMarkPaid(row.id)}
+                                  disabled={rowActionBusy[row.id] || Boolean(row.is_paid)}
+                                  className={`px-2 py-1 rounded text-[10px] font-bold transition-all ${
+                                    row.is_paid
+                                      ? 'bg-amber-700/60 text-amber-100 cursor-default'
+                                      : 'bg-amber-600 hover:bg-amber-500 text-white'
+                                  }`}
+                                  title={row.is_paid ? 'Ya pagado' : 'Marcar pagado'}
+                                >
+                                  {row.is_paid ? 'Pagado' : 'Pagar'}
+                                </button>
+                                <button
+                                  onClick={() => handleToggleAudited(row.id, Boolean(row.is_audited))}
+                                  disabled={rowActionBusy[row.id]}
+                                  className={`px-2 py-1 rounded text-[10px] font-bold transition-all ${
+                                    row.is_audited
+                                      ? 'bg-cyan-700/70 text-cyan-100'
+                                      : 'bg-slate-700 hover:bg-slate-600 text-slate-200'
+                                  }`}
+                                  title={row.is_audited ? 'Caso auditado' : 'Marcar auditado'}
+                                >
+                                  {row.is_audited ? 'Auditado' : 'Auditar'}
+                                </button>
+                                <button
+                                  onClick={() => handleToggleWithholding(row.id, row.withholding_applies !== false)}
+                                  disabled={rowActionBusy[row.id]}
+                                  className={`px-2 py-1 rounded text-[10px] font-bold transition-all ${
+                                    row.withholding_applies !== false
+                                      ? 'bg-red-700/70 text-red-100'
+                                      : 'bg-slate-700 hover:bg-slate-600 text-slate-200'
+                                  }`}
+                                  title={row.withholding_applies !== false ? 'Retención 10% activa' : 'Retención 10% desactivada'}
+                                >
+                                  {row.withholding_applies !== false ? 'Retiene' : 'Sin Ret.'}
+                                </button>
+                              </div>
+                            )}
+                          </td>
                         </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-800/40">
-                        {group.subscribers.map(row => {
-                          const isEditing = editingVendorComm[row.id] !== undefined
-                            || editingCompanyEarn[row.id] !== undefined
-                            || editingPaidAmount[row.id] !== undefined;
-                          const hasSavedValues = (row.vendor_commission || 0) > 0
-                            || row.company_earnings !== null
-                            || row.paid_amount !== null;
-
-                          return (
-                            <tr key={row.id} className="hover:bg-slate-800/20 transition-colors">
-                              <td className="px-5 py-2.5 text-xs text-slate-300 font-mono">{row.ban_number || '-'}</td>
-                              <td className="px-3 py-2.5 text-xs text-slate-300 font-mono">{row.phone || '-'}</td>
-                              <td className="px-3 py-2.5 text-right text-xs text-slate-300 font-mono">
-                                {row.monthly_value != null ? `$${Number(row.monthly_value).toLocaleString('es-ES', { minimumFractionDigits: 2 })}` : '-'}
-                              </td>
-                              {effectiveView === 'empresa' && (
-                                <td className="px-4 py-2.5 bg-emerald-500/5 border-l border-slate-800 text-center">
-                                  <input type="number" step="0.01"
-                                    className={`w-full max-w-[110px] bg-slate-800 border text-center font-bold text-emerald-400 text-xs px-2 py-1 outline-none transition-all rounded ${editingCompanyEarn[row.id] !== undefined ? 'border-emerald-500 ring-2 ring-emerald-500/20' : 'border-slate-700 hover:border-emerald-500/50'}`}
-                                    value={editingCompanyEarn[row.id] !== undefined ? editingCompanyEarn[row.id] : (row.company_earnings ?? '')}
-                                    onChange={(e) => setEditingCompanyEarn(prev => ({ ...prev, [row.id]: e.target.value }))}
-                                  />
-                                </td>
-                              )}
-                              <td className="px-4 py-2.5 bg-blue-500/5 border-l border-slate-800 text-center">
-                                {isAdmin ? (
-                                  <input type="number" step="0.01"
-                                    className={`w-full max-w-[110px] bg-slate-800 border text-center font-bold text-blue-400 text-xs px-2 py-1 outline-none transition-all rounded ${editingVendorComm[row.id] !== undefined ? 'border-blue-500 ring-2 ring-blue-500/20' : 'border-slate-700 hover:border-blue-500/50'}`}
-                                    value={editingVendorComm[row.id] !== undefined ? editingVendorComm[row.id] : (row.vendor_commission ?? '')}
-                                    onChange={(e) => setEditingVendorComm(prev => ({ ...prev, [row.id]: e.target.value }))}
-                                  />
-                                ) : (
-                                  <span className="font-bold text-blue-400 text-xs">{row.vendor_commission != null ? `$${Number(row.vendor_commission).toFixed(2)}` : '-'}</span>
-                                )}
-                              </td>
-                              <td className="px-4 py-2.5 bg-amber-500/5 border-l border-slate-800 text-center">
-                                {isAdmin ? (
-                                  <input type="number" step="0.01"
-                                    className={`w-full max-w-[110px] bg-slate-800 border text-center font-bold text-amber-400 text-xs px-2 py-1 outline-none transition-all rounded ${editingPaidAmount[row.id] !== undefined ? 'border-amber-500 ring-2 ring-amber-500/20' : 'border-slate-700 hover:border-amber-500/50'}`}
-                                    value={editingPaidAmount[row.id] !== undefined ? editingPaidAmount[row.id] : (row.paid_amount ?? '')}
-                                    onChange={(e) => setEditingPaidAmount(prev => ({ ...prev, [row.id]: e.target.value }))}
-                                  />
-                                ) : (
-                                  <span className="font-bold text-amber-400 text-xs">{row.paid_amount != null ? `$${Number(row.paid_amount).toFixed(2)}` : '-'}</span>
-                                )}
-                              </td>
-                              {isAdmin && (
-                                <td className="px-3 py-2.5 text-center">
-                                  <button
-                                    onClick={() => handleSave(row.id)}
-                                    disabled={savingStatus[row.id] || saveSuccess[row.id]}
-                                    className={`p-1.5 rounded-lg transition-all ${saveSuccess[row.id]
-                                      ? 'bg-green-600 text-white'
-                                      : isEditing
-                                        ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/40'
-                                        : hasSavedValues
-                                          ? 'bg-slate-700 text-emerald-400 opacity-60 hover:opacity-100'
-                                          : 'bg-slate-800 text-slate-500 opacity-30 hover:opacity-100 hover:bg-slate-700'
-                                    }`}
-                                    title={isEditing ? "Guardar cambios" : "Re-guardar"}
-                                  >
-                                    {savingStatus[row.id] ? (
-                                      <div className="w-4 h-4 border-2 border-white border-t-transparent animate-spin rounded-full" />
-                                    ) : saveSuccess[row.id] ? (
-                                      <CheckCircle2 size={14} className="text-white" />
-                                    ) : isEditing ? (
-                                      <Save size={14} />
-                                    ) : (
-                                      <CheckCircle2 size={14} />
-                                    )}
-                                  </button>
-                                </td>
-                              )}
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })}
+                      );
+                    })}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* Resumen Vendedor Footer */}
@@ -831,7 +1498,7 @@ export default function Reports() {
               <span className="font-black text-blue-400 text-lg">${vendorTotals.totalComm.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</span>
             </div>
             <div className="flex justify-between items-center py-1 text-red-400">
-              <span className="flex items-center gap-1"><Receipt className="w-3.5 h-3.5" /> Retención 10% Hacienda</span>
+              <span className="flex items-center gap-1"><Receipt className="w-3.5 h-3.5" /> Retención aplicada 10%</span>
               <span className="font-bold">-${vendorTotals.retention.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</span>
             </div>
             <div className="border-t border-slate-600 pt-2 flex justify-between items-center">
