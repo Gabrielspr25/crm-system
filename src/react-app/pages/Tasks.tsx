@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, CheckSquare, Columns3, Loader2, Pencil, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, CheckSquare, Columns3, Loader2, Pencil, Plus, RefreshCw, Search, Trash2, X, ExternalLink } from "lucide-react";
 import { authFetch, getCurrentUser } from "@/react-app/utils/auth";
+import { Link } from "react-router-dom";
 
 type TaskStatus = "pending" | "in_progress" | "done";
 type TaskTab = "all" | "pending" | "in_progress" | "follow_up" | "done";
@@ -233,7 +234,7 @@ function NotesChecklistEditor({ notes, onChange }: { notes: string; onChange: (v
         <button type="button" onClick={() => setMode("text")} className="text-xs text-slate-400 font-medium hover:text-white transition-colors">Modo Texto</button>
       </div>
       <div className="space-y-1.5 bg-slate-800/90 p-3 rounded-xl border-2 border-blue-500/40 min-h-[200px] max-h-[60vh] overflow-y-auto">
-        {lines.map((l, i) => {
+        {lines.map((text, idx) => ({ text, idx })).filter(item => item.text.trim() !== "").map(({ text: l, idx: i }) => {
           const isChecked = l.startsWith("[x] ");
           const isEmptyCheck = l.startsWith("[ ] ");
           const hasPrefix = isChecked || isEmptyCheck;
@@ -758,7 +759,13 @@ export default function TasksPage() {
                   return (
                     <tr key={task.id} className="border-b border-slate-800">
                       <td className={`px-2 py-2 ${task.status === "done" ? "text-slate-500" : "text-slate-200"}`}>
-                        <div>{task.client_name || "-"}</div>
+                        {task.client_id ? (
+                          <Link to={`/clientes?q=${task.client_id}`} className="flex items-center gap-1 font-medium hover:text-blue-400 transition-colors group">
+                            {task.client_name || "-"} <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+                          </Link>
+                        ) : (
+                          <div>{task.client_name || "-"}</div>
+                        )}
                         {task.client_id ? <div className="text-[11px] text-slate-500">ID {task.client_id}</div> : null}
                       </td>
                       <td className={`px-2 py-2 ${task.status === "done" ? "text-slate-500 line-through" : "text-white"}`}>{task.title}</td>

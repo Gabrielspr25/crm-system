@@ -5274,7 +5274,7 @@ function InteractiveChecklist({ task, onUpdate }: { task: any; onUpdate: () => v
 
   return (
     <div className="mt-1.5 bg-gray-900/50 p-2 rounded flex flex-col gap-1.5">
-      {lines.map((l: string, i: number) => {
+      {lines.map((text: string, idx: number) => ({ text, idx })).filter(item => item.text.trim() !== "").map(({ text: l, idx: i }: { text: string; idx: number }) => {
         const isChecked = l.startsWith("[x] ");
         const isEmptyCheck = l.startsWith("[ ] ");
         const hasPrefix = isChecked || isEmptyCheck;

@@ -749,6 +749,12 @@ async function ensureTasksSchema() {
       CREATE INDEX IF NOT EXISTS crm_task_columns_owner_idx
       ON crm_task_columns(owner_user_id, sort_order)
     `);
+
+    try {
+      await query(`ALTER TABLE crm_tasks ALTER COLUMN client_id TYPE TEXT USING client_id::text`);
+    } catch (e) {
+      console.warn("Notice: could not alter crm_tasks.client_id to text:", e.message);
+    }
   })().catch((error) => {
     ensureTasksSchemaPromise = null;
     throw error;
