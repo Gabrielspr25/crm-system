@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, CheckSquare, Columns3, Loader2, Pencil, Plus, RefreshCw, Search, Trash2, X, ExternalLink } from "lucide-react";
 import { authFetch, getCurrentUser } from "@/react-app/utils/auth";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 
 type TaskStatus = "pending" | "in_progress" | "done";
 type TaskTab = "all" | "pending" | "in_progress" | "follow_up" | "done";
