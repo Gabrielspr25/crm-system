@@ -759,12 +759,12 @@ export default function TasksPage() {
                   return (
                     <tr key={task.id} className="border-b border-slate-800">
                       <td className={`px-2 py-2 ${task.status === "done" ? "text-slate-500" : "text-slate-200"}`}>
-                        {task.client_id ? (
-                          <Link to={`/clientes?q=${task.client_id}`} className="flex items-center gap-1 font-medium hover:text-blue-400 transition-colors group">
+                        {(task.client_id || task.client_name) ? (
+                          <Link to={`/clientes?q=${encodeURIComponent(task.client_id || task.client_name || "")}`} className="flex items-center gap-1 font-medium hover:text-blue-400 transition-colors group">
                             {task.client_name || "-"} <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
                           </Link>
                         ) : (
-                          <div>{task.client_name || "-"}</div>
+                          <div>-</div>
                         )}
                         {task.client_id ? <div className="text-[11px] text-slate-500">ID {task.client_id}</div> : null}
                       </td>
