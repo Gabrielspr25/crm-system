@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { AlertTriangle, ClipboardPaste, Loader2 } from "lucide-react";
 import { authFetch } from "@/react-app/utils/auth";
+import { extractSubscriberTextFromImage } from "@/react-app/utils/subscriberImageExtractor";
 
 type SyncStats = {
   total_lines?: number;
@@ -33,6 +34,32 @@ type Props = {
   onSuccess: (result: SyncResponse) => Promise<void> | void;
 };
 
+// Parse HTML clipboard data — reads ALL rows including browser-highlighted (blue) ones
+// that get dropped from text/plain when copying a table selection
+function extractTableFromHtml(html: string): string {
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, "text/html");
+    const rows = doc.querySelectorAll("tr");
+    if (rows.length > 0) {
+      return Array.from(rows)
+        .map((row) => {
+          const cells = row.querySelectorAll("td, th");
+          return Array.from(cells)
+            .map((cell) => (cell.textContent ?? "").trim())
+            .join("\t");
+        })
+        .filter((line) => line.trim())
+        .join("\n");
+    }
+    // No table, fall back to stripping tags
+    const plain = doc.body?.textContent ?? "";
+    return plain.trim();
+  } catch {
+    return "";
+  }
+}
+
 export default function BanPasteSubscribersModal({
   isOpen,
   banId,
@@ -44,6 +71,24 @@ export default function BanPasteSubscribersModal({
   const [preview, setPreview] = useState<SyncResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  const appendExtractedText = async (file: File) => {
+    setLoading(true);
+    setError("");
+    try {
+      const extracted = await extractSubscriberTextFromImage(file);
+      const newText = extracted.text?.trim() || "";
+      if (!newText) {
+        setError("No se detectaron suscriptores en la imagen.");
+        return;
+      }
+      setText((prev) => (prev.trim() ? `${prev}\n${newText}` : newText));
+    } catch (e: any) {
+      setError(e.message || "Error al procesar la imagen.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -114,29 +159,8 @@ export default function BanPasteSubscribersModal({
             onChange={async (e) => {
               const file = e.target.files?.[0];
               if (!file) return;
-              setLoading(true);
-              setError("");
-              try {
-                const formData = new FormData();
-                formData.append("image", file);
-                const res = await authFetch("/api/ocr/process", {
-                  method: "POST",
-                  body: formData
-                });
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.error || "Error en el OCR");
-                if (data.data && data.data.length > 0) {
-                  const newText = data.data.map((r: any) => `${r.subscriber}\t${r.status}\t${r.plan || ""}`).join("\n");
-                  setText((prev) => (prev.trim() ? `${prev}\n${newText}` : newText));
-                } else {
-                  setError("No se detectaron suscriptores en la imagen.");
-                }
-              } catch (e: any) {
-                setError(e.message || "Error al procesar la imagen.");
-              } finally {
-                setLoading(false);
-                e.target.value = "";
-              }
+              await appendExtractedText(file);
+              e.target.value = "";
             }}
           />
           <button
@@ -195,40 +219,32 @@ export default function BanPasteSubscribersModal({
           }}
           onPaste={async (e) => {
             const clipboardData = e.clipboardData;
-            if (clipboardData && clipboardData.items) {
-              for (let i = 0; i < clipboardData.items.length; i++) {
-                const item = clipboardData.items[i];
-                if (item.type.indexOf("image") !== -1) {
-                  e.preventDefault();
-                  const file = item.getAsFile();
-                  if (!file) continue;
-                  
-                  setLoading(true);
-                  setError("");
-                  try {
-                    const formData = new FormData();
-                    formData.append("image", file);
-                    const res = await authFetch("/api/ocr/process", {
-                      method: "POST",
-                      body: formData
-                    });
-                    const data = await res.json();
-                    if (!res.ok) throw new Error(data.error || "Error en el OCR");
-                    if (data.data && data.data.length > 0) {
-                      const newText = data.data.map((r: any) => `${r.subscriber}\t${r.status}\t${r.plan || ""}`).join("\n");
-                      setText((prev) => (prev.trim() ? `${prev}\n${newText}` : newText));
-                    } else {
-                      setError("No se detectaron suscriptores en la imagen.");
-                    }
-                  } catch (err: any) {
-                    setError(err.message || "Error al procesar la imagen pegada.");
-                  } finally {
-                    setLoading(false);
-                  }
-                  break; 
-                }
+            if (!clipboardData) return;
+
+            // Check for image first
+            for (let i = 0; i < clipboardData.items.length; i++) {
+              const item = clipboardData.items[i];
+              if (item.type.indexOf("image") !== -1) {
+                e.preventDefault();
+                const file = item.getAsFile();
+                if (file) await appendExtractedText(file);
+                return;
               }
             }
+
+            // Read HTML clipboard — preserves highlighted/selected rows that text/plain drops
+            const htmlData = clipboardData.getData("text/html");
+            if (htmlData && htmlData.trim()) {
+              const extracted = extractTableFromHtml(htmlData);
+              if (extracted && extracted.trim()) {
+                e.preventDefault();
+                setText((prev) => (prev.trim() ? `${prev}\n${extracted}` : extracted));
+                setPreview(null);
+                setError("");
+                return;
+              }
+            }
+            // Fall through to default textarea text paste
           }}
           rows={12}
           className="w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 font-mono text-xs text-slate-100 outline-none focus:border-blue-500"
