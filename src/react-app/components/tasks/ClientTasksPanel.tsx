@@ -1,6 +1,6 @@
 import { CheckSquare, ChevronDown, Loader2, Plus, Save, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { authFetch, getCurrentUser } from "@/react-app/utils/auth";
+import { authFetch, getCurrentUser, setAuthToken, setCurrentUser } from "@/react-app/utils/auth";
 
 interface ClientTasksPanelProps {
   client: {
@@ -269,13 +269,25 @@ export default function ClientTasksPanel({ client }: ClientTasksPanelProps) {
   );
   const canEditTemplates = ["admin", "supervisor"].includes(currentUserRole);
 
-  // Sync role from server in case stored user data is stale (e.g. role changed since last login)
+  // Sync role from server in case stored user data is stale (e.g. role changed since last login).
+  // Also refreshes the JWT token so server-side role checks (requireRole) work correctly.
   useEffect(() => {
     authFetch("/api/auth/me")
       .then((r) => (r.ok ? r.json() : null))
-      .then((data: { user?: { role?: string } } | null) => {
-        if (data?.user?.role) {
-          setCurrentUserRole(String(data.user.role).toLowerCase());
+      .then((data: { token?: string; user?: { id?: unknown; username?: string; role?: string; salespersonId?: unknown; salespersonName?: string | null } } | null) => {
+        if (!data) return;
+        const freshRole = String(data.user?.role || "").toLowerCase();
+        if (freshRole) setCurrentUserRole(freshRole);
+        // Persist fresh token so subsequent API calls use the correct role
+        if (data.token) setAuthToken(data.token);
+        if (data.user?.role) {
+          setCurrentUser({
+            userId: data.user.id as string | number | null ?? null,
+            username: String(data.user.username || ""),
+            role: freshRole,
+            salespersonId: data.user.salespersonId as string | number | null ?? null,
+            salespersonName: data.user.salespersonName ?? null,
+          });
         }
       })
       .catch(() => {});
