@@ -1,18 +1,43 @@
 // ===============================================
-// 🔐 AUTH UTILS - CRM PRO (versión estable 2025)
+// AUTH UTILS - CRM PRO
 // ===============================================
 
-// Configuración base del backend
+const defaultApiBaseUrl = import.meta.env.DEV
+  ? `${window.location.protocol}//${window.location.hostname}:3001`
+  : window.location.origin;
+
 export const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL && import.meta.env.VITE_API_BASE_URL.trim() !== ""
     ? import.meta.env.VITE_API_BASE_URL
-    : window.location.origin;
+    : defaultApiBaseUrl;
 
 const STORAGE_KEYS = {
   accessToken: "crm_token",
   refreshToken: "crm_refresh_token",
   user: "crm_user",
 } as const;
+
+const emitAuthStateChanged = (): void => {
+  try {
+    window.dispatchEvent(new CustomEvent("token-updated"));
+  } catch {
+    // noop
+  }
+};
+
+const tokenHasExpiration = (token: string | null): boolean => {
+  if (!token) return false;
+  try {
+    const [, payload] = token.split(".");
+    if (!payload) return false;
+    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+    const decoded = JSON.parse(atob(padded));
+    return typeof decoded?.exp === "number";
+  } catch {
+    return false;
+  }
+};
 
 export type AuthUser = {
   userId: string | number | null;
@@ -89,9 +114,12 @@ export const clearAuthToken = (): void => {
     localStorage.removeItem(STORAGE_KEYS.accessToken);
     localStorage.removeItem(STORAGE_KEYS.refreshToken);
     localStorage.removeItem(STORAGE_KEYS.user);
+    localStorage.removeItem("crm_permissions_snapshot");
+    localStorage.removeItem("crm_permissions_catalog");
   } catch {
-    /* noop */
+    // noop
   }
+  emitAuthStateChanged();
 };
 
 export const setCurrentUser = (user: AuthUser | null): void => {
@@ -99,11 +127,13 @@ export const setCurrentUser = (user: AuthUser | null): void => {
     try {
       localStorage.removeItem(STORAGE_KEYS.user);
     } catch {
-      /* noop */
+      // noop
     }
+    emitAuthStateChanged();
     return;
   }
   setStoredUser(user);
+  emitAuthStateChanged();
 };
 
 export const logout = (): void => {
@@ -118,15 +148,70 @@ const persistSession = (options: {
   const { token, refreshToken, user } = options;
   if (token) {
     setAuthToken(token);
-    // Disparar evento cuando se guarda el token
-    window.dispatchEvent(new CustomEvent('token-updated'));
   }
   if (refreshToken) setRefreshToken(refreshToken);
   if (user) setStoredUser(user);
+  emitAuthStateChanged();
 };
 
 type AuthFetchOptions = RequestInit & {
   json?: unknown;
+};
+
+const tryJsonFetch = async (
+  paths: string[],
+  options: {
+    method?: string;
+    json?: unknown;
+    headers?: Record<string, string>;
+  } = {}
+) => {
+  let lastResponse: Response | null = null;
+  let lastPayload: any = null;
+  let lastPath = paths[paths.length - 1] || "";
+
+  for (const path of paths) {
+    lastPath = path;
+
+    const headers: Record<string, string> = {
+      Accept: "application/json",
+      ...(options.headers || {}),
+    };
+
+    let body: string | undefined;
+    if (options.json !== undefined) {
+      headers["Content-Type"] = "application/json";
+      body = JSON.stringify(options.json);
+    }
+
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      method: options.method || "GET",
+      headers,
+      body,
+    });
+
+    const payload = await response.json().catch(() => ({}));
+
+    if (response.ok) {
+      return { response, payload, path };
+    }
+
+    lastResponse = response;
+    lastPayload = payload;
+
+    const errorText = String(payload?.error || "").toLowerCase();
+    const looksLikeWrongRoute =
+      response.status === 404 ||
+      errorText.includes("token no proporcionado") ||
+      errorText.includes("token requerido") ||
+      errorText.includes("ruta");
+
+    if (!looksLikeWrongRoute) {
+      break;
+    }
+  }
+
+  return { response: lastResponse, payload: lastPayload, path: lastPath };
 };
 
 const refreshAuthToken = async (): Promise<string | null> => {
@@ -134,24 +219,25 @@ const refreshAuthToken = async (): Promise<string | null> => {
   if (!token) return null;
 
   try {
-    const res = await fetch(`${API_BASE_URL}/api/token/refresh`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refresh_token: token }),
-    });
+    const { response, payload } = await tryJsonFetch(
+      ["/api/token/refresh", "/api/auth/refresh-token"],
+      {
+        method: "POST",
+        json: { refresh_token: token },
+      }
+    );
 
-    if (!res.ok) {
+    if (!response?.ok) {
       return null;
     }
 
-    const data = await res.json().catch(() => null);
-    if (data?.token) {
+    if (payload?.token) {
       persistSession({
-        token: data.token,
-        refreshToken: data.refresh_token,
-        user: data.user,
+        token: payload.token,
+        refreshToken: payload.refresh_token,
+        user: payload.user,
       });
-      return data.token as string;
+      return payload.token as string;
     }
     return null;
   } catch (error) {
@@ -191,52 +277,51 @@ export const authFetch = async (
 
     if (response.status === 401) {
       if (token) {
-        // Intentar refrescar el token UNA SOLA VEZ
-        console.log("🔄 Token expirado, intentando refrescar...");
+        if (!tokenHasExpiration(token)) {
+          console.warn("401 recibido con token persistente. No se cierra sesion automaticamente.");
+          return response;
+        }
+
+        console.log("Token expirado, intentando refrescar...");
         const newToken = await refreshAuthToken();
         if (newToken) {
-          console.log("✅ Token refrescado exitosamente");
+          console.log("Token refrescado exitosamente");
           const retryHeaders = new Headers(headers);
           retryHeaders.set("Authorization", `Bearer ${newToken}`);
           const retryResponse = await fetch(url, { ...requestInit, headers: retryHeaders });
-          
-          // Si el retry también falla con 401, logout definitivo
+
           if (retryResponse.status === 401) {
-            console.error("❌ La solicitud falló después de refrescar. Token inválido.");
+            console.error("La solicitud fallo despues de refrescar. Token invalido.");
             clearAuthToken();
-            if (!window.location.pathname.includes('/login')) {
-              window.location.href = '/login?reason=token_invalid';
+            if (!window.location.pathname.includes("/login")) {
+              window.location.href = "/login?reason=token_invalid";
             }
             return retryResponse;
           }
           return retryResponse;
-        } else {
-          console.warn("⚠️ No se pudo refrescar el token. Refresh token probablemente expirado.");
-          clearAuthToken();
-          if (!window.location.pathname.includes('/login')) {
-            // Mostrar error amigable
-            window.location.href = '/login?reason=session_expired';
-          }
+        }
+
+        console.warn("No se pudo refrescar el token. Refresh token probablemente expirado.");
+        clearAuthToken();
+        if (!window.location.pathname.includes("/login")) {
+          window.location.href = "/login?reason=session_expired";
         }
       }
-      
-      // Sin token original
+
       clearAuthToken();
-      if (!window.location.pathname.includes('/login')) {
-        console.warn("⚠️ No hay token. Redirigiendo al login...");
-        window.location.href = '/login?reason=no_token';
+      if (!window.location.pathname.includes("/login")) {
+        console.warn("No hay token. Redirigiendo al login...");
+        window.location.href = "/login?reason=no_token";
       }
     }
 
     return response;
   } catch (error) {
-    // Manejar errores de conexión/timeout
     if (error instanceof TypeError) {
-      console.error("❌ Error de conexión:", error.message);
-      // Esto podría ser un timeout o desconexión de red
+      console.error("Error de conexion:", error.message);
       clearAuthToken();
-      if (!window.location.pathname.includes('/login')) {
-        window.location.href = '/login?reason=connection_error';
+      if (!window.location.pathname.includes("/login")) {
+        window.location.href = "/login?reason=connection_error";
       }
     }
     console.error("Error en authFetch:", error);
@@ -244,27 +329,51 @@ export const authFetch = async (
   }
 };
 
-export const login = async (username: string, password: string) => {
-  const res = await fetch(`${API_BASE_URL}/api/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, password }),
-  });
+export const devAdminLogin = async () => {
+  const { response, payload } = await tryJsonFetch(
+    ["/api/auth/dev-admin"],
+    { method: "POST" }
+  );
 
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    throw new Error(data?.error || "Credenciales inválidas");
+  if (!response?.ok) {
+    throw new Error("Dev login failed");
   }
 
-  const data = await res.json();
-  if (data?.token) {
+  if (payload?.token) {
     persistSession({
-      token: data.token,
-      refreshToken: data.refresh_token,
-      user: data.user,
+      token: payload.token,
+      user: payload.user,
     });
-    // Disparar evento para que los hooks sepan que hay un nuevo token
-    window.dispatchEvent(new CustomEvent('token-updated'));
   }
-  return data;
+  return payload;
+};
+
+export const login = async (username: string, password: string) => {
+  const { response, payload } = await tryJsonFetch(
+    ["/api/login", "/api/auth/login"],
+    {
+      method: "POST",
+      json: { username, password },
+    }
+  );
+
+  if (!response?.ok) {
+    const rawError = String(payload?.error || "").trim();
+    if (
+      rawError.toLowerCase().includes("token no proporcionado") ||
+      rawError.toLowerCase().includes("token requerido")
+    ) {
+      throw new Error("El servicio de login esta mal configurado. El usuario no deberia ver un error de token aqui.");
+    }
+    throw new Error(rawError || "Credenciales invalidas");
+  }
+
+  if (payload?.token) {
+    persistSession({
+      token: payload.token,
+      refreshToken: payload.refresh_token,
+      user: payload.user,
+    });
+  }
+  return payload;
 };

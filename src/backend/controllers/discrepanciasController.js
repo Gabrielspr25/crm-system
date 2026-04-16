@@ -1,39 +1,132 @@
 
-import { query, getClient } from '../database/db.js';
+import { query } from '../database/db.js';
 import { serverError, badRequest } from '../middlewares/errorHandler.js';
-import pkg from 'pg';
-const { Pool } = pkg;
+import { getDiscrepanciasPool } from '../database/externalPools.js';
 
-let remotePool = null;
+const LOCAL_FIELD_MAP = Object.freeze({
+    name: 'name',
+    email: 'email',
+    tax_id: 'tax_id',
+    owner_name: 'owner_name',
+    contact_person: 'contact_person',
+    phone: 'phone',
+    cellular: 'cellular',
+    additional_phone: 'additional_phone',
+    address: 'address',
+    city: 'city',
+    sector: 'sector',
+    zip_code: 'zip_code',
+    business_name: 'business_name'
+});
 
-function getRemotePool() {
-    if (!remotePool) {
-        console.log('🔍 [REMOTE POOL] Creando nuevo pool de conexión a 159.203.70.5:5432...');
-        remotePool = new Pool({
-            host: '159.203.70.5',
-            port: 5432,
-            user: 'postgres',
-            password: 'p0stmu7t1',
-            database: 'claropr',
-            connectionTimeoutMillis: 15000,
-            query_timeout: 30000,
-            statement_timeout: 30000,
-            ssl: false,
-            max: 5,
-            idleTimeoutMillis: 30000
-        });
+const REMOTE_FIELD_MAP = Object.freeze({
+    name: 'nombre',
+    email: 'email',
+    tax_id: 'segurosocial',
+    phone: 'telefonocontacto',
+    cellular: 'telefonotrabajo',
+    additional_phone: 'telefonoresidencia',
+    address: 'direccionpostal',
+    business_name: 'nombre'
+});
 
-        remotePool.on('error', (err) => {
-            console.error('🔍 [REMOTE POOL] Error en pool:', err);
-        });
+const normalizeComparableText = (value) =>
+    String(value || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[\.\,\|\;\:\-_]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toUpperCase();
+
+const normalizeNameComparable = (value) =>
+    normalizeComparableText(value)
+        .replace(/\b(MR|MRS|MS|MISS|DR|SR|SRA|SRTA|DRA)\b/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+const nameTokens = (value) =>
+    normalizeNameComparable(value)
+        .split(' ')
+        .filter(Boolean);
+
+const areNamesEquivalent = (a, b) => {
+    const ta = nameTokens(a);
+    const tb = nameTokens(b);
+    if (!ta.length || !tb.length) return true;
+    if (ta.join(' ') === tb.join(' ')) return true;
+    const shorter = ta.length <= tb.length ? ta : tb;
+    const longer = ta.length <= tb.length ? tb : ta;
+    return shorter.every((token) => longer.includes(token));
+};
+
+const normalizeYesNo = (value, kind = 'generic') => {
+    const normalized = normalizeComparableText(value);
+    if (!normalized) return '';
+
+    if (
+        normalized === 'NONE' ||
+        normalized === 'NULL' ||
+        normalized === 'N/A' ||
+        normalized === 'VACIO' ||
+        normalized === '(VACIO)'
+    ) {
+        return kind === 'seguro' ? 'NO' : '';
     }
-    return remotePool;
-}
+
+    if (kind === 'paper') {
+        if (
+            normalized === 'NO' ||
+            normalized.includes('NO PAPER') ||
+            normalized.includes('NOPAPER') ||
+            normalized.includes('EBILL')
+        ) {
+            return 'NO';
+        }
+        if (normalized === 'SI' || normalized === 'YES' || normalized.includes('PAPER')) {
+            return 'SI';
+        }
+        return normalized;
+    }
+
+    if (
+        normalized === 'NO' ||
+        normalized === 'FALSE' ||
+        normalized === '0' ||
+        normalized.includes('SIN SEGURO')
+    ) {
+        return 'NO';
+    }
+    if (
+        normalized === 'SI' ||
+        normalized === 'YES' ||
+        normalized === 'TRUE' ||
+        normalized === '1' ||
+        normalized.includes('CON SEGURO')
+    ) {
+        return 'SI';
+    }
+    return normalized;
+};
+
+const normalizePersonFullName = (value) =>
+    String(value || '')
+        .replace(/^(MR|MRS|MS|MISS|DR|SR|SRA|SRTA|DRA)\.?\s+/i, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+const splitPersonName = (value) => {
+    const full = normalizePersonFullName(value);
+    if (!full) return { full: '', nombre: '', apellido: '' };
+    const parts = full.split(' ').filter(Boolean);
+    if (parts.length === 1) return { full, nombre: parts[0], apellido: '' };
+    return { full, nombre: parts[0], apellido: parts.slice(1).join(' ') };
+};
 
 export const getDiscrepancias = async (req, res) => {
     try {
         console.log('🔍 [DISCREPANCIAS] Iniciando análisis de discrepancias...');
-        const poolRemoto = getRemotePool();
+        const poolRemoto = getDiscrepanciasPool();
         console.log('🔍 [DISCREPANCIAS] Pool remoto obtenido');
 
         // 1. Obtener datos locales (ejemplo con clientes)
@@ -106,12 +199,23 @@ export const syncDiscrepancia = async (req, res) => {
 
     try {
         // Extraer el ID de cliente del formato "field-id"
-        const clientId = id.split('-').pop();
+        const clientIdRaw = id.split('-').pop();
+        const clientId = Number.parseInt(String(clientIdRaw), 10);
+        if (!Number.isFinite(clientId)) {
+            return badRequest(res, 'ID de cliente inválido');
+        }
+
+        const normalizedField = String(field || '').trim().toLowerCase();
 
         if (action === 'remote_to_local') {
+            const localField = LOCAL_FIELD_MAP[normalizedField];
+            if (!localField) {
+                return badRequest(res, `Campo no permitido para sync local: ${field}`);
+            }
+
             // Actualizar base de datos local con valor remoto
             await query(
-                `UPDATE clients SET ${field} = $1 WHERE id = $2`,
+                `UPDATE clients SET ${localField} = $1 WHERE id = $2`,
                 [value, clientId]
             );
 
@@ -120,10 +224,15 @@ export const syncDiscrepancia = async (req, res) => {
                 message: `Cliente ${clientId} actualizado localmente`
             });
         } else if (action === 'local_to_remote') {
+            const remoteField = REMOTE_FIELD_MAP[normalizedField];
+            if (!remoteField) {
+                return badRequest(res, `Campo no permitido para sync remoto: ${field}`);
+            }
+
             // Actualizar base de datos remota
-            const poolRemoto = getRemotePool();
+            const poolRemoto = getDiscrepanciasPool();
             await poolRemoto.query(
-                `UPDATE clientecredito SET ${field} = $1 WHERE clientecreditoid = $2`,
+                `UPDATE clientecredito SET ${remoteField} = $1 WHERE clientecreditoid = $2`,
                 [value, clientId]
             );
 
@@ -141,83 +250,104 @@ export const syncDiscrepancia = async (req, res) => {
 
 export const compareExcel = async (req, res) => {
     try {
-        console.log('🔍 [COMPARE-EXCEL] Iniciando comparación...');
-        const { data, mode } = req.body;
+        console.log('🔍 [COMPARE-EXCEL] Iniciando comparacion...');
+        const { data } = req.body;
 
         if (!data || !Array.isArray(data)) {
-            return badRequest(res, 'Datos inválidos');
+            return badRequest(res, 'Datos invalidos');
         }
 
         console.log(`🔍 [COMPARE-EXCEL] Comparando ${data.length} registros con BD multicellular`);
 
-        const poolRemoto = getRemotePool();
+        const normalizeDigits = (value) => String(value || '').replace(/\D/g, '');
+        const normalizePhone10 = (value) => {
+            const digits = normalizeDigits(value);
+            if (!digits) return '';
+            if (digits.length === 11 && digits.startsWith('1')) return digits.slice(1);
+            if (digits.length >= 10) return digits.slice(-10);
+            return '';
+        };
+
+        const poolRemoto = getDiscrepanciasPool();
         const discrepancies = [];
 
-        // 1. Extract all phones and generate candidates (10 and 11 digits)
-        const phoneMap = new Map(); // Map normalized (10-digit) phone -> original row
-        const candidates = new Set();
-        const phonesToQuery = []; // Keep for valid check
+        const phoneCandidates = new Set();
+        const banCandidates = new Set();
 
         for (const row of data) {
-            const phone = row.Suscriptores?.phone;
-            if (phone) {
-                const phoneClean = String(phone).replace(/\D/g, '').slice(-10); // always 10 chars for normalization
-                phoneMap.set(phoneClean, row);
-                phonesToQuery.push(phoneClean);
+            const phoneClean = normalizePhone10(row.Suscriptores?.phone);
+            const banClean = normalizeDigits(row.BANs?.ban_number);
 
-                // Add candidates for DB lookup (numeric matching)
-                if (phoneClean.length === 10) {
-                    candidates.add(phoneClean); // "787..."
-                    candidates.add('1' + phoneClean); // "1787..."
-                }
+            if (phoneClean) {
+                phoneCandidates.add(phoneClean);
+                phoneCandidates.add(`1${phoneClean}`);
+            }
+            if (banClean) {
+                banCandidates.add(banClean);
             }
         }
 
-        if (candidates.size === 0) {
+        if (phoneCandidates.size === 0 && banCandidates.size === 0) {
             return res.json({ success: true, data: { discrepancies: [], total: 0, analyzed: 0 } });
         }
 
-        // 2. Bulk Query using Index (numerocelularactivado is bigint/numeric)
-        // We cast the input array to bigint[] to force usage of the index on numerocelularactivado
-        const candidateArray = Array.from(candidates);
+        const candidatePhones = Array.from(phoneCandidates)
+            .map((v) => Number(v))
+            .filter(Number.isFinite);
+        const candidateBans = Array.from(banCandidates);
 
-        console.log(`🔍 [COMPARE-EXCEL] Buscando ${candidateArray.length} candidatos (10 y 11 dígitos) usando índice...`);
+        console.log(`🔍 [COMPARE-EXCEL] Buscando ${candidatePhones.length} telefonos y ${candidateBans.length} BANs...`);
+
+        const hasPhoneCandidates = candidatePhones.length > 0;
+        const hasBanCandidates = candidateBans.length > 0;
 
         const remoteQuery = `
-            SELECT 
+            SELECT
+                v.ventaid,
                 v.fechaactivacion as fecha,
                 v.ban,
                 CAST(v.numerocelularactivado AS text) as suscriber,
-                c.nombre,
+                TRIM(CONCAT(COALESCE(c.nombre, ''), ' ', COALESCE(c.apellido, ''))) as nombre,
                 v.simcard,
                 v.emai as imei,
-                CASE WHEN v.papper THEN 'SI' ELSE 'NO' END as paper,
+                CASE WHEN v.papper THEN 'NO' ELSE 'SI' END as paper,
                 CASE WHEN v.celuseguroexistente THEN 'SI' ELSE 'NO' END as seguro,
-                v.pricecode as price_code
+                v.pricecode as price_code,
+                v.codigovoz as price_plan
             FROM venta v
             LEFT JOIN clientecredito c ON v.clientecreditoid = c.clientecreditoid
-            WHERE v.numerocelularactivado = ANY($1::bigint[])
-            LIMIT 2000
+            WHERE
+                (($3::boolean) AND v.numerocelularactivado = ANY($1::bigint[]))
+                OR
+                (($4::boolean) AND regexp_replace(COALESCE(v.ban::text, ''), '\\D', '', 'g') = ANY($2::text[]))
+            ORDER BY v.fechaactivacion DESC NULLS LAST, v.ventaid DESC
+            LIMIT 5000
         `;
 
-        const remoteRes = await poolRemoto.query(remoteQuery, [candidateArray]);
+        const remoteRes = await poolRemoto.query(remoteQuery, [
+            candidatePhones,
+            candidateBans,
+            hasPhoneCandidates,
+            hasBanCandidates
+        ]);
         const dbResults = remoteRes.rows;
 
-        // 3. Match results in memory
         for (const row of data) {
             const phone = row.Suscriptores?.phone;
             const ban = row.BANs?.ban_number;
+            const phoneClean = normalizePhone10(phone);
+            const banClean = normalizeDigits(ban);
 
-            if (!phone) continue;
+            if (!phoneClean && !banClean) continue;
 
-            const phoneClean = String(phone).replace(/\D/g, '').slice(-10);
-
-            // Find matching db row
-            // We need to be careful with "LIKE" matching. 
-            const dbData = dbResults.find(dbRow => {
-                if (!dbRow.suscriber) return false;
-                return String(dbRow.suscriber).endsWith(phoneClean);
+            let dbData = dbResults.find((dbRow) => {
+                const dbPhoneClean = normalizePhone10(dbRow.suscriber);
+                return phoneClean && dbPhoneClean === phoneClean;
             });
+
+            if (!dbData && banClean) {
+                dbData = dbResults.find((dbRow) => normalizeDigits(dbRow.ban) === banClean);
+            }
 
             if (!dbData) {
                 discrepancies.push({
@@ -225,55 +355,76 @@ export const compareExcel = async (req, res) => {
                     type: 'MISSING_IN_REMOTE',
                     dbData: null
                 });
-            } else {
-                const differences = [];
+                continue;
+            }
 
-                // Comparar TODOS los campos
-                const excelData = {
-                    ban: ban || '',
-                    imei: row.Suscriptores?.imei || '',
-                    price_code: row.Suscriptores?.price_code || '',
-                    imsi: row.Suscriptores?.imsi || '',
-                    nombre: row.Suscriptores?.nombre || '',
-                    tipo_factura: row.Suscriptores?.tipo_factura || '',
-                    tipo_celuseguro: row.Suscriptores?.tipo_celuseguro || ''
-                };
+            const differences = [];
+            const excelData = {
+                ban: ban || '',
+                imei: row.Suscriptores?.imei || '',
+                price_code: row.Suscriptores?.price_code || '',
+                imsi: row.Suscriptores?.imsi || '',
+                nombre: row.Suscriptores?.nombre || '',
+                tipo_factura: row.Suscriptores?.tipo_factura || '',
+                tipo_celuseguro: row.Suscriptores?.tipo_celuseguro || '',
+                price_plan: row.Suscriptores?.price_plan || ''
+            };
 
-                // Comparar cada campo
-                if (excelData.ban && dbData.ban && excelData.ban !== String(dbData.ban)) {
-                    differences.push({ field: 'BAN', excel: excelData.ban, db: dbData.ban });
-                }
-                if (excelData.imei && dbData.imei && excelData.imei !== String(dbData.imei)) {
-                    differences.push({ field: 'IMEI', excel: excelData.imei, db: dbData.imei });
-                }
-                if (excelData.price_code && dbData.price_code && excelData.price_code !== String(dbData.price_code)) {
-                    differences.push({ field: 'PRICE_CODE', excel: excelData.price_code, db: dbData.price_code });
-                }
-                if (excelData.tipo_factura && dbData.paper && excelData.tipo_factura !== String(dbData.paper)) {
+            if (
+                excelData.ban &&
+                dbData.ban &&
+                normalizeDigits(excelData.ban) !== normalizeDigits(dbData.ban)
+            ) {
+                differences.push({ field: 'BAN', excel: excelData.ban, db: dbData.ban });
+            }
+            if (excelData.imei && dbData.imei && excelData.imei !== String(dbData.imei)) {
+                differences.push({ field: 'IMEI', excel: excelData.imei, db: dbData.imei });
+            }
+            if (excelData.price_code && dbData.price_code && excelData.price_code !== String(dbData.price_code)) {
+                differences.push({ field: 'PRICE_CODE', excel: excelData.price_code, db: dbData.price_code });
+            }
+            if (
+                excelData.nombre &&
+                dbData.nombre &&
+                !areNamesEquivalent(excelData.nombre, dbData.nombre)
+            ) {
+                differences.push({ field: 'NOMBRE', excel: excelData.nombre, db: dbData.nombre });
+            }
+            if (excelData.tipo_factura && dbData.paper) {
+                const excelPaper = normalizeYesNo(excelData.tipo_factura, 'paper');
+                const dbPaper = normalizeYesNo(dbData.paper, 'paper');
+                if (excelPaper && dbPaper && excelPaper !== dbPaper) {
                     differences.push({ field: 'PAPER', excel: excelData.tipo_factura, db: dbData.paper });
                 }
-                if (excelData.tipo_celuseguro && dbData.seguro && excelData.tipo_celuseguro !== String(dbData.seguro)) {
+            }
+            if (excelData.tipo_celuseguro && dbData.seguro) {
+                const excelSeguro = normalizeYesNo(excelData.tipo_celuseguro, 'seguro');
+                const dbSeguro = normalizeYesNo(dbData.seguro, 'seguro');
+                if (excelSeguro && dbSeguro && excelSeguro !== dbSeguro) {
                     differences.push({ field: 'SEGURO', excel: excelData.tipo_celuseguro, db: dbData.seguro });
                 }
+            }
+            if (excelData.price_plan && dbData.price_plan && excelData.price_plan !== String(dbData.price_plan)) {
+                differences.push({ field: 'PRICE_PLAN', excel: excelData.price_plan, db: dbData.price_plan });
+            }
 
-                if (differences.length > 0) {
-                    discrepancies.push({
-                        phone: phone,
-                        type: 'MISMATCH',
-                        differences: differences,
-                        dbData: dbData
-                    });
-                } else {
-                    discrepancies.push({
-                        phone: phone,
-                        type: 'MATCH',
-                        dbData: dbData
-                    });
-                }
+            if (differences.length > 0) {
+                discrepancies.push({
+                    phone: phone,
+                    type: 'MISMATCH',
+                    differences: differences,
+                    dbData: dbData
+                });
+            } else {
+                discrepancies.push({
+                    phone: phone,
+                    type: 'MATCH',
+                    dbData: dbData
+                });
             }
         }
 
-        console.log(`🔍 [COMPARE-EXCEL] Comparación completada. ${discrepancies.length} resultados`);
+        console.log(`🔍 [COMPARE-EXCEL] Comparacion completada. ${discrepancies.length} resultados`);
 
         res.json({
             success: true,
@@ -292,21 +443,31 @@ export const compareExcel = async (req, res) => {
 
 export const updateRow = async (req, res) => {
     try {
-        const { phone, data } = req.body;
+        const { phone, ban, ventaid, data } = req.body;
 
-        if (!phone || !data) {
-            return badRequest(res, 'Faltan parámetros');
+        if (!data) {
+            return badRequest(res, 'Faltan parametros');
         }
 
-        console.log(`🔍 [UPDATE-ROW] Actualizando registro para teléfono: ${phone}`);
+        console.log(`🔍 [UPDATE-ROW] Actualizando registro. phone=${phone || ''} ban=${ban || ''} ventaid=${ventaid || ''}`);
 
-        const poolRemoto = getRemotePool();
-        const phoneClean = String(phone).replace(/\D/g, '').slice(-10);
+        const normalizeDigits = (value) => String(value || '').replace(/\D/g, '');
+        const normalizePhone10 = (value) => {
+            const digits = normalizeDigits(value);
+            if (!digits) return '';
+            if (digits.length === 11 && digits.startsWith('1')) return digits.slice(1);
+            if (digits.length >= 10) return digits.slice(-10);
+            return '';
+        };
 
-        // Construir UPDATE dinámicamente
+        const poolRemoto = getDiscrepanciasPool();
+        const phoneClean = normalizePhone10(phone);
+        const banClean = normalizeDigits(ban);
+
         const updates = [];
         const values = [];
         let paramIndex = 1;
+        let personNameToUpdate = null;
 
         const fieldMapping = {
             'fecha': 'fechaactivacion',
@@ -314,17 +475,27 @@ export const updateRow = async (req, res) => {
             'simcard': 'simcard',
             'imei': 'emai',
             'price_code': 'pricecode',
-            'paper': 'papper',      // boolean: SI/NO -> true/false
-            'seguro': 'celuseguroexistente'  // boolean: SI/NO -> true/false
+            'paper': 'papper',
+            'seguro': 'celuseguroexistente',
+            'price_plan': 'codigovoz'
         };
 
         for (const [key, value] of Object.entries(data)) {
+            if (key === 'nombre') {
+                const splitName = splitPersonName(value);
+                if (splitName.full) {
+                    personNameToUpdate = splitName;
+                }
+                continue;
+            }
             const dbColumn = fieldMapping[key];
             if (dbColumn && value !== undefined && value !== 'Cargando...') {
-                // Convertir SI/NO a boolean para campos booleanos
                 let finalValue = value;
-                if (key === 'paper' || key === 'seguro') {
-                    finalValue = String(value).toUpperCase() === 'SI';
+                if (key === 'paper') {
+                    // papper=true significa "NO PAPER"
+                    finalValue = normalizeYesNo(value, 'paper') === 'NO';
+                } else if (key === 'seguro') {
+                    finalValue = normalizeYesNo(value, 'seguro') === 'SI';
                 }
                 updates.push(`${dbColumn} = $${paramIndex}`);
                 values.push(finalValue);
@@ -332,29 +503,84 @@ export const updateRow = async (req, res) => {
             }
         }
 
-        if (updates.length === 0) {
+        if (updates.length === 0 && !personNameToUpdate) {
             return badRequest(res, 'No hay campos para actualizar');
         }
 
-        values.push(phoneClean);
+        let whereClause = '';
+        if (ventaid) {
+            whereClause = `ventaid = $${paramIndex}`;
+            values.push(Number(ventaid));
+            paramIndex++;
+        } else if (phoneClean) {
+            whereClause = `regexp_replace(CAST(numerocelularactivado AS text), '\\D', '', 'g') LIKE '%' || $${paramIndex}`;
+            values.push(phoneClean);
+            paramIndex++;
+        } else if (banClean) {
+            whereClause = `regexp_replace(COALESCE(ban::text, ''), '\\D', '', 'g') = $${paramIndex}`;
+            values.push(banClean);
+            paramIndex++;
+        } else {
+            return badRequest(res, 'Debe enviar phone, ban o ventaid para identificar el registro');
+        }
 
-        const updateQuery = `
-            UPDATE venta 
-            SET ${updates.join(', ')}
-            WHERE CAST(numerocelularactivado AS text) LIKE '%' || $${paramIndex}
-        `;
+        const identifierValue = values[values.length - 1];
 
-        console.log(`🔍 [UPDATE-ROW] Query:`, updateQuery);
-        console.log(`🔍 [UPDATE-ROW] Values:`, values);
+        let ventaRowsAffected = 0;
+        if (updates.length > 0) {
+            const updateQuery = `
+                UPDATE venta
+                SET ${updates.join(', ')}
+                WHERE ${whereClause}
+            `;
+            const result = await poolRemoto.query(updateQuery, values);
+            ventaRowsAffected = result.rowCount || 0;
+            console.log(`🔍 [UPDATE-ROW] Filas actualizadas en venta: ${ventaRowsAffected}`);
+        }
 
-        const result = await poolRemoto.query(updateQuery, values);
-
-        console.log(`🔍 [UPDATE-ROW] Filas actualizadas: ${result.rowCount}`);
+        let clienteRowsAffected = 0;
+        let clientecreditoid = null;
+        if (personNameToUpdate) {
+            const whereClauseLookup = whereClause.replace(/\$\d+/g, '$1');
+            const findClientQuery = `
+                SELECT clientecreditoid
+                FROM venta
+                WHERE ${whereClauseLookup}
+                  AND clientecreditoid IS NOT NULL
+                ORDER BY fechaactivacion DESC NULLS LAST, ventaid DESC
+                LIMIT 1
+            `;
+            const clientRef = await poolRemoto.query(findClientQuery, [identifierValue]);
+            if (clientRef.rows.length > 0) {
+                clientecreditoid = clientRef.rows[0].clientecreditoid;
+                const updateClientQuery = `
+                    UPDATE clientecredito
+                    SET nombre = $1,
+                        apellido = $2
+                    WHERE clientecreditoid = $3
+                `;
+                const clientResult = await poolRemoto.query(updateClientQuery, [
+                    personNameToUpdate.nombre,
+                    personNameToUpdate.apellido || null,
+                    clientecreditoid
+                ]);
+                clienteRowsAffected = clientResult.rowCount || 0;
+                console.log(`🔍 [UPDATE-ROW] Filas actualizadas en clientecredito: ${clienteRowsAffected}`);
+            }
+        }
 
         res.json({
             success: true,
-            message: `Registro actualizado (${result.rowCount} fila(s))`,
-            rowsAffected: result.rowCount
+            message: `Registro actualizado (venta: ${ventaRowsAffected}, cliente: ${clienteRowsAffected})`,
+            rowsAffected: ventaRowsAffected + clienteRowsAffected,
+            details: {
+                ventaRowsAffected,
+                clienteRowsAffected,
+                clientecreditoid,
+                nombre: personNameToUpdate?.full || null,
+                nombre_part: personNameToUpdate?.nombre || null,
+                apellido_part: personNameToUpdate?.apellido || null
+            }
         });
 
     } catch (error) {
@@ -362,4 +588,3 @@ export const updateRow = async (req, res) => {
         serverError(res, error, 'Error al actualizar registro');
     }
 };
-

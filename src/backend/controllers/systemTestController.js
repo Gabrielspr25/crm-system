@@ -1,4 +1,7 @@
-import { getClient } from '../database/db.js';
+import { getClient, query } from '../database/db.js';
+import { getTangoPool } from '../database/externalPools.js';
+import jwt from 'jsonwebtoken';
+import { config } from '../config/env.js';
 
 /**
  * AGENTE DE PRUEBAS COMPLETO DEL SISTEMA
@@ -6,6 +9,13 @@ import { getClient } from '../database/db.js';
  */
 
 const TEST_PREFIX = '__SYSTEM_TEST__';
+const API_BASE_URL = `http://127.0.0.1:${config.port || 3001}`;
+
+function normalizePhoneDigits(raw) {
+    const digits = String(raw || '').replace(/\D/g, '');
+    if (digits.length < 10) return null;
+    return digits.slice(-10);
+}
 
 // Datos de prueba que simulan inputs reales de un vendedor
 const TEST_DATA = {
@@ -19,7 +29,9 @@ const TEST_DATA = {
         additional_phone: '809-555-0003',
         address: 'Calle Prueba #123',
         city: 'Santo Domingo',
-        zip_code: '10101'
+        zip_code: '10101',
+        tax_id: 'TEST-RNC-001',
+        includes_ban: true
     },
     ban: {
         number: `999888777`,
@@ -77,7 +89,62 @@ export const runFullSystemTest = async (req, res) => {
         if (status === 'fail') results.summary.failed++;
     };
 
+    const safeCount = async (sql, params = []) => {
+        const rows = await query(sql, params);
+        return rows[0] || {};
+    };
+
+    const authHeader = req.headers?.authorization || `Bearer ${jwt.sign({
+        userId: req.user?.userId || null,
+        username: req.user?.username || 'system-test',
+        role: req.user?.role || 'admin',
+        salespersonId: req.user?.salespersonId || null
+    }, config.jwtSecret)}`;
+
+    const apiJson = async (path, options = {}) => {
+        const { json, headers, ...rest } = options;
+        const requestHeaders = {
+            Accept: 'application/json',
+            Authorization: authHeader,
+            ...(headers || {})
+        };
+
+        let body = rest.body;
+        if (json !== undefined) {
+            body = JSON.stringify(json);
+            requestHeaders['Content-Type'] = 'application/json';
+        }
+
+        const response = await fetch(`${API_BASE_URL}${path}`, {
+            ...rest,
+            headers: requestHeaders,
+            body
+        });
+
+        const raw = await response.text();
+        let payload = null;
+        try {
+            payload = raw ? JSON.parse(raw) : null;
+        } catch {
+            payload = { raw };
+        }
+
+        return { response, payload };
+    };
+
     try {
+        if (req.user?.role === 'admin') {
+            addTest('AUTH', 'Sesion admin autenticada', 'pass', 'El agente corre autenticado como admin', {
+                userId: req.user.userId || null,
+                username: req.user.username || null,
+                role: req.user.role
+            });
+        } else {
+            addTest('AUTH', 'Sesion admin autenticada', 'fail', 'El agente no recibió contexto admin válido', {
+                user: req.user || null
+            });
+        }
+
         // ========================================
         // FASE 1: LIMPIEZA PREVIA (por si quedó basura)
         // ========================================
@@ -93,31 +160,21 @@ export const runFullSystemTest = async (req, res) => {
         // ========================================
         let clientId = null;
         try {
-            const clientResult = await client.query(
-                `INSERT INTO clients 
-                 (name, owner_name, contact_person, email, phone, cellular, additional_phone, address, city, zip_code, created_at, updated_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
-                 RETURNING *`,
-                [
-                    TEST_DATA.client.name,
-                    TEST_DATA.client.owner_name,
-                    TEST_DATA.client.contact_person,
-                    TEST_DATA.client.email,
-                    TEST_DATA.client.phone,
-                    TEST_DATA.client.cellular,
-                    TEST_DATA.client.additional_phone,
-                    TEST_DATA.client.address,
-                    TEST_DATA.client.city,
-                    TEST_DATA.client.zip_code
-                ]
-            );
-            
-            if (clientResult.rows.length > 0) {
-                clientId = clientResult.rows[0].id;
+            const { response, payload } = await apiJson('/api/clients', {
+                method: 'POST',
+                json: TEST_DATA.client
+            });
+
+            if (!response.ok) {
+                throw new Error(payload?.error || `HTTP ${response.status}`);
+            }
+
+            if (payload?.id) {
+                clientId = payload.id;
                 results.createdIds.clientId = clientId;
                 
                 // Verificar que TODOS los campos se guardaron
-                const savedClient = clientResult.rows[0];
+                const savedClient = payload;
                 const fieldsOk = [];
                 const fieldsFail = [];
                 
@@ -127,9 +184,12 @@ export const runFullSystemTest = async (req, res) => {
                 if (savedClient.email === TEST_DATA.client.email) fieldsOk.push('email'); else fieldsFail.push('email');
                 if (savedClient.phone === TEST_DATA.client.phone) fieldsOk.push('phone'); else fieldsFail.push('phone');
                 if (savedClient.cellular === TEST_DATA.client.cellular) fieldsOk.push('cellular'); else fieldsFail.push('cellular');
+                if (savedClient.additional_phone === TEST_DATA.client.additional_phone) fieldsOk.push('additional_phone'); else fieldsFail.push('additional_phone');
                 if (savedClient.address === TEST_DATA.client.address) fieldsOk.push('address'); else fieldsFail.push('address');
                 if (savedClient.city === TEST_DATA.client.city) fieldsOk.push('city'); else fieldsFail.push('city');
                 if (savedClient.zip_code === TEST_DATA.client.zip_code) fieldsOk.push('zip_code'); else fieldsFail.push('zip_code');
+                if (savedClient.tax_id === TEST_DATA.client.tax_id) fieldsOk.push('tax_id'); else fieldsFail.push('tax_id');
+                if (Boolean(savedClient.includes_ban) === TEST_DATA.client.includes_ban) fieldsOk.push('includes_ban'); else fieldsFail.push('includes_ban');
                 
                 if (fieldsFail.length === 0) {
                     addTest('CLIENTES', 'Crear cliente (todos los campos)', 'pass', 
@@ -153,21 +213,46 @@ export const runFullSystemTest = async (req, res) => {
                 const newName = `${TEST_PREFIX}_Cliente_Editado`;
                 const newCity = 'La Romana';
                 
-                await client.query(
-                    `UPDATE clients SET name = $1, city = $2, updated_at = NOW() WHERE id = $3`,
-                    [newName, newCity, clientId]
-                );
+                const newTaxId = 'TEST-RNC-EDIT-002';
+                const { response, payload } = await apiJson(`/api/clients/${clientId}`, {
+                    method: 'PUT',
+                    json: {
+                        name: newName,
+                        city: newCity,
+                        tax_id: newTaxId,
+                        includes_ban: false
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error(payload?.error || `HTTP ${response.status}`);
+                }
                 
                 // Verificar que se guardó
-                const verifyResult = await client.query('SELECT name, city FROM clients WHERE id = $1', [clientId]);
+                const verifyResult = {
+                    rows: [
+                        {
+                            name: payload?.name,
+                            city: payload?.city,
+                            tax_id: payload?.tax_id,
+                            includes_ban: payload?.includes_ban
+                        }
+                    ]
+                };
                 
-                if (verifyResult.rows[0].name === newName && verifyResult.rows[0].city === newCity) {
+                if (
+                    verifyResult.rows[0].name === newName
+                    && verifyResult.rows[0].city === newCity
+                    && verifyResult.rows[0].tax_id === newTaxId
+                    && Boolean(verifyResult.rows[0].includes_ban) === false
+                ) {
                     addTest('CLIENTES', 'Editar cliente y guardar', 'pass', 
                         'Cliente editado correctamente',
-                        { before: TEST_DATA.client.name, after: newName });
+                        { before: TEST_DATA.client.name, after: newName, tax_id: newTaxId, includes_ban: false });
                 } else {
                     addTest('CLIENTES', 'Editar cliente y guardar', 'fail', 
-                        'Los cambios no se persistieron');
+                        'Los cambios no se persistieron',
+                        payload);
                 }
             } catch (err) {
                 addTest('CLIENTES', 'Editar cliente', 'fail', err.message);
@@ -312,6 +397,81 @@ export const runFullSystemTest = async (req, res) => {
         }
 
         // ========================================
+        // FASE 7.1: OCR / PASTE-SYNC CONFLICTO REAL
+        // ========================================
+        if (clientId && banId && subscriberId) {
+            let conflictClientId = null;
+            let conflictBanId = null;
+            let conflictSubscriberId = null;
+            try {
+                const conflictClientResult = await client.query(
+                    `INSERT INTO clients (name, created_at, updated_at)
+                     VALUES ($1, NOW(), NOW())
+                     RETURNING id`,
+                    [`${TEST_PREFIX}_Cliente_ConflictoOCR`]
+                );
+                conflictClientId = conflictClientResult.rows[0]?.id || null;
+                results.createdIds.conflictClientId = conflictClientId;
+
+                const conflictBanResult = await client.query(
+                    `INSERT INTO bans (client_id, ban_number, status, created_at, updated_at)
+                     VALUES ($1, $2, 'A', NOW(), NOW())
+                     RETURNING id, ban_number`,
+                    [conflictClientId, '999888778']
+                );
+                conflictBanId = conflictBanResult.rows[0]?.id || null;
+                results.createdIds.conflictBanId = conflictBanId;
+
+                const phoneDigits = normalizePhoneDigits(TEST_DATA.subscriber.phone);
+                const conflictRows = await client.query(
+                    `SELECT s.id, b.ban_number
+                       FROM subscribers s
+                       JOIN bans b ON b.id = s.ban_id
+                      WHERE NULLIF(regexp_replace(COALESCE(s.phone::text, ''), '[^0-9]', '', 'g'), '') = $1
+                        AND s.ban_id <> $2`,
+                    [phoneDigits, conflictBanId]
+                );
+
+                if (conflictRows.rows.length === 0) {
+                    addTest('OCR/SYNC', 'Detectar conflicto por telefono en otro BAN', 'fail',
+                        'La deteccion previa no encontro el telefono ya ocupado en otro BAN');
+                } else {
+                    let uniqueRejected = false;
+                    try {
+                        const conflictInsert = await client.query(
+                            `INSERT INTO subscribers (ban_id, phone, plan, monthly_value, created_at, updated_at)
+                             VALUES ($1, $2, $3, $4, NOW(), NOW())
+                             RETURNING id`,
+                            [conflictBanId, TEST_DATA.subscriber.phone, 'BREDE7', 55.55]
+                        );
+                        conflictSubscriberId = conflictInsert.rows?.[0]?.id || null;
+                    } catch (err) {
+                        if (err?.code === '23505') uniqueRejected = true;
+                    }
+
+                    if (uniqueRejected) {
+                        addTest('OCR/SYNC', 'Detectar conflicto por telefono en otro BAN', 'pass',
+                            'El sistema detecta el conflicto y la BD rechaza duplicados globales',
+                            {
+                                phone: TEST_DATA.subscriber.phone,
+                                existingBan: TEST_DATA.ban.number,
+                                conflictBan: '999888778'
+                            });
+                    } else {
+                        addTest('OCR/SYNC', 'Detectar conflicto por telefono en otro BAN', 'fail',
+                            'La BD permitio un duplicado global de telefono entre BANs');
+                    }
+                }
+            } catch (err) {
+                addTest('OCR/SYNC', 'Detectar conflicto por telefono en otro BAN', 'fail', err.message);
+            } finally {
+                if (conflictSubscriberId) await client.query('DELETE FROM subscribers WHERE id = $1', [conflictSubscriberId]);
+                if (conflictBanId) await client.query('DELETE FROM bans WHERE id = $1', [conflictBanId]);
+                if (conflictClientId) await client.query('DELETE FROM clients WHERE id = $1', [conflictClientId]);
+            }
+        }
+
+        // ========================================
         // FASE 8: CREAR SEGUIMIENTO/PROSPECTO
         // ========================================
         let followUpId = null;
@@ -440,11 +600,270 @@ export const runFullSystemTest = async (req, res) => {
         addTest('API', 'Verificación de endpoints', 'pass', 
             'Las pruebas directas a BD confirman que los datos se guardan correctamente');
 
+        // ================================================
+        // COMISIONES: diagnóstico completo del módulo
+        // Replica exactamente la lógica de server-FINAL.js
+        // ================================================
+        try {
+            const currentMonth = new Date().toISOString().slice(0, 7);
+            const reportMonthFilter = `${currentMonth}-01`;
+
+            // PASO 1: ¿Cuántos hay en total y por mes?
+            const totalReports = await safeCount(`SELECT COUNT(*)::int AS total FROM subscriber_reports`);
+
+            const recentMonths = await query(`
+                SELECT TO_CHAR(report_month, 'YYYY-MM') AS mes,
+                       COUNT(*)::int AS filas,
+                       ROUND(COALESCE(SUM(company_earnings),0)::numeric, 2) AS empresa,
+                       ROUND(COALESCE(SUM(vendor_commission),0)::numeric, 2) AS comision
+                  FROM subscriber_reports
+                 GROUP BY TO_CHAR(report_month, 'YYYY-MM')
+                 ORDER BY mes DESC
+                 LIMIT 5
+            `);
+
+            if (totalReports.total === 0) {
+                addTest('COMISIONES', 'Datos en módulo Comisiones', 'fail',
+                    'subscriber_reports está VACÍO — no hay datos. Ejecutar Sync Tango → CRM desde el módulo Comisiones.',
+                    { hint: 'Usar botón Sync Tango en la página de Comisiones/Reportes' });
+            } else {
+                // PASO 2: El JOIN exacto que usa la API para el mes actual
+                const joinResult = await query(`
+                    SELECT
+                        COUNT(*)::int                                             AS total_bd,
+                        COUNT(CASE WHEN s.id IS NOT NULL THEN 1 END)::int        AS con_subscriber,
+                        COUNT(CASE WHEN b.id IS NOT NULL THEN 1 END)::int        AS con_ban,
+                        COUNT(CASE WHEN c.id IS NOT NULL THEN 1 END)::int        AS con_cliente,
+                        COUNT(CASE WHEN sp.id IS NOT NULL THEN 1 END)::int       AS con_vendedor,
+                        COUNT(CASE WHEN (COALESCE(s.tango_ventaid, 0)::numeric > 0
+                                        OR LOWER(COALESCE(s.status,'activo')) IN ('activo','active'))
+                                   THEN 1 END)::int                              AS visibles_estimados
+                    FROM subscriber_reports sr
+                    LEFT JOIN subscribers s ON s.id = sr.subscriber_id
+                    LEFT JOIN bans b        ON b.id = s.ban_id
+                    LEFT JOIN clients c     ON c.id = b.client_id
+                    LEFT JOIN salespeople sp ON sp.id::text = c.salesperson_id::text
+                    WHERE sr.report_month = $1
+                `, [reportMonthFilter]);
+
+                const j = joinResult[0] || {};
+
+                // PASO 3: Si el mes actual no tiene datos, buscar el último mes con datos
+                let ultimoMesConDatos = null;
+                if (j.total_bd === 0 && recentMonths.length > 0) {
+                    ultimoMesConDatos = recentMonths[0].mes;
+                }
+
+                // PASO 4: Detectar subscribers huérfanos (sin BAN o sin cliente)
+                const huerfanos = await safeCount(`
+                    SELECT COUNT(*)::int AS total
+                      FROM subscriber_reports sr
+                      LEFT JOIN subscribers s ON s.id = sr.subscriber_id
+                     WHERE sr.report_month = $1
+                       AND s.id IS NULL
+                `, [reportMonthFilter]);
+
+                // PASO 5: Detectar si el filtro de status oculta datos
+                const ocultadosPorStatus = j.total_bd > 0
+                    ? await safeCount(`
+                        SELECT COUNT(*)::int AS total
+                          FROM subscriber_reports sr
+                          JOIN subscribers s ON s.id = sr.subscriber_id
+                         WHERE sr.report_month = $1
+                           AND (s.tango_ventaid IS NULL OR s.tango_ventaid = 0)
+                           AND LOWER(COALESCE(s.status,'activo')) NOT IN ('activo','active')
+                    `, [reportMonthFilter])
+                    : { total: 0 };
+
+                // Determinar estado
+                let testStatus = 'pass';
+                let msg = '';
+
+                if (j.total_bd === 0) {
+                    testStatus = ultimoMesConDatos ? 'fail' : 'fail';
+                    msg = ultimoMesConDatos
+                        ? `Mes actual (${currentMonth}) sin datos. Último mes con datos: ${ultimoMesConDatos}. El frontend muestra el mes actual por defecto — cambia el selector de mes.`
+                        : `No hay datos para ${currentMonth} ni para ningún otro mes.`;
+                } else if (j.visibles_estimados === 0) {
+                    testStatus = 'fail';
+                    msg = `${j.total_bd} reportes en BD para ${currentMonth} pero TODOS ocultos por filtro de status. Subscribers sin tango_ventaid y con status cancelado/suspendido.`;
+                } else if (huerfanos.total > 0) {
+                    testStatus = 'fail';
+                    msg = `${huerfanos.total} reportes en BD sin subscriber válido — el JOIN los excluye. Datos huérfanos.`;
+                } else if (j.con_cliente === 0 && j.total_bd > 0) {
+                    testStatus = 'fail';
+                    msg = `${j.total_bd} reportes pero ninguno tiene cliente válido — el JOIN de clientes falla.`;
+                } else {
+                    msg = `${j.visibles_estimados} reportes visibles para ${currentMonth}. Con vendedor: ${j.con_vendedor}. La API debería mostrar datos.`;
+                }
+
+                addTest('COMISIONES', 'Datos en módulo Comisiones', testStatus, msg, {
+                    mes_consultado: currentMonth,
+                    total_en_bd: j.total_bd,
+                    con_subscriber: j.con_subscriber,
+                    con_ban: j.con_ban,
+                    con_cliente: j.con_cliente,
+                    con_vendedor: j.con_vendedor,
+                    visibles_estimados: j.visibles_estimados,
+                    huerfanos_sin_subscriber: huerfanos.total,
+                    ocultos_por_status: ocultadosPorStatus.total,
+                    ultimos_5_meses: recentMonths,
+                    hint: j.total_bd === 0 && ultimoMesConDatos
+                        ? `Cambia el selector de mes a: ${ultimoMesConDatos}`
+                        : undefined
+                });
+            }
+        } catch (err) {
+            addTest('COMISIONES', 'Datos en módulo Comisiones', 'fail', err.message);
+        }
+
+        try {
+            const importStats = await safeCount(`
+                SELECT COUNT(*)::int AS clients,
+                       (SELECT COUNT(*)::int FROM bans) AS bans,
+                       (SELECT COUNT(*)::int FROM subscribers) AS subscribers
+                  FROM clients
+            `);
+            addTest('IMPORTADOR', 'Estructura base para importacion', 'pass',
+                'Clientes, BANs y suscriptores disponibles para importar',
+                importStats);
+        } catch (err) {
+            addTest('IMPORTADOR', 'Estructura base para importacion', 'fail', err.message);
+        }
+
+        try {
+            const workflowStats = await safeCount(`
+                SELECT
+                  (SELECT COUNT(*)::int FROM crm_workflow_templates) AS templates,
+                  (SELECT COUNT(*)::int FROM crm_workflow_template_steps) AS template_steps,
+                  (SELECT COUNT(*)::int FROM crm_deals) AS deals,
+                  (SELECT COUNT(*)::int FROM crm_deal_tasks) AS tasks
+            `);
+            addTest('WORKFLOW', 'Esquema y datos de workflow', 'pass',
+                'Tablas de workflow responden correctamente',
+                workflowStats);
+        } catch (err) {
+            addTest('WORKFLOW', 'Esquema y datos de workflow', 'fail', err.message);
+        }
+
+        try {
+            const tarifasStats = await safeCount(`
+                SELECT
+                  (SELECT COUNT(*)::int FROM plans WHERE COALESCE(is_active, true) = true) AS plans,
+                  (SELECT COUNT(*)::int FROM offers WHERE COALESCE(is_active, true) = true) AS offers,
+                  (SELECT COUNT(*)::int FROM benefits WHERE COALESCE(is_active, true) = true) AS benefits,
+                  (SELECT COUNT(*)::int FROM sales_guides WHERE COALESCE(is_active, true) = true) AS guides
+            `);
+            addTest('TARIFAS', 'Catalogos de tarifas y ofertas', 'pass',
+                'Planes, ofertas, beneficios y guias responden correctamente',
+                tarifasStats);
+        } catch (err) {
+            addTest('TARIFAS', 'Catalogos de tarifas y ofertas', 'fail', err.message);
+        }
+
+        try {
+            const campaignStats = await safeCount(`
+                SELECT
+                  (SELECT COUNT(*)::int FROM email_campaigns) AS campaigns,
+                  (SELECT COUNT(*)::int FROM email_recipients) AS recipients,
+                  (SELECT COUNT(*)::int FROM email_attachments) AS attachments,
+                  (SELECT COUNT(*)::int FROM email_tracking_events) AS tracking_events
+            `);
+            addTest('CAMPAÑAS', 'Modulo de correos y campañas', 'pass',
+                'Las tablas de campañas y tracking responden correctamente',
+                campaignStats);
+        } catch (err) {
+            addTest('CAMPAÑAS', 'Modulo de correos y campañas', 'fail', err.message);
+        }
+
+        let referidoId = null;
+        try {
+            const referidoResult = await client.query(
+                `INSERT INTO referidos (nombre, email, tipo, suscriptor, vendedor, notas, imei, estado, fecha)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+                 RETURNING id, nombre, estado, vendedor`,
+                [
+                    `${TEST_PREFIX}_Referido`,
+                    'referido@test.com',
+                    'Masivo',
+                    '809-555-7777',
+                    req.user?.username || 'system-test',
+                    'Referido de prueba',
+                    '',
+                    'Pendiente'
+                ]
+            );
+            referidoId = referidoResult.rows[0]?.id || null;
+            results.createdIds.referidoId = referidoId;
+            await client.query(
+                `UPDATE referidos
+                    SET estado = 'Contactado',
+                        notas = 'Referido actualizado por agente QA',
+                        updated_at = CURRENT_TIMESTAMP
+                  WHERE id = $1`,
+                [referidoId]
+            );
+            const verifyReferido = await client.query(
+                `SELECT id, nombre, estado, notas, vendedor FROM referidos WHERE id = $1`,
+                [referidoId]
+            );
+            addTest('REFERIDOS', 'Crear y editar referido', 'pass',
+                'El modulo de referidos permite crear y actualizar registros',
+                verifyReferido.rows[0] || null);
+        } catch (err) {
+            addTest('REFERIDOS', 'Crear y editar referido', 'fail', err.message);
+        }
+
+        try {
+            const tangoPool = getTangoPool();
+            const tangoHealth = await tangoPool.query(`
+                SELECT
+                  (SELECT COUNT(*)::int FROM venta WHERE activo = true AND ventatipoid IN (138,139,140,141)) AS ventas_activas,
+                  (SELECT COUNT(*)::int FROM tipoplan) AS planes_tango
+            `);
+            addTest('TANGO', 'Conectividad y lectura base', 'pass',
+                'La base Tango responde correctamente',
+                tangoHealth.rows[0] || null);
+        } catch (err) {
+            addTest('TANGO', 'Conectividad y lectura base', 'fail', err.message);
+        }
+
+        try {
+            const probeToken = jwt.sign({
+                userId: req.user?.userId || null,
+                username: req.user?.username || 'system-test',
+                role: req.user?.role || 'admin',
+                salespersonId: req.user?.salespersonId || null
+            }, config.jwtSecret);
+
+            const tangoRouteResponse = await fetch(`${API_BASE_URL}/api/tango/summary`, {
+                headers: {
+                    Authorization: `Bearer ${probeToken}`,
+                    Accept: 'application/json'
+                }
+            });
+
+            if (!tangoRouteResponse.ok) {
+                const body = await tangoRouteResponse.text();
+                addTest('TANGO', 'Ruta /api/tango montada', 'fail',
+                    `La ruta /api/tango/summary respondió HTTP ${tangoRouteResponse.status}`,
+                    { body: body.slice(0, 300) });
+            } else {
+                const payload = await tangoRouteResponse.json().catch(() => null);
+                addTest('TANGO', 'Ruta /api/tango montada', 'pass',
+                    'La ruta /api/tango/summary está montada y responde correctamente',
+                    payload);
+            }
+        } catch (err) {
+            addTest('TANGO', 'Ruta /api/tango montada', 'fail', err.message);
+        }
+
         // ========================================
         // FASE 12: LIMPIEZA FINAL
         // ========================================
         try {
             // Eliminar en orden inverso por las foreign keys
+            if (referidoId) await client.query('DELETE FROM referidos WHERE id = $1', [referidoId]);
             if (subscriberId) await client.query('DELETE FROM subscribers WHERE id = $1', [subscriberId]);
             if (followUpId) await client.query('DELETE FROM follow_up_prospects WHERE id = $1', [followUpId]);
             if (banId) await client.query('DELETE FROM bans WHERE id = $1', [banId]);

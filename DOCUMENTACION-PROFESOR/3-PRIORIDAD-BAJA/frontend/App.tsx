@@ -17,7 +17,7 @@ import LoginPage from "@/react-app/pages/Login";
 import ImportadorVisual from "@/react-app/pages/ImportadorVisual";
 import GoalsPage from "@/react-app/pages/Goals";
 import AuditLogPage from "@/react-app/pages/AuditLog";
-import ReferidosPage from "@/react-app/pages/Referidos";
+// import ReferidosPage from "@/react-app/pages/Referidos";
 import CorreosPage from "@/react-app/pages/Correos";
 import TarifasPage from "@/react-app/pages/Tarifas";
 import SystemStatus from "@/react-app/pages/SystemStatus";

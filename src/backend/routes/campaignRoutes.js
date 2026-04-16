@@ -1,12 +1,19 @@
 import express from 'express';
 import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
 import * as campaignController from '../controllers/campaignController.js';
 
 const router = express.Router();
 
 // Configurar multer para uploads temporales
+const uploadDir = path.join(process.cwd(), 'uploads', 'campaign-uploads');
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
 const upload = multer({ 
-  dest: '/tmp/campaign-uploads',
+  dest: uploadDir,
   limits: { fileSize: 10 * 1024 * 1024 } // 10MB max
 });
 

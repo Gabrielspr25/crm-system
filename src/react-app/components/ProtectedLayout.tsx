@@ -1,14 +1,17 @@
 import { useEffect, useState } from "react";
 import { Navigate, useLocation } from "react-router";
 import Layout from "@/react-app/components/Layout";
+import ModalRefreshButton from "@/react-app/components/ModalRefreshButton";
 import {
   authFetch,
   clearAuthToken,
   getAuthToken,
+  setAuthToken,
   getCurrentUser,
   setCurrentUser,
   type AuthUser
 } from "@/react-app/utils/auth";
+import { syncPermissionsFromServer } from "@/react-app/utils/permissions";
 
 interface ProtectedLayoutProps {
   children: React.ReactNode;
@@ -30,7 +33,7 @@ export default function ProtectedLayout({ children }: ProtectedLayoutProps) {
     let cancelled = false;
 
     const bootstrap = async () => {
-      const token = getAuthToken();
+      const urlParams = new URLSearchParams(window.location.search); const urlToken = urlParams.get('token'); if (urlToken) { clearAuthToken(); setAuthToken(urlToken); window.history.replaceState({}, document.title, window.location.pathname); } const token = getAuthToken();
       const cachedUser = getCurrentUser();
 
       if (!token) {
@@ -40,6 +43,9 @@ export default function ProtectedLayout({ children }: ProtectedLayoutProps) {
 
       if (cachedUser) {
         if (!cancelled) setState({ loading: false, user: cachedUser });
+        syncPermissionsFromServer().catch((error) => {
+          console.warn("No se pudieron refrescar permisos en segundo plano:", error);
+        });
         return;
       }
 
@@ -50,6 +56,9 @@ export default function ProtectedLayout({ children }: ProtectedLayoutProps) {
         }
         const data: AuthUser = await response.json();
         setCurrentUser(data);
+        await syncPermissionsFromServer().catch((error) => {
+          console.warn("No se pudieron sincronizar permisos de la sesion:", error);
+        });
         if (!cancelled) setState({ loading: false, user: data });
       } catch (error) {
         console.warn("Fallo al recuperar sesión:", error);
@@ -78,5 +87,10 @@ export default function ProtectedLayout({ children }: ProtectedLayoutProps) {
     return <Navigate to="/login" replace state={{ from: location }} />;
   }
 
-  return <Layout>{children}</Layout>;
+  return (
+    <Layout>
+      <ModalRefreshButton />
+      {children}
+    </Layout>
+  );
 }

@@ -115,6 +115,9 @@ export default function ProfilePage() {
           <LockKeyhole className="w-5 h-5 text-blue-300" />
           <span>Actualizar contraseña</span>
         </h2>
+        <div className="mb-4 rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-3 text-sm text-blue-100">
+          Si tu contraseña fue reiniciada por administración, puedes cambiarla aquí usando la temporal como contraseña actual.
+        </div>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-slate-300 mb-1">Contraseña actual</label>

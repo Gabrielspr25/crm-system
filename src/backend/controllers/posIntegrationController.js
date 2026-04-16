@@ -1,5 +1,4 @@
-import pkg from 'pg';
-const { Pool } = pkg;
+import { getPosPool } from '../database/externalPools.js';
 
 // Pool de conexión a la BD del POS
 let posPool = null;
@@ -9,23 +8,7 @@ let posPool = null;
  */
 function initializePOSPool() {
   if (!posPool) {
-    posPool = new Pool({
-      host: process.env.POS_DB_HOST || '167.99.12.125',
-      port: parseInt(process.env.POS_DB_PORT || '5432'),
-      user: process.env.POS_DB_USER || 'postgres',
-      password: process.env.POS_DB_PASSWORD,
-      database: process.env.POS_DB_NAME || 'claropr',
-      ssl: {
-        rejectUnauthorized: false
-      },
-      max: 5, // Máximo 5 conexiones en el pool
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 10000,
-    });
-
-    posPool.on('error', (err) => {
-      console.error('❌ Error inesperado en pool POS:', err);
-    });
+    posPool = getPosPool();
   }
   return posPool;
 }

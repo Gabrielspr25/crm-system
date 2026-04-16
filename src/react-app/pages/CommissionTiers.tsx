@@ -33,6 +33,16 @@ export default function CommissionTiers() {
     loadData();
   }, []);
 
+  useEffect(() => {
+    const handleRefresh = () => {
+      void loadData();
+    };
+    window.addEventListener('modal-refresh', handleRefresh);
+    return () => {
+      window.removeEventListener('modal-refresh', handleRefresh);
+    };
+  }, []);
+
   const loadData = async () => {
     try {
       const [tiersRes, productsRes] = await Promise.all([

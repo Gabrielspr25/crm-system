@@ -19,6 +19,198 @@ const PRODUCT_NAMES = {
   'a3234ba9-4651-476d-95e1-8efa89ff892b': 'Cloud',
 };
 
+const hasVendorSalespersonMappingTable = async () => {
+  try {
+    const rows = await query(`
+      SELECT EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = 'vendor_salesperson_mapping'
+      ) AS exists
+    `);
+    return Boolean(rows[0]?.exists);
+  } catch {
+    return false;
+  }
+};
+
+const getGoalsVendorQueryConfig = async (role, salespersonId, year, month) => {
+  const hasMappingTable = await hasVendorSalespersonMappingTable();
+
+  if (hasMappingTable) {
+    return {
+      text: `
+        SELECT DISTINCT
+          v.id AS vendor_id,
+          v.name AS vendor_name,
+          v.commission_percentage,
+          COALESCE(vsm.salesperson_id, sp_fallback.id) AS salesperson_id
+        FROM product_goals pg
+        JOIN vendors v ON v.id = pg.vendor_id
+        LEFT JOIN vendor_salesperson_mapping vsm ON vsm.vendor_id = v.id
+        LEFT JOIN salespeople sp_map ON sp_map.id = vsm.salesperson_id
+        LEFT JOIN salespeople sp_fallback
+          ON sp_map.id IS NULL
+         AND UPPER(TRIM(sp_fallback.name)) = UPPER(TRIM(v.name))
+        WHERE COALESCE(v.is_active, 1) = 1
+          AND pg.period_year = $1
+          AND pg.period_month = $2
+          AND COALESCE(pg.is_active, 1) = 1
+          AND COALESCE(vsm.salesperson_id, sp_fallback.id) IS NOT NULL
+          ${role === 'vendedor' ? 'AND COALESCE(vsm.salesperson_id, sp_fallback.id) = $3' : ''}
+        ORDER BY v.name
+      `,
+      params: role === 'vendedor' ? [year, month, salespersonId] : [year, month],
+    };
+  }
+
+  return {
+    text: `
+      SELECT DISTINCT
+        v.id AS vendor_id,
+        v.name AS vendor_name,
+        v.commission_percentage,
+        s.id AS salesperson_id
+      FROM product_goals pg
+      JOIN vendors v ON v.id = pg.vendor_id
+      LEFT JOIN salespeople s ON UPPER(TRIM(v.name)) = UPPER(TRIM(s.name))
+      WHERE COALESCE(v.is_active, 1) = 1
+        AND pg.period_year = $1
+        AND pg.period_month = $2
+        AND COALESCE(pg.is_active, 1) = 1
+        AND s.id IS NOT NULL
+        ${role === 'vendedor' ? 'AND s.id = $3' : ''}
+      ORDER BY v.name
+    `,
+    params: role === 'vendedor' ? [year, month, salespersonId] : [year, month],
+  };
+};
+
+const getLatestGoalPeriodQueryConfig = async (role, salespersonId) => {
+  const hasMappingTable = await hasVendorSalespersonMappingTable();
+
+  if (hasMappingTable) {
+    return {
+      text: `
+        SELECT
+          pg.period_year,
+          pg.period_month
+        FROM product_goals pg
+        JOIN vendors v ON v.id = pg.vendor_id
+        LEFT JOIN vendor_salesperson_mapping vsm ON vsm.vendor_id = v.id
+        LEFT JOIN salespeople sp_map ON sp_map.id = vsm.salesperson_id
+        LEFT JOIN salespeople sp_fallback
+          ON sp_map.id IS NULL
+         AND UPPER(TRIM(sp_fallback.name)) = UPPER(TRIM(v.name))
+        WHERE COALESCE(pg.is_active, 1) = 1
+          AND COALESCE(v.is_active, 1) = 1
+          AND COALESCE(vsm.salesperson_id, sp_fallback.id) IS NOT NULL
+          ${role === 'vendedor' ? 'AND COALESCE(vsm.salesperson_id, sp_fallback.id) = $1' : ''}
+        ORDER BY pg.period_year DESC, pg.period_month DESC
+        LIMIT 1
+      `,
+      params: role === 'vendedor' ? [salespersonId] : [],
+    };
+  }
+
+  return {
+    text: `
+      SELECT
+        pg.period_year,
+        pg.period_month
+      FROM product_goals pg
+      JOIN vendors v ON v.id = pg.vendor_id
+      LEFT JOIN salespeople s ON UPPER(TRIM(v.name)) = UPPER(TRIM(s.name))
+      WHERE COALESCE(pg.is_active, 1) = 1
+        AND COALESCE(v.is_active, 1) = 1
+        AND s.id IS NOT NULL
+        ${role === 'vendedor' ? 'AND s.id = $1' : ''}
+      ORDER BY pg.period_year DESC, pg.period_month DESC
+      LIMIT 1
+    `,
+    params: role === 'vendedor' ? [salespersonId] : [],
+  };
+};
+
+const getProductGoalsQueryConfig = async (salespersonId, year, month) => {
+  const hasMappingTable = await hasVendorSalespersonMappingTable();
+
+  if (hasMappingTable) {
+    return {
+      text: `
+        SELECT
+          pg.id,
+          v.name AS vendor_name,
+          p.id AS product_id,
+          p.name AS product_name,
+          pg.target_revenue AS target_amount,
+          pg.period_year,
+          pg.period_month
+        FROM product_goals pg
+        JOIN vendors v ON pg.vendor_id = v.id
+        LEFT JOIN vendor_salesperson_mapping vsm ON vsm.vendor_id = v.id
+        LEFT JOIN salespeople sp_map ON sp_map.id = vsm.salesperson_id
+        LEFT JOIN salespeople sp_fallback
+          ON sp_map.id IS NULL
+         AND UPPER(TRIM(sp_fallback.name)) = UPPER(TRIM(v.name))
+        LEFT JOIN products p ON pg.product_id::text = p.id::text
+        WHERE COALESCE(vsm.salesperson_id, sp_fallback.id) = $1
+          AND pg.period_year = $2
+          AND pg.period_month = $3
+          AND COALESCE(pg.is_active, 1) = 1
+        ORDER BY p.name
+      `,
+      params: [salespersonId, year, month],
+    };
+  }
+
+  return {
+    text: `
+      SELECT
+        pg.id,
+        v.name AS vendor_name,
+        p.id AS product_id,
+        p.name AS product_name,
+        pg.target_revenue AS target_amount,
+        pg.period_year,
+        pg.period_month
+      FROM product_goals pg
+      JOIN vendors v ON pg.vendor_id = v.id
+      LEFT JOIN salespeople s ON UPPER(TRIM(v.name)) = UPPER(TRIM(s.name))
+      LEFT JOIN products p ON pg.product_id::text = p.id::text
+      WHERE s.id = $1
+        AND pg.period_year = $2
+        AND pg.period_month = $3
+        AND COALESCE(pg.is_active, 1) = 1
+      ORDER BY p.name
+    `,
+    params: [salespersonId, year, month],
+  };
+};
+
+export async function getLatestPeriod(req, res) {
+  try {
+    const { role, salespersonId } = req.user;
+    const latestPeriodQuery = await getLatestGoalPeriodQueryConfig(role, salespersonId);
+    const result = await query(latestPeriodQuery.text, latestPeriodQuery.params);
+    const latest = result[0];
+
+    if (!latest) {
+      return res.json({ period: null });
+    }
+
+    return res.json({
+      period: `${latest.period_year}-${String(latest.period_month).padStart(2, '0')}`,
+    });
+  } catch (error) {
+    console.error('[goalsController] Error in getLatestPeriod:', error);
+    return res.status(500).json({
+      error: 'Error al obtener el último periodo con metas',
+      details: error.message,
+    });
+  }
+};
+
 /**
  * GET /api/goals/performance
  * Calcula el rendimiento de metas vs comisiones ganadas
@@ -31,22 +223,9 @@ export async function getPerformance(req, res) {
     const monthParam = req.query.month || new Date().toISOString().slice(0, 7);
     const [year, month] = monthParam.split('-').map(Number);
 
-    // 1. Obtener vendedores con metas del mes
-    const vendorsQuery = `
-      SELECT DISTINCT
-        v.id as vendor_id,
-        v.name as vendor_name,
-        v.commission_percentage,
-        s.id as salesperson_id
-      FROM vendors v
-      LEFT JOIN salespeople s ON UPPER(TRIM(v.name)) = UPPER(TRIM(s.name))
-      WHERE v.is_active = 1
-        AND s.id IS NOT NULL
-        ${role === 'vendedor' ? 'AND s.id = $1' : ''}
-      ORDER BY v.name
-    `;
-    const vendorsParams = role === 'vendedor' ? [salespersonId] : [];
-    const vendorsResult = await query(vendorsQuery, vendorsParams);
+    // 1. Obtener vendedores con metas del mes usando el mapeo real vendedor ↔ salesperson
+    const vendorsQuery = await getGoalsVendorQueryConfig(role, salespersonId, year, month);
+    const vendorsResult = await query(vendorsQuery.text, vendorsQuery.params);
 
     const performanceData = [];
 
@@ -67,6 +246,7 @@ export async function getPerformance(req, res) {
       }
 
       // 3. Comisiones de sales_history para este vendedor/mes
+      // Nueva lógica: solo sumar columnas materializadas de sales_history, sin joins ni conteo de filas
       const commissionsQuery = `
         SELECT
           COALESCE(SUM(fijo_ren), 0) as fijo_ren,
@@ -75,6 +255,7 @@ export async function getPerformance(req, res) {
           COALESCE(SUM(movil_renovacion), 0) as movil_renovacion,
           COALESCE(SUM(claro_tv), 0) as claro_tv,
           COALESCE(SUM(cloud), 0) as cloud,
+          COALESCE(SUM(mpls), 0) as mpls,
           COALESCE(SUM(total_amount), 0) as total_amount,
           COALESCE(SUM(monthly_value), 0) as monthly_value,
           COUNT(*) as sale_count
@@ -178,27 +359,8 @@ export async function getProductGoals(req, res) {
       return res.status(403).json({ error: 'No autorizado' });
     }
 
-    const goalsQuery = `
-      SELECT
-        pg.id,
-        v.name as vendor_name,
-        p.id as product_id,
-        p.name as product_name,
-        pg.target_revenue as target_amount,
-        pg.period_year,
-        pg.period_month
-      FROM product_goals pg
-      JOIN vendors v ON pg.vendor_id = v.id
-      LEFT JOIN salespeople s ON UPPER(v.name) = UPPER(s.name)
-      LEFT JOIN products p ON pg.product_id::text = p.id::text
-      WHERE s.id = $1
-        AND pg.period_year = $2
-        AND pg.period_month = $3
-        AND COALESCE(pg.is_active, 1) = 1
-      ORDER BY p.name
-    `;
-
-    const result = await query(goalsQuery, [salespersonId, year, month]);
+    const goalsQuery = await getProductGoalsQueryConfig(salespersonId, year, month);
+    const result = await query(goalsQuery.text, goalsQuery.params);
 
     res.json({
       period: monthParam,

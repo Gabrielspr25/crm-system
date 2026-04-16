@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-
+// Archivo desactivado por eliminación del módulo de referidos
 function cn(...inputs) {
   return twMerge(clsx(inputs));
 }

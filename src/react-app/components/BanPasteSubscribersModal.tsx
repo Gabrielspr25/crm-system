@@ -68,6 +68,8 @@ export default function BanPasteSubscribersModal({
   onSuccess
 }: Props) {
   const [text, setText] = useState("");
+  const [ocrRawText, setOcrRawText] = useState("");
+  const [ocrWarnings, setOcrWarnings] = useState<string[]>([]);
   const [preview, setPreview] = useState<SyncResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -78,6 +80,8 @@ export default function BanPasteSubscribersModal({
     try {
       const extracted = await extractSubscriberTextFromImage(file);
       const newText = extracted.text?.trim() || "";
+      setOcrRawText(extracted.rawText?.trim() || "");
+      setOcrWarnings(Array.isArray(extracted.warnings) ? extracted.warnings : []);
       if (!newText) {
         setError("No se detectaron suscriptores en la imagen.");
         return;
@@ -176,9 +180,31 @@ export default function BanPasteSubscribersModal({
             type="button"
             onClick={async () => {
               try {
-                const clip = await navigator.clipboard.readText();
-                if (clip.trim()) {
-                  setText((prev) => (prev.trim() ? `${prev}\n${clip}` : clip));
+                // Try clipboard.read() first — reads all formats including text/html
+                // text/html preserves ALL table rows including browser-highlighted ones
+                let inserted = false;
+                try {
+                  const items = await (navigator.clipboard as any).read();
+                  for (const item of items) {
+                    if (item.types.includes("text/html")) {
+                      const blob = await item.getType("text/html");
+                      const html = await blob.text();
+                      const extracted = extractTableFromHtml(html);
+                      if (extracted.trim()) {
+                        setText((prev) => (prev.trim() ? `${prev}\n${extracted}` : extracted));
+                        inserted = true;
+                        break;
+                      }
+                    }
+                  }
+                } catch {
+                  // clipboard.read() not available or denied — fall through to readText
+                }
+                if (!inserted) {
+                  const clip = await navigator.clipboard.readText();
+                  if (clip.trim()) {
+                    setText((prev) => (prev.trim() ? `${prev}\n${clip}` : clip));
+                  }
                 }
               } catch (e) {
                 console.error(e);
@@ -195,6 +221,8 @@ export default function BanPasteSubscribersModal({
             type="button"
             onClick={() => {
               setText("");
+              setOcrRawText("");
+              setOcrWarnings([]);
               setPreview(null);
               setError("");
             }}
@@ -250,6 +278,22 @@ export default function BanPasteSubscribersModal({
           className="w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 font-mono text-xs text-slate-100 outline-none focus:border-blue-500"
           placeholder="Pega aquí el texto, usa el botón de OCR o presiona Ctrl+V para pegar una imagen directamente..."
         />
+
+        {(ocrWarnings.length > 0 || ocrRawText) && (
+          <div className="mt-3 rounded-lg border border-slate-700 bg-slate-950 p-3">
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">OCR bruto</h3>
+            {ocrWarnings.length > 0 && (
+              <ul className="mb-3 list-disc space-y-1 pl-5 text-xs text-amber-300">
+                {ocrWarnings.map((warning, index) => (
+                  <li key={`${warning}-${index}`}>{warning}</li>
+                ))}
+              </ul>
+            )}
+            <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded border border-slate-800 bg-slate-900 p-3 text-[11px] text-slate-300">
+              {ocrRawText || "Sin raw_text devuelto por el backend."}
+            </pre>
+          </div>
+        )}
 
         {error && (
           <div className="mt-3 flex items-start gap-2 rounded-lg border border-red-900 bg-red-950/40 p-3 text-sm text-red-300">

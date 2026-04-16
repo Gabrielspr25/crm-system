@@ -1,4 +1,4 @@
-import { query } from '../database/db.js';
+import { getClient, query } from '../database/db.js';
 import { serverError, badRequest, notFound } from '../middlewares/errorHandler.js';
 
 export const getBans = async (req, res) => {
@@ -101,5 +101,84 @@ export const updateBan = async (req, res) => {
         res.json(result[0]);
     } catch (error) {
         serverError(res, error, 'Error actualizando BAN');
+    }
+};
+
+export const deleteBan = async (req, res) => {
+    const { id } = req.params;
+    const client = await getClient();
+
+    try {
+        await client.query('BEGIN');
+
+        const banResult = await client.query(
+            'SELECT id FROM bans WHERE id = $1 LIMIT 1',
+            [id]
+        );
+
+        if (banResult.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return notFound(res, 'BAN');
+        }
+
+        const activeSubsResult = await client.query(
+            `SELECT COUNT(*)::int AS total
+             FROM subscribers
+             WHERE ban_id = $1
+               AND COALESCE(LOWER(status), 'activo') NOT IN ('cancelado', 'cancelled', 'no_renueva_ahora')`,
+            [id]
+        );
+
+        const activeSubscribers = Number(activeSubsResult.rows[0]?.total || 0);
+        if (activeSubscribers > 0) {
+            await client.query('ROLLBACK');
+            return badRequest(res, 'No se puede eliminar el BAN porque tiene líneas activas.');
+        }
+
+        const subscriberIdsResult = await client.query(
+            'SELECT id FROM subscribers WHERE ban_id = $1',
+            [id]
+        );
+        const subscriberIds = subscriberIdsResult.rows.map((row) => row.id);
+
+        let deletedReports = 0;
+        let deletedSubscribers = 0;
+
+        if (subscriberIds.length > 0) {
+            const reportsResult = await client.query(
+                'DELETE FROM subscriber_reports WHERE subscriber_id = ANY($1::uuid[])',
+                [subscriberIds]
+            );
+            deletedReports = reportsResult.rowCount || 0;
+
+            const subscribersResult = await client.query(
+                'DELETE FROM subscribers WHERE id = ANY($1::uuid[])',
+                [subscriberIds]
+            );
+            deletedSubscribers = subscribersResult.rowCount || 0;
+        }
+
+        const banDeleteResult = await client.query(
+            'DELETE FROM bans WHERE id = $1 RETURNING id',
+            [id]
+        );
+
+        await client.query('COMMIT');
+
+        return res.json({
+            success: true,
+            ban: banDeleteResult.rows[0],
+            deleted_reports: deletedReports,
+            deleted_subscribers: deletedSubscribers
+        });
+    } catch (error) {
+        try {
+            await client.query('ROLLBACK');
+        } catch (_rollbackError) {
+            // ignore rollback error
+        }
+        return serverError(res, error, 'Error eliminando BAN');
+    } finally {
+        client.release();
     }
 };

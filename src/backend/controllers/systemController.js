@@ -175,8 +175,7 @@ export async function runSystemDiagnostics(req, res) {
     { name: 'products', description: 'Productos' },
     { name: 'categories', description: 'Categorías' },
     { name: 'goals', description: 'Metas' },
-    { name: 'referrals', description: 'Referidos' },
-    { name: 'tariffs_plans', description: 'Planes de Tarifas' }
+    { name: 'referrals', description: 'Referidos' }
   ];
   
   for (const table of tables) {

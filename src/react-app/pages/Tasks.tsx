@@ -1,5 +1,6 @@
-import { CheckCircle2, ClipboardList, Download, Loader2, Pencil, Plus, Trash2, Upload, UserCircle2 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { CheckCircle2, ClipboardList, Download, GripVertical, Loader2, Pencil, Plus, Trash2, Upload, UserCircle2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import * as XLSX from "xlsx";
 import { useLocation, useNavigate } from "react-router";
 import PersonalTaskModal, { type PersonalTaskFormValue } from "@/react-app/components/tasks/PersonalTaskModal";
 import { authFetch, getCurrentUser } from "@/react-app/utils/auth";
@@ -190,6 +191,10 @@ export default function TasksPage() {
   const [editingTask, setEditingTask] = useState<PersonalTaskItem | null>(null);
   const [draft, setDraft] = useState<PersonalTaskFormValue>(buildDefaultTask(currentUserId));
   const [importingTasks, setImportingTasks] = useState(false);
+  const [orderedTaskIds, setOrderedTaskIds] = useState<number[]>([]);
+  const dragId = useRef<number | null>(null);
+  const dragOverId = useRef<number | null>(null);
+  const [dragActiveId, setDragActiveId] = useState<number | null>(null);
 
   useEffect(() => {
     setActiveTab(queryTab);
@@ -281,6 +286,16 @@ export default function TasksPage() {
   useEffect(() => {
     void Promise.all([loadClientWorkflows(), loadPersonalTasks()]);
   }, [loadClientWorkflows, loadPersonalTasks]);
+
+  // Sync order when tasks load (new tasks go to end, deleted tasks removed)
+  useEffect(() => {
+    setOrderedTaskIds((prev) => {
+      const ids = personalTasks.map((t) => t.id);
+      const kept = prev.filter((id) => ids.includes(id));
+      const added = ids.filter((id) => !kept.includes(id));
+      return [...kept, ...added];
+    });
+  }, [personalTasks]);
 
   const clientRows = useMemo<DealBoardRow[]>(() => {
     const byDealId = new Map<number, DealBoardRow>();
@@ -516,34 +531,62 @@ export default function TasksPage() {
   const handleImport = useCallback(async (file: File) => {
     setImportingTasks(true);
     try {
-      const text = await file.text();
-      const lines = text.split(/\r?\n/).filter(Boolean);
-      if (lines.length < 2) { window.alert("El archivo está vacío o no tiene datos."); return; }
+      const STATUS_MAP: Record<string, string> = {
+        pending: "pending", pendiente: "pending",
+        in_progress: "in_progress", "en progreso": "in_progress",
+        done: "done", completado: "done", listo: "done",
+      };
+      const PRIORITY_MAP: Record<string, string> = {
+        low: "low", baja: "low", normal: "normal", high: "high", alta: "high",
+      };
 
-      const headers = lines[0].split(",").map((h) => h.replace(/^"|"$/g, "").trim().toLowerCase());
-      const idx = (key: string) => headers.indexOf(key);
+      // Parse file → rows of {header: value} objects using SheetJS (handles Excel + CSV)
+      let rows: Record<string, string>[] = [];
 
-      const STATUS_MAP: Record<string, string> = { pending: "pending", pendiente: "pending", in_progress: "in_progress", "en progreso": "in_progress", done: "done", completado: "done", listo: "done" };
-      const PRIORITY_MAP: Record<string, string> = { low: "low", baja: "low", normal: "normal", high: "high", alta: "high" };
+      const isCsv = /\.(csv|tsv|txt)$/i.test(file.name);
+      let raw: Record<string, unknown>[];
+      if (isCsv) {
+        const text = await file.text();
+        const wb = XLSX.read(text, { type: "string", raw: false });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: "" });
+      } else {
+        const buf = await file.arrayBuffer();
+        const wb = XLSX.read(buf, { type: "array", cellDates: true, raw: false });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: "" });
+      }
 
-      const parseCell = (row: string[], i: number) => (i >= 0 ? (row[i] ?? "").replace(/^"|"$/g, "").trim() : "");
+      if (!raw.length) { window.alert("El archivo está vacío o no tiene datos."); return; }
+
+      rows = raw.map((r) => {
+        const out: Record<string, string> = {};
+        for (const [k, v] of Object.entries(r)) {
+          out[String(k).trim().toLowerCase()] = String(v ?? "").trim();
+        }
+        return out;
+      });
+
+      const get = (row: Record<string, string>, ...keys: string[]) => {
+        for (const k of keys) if (row[k]) return row[k];
+        return "";
+      };
 
       let imported = 0;
       let errors = 0;
-      for (let i = 1; i < lines.length; i++) {
-        const row = lines[i].match(/(".*?"|[^,]+|(?<=,)(?=,)|(?<=,)$|^(?=,))/g) ?? lines[i].split(",");
-        const title = parseCell(row, idx("titulo"));
+      for (const row of rows) {
+        const title = get(row, "titulo", "title", "tarea", "nombre", "task");
         if (!title) continue;
-        const status = STATUS_MAP[parseCell(row, idx("estado")).toLowerCase()] ?? "pending";
-        const priority = PRIORITY_MAP[parseCell(row, idx("prioridad")).toLowerCase()] ?? "normal";
-        const due_date = parseCell(row, idx("fecha_limite")) || null;
-        const follow_up_date = parseCell(row, idx("fecha_seguimiento")) || null;
-        const follow_up_time = parseCell(row, idx("hora_seguimiento")) || null;
-        const notes = parseCell(row, idx("notas")) || null;
+        const status = STATUS_MAP[get(row, "estado", "status").toLowerCase()] ?? "pending";
+        const priority = PRIORITY_MAP[get(row, "prioridad", "priority").toLowerCase()] ?? "normal";
+        const due_date = get(row, "fecha_limite", "due_date", "vence", "vencimiento", "fecha") || null;
+        const follow_up_date = get(row, "fecha_seguimiento", "follow_up_date", "seguimiento", "followup") || null;
+        const follow_up_time = get(row, "hora_seguimiento", "follow_up_time", "hora", "hora_seguimiento", "time") || null;
+        const notes = get(row, "notas", "notes", "descripcion", "description", "nota") || null;
         try {
           const created = await requestJson<PersonalTaskItem>("/api/tasks", {
             method: "POST",
-            json: { title, status, priority, due_date, follow_up_date, follow_up_time, notes, task_kind: "regular", assigned_user_id: currentUserId }
+            json: { title, status, priority, due_date, follow_up_date, follow_up_time, notes, task_kind: "regular", assigned_user_id: currentUserId },
           });
           setPersonalTasks((prev) => [created, ...prev]);
           imported++;
@@ -556,6 +599,34 @@ export default function TasksPage() {
       setImportingTasks(false);
     }
   }, [currentUserId]);
+
+  const handleDragStart = useCallback((id: number) => {
+    dragId.current = id;
+    setDragActiveId(id);
+  }, []);
+
+  const handleDragEnter = useCallback((id: number) => {
+    dragOverId.current = id;
+  }, []);
+
+  const handleDragEnd = useCallback(() => {
+    const from = dragId.current;
+    const to = dragOverId.current;
+    if (from !== null && to !== null && from !== to) {
+      setOrderedTaskIds((prev) => {
+        const next = [...prev];
+        const fromIdx = next.indexOf(from);
+        const toIdx = next.indexOf(to);
+        if (fromIdx === -1 || toIdx === -1) return prev;
+        next.splice(fromIdx, 1);
+        next.splice(toIdx, 0, from);
+        return next;
+      });
+    }
+    dragId.current = null;
+    dragOverId.current = null;
+    setDragActiveId(null);
+  }, []);
 
   return (
     <div className="mx-auto max-w-7xl space-y-6 p-6">
@@ -606,7 +677,7 @@ export default function TasksPage() {
               Importar
               <input
                 type="file"
-                accept=".csv"
+                accept=".csv,.xlsx,.xls,.ods"
                 className="hidden"
                 onChange={async (e) => {
                   const file = e.target.files?.[0];
@@ -865,83 +936,150 @@ export default function TasksPage() {
                 </button>
               ) : null}
             </div>
-          ) : (
-            filteredPersonalTasks.map((task) => (
-              <div key={task.id} className="rounded-3xl border border-slate-800 bg-slate-900/80 p-5 shadow-2xl">
-                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                  <div className="space-y-2">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h3 className={`text-base font-semibold ${task.status === "done" ? "text-slate-500 line-through" : "text-white"}`}>
-                        {task.title}
-                      </h3>
-                      <span className={`rounded-full border px-2.5 py-1 text-xs font-medium ${statusClasses(task.status)}`}>
-                        {statusLabel(task.status)}
-                      </span>
-                      <span className={`rounded-full border px-2.5 py-1 text-xs font-medium ${priorityClasses(task.priority)}`}>
-                        {priorityLabel(task.priority)}
-                      </span>
-                    </div>
-
-                    <div className="flex flex-wrap gap-3 text-xs text-slate-400">
-                      {task.assigned_name || task.assigned_username ? <span>Asignado a: {task.assigned_name || task.assigned_username}</span> : null}
-                      {task.due_date ? <span>Vence: {new Date(task.due_date).toLocaleDateString()}</span> : null}
-                      {task.follow_up_date ? (
-                        <span>
-                          Seguimiento: {new Date(task.follow_up_date).toLocaleDateString()}
-                          {task.follow_up_time ? ` ${task.follow_up_time}` : ""}
-                        </span>
-                      ) : null}
-                      {task.updated_at ? <span>Actualizado: {new Date(task.updated_at).toLocaleString()}</span> : null}
-                    </div>
-
-                    {task.notes ? (
-                      <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-3 text-sm whitespace-pre-wrap text-slate-300">
-                        {task.notes}
-                      </div>
-                    ) : null}
-                  </div>
-
-                  <div className="flex flex-wrap gap-2">
-                    {task.status !== "done" ? (
-                      <button
-                        type="button"
-                        onClick={() => void handleQuickStatus(task, "done")}
-                        className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-medium text-emerald-200"
-                      >
-                        <CheckCircle2 className="h-3.5 w-3.5" />
-                        Completar
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => void handleQuickStatus(task, "pending")}
-                        className="rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-xs font-medium text-slate-200"
-                      >
-                        Reabrir
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => setEditingTask(task)}
-                      className="inline-flex items-center gap-1 rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-xs font-medium text-slate-200"
-                    >
-                      <Pencil className="h-3.5 w-3.5" />
-                      Editar
-                    </button>
-                    <button
-                      type="button"
-                      disabled={deletingPersonalId === task.id}
-                      onClick={() => void handleDeletePersonalTask(task.id)}
-                      className="inline-flex items-center gap-1 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs font-medium text-red-200 disabled:opacity-60"
-                    >
-                      {deletingPersonalId === task.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-                      Eliminar
-                    </button>
-                  </div>
+          ) : (() => {
+            const canDrag = personalStatusFilter === "all" && !searchTerm.trim();
+            const sorted = canDrag
+              ? [...filteredPersonalTasks].sort(
+                  (a, b) => orderedTaskIds.indexOf(a.id) - orderedTaskIds.indexOf(b.id)
+                )
+              : filteredPersonalTasks;
+            return (
+              <div className="rounded-3xl border border-slate-800 bg-slate-900/80 shadow-2xl overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[700px] text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-700 text-left text-xs uppercase tracking-wide text-slate-400 bg-slate-800/60">
+                        <th className="w-8 px-2 py-3" />
+                        <th className="w-8 px-2 py-3 text-center">#</th>
+                        <th className="px-3 py-3">Tarea</th>
+                        <th className="px-3 py-3 w-28">Estado</th>
+                        <th className="px-3 py-3 w-24">Prioridad</th>
+                        <th className="px-3 py-3 w-28">Vence</th>
+                        <th className="px-3 py-3 w-36">Seguimiento</th>
+                        <th className="px-3 py-3 w-48 text-right">Acciones</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sorted.map((task, idx) => {
+                        const isDragging = dragActiveId === task.id;
+                        return (
+                          <tr
+                            key={task.id}
+                            draggable={canDrag}
+                            onDragStart={() => handleDragStart(task.id)}
+                            onDragEnter={() => handleDragEnter(task.id)}
+                            onDragOver={(e) => e.preventDefault()}
+                            onDragEnd={handleDragEnd}
+                            className={`border-b border-slate-800/80 transition-colors
+                              ${isDragging ? "opacity-40 bg-blue-500/10" : "hover:bg-slate-800/40"}
+                              ${task.status === "done" ? "opacity-60" : ""}
+                            `}
+                          >
+                            {/* Drag handle */}
+                            <td className="px-2 py-3 text-slate-600">
+                              {canDrag && (
+                                <GripVertical className="h-4 w-4 cursor-grab active:cursor-grabbing mx-auto" />
+                              )}
+                            </td>
+                            {/* Row number */}
+                            <td className="px-2 py-3 text-center text-slate-500 font-mono text-xs font-semibold">
+                              {idx + 1}
+                            </td>
+                            {/* Title + notes */}
+                            <td className="px-3 py-3">
+                              <div className={`font-medium ${task.status === "done" ? "line-through text-slate-500" : "text-white"}`}>
+                                {task.title}
+                              </div>
+                              {task.notes && (
+                                <div className="text-xs text-slate-500 mt-0.5 truncate max-w-xs" title={task.notes}>
+                                  {task.notes}
+                                </div>
+                              )}
+                              {task.assigned_name || task.assigned_username ? (
+                                <div className="text-xs text-slate-500 mt-0.5">
+                                  → {task.assigned_name || task.assigned_username}
+                                </div>
+                              ) : null}
+                            </td>
+                            {/* Status */}
+                            <td className="px-3 py-3">
+                              <span className={`rounded-full border px-2.5 py-1 text-xs font-medium ${statusClasses(task.status)}`}>
+                                {statusLabel(task.status)}
+                              </span>
+                            </td>
+                            {/* Priority */}
+                            <td className="px-3 py-3">
+                              <span className={`rounded-full border px-2.5 py-1 text-xs font-medium ${priorityClasses(task.priority)}`}>
+                                {priorityLabel(task.priority)}
+                              </span>
+                            </td>
+                            {/* Due date */}
+                            <td className="px-3 py-3 text-xs text-slate-400">
+                              {task.due_date ? new Date(task.due_date).toLocaleDateString("es-PR", { day: "2-digit", month: "short" }) : "—"}
+                            </td>
+                            {/* Follow-up */}
+                            <td className="px-3 py-3 text-xs text-slate-400">
+                              {task.follow_up_date
+                                ? `${new Date(task.follow_up_date).toLocaleDateString("es-PR", { day: "2-digit", month: "short" })}${task.follow_up_time ? ` ${task.follow_up_time}` : ""}`
+                                : "—"}
+                            </td>
+                            {/* Actions */}
+                            <td className="px-3 py-3">
+                              <div className="flex items-center justify-end gap-2">
+                                {task.status !== "done" ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleQuickStatus(task, "done")}
+                                    title="Marcar completada"
+                                    className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-3 py-2 text-sm font-semibold text-emerald-200 hover:bg-emerald-500/30 transition-colors"
+                                  >
+                                    <CheckCircle2 className="h-4 w-4" />
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleQuickStatus(task, "pending")}
+                                    title="Reabrir"
+                                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm font-semibold text-slate-200 hover:bg-slate-700 transition-colors"
+                                  >
+                                    ↩
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingTask(task)}
+                                  title="Editar"
+                                  className="inline-flex items-center gap-1.5 rounded-lg border border-blue-500/40 bg-blue-500/15 px-3 py-2 text-sm font-semibold text-blue-200 hover:bg-blue-500/30 transition-colors"
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={deletingPersonalId === task.id}
+                                  onClick={() => void handleDeletePersonalTask(task.id)}
+                                  title="Eliminar"
+                                  className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/40 bg-red-500/15 px-3 py-2 text-sm font-semibold text-red-300 hover:bg-red-500/30 transition-colors disabled:opacity-50"
+                                >
+                                  {deletingPersonalId === task.id
+                                    ? <Loader2 className="h-4 w-4 animate-spin" />
+                                    : <Trash2 className="h-4 w-4" />}
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
+                {!canDrag && (
+                  <p className="px-4 py-2 text-[11px] text-slate-600 border-t border-slate-800">
+                    Reordenar con drag disponible cuando no hay filtros activos.
+                  </p>
+                )}
               </div>
-            ))
-          )}
+            );
+          })()}
         </div>
       )}
 

@@ -1,7 +1,7 @@
 {
     "name": "mocha-app",
     "private": true,
-    "version": "2026-392",
+    "version": "2026-399",
     "type": "module",
     "dependencies": {
         "@azure/msal-browser": "^4.27.0",
@@ -72,13 +72,13 @@
         "dev:backend": "node server-FINAL.js",
         "start": "node server-FINAL.js",
         "lint": "eslint .",
-        "deploy": "node auto-deploy.js",
-        "deploy:upload": "node deploy-auto.js",
+        "deploy": "powershell -ExecutionPolicy Bypass -File ./deploy-simple.ps1",
+        "deploy:upload": "powershell -ExecutionPolicy Bypass -File ./deploy-simple.ps1 -SkipBuild",
         "extract": "node extract-knowledge.js",
-        "setup:ssh": "node setup-ssh-key.js",
-        "deploy:auto": "node auto-deploy-ssh.js",
+        "setup:ssh": "powershell -ExecutionPolicy Bypass -File ./scripts/ops-deploy/SETUP-SSH.ps1",
+        "deploy:auto": "powershell -ExecutionPolicy Bypass -File ./deploy-simple.ps1",
         "search:ai": "node search-ai-button.js",
-        "check:status": "node check-deploy-status.js",
-        "deploy:now": "node deploy-with-password.js"
+        "check:status": "powershell -ExecutionPolicy Bypass -File ./scripts/ops-deploy/DIAGNOSTICO-DEPLOY.ps1",
+        "deploy:now": "powershell -ExecutionPolicy Bypass -File ./deploy-simple.ps1"
     }
 }

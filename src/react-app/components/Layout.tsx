@@ -23,18 +23,23 @@ import {
   Menu,
   X,
   ChevronDown,
-  ChevronRight
+  ChevronRight,
+  Mic,
+  ShieldCheck,
+  KeyRound
 } from "lucide-react";
 
 
 import { useTheme } from "@/react-app/hooks/useTheme";
-import { getCurrentRole, getCurrentUser, clearAuthToken } from "@/react-app/utils/auth";
+import { getCurrentUser, clearAuthToken } from "@/react-app/utils/auth";
+import { getStoredPermissionSnapshot, isPermissionAllowed } from "@/react-app/utils/permissions";
 import { APP_VERSION } from "@/version";
 
 type NavItem = {
   name: string;
   href: string;
   icon: LucideIcon;
+  permissionKey?: string;
   roles?: string[];
   external?: boolean;
 };
@@ -42,22 +47,22 @@ type NavItem = {
 // VERSION: 2025-01-15-CON-IMPORTADOR-VISUAL
 
 const navigation: NavItem[] = [
-  { name: "Panel General", href: "/", icon: LayoutDashboard, roles: ["admin", "supervisor", "vendedor"] },
-  { name: "Tareas", href: "/tareas", icon: CheckSquare, roles: ["admin", "supervisor", "vendedor"] },
-  { name: "Clientes", href: "/clientes", icon: Users, roles: ["admin", "supervisor", "vendedor"] },
-  { name: "Correos", href: "/correos", icon: Mail, roles: ["admin", "supervisor", "vendedor"] },
+  { name: "Panel General", href: "/", icon: LayoutDashboard, permissionKey: "nav.dashboard", roles: ["admin", "supervisor", "vendedor"] },
+  { name: "Tareas", href: "/tareas", icon: CheckSquare, permissionKey: "nav.tasks", roles: ["admin", "supervisor", "vendedor"] },
+  { name: "Clientes", href: "/clientes", icon: Users, permissionKey: "nav.clients", roles: ["admin", "supervisor", "vendedor"] },
+  { name: "Correos", href: "/correos", icon: Mail, permissionKey: "nav.emails", roles: ["admin", "supervisor", "vendedor"] },
   { name: "Campañas", href: "/campanas", icon: SendHorizontal, roles: ["admin"] },
-  { name: "Vendedores", href: "/vendedores", icon: Building2, roles: ["admin", "supervisor"] },
-  { name: "Productos", href: "/productos", icon: Package, roles: ["admin", "supervisor"] },
+  { name: "Vendedores", href: "/vendedores", icon: Building2, permissionKey: "nav.vendors", roles: ["admin", "supervisor"] },
+  { name: "Productos", href: "/productos", icon: Package, permissionKey: "nav.products", roles: ["admin", "supervisor"] },
   { name: "Categorías", href: "/categorias", icon: Folder, roles: ["admin"] },
-  { name: "Metas", href: "/metas", icon: Target, roles: ["admin", "supervisor"] },
-  { name: "Comisiones", href: "/reportes", icon: BarChart3, roles: ["admin", "supervisor", "vendedor"] },
-  { name: "Cognos", href: "/discrepancias", icon: AlertTriangle, roles: ["admin", "supervisor"] },
-  { name: "Historial", href: "/historial", icon: FileText, roles: ["admin"] },
-  { name: "Importador", href: "/importador", icon: Upload, roles: ["admin", "supervisor"] },
-  { name: "Tango", href: "/tango", icon: Activity, roles: ["admin"] },
+  { name: "Metas", href: "/metas", icon: Target, permissionKey: "nav.goals", roles: ["admin", "supervisor"] },
+  { name: "Comisiones", href: "/reportes", icon: BarChart3, permissionKey: "nav.reports", roles: ["admin", "supervisor", "vendedor"] },
+  { name: "Cognos", href: "/discrepancias", icon: AlertTriangle, permissionKey: "nav.cognos", roles: ["admin", "supervisor"] },
+  { name: "Historial", href: "/historial", icon: FileText, permissionKey: "nav.audit", roles: ["admin"] },
+  { name: "Importador", href: "/importador", icon: Upload, permissionKey: "nav.importer", roles: ["admin", "supervisor"] },
+  { name: "Tango", href: "/tango", icon: Activity, permissionKey: "nav.tango", roles: ["admin"] },
   { name: "Reglas y Procesos", href: "/reglas-procesos", icon: FileText, roles: ["admin", "supervisor"], external: true },
-  { name: "Perfil", href: "/perfil", icon: UserCircle2, roles: ["admin", "supervisor", "vendedor"] },
+  { name: "Perfil", href: "/perfil", icon: UserCircle2, permissionKey: "nav.profile", roles: ["admin", "supervisor", "vendedor"] },
   { name: "Ofertas Web", href: "https://ofertas.ss-group.cloud", icon: Layers, external: true },
 ];
 
@@ -71,10 +76,10 @@ export default function Layout({ children }: LayoutProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const { isDark, toggleTheme } = useTheme();
-  const role = getCurrentRole() ?? "admin";
+  const [authSnapshot, setAuthSnapshot] = useState(() => getCurrentUser());
+  const role = String(authSnapshot?.role || "admin");
   const roleNormalized = role.trim().toLowerCase();
-  const user = useMemo(() => getCurrentUser(), []);
-  const userLabel = user?.salespersonName || user?.username || "Usuario";
+  const userLabel = authSnapshot?.salespersonName || authSnapshot?.username || "Usuario";
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [commercialOpen, setCommercialOpen] = useState(true);
 
@@ -82,6 +87,20 @@ export default function Layout({ children }: LayoutProps) {
   useEffect(() => {
     console.log(`✅ LAYOUT VERSION: ${APP_VERSION}`);
     console.log('✅ Navigation items:', navigation.map(n => n.name).join(', '));
+  }, []);
+
+  useEffect(() => {
+    const syncAuthSnapshot = () => {
+      setAuthSnapshot(getCurrentUser());
+    };
+
+    window.addEventListener('token-updated', syncAuthSnapshot);
+    window.addEventListener('storage', syncAuthSnapshot);
+
+    return () => {
+      window.removeEventListener('token-updated', syncAuthSnapshot);
+      window.removeEventListener('storage', syncAuthSnapshot);
+    };
   }, []);
 
   const filteredNavigation = useMemo(
@@ -181,10 +200,12 @@ export default function Layout({ children }: LayoutProps) {
               );
 
               if (item.external) {
+                let finalHref = item.href;
+
                 return (
                   <a
                     key={item.name}
-                    href={item.href}
+                    href={finalHref}
                     target={item.href.startsWith("http") ? "_blank" : undefined}
                     rel={item.href.startsWith("http") ? "noopener noreferrer" : undefined}
                     className={className}
@@ -195,6 +216,7 @@ export default function Layout({ children }: LayoutProps) {
                   </a>
                 );
               }
+
 
               return (
                 <Link

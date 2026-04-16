@@ -126,6 +126,18 @@ export default function TarifasPage() {
     loadStructures();
   }, []);
 
+  useEffect(() => {
+    const handleRefresh = () => {
+      void loadStructures();
+    };
+    window.addEventListener('modal-refresh', handleRefresh);
+    window.addEventListener('refreshTarifas', handleRefresh);
+    return () => {
+      window.removeEventListener('modal-refresh', handleRefresh);
+      window.removeEventListener('refreshTarifas', handleRefresh);
+    };
+  }, []);
+
   const loadStructures = async () => {
     setLoading(true);
     try {

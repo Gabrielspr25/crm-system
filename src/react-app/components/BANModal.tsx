@@ -174,9 +174,11 @@ export default function BANModal({ onSave, onClose, ban }: BANModalProps) {
               <option value="Fijo">Fijo</option>
               <option value="Convergente">Convergente</option>
             </select>
-            <p className="text-xs text-red-400 dark:text-red-400 mt-1 font-medium">
-              ⚠️ Campo obligatorio - debe seleccionar un tipo
-            </p>
+            {!formData.account_type && (
+              <p className="text-xs text-red-400 dark:text-red-400 mt-1 font-medium">
+                ⚠️ Campo obligatorio - debe seleccionar un tipo
+              </p>
+            )}
           </div>
 
           {/* Status */}

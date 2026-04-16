@@ -3,6 +3,9 @@ import * as goalsController from '../controllers/goalsController.js';
 
 const router = express.Router();
 
+// GET /api/goals/latest-period - Último periodo con metas visibles para el usuario
+router.get('/latest-period', goalsController.getLatestPeriod);
+
 // GET /api/goals/performance - Rendimiento global de metas vs comisiones
 router.get('/performance', goalsController.getPerformance);
 

@@ -16,7 +16,7 @@ import rateLimit from 'express-rate-limit';
 import { saveImportData } from './src/backend/controllers/importController.js';
 import { fullSystemCheck } from './src/backend/controllers/healthController.js';
 import { runFullSystemTest } from './src/backend/controllers/systemTestController.js';
-import referidosRoutes from './src/backend/routes/referidosRoutes.js';
+// import referidosRoutes from './src/backend/routes/referidosRoutes.js';
 import tarifasRoutes from './src/backend/routes/tarifasRoutes.js';
 import clientRoutes from './src/backend/routes/clientRoutes.js';
 import banRoutes from './src/backend/routes/banRoutes.js';
@@ -68,7 +68,7 @@ const distPath = path.join(__dirname, 'dist/client');
 app.use(express.static(distPath));
 
 // Rutas de Módulos Específicos
-app.use('/api/referidos', referidosRoutes);
+// app.use('/api/referidos', referidosRoutes);
 app.use('/api/tariffs', tarifasRoutes);
 app.use('/api/clients', clientRoutes);
 app.use('/api/bans', banRoutes);

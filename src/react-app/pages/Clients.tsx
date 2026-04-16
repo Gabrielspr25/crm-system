@@ -1,6 +1,6 @@
 // VERSION: 2025-01-15-T16-FINAL-V5.1.37-PRODUCTION
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { useNavigate } from "react-router";
+import { useLocation, useNavigate } from "react-router";
 import { Plus, Search, Edit, Users, Building, Phone, Mail, MapPin, Hash, Calendar, Trash2, UserPlus, Download, FileSpreadsheet, FileText, Check, X, Package, BarChart3, Sparkles, Send, Merge, Save, FileDown, ShoppingCart, ArrowRightLeft, Undo2, Upload, Mic } from "lucide-react";
 import { useApi } from "../hooks/useApi";
 import { authFetch, getCurrentUser } from "@/react-app/utils/auth";
@@ -13,7 +13,10 @@ import OfferGenerator from "../components/OfferGenerator";
 import EmailModal from "../components/EmailModal";
 import ComparativaModal from "../components/ComparativaModal";
 import BanPasteSubscribersModal from "../components/BanPasteSubscribersModal";
+import ClientTasksPanel from "@/react-app/components/tasks/ClientTasksPanel";
 import * as XLSX from 'xlsx';
+
+const OPEN_CLIENT_INTENT_KEY = "crm_open_client_task_intent";
 
 interface Client {
   id: number;
@@ -55,6 +58,7 @@ interface Vendor {
   id: number;
   name: string;
   email: string | null;
+  salesperson_id?: string | null;
   is_active: number;
   created_at: string;
   updated_at: string;
@@ -220,6 +224,7 @@ interface ClientDetail {
   zip_code: string | null;
   vendor_name: string | null;
   vendor_id: number | null;
+  salesperson_id?: string | number | null;
   created_at: string;
   bans: BAN[];
   base: string | null;
@@ -317,6 +322,7 @@ const getStatusBadge = (status: ClientStatus, days: number, createdAt?: string |
 
 // V3.5 FINAL FIX - 2025-01-15 - Tab configuration and version display
 export default function Clients() {
+  const location = useLocation();
   const navigate = useNavigate();
   const UNIQUE_BUILD_ID = APP_VERSION;
 
@@ -337,7 +343,7 @@ export default function Clients() {
   const [showSubscriberModal, setShowSubscriberModal] = useState(false);
   const [showClientDetailModal, setShowClientDetailModal] = useState(false);
   const [loadingClientDetail, setLoadingClientDetail] = useState(false);
-  const [clientDetailInitialTab, setClientDetailInitialTab] = useState<'info' | 'bans' | 'history' | 'comparativas' | 'ventas'>('bans');
+  const [clientDetailInitialTab, setClientDetailInitialTab] = useState<'info' | 'bans' | 'history' | 'comparativas' | 'ventas' | 'tareas'>('bans');
   const [editingClient, setEditingClient] = useState<Client | null>(null);
   const [selectedClientId, setSelectedClientId] = useState<number | null>(null);
   const [selectedBanId, setSelectedBanId] = useState<number | null>(null);
@@ -370,10 +376,15 @@ export default function Clients() {
   const [mergeSearchResults, setMergeSearchResults] = useState<Client[]>([]);
   const [showMergeSearchResults, setShowMergeSearchResults] = useState(false);
   const [selectedTargetClient, setSelectedTargetClient] = useState<Client | null>(null);
+  const [globalSearchClients, setGlobalSearchClients] = useState<Client[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
 
   const { data: clientsResponse, loading: clientsLoading, error: clientsError, refetch: refetchClients } = useApi<{ clients: Client[], stats: { active_count: number, cancelled_count: number, following_count: number, completed_count: number, incomplete_count: number } }>(`/api/clients?tab=${activeTab}`);
   const clients = clientsResponse?.clients || [];
   const clientStats = clientsResponse?.stats;
+  const isGlobalSearchMode = searchTerm.trim().length > 0;
+  const sourceClients = isGlobalSearchMode ? globalSearchClients : clients;
+  const sourceLoading = isGlobalSearchMode ? searchLoading : clientsLoading;
 
   // DEBUG: Log para verificar filtro de vendedor
   useEffect(() => {
@@ -382,17 +393,75 @@ export default function Clients() {
       console.log(`🔍 [Clients] stats=`, clientStats);
     }
   }, [clientsResponse]);
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!isGlobalSearchMode) {
+      setGlobalSearchClients([]);
+      setSearchLoading(false);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      setSearchLoading(true);
+      try {
+        if (cancelled) return;
+        const tabNames: Array<'active' | 'cancelled' | 'following' | 'completed' | 'incomplete'> = [
+          'active',
+          'cancelled',
+          'following',
+          'completed',
+          'incomplete'
+        ];
+        const responses = await Promise.all(
+          tabNames.map(async (tab) => {
+            const res = await authFetch(`/api/clients?tab=${tab}`);
+            const data = await res.json().catch(() => ({ clients: [] }));
+            return Array.isArray(data?.clients) ? data.clients : [];
+          })
+        );
+        const merged = new Map<string | number, Client>();
+        responses.flat().forEach((client) => {
+          const previous = merged.get(client.id);
+          merged.set(client.id, previous ? { ...previous, ...client } : client);
+        });
+        setGlobalSearchClients(Array.from(merged.values()));
+      } catch (error) {
+        console.error('Error en búsqueda global de clientes:', error);
+        if (!cancelled) {
+          setGlobalSearchClients([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setSearchLoading(false);
+        }
+      }
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [isGlobalSearchMode, searchTerm]);
   const { data: vendors } = useApi<Vendor[]>("/api/vendors");
   const { data: prospects, refetch: refetchProspects } = useApi<FollowUpProspect[]>("/api/follow-up-prospects?include_completed=true"); const notify = (type: 'success' | 'error' | 'info', text: string) => {
     setNotification({ type, text });
   };
 
+  const resolveFollowUpVendorId = useCallback((clientData: { vendor_id?: number | null; salesperson_id?: string | number | null }) => {
+    if (clientData.vendor_id) return clientData.vendor_id;
+    const salespersonId = String(clientData.salesperson_id || '').trim();
+    if (!salespersonId || !Array.isArray(vendors)) return null;
+    const matchedVendor = vendors.find((vendor) => String(vendor.salesperson_id || '').trim() === salespersonId);
+    return matchedVendor?.id || null;
+  }, [vendors]);
+
   // Mostrar error si falla la carga
   useEffect(() => {
-    if (clientsError) {
+    if (clientsError && !clientsLoading && clients.length === 0) {
       notify('error', `Error cargando clientes: ${clientsError}`);
     }
-  }, [clientsError]);
+  }, [clients, clientsError, clientsLoading]);
 
   const statusPriority: Record<ClientStatus, number> = {
     overdue: 0,
@@ -450,16 +519,62 @@ export default function Clients() {
     };
   }, [refetchClients]);
 
+  useEffect(() => {
+    if (clientsLoading) return;
+    const params = new URLSearchParams(location.search);
+    const openClient = String(params.get('openClient') || '').trim();
+    const tab = String(params.get('tab') || '').trim();
+
+    let pendingClientId = openClient;
+    let pendingTab = tab;
+
+    if (!pendingClientId) {
+      try {
+        const rawIntent = window.sessionStorage.getItem(OPEN_CLIENT_INTENT_KEY);
+        if (rawIntent) {
+          const intent = JSON.parse(rawIntent);
+          pendingClientId = String(intent?.clientId || '').trim();
+          pendingTab = String(intent?.tab || '').trim();
+        }
+      } catch {
+        pendingClientId = '';
+        pendingTab = '';
+      }
+    }
+
+    if (!pendingClientId) return;
+
+    const parsedClientId = Number(pendingClientId);
+    const resolvedClientId = Number.isFinite(parsedClientId)
+      ? parsedClientId
+      : clients.find((client) => String(client.id) === pendingClientId)?.id;
+
+    if (!resolvedClientId) return;
+
+    const initialTab = pendingTab === 'tareas' || pendingTab === 'pasos' ? 'tareas' : 'bans';
+    void (async () => {
+      await handleViewClientDetail(resolvedClientId, initialTab);
+      try {
+        window.sessionStorage.removeItem(OPEN_CLIENT_INTENT_KEY);
+      } catch {
+        // Ignore storage cleanup failures.
+      }
+      if (window.location.search) {
+        window.history.replaceState(window.history.state, document.title, window.location.pathname);
+      }
+    })();
+  }, [clients, clientsLoading, location.search]);
+
   // Load all client data with their BANs and subscribers
   useEffect(() => {
     // Evitar ejecutar si aún está cargando
-    if (clientsLoading) {
+    if (sourceLoading) {
       return;
     }
 
     const loadClientData = async () => {
-      console.log('🔄 loadClientData iniciado. Clientes recibidos:', clients?.length || 0);
-      if (!clients || clients.length === 0) {
+      console.log('🔄 loadClientData iniciado. Clientes recibidos:', sourceClients?.length || 0);
+      if (!sourceClients || sourceClients.length === 0) {
         console.log('⚠️ No hay clientes, limpiando clientItems');
         setClientItems([]);
         return;
@@ -470,9 +585,9 @@ export default function Clients() {
 
         // PRIMERO: Crear clientItems básicos SIN cargar BANs/suscriptores (más rápido)
         const clientData: ClientItem[] = [];
-        console.log(`📊 Creando ${clients.length} clientItems básicos (sin BANs/suscriptores)...`);
+        console.log(`📊 Creando ${sourceClients.length} clientItems básicos (sin BANs/suscriptores)...`);
 
-        for (const client of clients) {
+        for (const client of sourceClients) {
           // Check if this client is being followed
           const clientProspects = followUpProspects.filter((p) => p.client_id === client.id);
           const activeProspect = clientProspects.find((p) => isProspectActive(p));
@@ -577,7 +692,7 @@ export default function Clients() {
     };
 
     loadClientData();
-  }, [clients, prospects, clientsLoading]);
+  }, [sourceClients, prospects, sourceLoading]);
 
   const clientSummaries = useMemo<ClientRowSummary[]>(() => {
     const map = new Map<number, {
@@ -690,9 +805,9 @@ export default function Clients() {
 
     // Crear un mapa de clientId a lastActivity, banType, hasCancelledBans e isIncomplete desde clients
     const clientMetadata = new Map<number, { lastActivity: string | null; banType: string | null; hasCancelledBans: boolean; isIncomplete: boolean }>();
-    if (clients) {
-      console.log(`🔄 Procesando ${clients.length} clientes para detectar incompletos...`);
-      clients.forEach(client => {
+    if (sourceClients) {
+      console.log(`🔄 Procesando ${sourceClients.length} clientes para detectar incompletos...`);
+      sourceClients.forEach(client => {
         const lastActivity = client.last_activity || client.updated_at || null;
 
         // Usar ban_descriptions primero (desde la tabla bans), si no está disponible usar all_service_types (desde subscribers)
@@ -740,7 +855,7 @@ export default function Clients() {
 
       // Estadísticas de validación
       let stats = {
-        total: clients.length,
+        total: sourceClients.length,
         completos: 0,
         incompletos: 0,
         sinBAN: 0,
@@ -751,7 +866,7 @@ export default function Clients() {
         muestrasIncompletos: [] as any[]
       };
 
-      clients.forEach(client => {
+      sourceClients.forEach(client => {
         const hasName = Boolean(client.name && typeof client.name === 'string' && client.name.trim() !== '');
         const hasBusinessName = Boolean(client.business_name && typeof client.business_name === 'string' && client.business_name.trim() !== '');
 
@@ -813,7 +928,7 @@ export default function Clients() {
     return Array.from(map.values()).map(({ base, subscriberPhones, primary }) => {
       // Usar datos del backend directamente (conteo real y preciso)
       // IMPORTANTE: Cada BAN pertenece a UN SOLO cliente (no se repiten)
-      const clientFromBackend = clients?.find(c => c.id === base.clientId);
+      const clientFromBackend = sourceClients?.find(c => c.id === base.clientId);
       const totalBans = clientFromBackend?.ban_count || 0;
       const totalSubscribers = clientFromBackend?.subscriber_count || base.totalSubscribers || 0;
 
@@ -847,7 +962,7 @@ export default function Clients() {
         subscribersDetail: clientFromBackend?.subscribers_detail || base.subscribersDetail || [],
       };
     });
-  }, [clientItems, clients]);
+  }, [clientItems, sourceClients]);
 
   const filteredClients = clientSummaries.filter(item => {
     // Filtrar por búsqueda
@@ -950,7 +1065,24 @@ export default function Clients() {
 
   // Al usar backend filtering, filteredClients ya contiene solo lo que queremos
   // Sin embargo, mantenemos la lógica de búsqueda sobre los resultados retornados
-  const clientsForTab = [...filteredClients].sort((a, b) => {
+  const dedupedFilteredClients = Array.from(
+    filteredClients.reduce((map, item) => {
+      const existing = map.get(item.clientId);
+      if (!existing) {
+        map.set(item.clientId, item);
+        return map;
+      }
+
+      const existingActivity = existing.lastActivity ? new Date(existing.lastActivity).getTime() : 0;
+      const nextActivity = item.lastActivity ? new Date(item.lastActivity).getTime() : 0;
+      if (nextActivity >= existingActivity) {
+        map.set(item.clientId, item);
+      }
+      return map;
+    }, new Map<number | string, ClientRowSummary>()).values()
+  );
+
+  const clientsForTab = [...dedupedFilteredClients].sort((a, b) => {
     // 0) Los clientes vendidos/completados siempre van al final.
     if (a.wasCompleted !== b.wasCompleted) {
       return a.wasCompleted ? 1 : -1;
@@ -1025,11 +1157,16 @@ export default function Clients() {
         return;
       }
 
+      const resolvedVendorId = resolveFollowUpVendorId(client);
+      if (!resolvedVendorId) {
+        throw new Error('Este cliente no tiene vendedor asignado. No se puede enviar a seguimiento.');
+      }
+
       // SIMPLIFICADO: Crear prospect directamente sin complicaciones
       const prospectData = {
         company_name: client.business_name || client.name,
         client_id: clientId,
-        vendor_id: client.vendor_id || null,
+        vendor_id: resolvedVendorId,
         contact_phone: client.phone || '',
         contact_email: client.email || '',
         notes: 'Cliente enviado desde gestión de clientes',
@@ -1213,7 +1350,7 @@ export default function Clients() {
     }
   };
 
-  const handleViewClientDetail = async (clientId: number, initialTab: 'info' | 'bans' | 'history' | 'comparativas' | 'ventas' = 'bans') => {
+  const handleViewClientDetail = async (clientId: number, initialTab: 'info' | 'bans' | 'history' | 'comparativas' | 'ventas' | 'tareas' = 'bans') => {
     try {
       setLoadingClientDetail(true);
       setClientDetailInitialTab(initialTab); // Establecer la pestaña inicial
@@ -1363,19 +1500,18 @@ export default function Clients() {
         throw new Error(error.error || "Error al actualizar el cliente");
       }
 
-      // Verificar si el cliente estaba incompleto y ahora está completo
-      const wasIncomplete = editingClient.business_name?.startsWith('Empresa BAN ') ||
-        editingClient.business_name?.startsWith('Cliente BAN ') ||
+      // Verificar si el cliente estaba incompleto (sin nombre/empresa) y ahora está completo
+      // La condición de "incompleto" del sistema es: !name && !business_name
+      const wasIncomplete = (
+        !editingClient.name ||
+        editingClient.name.trim() === '' ||
         !editingClient.business_name ||
-        !editingClient.email ||
-        (!editingClient.phone && !editingClient.mobile_phone && !editingClient.contact_person);
+        editingClient.business_name.trim() === ''
+      ) && activeTab === 'incomplete';
 
-      const hasRealBusinessName = Boolean(data.business_name &&
-        !data.business_name.startsWith('Empresa BAN ') &&
-        !data.business_name.startsWith('Cliente BAN '));
-      const hasEmail = Boolean(data.email);
-      const hasContact = Boolean(data.phone || data.mobile_phone || data.contact_person);
-      const isNowComplete = hasRealBusinessName && hasEmail && hasContact;
+      // El modal envía `data.name` (campo "Empresa / Razón Social"); también acepta data.business_name
+      const incomingName = (data.name || data.business_name || '').trim();
+      const isNowComplete = Boolean(incomingName);
 
       setPendingBanClientId(null);
       // Modal permanece abierto después de guardar - actualizar datos del cliente editando
@@ -1386,7 +1522,13 @@ export default function Clients() {
       }
       await refetchClients();
 
-      notify('success', `Cliente ${data.business_name || data.name} actualizado correctamente.`);
+      // Auto-move: si el cliente transitó de incompleto a completo, mover a tab Activos
+      if (wasIncomplete && isNowComplete) {
+        setActiveTab('active');
+        notify('success', `Cliente ${incomingName} completado y movido a Activos.`);
+      } else {
+        notify('success', `Cliente ${data.business_name || data.name} actualizado correctamente.`);
+      }
     } catch (error) {
       console.error("Error updating client:", error);
       notify('error', error instanceof Error ? error.message : 'Error al actualizar el cliente.');
@@ -2528,7 +2670,9 @@ export default function Clients() {
           </div>
         ) : clientDetail ? (
           <ClientManagementModal
+            key={`${clientDetail.id}-${clientDetailInitialTab}`}
             client={clientDetail}
+            resolveFollowUpVendorId={resolveFollowUpVendorId}
             onClose={() => {
               setShowClientDetailModal(false);
               setClientDetail(null);
@@ -2723,6 +2867,7 @@ function ClientManagementModal({
   onRefreshClient,
   onFollowUpUpdated,
   clientHasActiveFollowUp,
+  resolveFollowUpVendorId,
   initialTab = 'bans'
 }: {
   client: ClientDetail;
@@ -2732,9 +2877,10 @@ function ClientManagementModal({
   onRefreshClient?: () => Promise<void>;
   onFollowUpUpdated?: () => Promise<void> | void;
   clientHasActiveFollowUp: (clientId: number) => boolean;
-  initialTab?: 'info' | 'bans' | 'history' | 'comparativas' | 'ventas';
+  resolveFollowUpVendorId: (client: { vendor_id?: number | null; salesperson_id?: string | number | null }) => number | null;
+  initialTab?: 'info' | 'bans' | 'history' | 'comparativas' | 'ventas' | 'tareas';
 }) {
-  const [activeTab, setActiveTab] = useState<'info' | 'bans' | 'history' | 'comparativas' | 'ventas'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'info' | 'bans' | 'history' | 'comparativas' | 'ventas' | 'tareas'>(initialTab);
   const [showBANForm, setShowBANForm] = useState(false);
   const [showEmailModal, setShowEmailModal] = useState(false);
   const [showComparativaModal, setShowComparativaModal] = useState(false);
@@ -2745,6 +2891,10 @@ function ClientManagementModal({
   const [isReturningToPool, setIsReturningToPool] = useState(false);
   const [isEditingClient, setIsEditingClient] = useState(false);
   const [subscriberSubTabs, setSubscriberSubTabs] = useState<Record<string, 'activas' | 'no_renueva' | 'canceladas'>>({});
+
+  useEffect(() => {
+    setActiveTab(initialTab);
+  }, [initialTab, client.id]);
 
   // === COMPARATIVAS STATE ===
   interface OfferRow {
@@ -2997,13 +3147,18 @@ function ClientManagementModal({
       }
 
       console.log('🟢 Enviando a seguimiento...');
+      const resolvedVendorId = resolveFollowUpVendorId(client);
+      if (!resolvedVendorId) {
+        throw new Error('Este cliente no tiene vendedor asignado. No se puede enviar a seguimiento.');
+      }
+
       setIsSendingToFollowUp(true);
 
       // SIMPLIFICADO: Igual para todos
       const prospectData = {
         company_name: client.business_name || client.name,
         client_id: client.id,
-        vendor_id: client.vendor_id || null,
+        vendor_id: resolvedVendorId,
         contact_phone: client.phone || '',
         contact_email: client.email || '',
         notes: 'Cliente enviado desde gestión de clientes',
@@ -3541,11 +3696,10 @@ function ClientManagementModal({
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-gray-900 rounded-xl shadow-xl border border-gray-800 w-full max-w-7xl max-h-[95vh] overflow-hidden">
         {/* Header */}
-        <div className="flex justify-between items-start p-6 border-b border-gray-700 bg-gradient-to-r from-gray-800 to-gray-700">
-          <div>
-            <h2 className="text-2xl font-bold text-white">{client.business_name || client.name}</h2>
-            <p className="text-gray-300 mt-1">Gestión completa del cliente</p>
-            <div className="mt-2 flex items-center gap-2">
+        <div className="flex justify-between items-start gap-4 p-4 border-b border-gray-700 bg-gradient-to-r from-gray-800 to-gray-700">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-2xl font-bold text-white">{client.business_name || client.name}</h2>
               <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border ${hasActiveFollowUpInModal
                 ? 'bg-amber-900/40 text-amber-100 border-amber-500/30'
                 : 'bg-gray-800/60 text-gray-300 border-gray-600/50'
@@ -3558,6 +3712,7 @@ function ClientManagementModal({
                 </span>
               )}
             </div>
+            <p className="text-gray-300 mt-1 text-sm">Gestión completa del cliente</p>
           </div>
           <div className="flex items-center space-x-3">
             {!hasActiveFollowUpInModal && (
@@ -3671,12 +3826,12 @@ function ClientManagementModal({
               : 'text-gray-400 hover:text-white hover:bg-gray-750'
               }`}
           >
-            📋 Tareas
+            📋 Pasos
           </button>
         </div>
 
         {/* Content */}
-        <div className="p-6 h-[60vh] overflow-y-auto">
+        <div className="p-4 h-[68vh] overflow-y-auto">
           {activeTab === 'info' && (
             <div className="space-y-6">
               <div className="flex justify-between items-center mb-4">
@@ -4791,7 +4946,7 @@ function ClientManagementModal({
 
           {/* ====== TAB TAREAS ====== */}
           {activeTab === 'tareas' && (
-            <TasksPanelClient client={client} />
+            <ClientTasksPanel client={client} />
           )}
         </div>
 

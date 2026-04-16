@@ -5,7 +5,7 @@ import * as tarifasController from '../controllers/tarifasController.js';
 const router = express.Router();
 
 // Configurar multer para archivos en memoria
-const upload = multer({ 
+const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 }, // 10MB max
   fileFilter: (req, file, cb) => {
@@ -32,6 +32,7 @@ router.get('/categories', tarifasController.getCategories);
 // Planes
 router.get('/plans', tarifasController.getPlans);
 router.get('/plans/:id', tarifasController.getPlanById);
+router.post('/plans/clear', tarifasController.clearPlans);
 router.post('/plans', tarifasController.createPlan);
 router.put('/plans/:id', tarifasController.updatePlan);
 router.delete('/plans/:id', tarifasController.deletePlan);

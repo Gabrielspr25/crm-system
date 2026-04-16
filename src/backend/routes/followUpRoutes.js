@@ -1,5 +1,5 @@
 import express from 'express';
-import { getFollowUpProspects, createFollowUpProspect, updateFollowUpProspect, getFollowUpSteps } from '../controllers/followUpController.js';
+import { getFollowUpProspects, createFollowUpProspect, updateFollowUpProspect, getFollowUpSteps, returnFollowUpProspect } from '../controllers/followUpController.js';
 import { authenticateToken } from '../middlewares/auth.js';
 
 const router = express.Router();
@@ -10,5 +10,6 @@ router.get('/', getFollowUpProspects);
 router.get('/steps', getFollowUpSteps);
 router.post('/', createFollowUpProspect);
 router.put('/:id', updateFollowUpProspect);
+router.put('/:id/return', returnFollowUpProspect);
 
 export default router;

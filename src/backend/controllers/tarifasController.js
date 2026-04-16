@@ -1,8 +1,10 @@
 import { query, getClient } from '../database/db.js';
 import { createRequire } from 'module';
+import fs from 'fs';
+import path from 'path';
+
 const require = createRequire(import.meta.url);
-const pdfParseLib = require('pdf-parse');
-const pdfParse = pdfParseLib.default || pdfParseLib;
+const { PDFParse } = require('pdf-parse');
 
 // ==================== CATEGORÍAS ====================
 export const getCategories = async (req, res) => {
@@ -70,26 +72,71 @@ export const getPlanById = async (req, res) => {
   }
 };
 
+export const clearPlans = async (req, res) => {
+  try {
+    const { type } = req.body;
+
+    if (type === 'fijo' || type === 'promocion') {
+      // Elimina todos los planes que NO son categoría MOVIL
+      await query(`DELETE FROM plans WHERE category_id IN (SELECT id FROM plan_categories WHERE UPPER(name) NOT LIKE '%MOVIL%' AND UPPER(name) NOT LIKE '%CELULAR%')`);
+    } else if (type === 'moviles' || type === 'movil') {
+      // Elimina todos los planes que son categoría MOVIL
+      await query(`DELETE FROM plans WHERE category_id IN (SELECT id FROM plan_categories WHERE UPPER(name) LIKE '%MOVIL%' OR UPPER(name) LIKE '%CELULAR%')`);
+    } else {
+      // Si no pasan tipo o es otro, hacer un clean total (opcional). Por precaución lo comento o lo dejo fijo.
+      await query(`DELETE FROM plans`);
+    }
+
+    res.json({ message: 'Planes borrados exitosamente para evitar duplicados / fantasmas' });
+  } catch (error) {
+    console.error('Error clearPlans:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
 export const createPlan = async (req, res) => {
   try {
-    const {
-      category_id, name, code, alpha_code, description, price, price_autopay,
+    let {
+      category_id, category_name, name, code, alpha_code, description, price, price_autopay,
       technology, data_included, voice_included, sms_included, hotspot, roaming_info,
       installation_0m, installation_12m, installation_24m, penalty,
+      activation_0m, activation_12m, activation_24m,
       min_lines, max_lines, notes, is_convergent_only, display_order
     } = req.body;
+
+    // Si nos pasan el nombre de la categoría, la buscamos o creamos
+    let finalCategoryId = category_id;
+    if (category_name && !finalCategoryId) {
+      const existing = await query(`SELECT id FROM plan_categories WHERE name = $1 OR code = $1 LIMIT 1`, [category_name]);
+      if (existing.length > 0) {
+        finalCategoryId = existing[0].id;
+      } else {
+        const codeClean = category_name.toUpperCase().replace(/[^A-Z0-9]/g, '_').substring(0, 15);
+        const nameClean = category_name.substring(0, 49);
+        const insertRes = await query(
+          `INSERT INTO plan_categories (code, name, is_active, display_order) VALUES ($1, $2, true, 99) RETURNING id`,
+          [codeClean, nameClean]
+        );
+        finalCategoryId = insertRes[0].id;
+      }
+    }
+
+    // Fallback a categoría "GENERAL" o 6 si no hay nada
+    finalCategoryId = finalCategoryId || 6;
 
     const rows = await query(
       `INSERT INTO plans (
         category_id, name, code, alpha_code, description, price, price_autopay,
         technology, data_included, voice_included, sms_included, hotspot, roaming_info,
         installation_0m, installation_12m, installation_24m, penalty,
+        activation_0m, activation_12m, activation_24m,
         min_lines, max_lines, notes, is_convergent_only, display_order, created_by
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
       RETURNING *`,
-      [category_id, name, code, alpha_code, description, price, price_autopay,
+      [finalCategoryId, name, code, alpha_code, description, price, price_autopay,
         technology, data_included, voice_included, sms_included, hotspot, roaming_info,
         installation_0m, installation_12m, installation_24m, penalty,
+        activation_0m, activation_12m, activation_24m,
         min_lines, max_lines, notes, is_convergent_only, display_order, req.user?.id]
     );
 
@@ -116,6 +163,23 @@ export const updatePlan = async (req, res) => {
     const oldRows = await query('SELECT * FROM plans WHERE id = $1', [id]);
     if (oldRows.length === 0) {
       return res.status(404).json({ error: 'Plan no encontrado' });
+    }
+
+    // Interceptar category_name si viene en el body
+    if (fields.category_name) {
+      const existing = await query(`SELECT id FROM plan_categories WHERE name = $1 OR code = $1 LIMIT 1`, [fields.category_name]);
+      if (existing.length > 0) {
+        fields.category_id = existing[0].id;
+      } else {
+        const codeClean = fields.category_name.toUpperCase().replace(/[^A-Z0-9]/g, '_').substring(0, 15);
+        const nameClean = fields.category_name.substring(0, 49);
+        const insertRes = await query(
+          `INSERT INTO plan_categories (code, name, is_active, display_order) VALUES ($1, $2, true, 99) RETURNING id`,
+          [codeClean, nameClean]
+        );
+        fields.category_id = insertRes[0].id;
+      }
+      delete fields.category_name;
     }
 
     const updates = [];
@@ -495,10 +559,32 @@ export const parseDocument = async (req, res) => {
     }
 
     const { originalname, buffer, mimetype } = req.file;
+    const type = req.body.type || 'fijo'; // 'fijo' o 'promocion'
     const extension = originalname.toLowerCase().split('.').pop();
+
+    // Guardar archivo en carpeta
+    const uploadDir = path.join(process.cwd(), 'uploads', 'planes');
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+
+    // Eliminar archivos existentes del mismo tipo antes de guardar el nuevo
+    const existingFiles = fs.readdirSync(uploadDir);
+    for (const file of existingFiles) {
+      if (file.startsWith(`planes_${type}.`)) {
+        fs.unlinkSync(path.join(uploadDir, file));
+      }
+    }
+
+    const savedFileName = `planes_${type}.${extension}`;
+    const filePath = path.join(uploadDir, savedFileName);
+    fs.writeFileSync(filePath, buffer);
+
+    console.log(`Archivo guardado en: ${filePath}`);
+
     let plans = [];
 
-    console.log(`Procesando archivo: ${originalname}, tipo: ${mimetype}`);
+    console.log(`Procesando archivo: ${originalname}, mime: ${mimetype}, tipo: ${type}`);
 
     if (extension === 'pdf') {
       plans = await parsePdfBuffer(buffer);
@@ -523,8 +609,10 @@ export const parseDocument = async (req, res) => {
 
 // Parser PDF usando pdf-parse (mejor para tablas)
 async function parsePdfBuffer(buffer) {
-  const data = await pdfParse(buffer);
-  const text = data.text;
+  const parser = new PDFParse({ data: buffer });
+  await parser.load();
+  const result = await parser.getText();
+  const text = result.text || '';
 
   console.log('PDF Text Length:', text.length);
   console.log('PDF Sample:', text.substring(0, 500));
@@ -532,13 +620,17 @@ async function parsePdfBuffer(buffer) {
   return extractPlansFromPdfText(text);
 }
 
-// Parser Excel usando xlsx
 async function parseExcelBuffer(buffer, extension) {
   const XLSX = await import('xlsx');
   const workbook = XLSX.read(buffer, { type: 'buffer' });
   const sheetName = workbook.SheetNames[0];
   const worksheet = workbook.Sheets[sheetName];
   const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+
+  console.log(`[EXCEL PARSER] Sheet ID: ${sheetName}. Total rows: ${rows.length}`);
+  if (rows.length > 0) {
+    console.log('[EXCEL PARSER] Sample row 10 (raw):', JSON.stringify(rows[10] || []));
+  }
 
   return extractPlansFromRows(rows);
 }
@@ -710,40 +802,125 @@ function extractPlansFromRows(rows) {
   rows.forEach((row, idx) => {
     if (!row || row.length === 0) return;
 
-    const firstCell = String(row[0] || '').toUpperCase();
+    // Determinar dónde empieza la data (algunos Excels vienen con la columna A vacía)
+    let offset = 0;
+    while (offset < row.length && (row[offset] === null || row[offset] === undefined || String(row[offset]).trim() === '')) {
+      offset++;
+    }
+    if (offset >= row.length) return; // Fila vacía
 
-    // Detectar categoría
-    if (firstCell.includes('MÓVIL') || firstCell.includes('MOVIL')) currentCategory = 'MOVIL';
-    else if (firstCell.includes('1PLAY') || firstCell.includes('1 PLAY')) currentCategory = '1PLAY';
-    else if (firstCell.includes('2PLAY') || firstCell.includes('2 PLAY')) currentCategory = '2PLAY';
-    else if (firstCell.includes('3PLAY') || firstCell.includes('3 PLAY')) currentCategory = '3PLAY';
-    else if (firstCell.includes('TV')) currentCategory = 'TV';
+    const firstCell = String(row[offset]).trim().toUpperCase();
 
-    // Detectar tecnología
-    if (firstCell.includes('GPON')) currentTechnology = 'GPON';
-    else if (firstCell.includes('COBRE')) currentTechnology = 'COBRE/VRAD';
+    // 1. Detectar Cabecera de Categoría (fila donde dice 'Código' en la primera celda)
+    if (firstCell === 'CÓDIGO' || firstCell === 'CODIGO') {
+      // El nombre de la familia de productos vendrá en la siguiente columna
+      const categoryTitle = String(row[offset + 1] || '').trim();
+      if (categoryTitle) {
+        currentCategory = categoryTitle;
+      }
+      return;
+    }
 
-    // Detectar filas de planes (código numérico o alfanumérico al inicio)
-    const codePattern = /^[A-Z]?\d{3,4}[A-Z]?$/;
-    if (codePattern.test(firstCell) || (row[0] && row[1] && !isNaN(parseFloat(String(row[1]).replace('$', ''))))) {
-      const priceCell = row.find(cell => {
-        const val = String(cell || '').replace('$', '').replace(',', '');
-        return !isNaN(parseFloat(val)) && parseFloat(val) > 0;
-      });
+    // Detectar Bloques de Tecnología que actúan como títulos de sección
+    if (firstCell === 'COBRE/VRAD' || firstCell === 'COBRE' || firstCell === 'VRAD') {
+      currentTechnology = 'COBRE/VRAD';
+      return;
+    }
+    if (firstCell === 'GPON' || firstCell === 'FIBRA') {
+      currentTechnology = 'GPON';
+      return;
+    }
 
-      const price = priceCell ? parseFloat(String(priceCell).replace('$', '').replace(',', '')) : 0;
+    // 2. Extraer Plan 
+    const codePattern = /^[A-Z0-9\-]+$/i;
+    const rawPrice = String(row[offset + 2] || '').replace('$', '').replace(/,/g, '').trim();
+    const priceNum = parseFloat(rawPrice);
+
+    // Si la primer celda parece código de plan y el precio es un num, es plan
+    if (firstCell && codePattern.test(firstCell) && !isNaN(priceNum)) {
+
+      const description = String(row[offset + 1] || '').trim();
+      const alpha_code = String(row[offset + 3] || '').trim();
+
+      // ESTRICTO Y DINÁMICO: Mantener el título original para la tabla y añadirle el tag de la UI
+      let baseCategory = currentCategory.trim() || 'GENERAL';
+      let tag = '';
+      const descUpper = description.toUpperCase();
+      const catUpper = baseCategory.toUpperCase();
+
+      if (descUpper.includes('2PLAY') || descUpper.includes('2 PLAY') || catUpper.includes('2PLAY')) {
+        tag = ' (2PLAY)';
+      } else if (descUpper.includes('3PLAY') || descUpper.includes('3 PLAY') || catUpper.includes('3PLAY')) {
+        tag = ' (3PLAY)';
+      } else if (descUpper.includes('TV') || descUpper.includes('CLARO TV') || catUpper.includes('TV') || catUpper.includes('TELEVISION')) {
+        tag = ' (TV)';
+      } else if (descUpper.includes('MOVIL') || descUpper.includes('MÓVIL') || descUpper.includes('RED PLUS') || catUpper.includes('CELULAR') || catUpper.includes('NACIONALES')) {
+        tag = ' (MOVIL)';
+      } else {
+        tag = ' (1PLAY)';
+      }
+
+      // Evitar meter tags duplicados en el título visual, ej "Planes TV (TV)" o "MOVIL (MOVIL)"
+      let planCategory = baseCategory;
+      if (!catUpper.includes(tag.replace(/[() ]/g, ''))) {
+        planCategory += tag;
+      }
+
+      let techFallback = currentTechnology;
+      let hasTechColumn = false;
+      const technologyRaw = String(row[offset + 4] || '').trim().toUpperCase();
+
+      if (technologyRaw.includes('GPON')) {
+        techFallback = 'GPON';
+        hasTechColumn = true;
+      } else if (technologyRaw.includes('COBRE') || technologyRaw.includes('VRAD')) {
+        techFallback = 'COBRE/VRAD';
+        hasTechColumn = true;
+      } else {
+        if (description.includes('GPON') || firstCell.startsWith('A') || alpha_code.startsWith('G-')) {
+          techFallback = 'GPON';
+        } else if (description.includes('COBRE') || description.includes('VRAD') || alpha_code.startsWith('V-')) {
+          techFallback = 'COBRE/VRAD';
+        }
+      }
+
+      const parseMoney = (val) => {
+        if (val === null || val === undefined) return 0;
+        const strVal = String(val).trim();
+        if (strVal === '-' || strVal === '') return 0;
+        const num = parseFloat(strVal.replace('$', '').replace(/,/g, ''));
+        return isNaN(num) ? 0 : num;
+      };
+
+      // Lectura estricta de las columnas en su posición geométrica para no desfasar 
+      // y cruzar los ceros faltantes de Instalación con Activación
+      let voiceIncluded = hasTechColumn ? String(row[offset + 5] || '').trim() : String(row[offset + 4] || '').trim();
+
+      let inst0 = parseMoney(row[offset + 6]);
+      let inst12 = parseMoney(row[offset + 7]);
+      let inst24 = parseMoney(row[offset + 8]);
+
+      let act0 = parseMoney(row[offset + 9]);
+      let act12 = parseMoney(row[offset + 10]);
+      let act24 = parseMoney(row[offset + 11]);
+
+      let penalty = parseMoney(row[offset + 12]);
 
       plans.push({
-        code: String(row[0] || ''),
-        price: price,
-        description: String(row[2] || row[1] || ''),
-        alpha_code: String(row[3] || ''),
-        category: currentCategory,
-        technology: currentTechnology,
-        installation_0m: parseFloat(String(row[4] || '0').replace('$', '')) || 0,
-        installation_12m: parseFloat(String(row[5] || '0').replace('$', '')) || 0,
-        installation_24m: parseFloat(String(row[6] || '0').replace('$', '')) || 0,
-        penalty: parseFloat(String(row[7] || '0').replace('$', '')) || 0
+        code: firstCell,
+        description: description,
+        price: priceNum,
+        alpha_code: alpha_code,
+        category: planCategory,
+        technology: techFallback,
+        voice_included: voiceIncluded,
+        installation_0m: inst0,
+        installation_12m: inst12,
+        installation_24m: inst24,
+        activation_0m: act0,
+        activation_12m: act12,
+        activation_24m: act24,
+        penalty: penalty
       });
     }
   });

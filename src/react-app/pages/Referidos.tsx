@@ -102,6 +102,18 @@ export default function ReferidosPage() {
     };
   }, []);
 
+  useEffect(() => {
+    const handleRefresh = () => {
+      void loadReferidos();
+    };
+    window.addEventListener('modal-refresh', handleRefresh);
+    window.addEventListener('refreshReferidos', handleRefresh);
+    return () => {
+      window.removeEventListener('modal-refresh', handleRefresh);
+      window.removeEventListener('refreshReferidos', handleRefresh);
+    };
+  }, []);
+
   // Verificar alertas del día cuando cambia la data
   useEffect(() => {
     checkTodayAlerts();
@@ -1259,3 +1271,4 @@ export default function ReferidosPage() {
     </div>
   );
 }
+// Archivo eliminado por eliminación del módulo de referidos

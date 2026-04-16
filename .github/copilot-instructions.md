@@ -4,26 +4,31 @@
 
 **Estas reglas deben seguirse SIEMPRE sin excepción:**
 
-1. **VERSIÓN OBLIGATORIA**: NUNCA desplegar sin actualizar versión en `src/version.ts` primero
+1. **NUNCA TRABAJAR EN LOCAL**: NO iniciar `npm run dev` ni servidores locales. El proyecto se prueba SIEMPRE en el servidor de producción (143.244.191.139 / crmp.ss-group.cloud).
+   - Después de editar código: `npm run build` → deploy al servidor → verificar en el dominio
+   - NUNCA sugerir "prueba en localhost" ni abrir puertos locales
+   - El flujo es: editar → build → scp → verificar en producción
+
+2. **VERSIÓN OBLIGATORIA**: NUNCA desplegar sin actualizar versión en `src/version.ts` primero
    - Incrementar versión ANTES de `npm run build`
    - Formato: `X.Y.Z-DESCRIPCION-CORTA`
    - Ejemplo: `5.2.3-FIX-REPORTES`
 
-2. **VERIFICACIÓN POST-DEPLOY**: Después de desplegar, SIEMPRE verificar que la versión subió
+3. **VERIFICACIÓN POST-DEPLOY**: Después de desplegar, SIEMPRE verificar que la versión subió
    - Ejecutar: `ssh root@143.244.191.139 "curl -s http://localhost:3001/api/version"`
    - Confirmar que muestra la nueva versión ANTES de decir "listo"
    - Si no coincide, investigar y corregir
 
-3. **NO PEDIR DISCULPAS**: Nunca escribir "perdón por no darlo", "disculpa", "lo siento"
+4. **NO PEDIR DISCULPAS**: Nunca escribir "perdón por no darlo", "disculpa", "lo siento"
    - Ser directo y profesional
    - Reconocer errores con "arreglado", "corregido", "actualizado"
 
-4. **PROBAR ANTES DE ENTREGAR**: Verificar lógica antes de mostrar código al usuario
+5. **PROBAR ANTES DE ENTREGAR**: Verificar lógica antes de mostrar código al usuario
    - Para cambios de BD: ejecutar query de prueba primero
    - Para lógica compleja: revisar casos edge
    - Para cálculos: validar con datos reales
 
-5. **DEPLOYMENT COMPLETO**: Verificar TODOS los pasos se completaron
+6. **DEPLOYMENT COMPLETO**: Verificar TODOS los pasos se completaron
    - ✓ Versión actualizada
    - ✓ Build exitoso
    - ✓ Archivos copiados (frontend Y backend si aplica)

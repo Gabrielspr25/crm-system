@@ -1,6 +1,26 @@
 import { query } from '../database/db.js';
 import { serverError, badRequest, notFound } from '../middlewares/errorHandler.js';
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const isValidUuid = (value) => typeof value === 'string' && UUID_REGEX.test(value);
+
+const resolveSalespersonIdFromVendor = async (vendorId) => {
+    if (vendorId === null || vendorId === undefined || vendorId === '') return null;
+
+    try {
+        const rows = await query(
+            'SELECT salesperson_id FROM vendor_salesperson_mapping WHERE vendor_id = $1 LIMIT 1',
+            [vendorId]
+        );
+        return rows?.[0]?.salesperson_id || null;
+    } catch (error) {
+        // Tabla de mapping ausente en algÃºn entorno
+        if (error?.code === '42P01') return null;
+        throw error;
+    }
+};
+
 export const mergeClients = async (req, res) => {
     const { sourceId, targetId } = req.body;
 
@@ -49,15 +69,58 @@ export const searchClients = async (req, res) => {
 
     try {
         const searchTerm = `%${q}%`;
+        const params = [searchTerm];
         const clients = await query(
-            `SELECT DISTINCT c.* 
+            `SELECT c.*,
+                    (SELECT COUNT(*) FROM bans b WHERE b.client_id = c.id AND (b.status = 'A' OR LOWER(b.status) = 'activo')) as active_ban_count,
+                    (SELECT COUNT(*) FROM bans b WHERE b.client_id = c.id AND (b.status = 'C' OR LOWER(b.status) = 'inactivo')) as cancelled_ban_count,
+                    (SELECT COUNT(*) FROM bans b WHERE b.client_id = c.id) as ban_count,
+                    (SELECT COUNT(*) FROM subscribers s JOIN bans b ON s.ban_id = b.id WHERE b.client_id = c.id AND COALESCE(LOWER(s.status), 'activo') NOT IN ('cancelado', 'cancelled', 'no_renueva_ahora')) as active_subscriber_count,
+                    (SELECT COUNT(*) FROM subscribers s JOIN bans b ON s.ban_id = b.id WHERE b.client_id = c.id) as subscriber_count,
+                    (SELECT string_agg(CAST(s.phone AS text), ', ') FROM subscribers s JOIN bans b ON s.ban_id = b.id WHERE b.client_id = c.id) as subscriber_phones,
+                    (
+                        SELECT json_agg(json_build_object(
+                            'ban_number', CAST(b.ban_number AS text),
+                            'phone', CAST(s.phone AS text)
+                        ))
+                        FROM bans b
+                        JOIN subscribers s ON s.ban_id = b.id
+                        WHERE b.client_id = c.id
+                    ) as subscribers_detail,
+                    (SELECT string_agg(CAST(b.ban_number AS text), ', ') FROM bans b WHERE b.client_id = c.id) as ban_numbers,
+                    (SELECT COUNT(*) > 0 FROM bans b WHERE b.client_id = c.id) as has_bans,
+                    (SELECT COUNT(*) > 0 FROM bans b WHERE b.client_id = c.id AND b.status = 'C') as has_cancelled_bans,
+                    (SELECT s.phone FROM subscribers s JOIN bans b ON s.ban_id = b.id WHERE b.client_id = c.id AND COALESCE(LOWER(s.status), 'activo') NOT IN ('cancelado', 'cancelled', 'no_renueva_ahora') ORDER BY s.contract_end_date ASC NULLS LAST LIMIT 1) as primary_subscriber_phone,
+                    (SELECT MIN(s.contract_end_date) FROM subscribers s JOIN bans b ON s.ban_id = b.id WHERE b.client_id = c.id AND s.contract_end_date IS NOT NULL AND COALESCE(LOWER(s.status), 'activo') NOT IN ('cancelado', 'cancelled', 'no_renueva_ahora')) as primary_contract_end_date,
+                    (SELECT MIN(s.created_at) FROM subscribers s JOIN bans b ON s.ban_id = b.id WHERE b.client_id = c.id) as primary_subscriber_created_at,
+                    (SELECT b.account_type FROM bans b WHERE b.client_id = c.id AND (b.status = 'A' OR LOWER(b.status) = 'activo') LIMIT 1) as primary_service_type,
+                    (SELECT string_agg(DISTINCT b.account_type, ', ') FROM bans b WHERE b.client_id = c.id AND b.account_type IS NOT NULL) as all_service_types,
+                    sp.name as vendor_name,
+                    (SELECT MAX(GREATEST(COALESCE(s2.updated_at, s2.created_at), COALESCE(b2.updated_at, b2.created_at))) FROM subscribers s2 JOIN bans b2 ON s2.ban_id = b2.id WHERE b2.client_id = c.id) as last_activity
              FROM clients c
-             LEFT JOIN bans b ON c.id = b.client_id
-             WHERE c.name ILIKE $1 
-                OR c.email ILIKE $1 
-                OR CAST(b.ban_number AS text) ILIKE $1
-             LIMIT 20`,
-            [searchTerm]
+             LEFT JOIN salespeople sp ON sp.id = c.salesperson_id
+             WHERE (
+               COALESCE(c.name, '') ILIKE $1
+               OR COALESCE(c.business_name, '') ILIKE $1
+               OR COALESCE(c.email, '') ILIKE $1
+               OR COALESCE(c.phone, '') ILIKE $1
+               OR COALESCE(c.additional_phone, '') ILIKE $1
+               OR COALESCE(c.cellular, '') ILIKE $1
+               OR COALESCE(c.contact_person, '') ILIKE $1
+               OR COALESCE(c.address, '') ILIKE $1
+               OR COALESCE(c.city, '') ILIKE $1
+               OR EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id AND CAST(b.ban_number AS text) ILIKE $1)
+               OR EXISTS (
+                    SELECT 1
+                    FROM subscribers s
+                    JOIN bans b ON s.ban_id = b.id
+                    WHERE b.client_id = c.id
+                      AND CAST(s.phone AS text) ILIKE $1
+               )
+             )
+             ORDER BY c.created_at DESC
+             LIMIT 100`,
+            params
         );
         res.json(clients);
     } catch (error) {
@@ -78,14 +141,28 @@ export const getClients = async (req, res) => {
             conditions.push(`NOT EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id AND (b.status = 'A' OR LOWER(b.status) = 'activo'))`);
             conditions.push(`(c.name IS NOT NULL AND c.name != '' AND c.name != 'NULL')`);
         } else if (tab === 'active' || !tab) {
-            // ACTIVOS: Clientes CON AL MENOS UN BAN ACTIVO O sin BANs (recién creados)
+            // ACTIVOS: Clientes CON AL MENOS UN BAN ACTIVO O sin BANs (reciÃ©n creados)
+            // EXCLUIR clientes que estÃ¡n en seguimiento activo
             conditions.push(`(
                 EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id AND (b.status = 'A' OR LOWER(b.status) = 'activo'))
                 OR NOT EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id)
             )`);
             conditions.push(`(c.name IS NOT NULL AND c.name != '' AND c.name != 'NULL')`);
+            conditions.push(`NOT EXISTS (
+                SELECT 1
+                FROM follow_up_prospects f
+                WHERE f.client_id = c.id
+                  AND f.completed_date IS NULL
+                  AND COALESCE(f.is_active::text, 'true') IN ('true', '1', 't')
+            )`);
         } else if (tab === 'following') {
-            conditions.push(`EXISTS (SELECT 1 FROM follow_up_prospects f WHERE f.client_id = c.id AND f.completed_date IS NULL)`);
+            conditions.push(`EXISTS (
+                SELECT 1
+                FROM follow_up_prospects f
+                WHERE f.client_id = c.id
+                  AND f.completed_date IS NULL
+                  AND COALESCE(f.is_active::text, 'true') IN ('true', '1', 't')
+            )`);
             conditions.push(`EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id)`);
         } else if (tab === 'completed') {
             conditions.push(`EXISTS (SELECT 1 FROM follow_up_prospects f WHERE f.client_id = c.id AND f.completed_date IS NOT NULL)`);
@@ -100,7 +177,7 @@ export const getClients = async (req, res) => {
             (SELECT COUNT(*) FROM bans b WHERE b.client_id = c.id AND (b.status = 'A' OR LOWER(b.status) = 'activo')) as active_ban_count,
             (SELECT COUNT(*) FROM bans b WHERE b.client_id = c.id AND (b.status = 'C' OR LOWER(b.status) = 'inactivo')) as cancelled_ban_count,
             (SELECT COUNT(*) FROM bans b WHERE b.client_id = c.id) as ban_count,
-            (SELECT COUNT(*) FROM subscribers s JOIN bans b ON s.ban_id = b.id WHERE b.client_id = c.id) as active_subscriber_count,
+            (SELECT COUNT(*) FROM subscribers s JOIN bans b ON s.ban_id = b.id WHERE b.client_id = c.id AND COALESCE(LOWER(s.status), 'activo') NOT IN ('cancelado', 'cancelled', 'no_renueva_ahora')) as active_subscriber_count,
             (SELECT COUNT(*) FROM subscribers s JOIN bans b ON s.ban_id = b.id WHERE b.client_id = c.id) as subscriber_count,
             (SELECT string_agg(CAST(s.phone AS text), ', ') FROM subscribers s JOIN bans b ON s.ban_id = b.id WHERE b.client_id = c.id) as subscriber_phones,
             (
@@ -115,8 +192,8 @@ export const getClients = async (req, res) => {
             (SELECT string_agg(CAST(b.ban_number AS text), ', ') FROM bans b WHERE b.client_id = c.id) as ban_numbers,
             (SELECT COUNT(*) > 0 FROM bans b WHERE b.client_id = c.id) as has_bans,
             (SELECT COUNT(*) > 0 FROM bans b WHERE b.client_id = c.id AND b.status = 'C') as has_cancelled_bans,
-            (SELECT s.phone FROM subscribers s JOIN bans b ON s.ban_id = b.id WHERE b.client_id = c.id ORDER BY s.contract_end_date ASC NULLS LAST LIMIT 1) as primary_subscriber_phone,
-            (SELECT MIN(s.contract_end_date) FROM subscribers s JOIN bans b ON s.ban_id = b.id WHERE b.client_id = c.id AND s.contract_end_date IS NOT NULL) as primary_contract_end_date,
+            (SELECT s.phone FROM subscribers s JOIN bans b ON s.ban_id = b.id WHERE b.client_id = c.id AND COALESCE(LOWER(s.status), 'activo') NOT IN ('cancelado', 'cancelled', 'no_renueva_ahora') ORDER BY s.contract_end_date ASC NULLS LAST LIMIT 1) as primary_subscriber_phone,
+            (SELECT MIN(s.contract_end_date) FROM subscribers s JOIN bans b ON s.ban_id = b.id WHERE b.client_id = c.id AND s.contract_end_date IS NOT NULL AND COALESCE(LOWER(s.status), 'activo') NOT IN ('cancelado', 'cancelled', 'no_renueva_ahora')) as primary_contract_end_date,
             (SELECT MIN(s.created_at) FROM subscribers s JOIN bans b ON s.ban_id = b.id WHERE b.client_id = c.id) as primary_subscriber_created_at,
             (SELECT b.account_type FROM bans b WHERE b.client_id = c.id AND (b.status = 'A' OR LOWER(b.status) = 'activo') LIMIT 1) as primary_service_type,
             (SELECT string_agg(DISTINCT b.account_type, ', ') FROM bans b WHERE b.client_id = c.id AND b.account_type IS NOT NULL) as all_service_types,
@@ -137,18 +214,34 @@ export const getClients = async (req, res) => {
                    EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id AND b.status = 'A')
                    OR NOT EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id)
                  )
-                 AND (c.name IS NOT NULL AND c.name <> '' AND c.name <> 'NULL')) as active_count,
+                 AND (c.name IS NOT NULL AND c.name <> '' AND c.name <> 'NULL')
+                 AND NOT EXISTS (
+                   SELECT 1
+                   FROM follow_up_prospects f
+                   WHERE f.client_id = c.id
+                     AND f.completed_date IS NULL
+                     AND COALESCE(f.is_active::text, 'true') IN ('true', '1', 't')
+                 )) as active_count,
                 (SELECT COUNT(DISTINCT c.id) FROM clients c 
                  WHERE EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id AND b.status = 'C')
                  AND NOT EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id AND (b.status = 'A' OR LOWER(b.status) = 'activo'))
                  AND (c.name IS NOT NULL AND c.name <> '' AND c.name <> 'NULL')) as cancelled_count,
                 (SELECT COUNT(DISTINCT c.id) FROM clients c
-                 WHERE EXISTS (SELECT 1 FROM follow_up_prospects f WHERE f.client_id = c.id AND f.completed_date IS NULL)) as following_count,
+                 WHERE EXISTS (
+                   SELECT 1
+                   FROM follow_up_prospects f
+                   WHERE f.client_id = c.id
+                     AND f.completed_date IS NULL
+                     AND COALESCE(f.is_active::text, 'true') IN ('true', '1', 't')
+                 )
+                 ) as following_count,
                 (SELECT COUNT(DISTINCT c.id) FROM clients c
-                 WHERE EXISTS (SELECT 1 FROM follow_up_prospects f WHERE f.client_id = c.id AND f.completed_date IS NOT NULL)) as completed_count,
+                 WHERE EXISTS (SELECT 1 FROM follow_up_prospects f WHERE f.client_id = c.id AND f.completed_date IS NOT NULL)
+                 ) as completed_count,
                 (SELECT COUNT(DISTINCT c.id) FROM clients c 
-                 WHERE (c.name IS NULL OR c.name = '' OR c.name = 'NULL')) as incomplete_count
-        `);
+                 WHERE (c.name IS NULL OR c.name = '' OR c.name = 'NULL')
+                 ) as incomplete_count
+        `, []);
 
         res.json({
             clients: clients,
@@ -184,6 +277,8 @@ export const createClient = async (req, res) => {
         address = null,
         city = null,
         zip_code = null,
+        tax_id = null,
+        notes = null,
         includes_ban = 0,
         vendor_id = null
     } = req.body;
@@ -193,14 +288,28 @@ export const createClient = async (req, res) => {
     }
 
     try {
-        const salespersonId = req.user?.salespersonId || null;
+        let salespersonId = req.user?.salespersonId || null;
+        const requestedSalespersonId = typeof req.body?.salesperson_id === 'string'
+            ? req.body.salesperson_id.trim()
+            : null;
 
-        // VALIDACIÓN OBLIGATORIA: Vendedor debe estar asignado
-        if (!salespersonId) {
-            return badRequest(res, 'Vendedor asignado es obligatorio. No se puede crear un cliente sin vendedor.');
+        // Si no viene desde token (admin/supervisor), usar salesperson_id enviado por frontend.
+        if (!salespersonId && requestedSalespersonId && isValidUuid(requestedSalespersonId)) {
+            salespersonId = requestedSalespersonId;
         }
 
-        // VALIDACIÓN: Verificar que no exista un cliente con el mismo nombre
+        // Fallback legacy: vendor_id (int) -> salesperson_id (uuid)
+        if (!salespersonId && vendor_id !== null && vendor_id !== undefined) {
+            salespersonId = await resolveSalespersonIdFromVendor(vendor_id);
+        }
+
+        // Regla operativa: se pueden crear clientes sin vendedor.
+        // Solo persistimos salesperson_id si realmente es un UUID valido.
+        if (salespersonId && !isValidUuid(String(salespersonId))) {
+            salespersonId = null;
+        }
+
+        // VALIDACIÃ“N: Verificar que no exista un cliente con el mismo nombre
         const existingClient = await query(
             'SELECT id, name FROM clients WHERE UPPER(TRIM(name)) = UPPER(TRIM($1))',
             [name]
@@ -215,8 +324,8 @@ export const createClient = async (req, res) => {
 
         const result = await query(
             `INSERT INTO clients
-        (owner_name, name, contact_person, email, phone, additional_phone, cellular, address, city, zip_code, salesperson_id, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),NOW())
+        (owner_name, name, contact_person, email, phone, additional_phone, cellular, address, city, zip_code, tax_id, notes, includes_ban, salesperson_id, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW(),NOW())
        RETURNING *`,
             [
                 owner_name?.trim() || null,
@@ -229,7 +338,10 @@ export const createClient = async (req, res) => {
                 address,
                 city,
                 zip_code,
-                salespersonId
+                tax_id?.trim?.() || tax_id || null,
+                notes,
+                Boolean(includes_ban),
+                salespersonId || null
             ]
         );
 
@@ -252,26 +364,57 @@ export const updateClient = async (req, res) => {
         address,
         city,
         zip_code,
+        tax_id,
+        notes,
         includes_ban,
         vendor_id,
         salesperson_id
     } = req.body;
 
     try {
-        const existing = await query('SELECT id FROM clients WHERE id = $1', [id]);
+        if (req.user?.role === 'vendedor' && !req.user?.salespersonId) {
+            return res.status(403).json({ error: 'Usuario vendedor sin vendedor asignado' });
+        }
+        const existing = await query('SELECT id, salesperson_id FROM clients WHERE id = $1', [id]);
         if (existing.length === 0) {
             return notFound(res, 'Cliente');
         }
+        if (req.user?.role === 'vendedor' && req.user?.salespersonId) {
+            const owner = existing[0].salesperson_id;
+            const isOwnedByOther = owner && String(owner) !== String(req.user.salespersonId);
+            if (isOwnedByOther) {
+                return res.status(403).json({ error: 'No tienes acceso a este cliente' });
+            }
+        }
 
-        // Si se envía salesperson_id explícitamente (puede ser null para desasignar)
-        const hasSalespersonUpdate = 'salesperson_id' in req.body;
+        // Si se envÃ­a salesperson_id explÃ­citamente (puede ser null para desasignar)
+        const hasSalespersonUpdate = ('salesperson_id' in req.body) || ('vendor_id' in req.body);
 
-        // Validar que salesperson_id sea UUID válido (no integer legacy)
-        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-        let safeSalespersonId = salesperson_id || null;
-        if (safeSalespersonId && !uuidRegex.test(safeSalespersonId)) {
-            console.warn(`⚠️ salesperson_id no es UUID válido: "${safeSalespersonId}" — ignorando`);
+        let safeSalespersonId = null;
+        if (typeof salesperson_id === 'string' && salesperson_id.trim() !== '') {
+            safeSalespersonId = salesperson_id.trim();
+        }
+
+        if (safeSalespersonId && !isValidUuid(safeSalespersonId)) {
+            console.warn(`salesperson_id no es UUID válido: "${safeSalespersonId}" — se intentará mapear por vendor_id`);
             safeSalespersonId = null;
+        }
+
+        // Fallback legacy: vendor_id (int) -> salesperson_id (uuid)
+        if (!safeSalespersonId && vendor_id !== null && vendor_id !== undefined && vendor_id !== '') {
+            safeSalespersonId = await resolveSalespersonIdFromVendor(vendor_id);
+        }
+
+        // Para vendedores:
+        // - si intentan asignar otro vendedor, se mantiene su propio salesperson_id.
+        // - si envían explícitamente salesperson_id: null, se permite desasignar (devolver al pool).
+        if (req.user?.role === 'vendedor' && req.user?.salespersonId && isValidUuid(String(req.user.salespersonId))) {
+            const salespersonSent = Object.prototype.hasOwnProperty.call(req.body, 'salesperson_id');
+            if (!salespersonSent) {
+                safeSalespersonId = String(req.user.salespersonId);
+            } else if (salesperson_id !== null) {
+                safeSalespersonId = String(req.user.salespersonId);
+            }
         }
 
         let result;
@@ -288,13 +431,18 @@ export const updateClient = async (req, res) => {
                   address = COALESCE($8, address),
                   city = COALESCE($9, city),
                   zip_code = COALESCE($10, zip_code),
-                  salesperson_id = $11,
+                  tax_id = COALESCE($11, tax_id),
+                  notes = COALESCE($12, notes),
+                  includes_ban = COALESCE($13, includes_ban),
+                  salesperson_id = $14,
                   updated_at = NOW()
-            WHERE id = $12
+            WHERE id = $15
             RETURNING *`,
                 [
                     owner_name, name, contact_person, email, phone, additional_phone, cellular,
-                    address, city, zip_code, safeSalespersonId, id
+                    address, city, zip_code, tax_id, notes,
+                    includes_ban === undefined ? null : Boolean(includes_ban),
+                    safeSalespersonId, id
                 ]
             );
         } else {
@@ -310,12 +458,17 @@ export const updateClient = async (req, res) => {
                   address = COALESCE($8, address),
                   city = COALESCE($9, city),
                   zip_code = COALESCE($10, zip_code),
+                  tax_id = COALESCE($11, tax_id),
+                  notes = COALESCE($12, notes),
+                  includes_ban = COALESCE($13, includes_ban),
                   updated_at = NOW()
-            WHERE id = $11
+            WHERE id = $14
             RETURNING *`,
                 [
                     owner_name, name, contact_person, email, phone, additional_phone, cellular,
-                    address, city, zip_code, id
+                    address, city, zip_code, tax_id, notes,
+                    includes_ban === undefined ? null : Boolean(includes_ban),
+                    id
                 ]
             );
         }
@@ -323,6 +476,26 @@ export const updateClient = async (req, res) => {
         res.json(result[0]);
     } catch (error) {
         serverError(res, error, 'Error actualizando cliente');
+    }
+};
+
+/**
+ * PATCH /api/clients/:id/mark-checked
+ * Marca un cliente como "actualizado" con timestamp
+ */
+export const markClientChecked = async (req, res) => {
+    const { id } = req.params;
+    try {
+        const result = await query(
+            'UPDATE clients SET last_checked_at = NOW() WHERE id = $1 RETURNING id, last_checked_at',
+            [id]
+        );
+        if (result.length === 0) {
+            return notFound(res, 'Cliente');
+        }
+        res.json({ success: true, last_checked_at: result[0].last_checked_at });
+    } catch (error) {
+        serverError(res, error, 'Error marcando cliente como actualizado');
     }
 };
 
@@ -352,3 +525,6 @@ export const checkDuplicateClient = async (req, res) => {
         serverError(res, error, 'Error verificando duplicado');
     }
 };
+
+
+

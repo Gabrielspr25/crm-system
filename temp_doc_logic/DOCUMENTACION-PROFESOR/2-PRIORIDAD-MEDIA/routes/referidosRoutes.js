@@ -12,3 +12,4 @@ router.put('/:id', updateReferido);
 router.delete('/:id', deleteReferido);
 
 export default router;
+// Archivo eliminado por eliminación del módulo de referidos

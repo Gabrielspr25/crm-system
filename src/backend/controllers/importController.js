@@ -1,4 +1,4 @@
-import { query, getClient } from '../database/db.js';
+﻿import { query, getClient } from '../database/db.js';
 import { serverError, badRequest } from '../middlewares/errorHandler.js';
 import * as XLSX from 'xlsx';
 import * as path from 'path';
@@ -28,6 +28,9 @@ export const saveImportData = async (req, res) => {
     let omittedReasons = [];
     let createdClients = [];
     let clientSalesStats = new Map();
+    // NUEVO: Duplicados detectados en el lote y en la BD
+    let duplicadosLote = [];
+    let duplicadosBD = [];
 
     // PROCESAMIENTO EN LOTES
     const BATCH_SIZE = 100;
@@ -36,6 +39,20 @@ export const saveImportData = async (req, res) => {
     console.log(`[SAVE] Procesando ${data.length} filas en ${totalBatches} lotes de ${BATCH_SIZE}`);
 
     try {
+        // Pre-chequeo de duplicados en el lote (por ban_number y phone)
+        const seen = new Set();
+        for (const row of data) {
+            const ban = row?.BANs?.ban_number || '';
+            const phone = row?.Suscriptores?.phone || '';
+            if (ban && phone) {
+                const key = `${ban}__${phone}`;
+                if (seen.has(key)) {
+                    duplicadosLote.push({ ban_number: ban, phone });
+                } else {
+                    seen.add(key);
+                }
+            }
+        }
         // Procesar en lotes
         for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
             const start = batchIndex * BATCH_SIZE;
@@ -65,7 +82,7 @@ export const saveImportData = async (req, res) => {
                         const accountType = String(banData.account_type || '').trim();
                         const phone = String(subData.phone || '').trim();
 
-                        // Mapeo de status a 1 carácter (A=Activo, C=Cancelado)
+                        // Mapeo de status a 1 carÃ¡cter (A=Activo, C=Cancelado)
                         const rawStatus = String(banData.status || '').trim().toUpperCase();
                         let banStatusValue = null;
                         if (rawStatus === 'A' || rawStatus.startsWith('ACTIV')) {
@@ -73,19 +90,33 @@ export const saveImportData = async (req, res) => {
                         } else if (rawStatus === 'C' || rawStatus.startsWith('CANCEL') || rawStatus.startsWith('CERR')) {
                             banStatusValue = 'C';
                         } else if (rawStatus && rawStatus.length === 1) {
-                            banStatusValue = rawStatus; // Ya es 1 carácter
+                            banStatusValue = rawStatus; // Ya es 1 carÃ¡cter
                         }
                         // Si no coincide con nada, queda null
 
+
                         if (!banNumber) {
                             omitted++;
-                            omittedReasons.push(`Fila ${processed}: Falta número BAN`);
+                            omittedReasons.push(`Fila ${processed}: Falta nÃºmero BAN`);
                             continue;
                         }
 
                         if (!phone) {
                             omitted++;
-                            omittedReasons.push(`Fila ${processed}: Falta teléfono del suscriptor`);
+                            omittedReasons.push(`Fila ${processed}: Falta telÃ©fono del suscriptor`);
+                            continue;
+                        }
+
+                        // Chequeo de duplicados en BD antes de insertar/actualizar
+                        const dupCheck = await client.query(
+                            'SELECT id FROM subscribers WHERE ban_id = (SELECT id FROM bans WHERE ban_number = $1) AND phone = $2',
+                            [banNumber, phone]
+                        );
+                        if (dupCheck.rows.length > 1) {
+                            duplicadosBD.push({ ban_number: banNumber, phone });
+                            // No insertar ni actualizar duplicado
+                            omitted++;
+                            omittedReasons.push(`Fila ${processed}: Duplicado en BD (ban_number: ${banNumber}, phone: ${phone})`);
                             continue;
                         }
 
@@ -118,7 +149,7 @@ export const saveImportData = async (req, res) => {
                                 const vendorRes = await client.query('SELECT id FROM vendors WHERE name ILIKE $1', [vendorName]);
                                 if (vendorRes.rows.length > 0) {
                                     finalVendorId = vendorRes.rows[0].id;
-                                    // Mapear vendor_id → salesperson_id
+                                    // Mapear vendor_id â†’ salesperson_id
                                     const mappingRes = await client.query(
                                         'SELECT salesperson_id FROM vendor_salesperson_mapping WHERE vendor_id = $1',
                                         [finalVendorId]
@@ -191,7 +222,7 @@ export const saveImportData = async (req, res) => {
                                 );
                             }
 
-                            // Campo is_active no existe en bans, se eliminó esta actualización
+                            // Campo is_active no existe en bans, se eliminÃ³ esta actualizaciÃ³n
 
                             updated++;
                         } else {
@@ -209,7 +240,7 @@ export const saveImportData = async (req, res) => {
                                 const vendorRes = await client.query('SELECT id FROM vendors WHERE name ILIKE $1', [vendorName]);
                                 if (vendorRes.rows.length > 0) {
                                     finalVendorId = vendorRes.rows[0].id;
-                                    // Mapear vendor_id → salesperson_id
+                                    // Mapear vendor_id â†’ salesperson_id
                                     const mappingRes = await client.query(
                                         'SELECT salesperson_id FROM vendor_salesperson_mapping WHERE vendor_id = $1',
                                         [finalVendorId]
@@ -229,13 +260,6 @@ export const saveImportData = async (req, res) => {
                                 if (existingClient.rows.length > 0) {
                                     clientId = existingClient.rows[0].id;
                                 } else {
-                                    // VALIDACIÓN OBLIGATORIA: No permitir crear cliente sin vendedor
-                                    if (!finalSalespersonId) {
-                                        omitted++;
-                                        omittedReasons.push(`Fila ${processed}: Cliente "${clientName}" no tiene vendedor asignado. Vendor/Salesperson es obligatorio.`);
-                                        continue;
-                                    }
-
                                     const newClient = await client.query(
                                         `INSERT INTO clients (name, owner_name, contact_person, email, phone, additional_phone, cellular, address, city, zip_code, tax_id, salesperson_id, created_at, updated_at)
                                          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
@@ -252,7 +276,7 @@ export const saveImportData = async (req, res) => {
                                             clientData.city || null,
                                             clientData.zip_code || null,
                                             clientData.tax_id || null,
-                                            finalSalespersonId // UUID mapeado
+                                            finalSalespersonId || null
                                         ]
                                     );
                                     clientId = newClient.rows[0].id;
@@ -429,11 +453,11 @@ export const saveImportData = async (req, res) => {
                 }
 
                 await client.query('COMMIT');
-                console.log(`[SAVE] ✓ Lote ${batchIndex + 1}/${totalBatches} completado`);
+                console.log(`[SAVE] âœ“ Lote ${batchIndex + 1}/${totalBatches} completado`);
 
             } catch (error) {
                 await client.query('ROLLBACK');
-                console.error(`[SAVE] ✗ Error en lote ${batchIndex + 1}:`, error);
+                console.error(`[SAVE] âœ— Error en lote ${batchIndex + 1}:`, error);
                 errors.push(`Error en lote ${batchIndex + 1}: ${error.message}`);
                 // Continuar con el siguiente lote en lugar de abortar todo
             } finally {
@@ -446,13 +470,15 @@ export const saveImportData = async (req, res) => {
 
         res.json({
             success: true,
-            message: 'Importación completada',
+            message: 'ImportaciÃ³n completada',
             details: {
                 processed,
                 created,
                 updated,
                 omitted,
                 omittedReasons: omittedReasons.slice(0, 20),
+                duplicadosLote,
+                duplicadosBD,
                 errors: errors.length,
                 errorList: errors.slice(0, 10),
                 createdClients,
@@ -464,7 +490,7 @@ export const saveImportData = async (req, res) => {
         });
 
     } catch (error) {
-        serverError(res, error, 'Error en importación masiva');
+        serverError(res, error, 'Error en importaciÃ³n masiva');
     }
 };
 
@@ -486,45 +512,140 @@ export const simulateImportData = async (req, res) => {
     let incompletos = 0;
     let cancelados = 0;
 
-    const client = await getClient();
-
     try {
-        for (const row of data) {
+        const now = new Date();
+        const stamp = now.toISOString().replace(/[-:TZ.]/g, '').slice(0, 14);
+        const rand = Math.random().toString(36).slice(2, 8).toUpperCase();
+        const runId = `IMP-${stamp}-${rand}`;
+
+        const importables = [];
+        const excluded = [];
+        const groupedByAccountType = {};
+        const groupedByLineType = {};
+        const groupedByPlan = {};
+        const groupedByVendor = {};
+        const plansWithoutCost = {};
+
+        for (let index = 0; index < data.length; index++) {
+            const row = data[index];
             const clientData = row.Clientes || {};
             const banData = row.BANs || {};
             const subData = row.Suscriptores || {};
 
             const clientName = String(clientData.name || '').trim();
-            const banStatusValue = String(banData.status || '').trim().toUpperCase();
+            const banNumber = String(banData.ban_number || '').trim();
+            const phone = String(subData.phone || '').trim();
+            const rawStatus = String(banData.status || '').trim().toUpperCase();
+            const accountType = String(banData.account_type || '').trim() || 'SIN_TIPO';
+            const lineType = String(subData.line_type || subData.type || '').trim().toUpperCase() || 'SIN_TIPO';
+            const plan = String(subData.plan || subData.codigovoz || '').trim() || 'SIN_PLAN';
+            const vendor = String(clientData.salesperson_id || clientData.vendor_id || '').trim() || 'SIN_VENDEDOR';
+            const base = String(clientData.base || '').trim() || 'SIN_BASE';
 
-            if (banStatusValue === 'C') {
+            const monthlyValueRaw = subData.monthly_value;
+            const monthlyValue = monthlyValueRaw === null || monthlyValueRaw === undefined || monthlyValueRaw === ''
+                ? null
+                : Number(monthlyValueRaw);
+
+            const isCancelled = rawStatus === 'C' || rawStatus.startsWith('CANCEL') || rawStatus.startsWith('CERR');
+            const isIncomplete = !clientName || !banNumber || !phone;
+
+            const rowSummary = {
+                row_number: index + 1,
+                company_name: clientName || null,
+                ban_number: banNumber || null,
+                phone: phone || null,
+                account_type: accountType,
+                line_type: lineType,
+                plan,
+                monthly_value: Number.isFinite(monthlyValue) ? monthlyValue : null,
+                vendor,
+                base
+            };
+
+            if (isCancelled) {
                 cancelados++;
-            } else {
-                if (clientName) {
-                    disponibles++;
-                } else {
-                    incompletos++;
+                excluded.push({
+                    import_item_id: `${runId}-X-${String(excluded.length + 1).padStart(5, '0')}`,
+                    reason: 'cancelado',
+                    ...rowSummary
+                });
+                continue;
+            }
+
+            if (isIncomplete) {
+                incompletos++;
+                const missingFields = [];
+                if (!clientName) missingFields.push('empresa');
+                if (!banNumber) missingFields.push('ban');
+                if (!phone) missingFields.push('suscriptor');
+                const importItem = {
+                    import_item_id: `${runId}-I-${String(importables.length + 1).padStart(5, '0')}`,
+                    is_incomplete: true,
+                    missing_fields: missingFields,
+                    ...rowSummary
+                };
+                importables.push(importItem);
+
+                groupedByAccountType[accountType] = (groupedByAccountType[accountType] || 0) + 1;
+                groupedByLineType[lineType] = (groupedByLineType[lineType] || 0) + 1;
+                groupedByPlan[plan] = (groupedByPlan[plan] || 0) + 1;
+                groupedByVendor[vendor] = (groupedByVendor[vendor] || 0) + 1;
+
+                if (!Number.isFinite(monthlyValue)) {
+                    plansWithoutCost[plan] = (plansWithoutCost[plan] || 0) + 1;
                 }
+                continue;
+            }
+
+            disponibles++;
+            const importItem = {
+                import_item_id: `${runId}-I-${String(importables.length + 1).padStart(5, '0')}`,
+                ...rowSummary
+            };
+            importables.push(importItem);
+
+            groupedByAccountType[accountType] = (groupedByAccountType[accountType] || 0) + 1;
+            groupedByLineType[lineType] = (groupedByLineType[lineType] || 0) + 1;
+            groupedByPlan[plan] = (groupedByPlan[plan] || 0) + 1;
+            groupedByVendor[vendor] = (groupedByVendor[vendor] || 0) + 1;
+
+            if (!Number.isFinite(monthlyValue)) {
+                plansWithoutCost[plan] = (plansWithoutCost[plan] || 0) + 1;
             }
         }
+
+        const sortEntriesDesc = (obj) =>
+            Object.entries(obj)
+                .sort((a, b) => Number(b[1]) - Number(a[1]))
+                .map(([key, count]) => ({ key, count: Number(count) }));
 
         res.json({
             success: true,
             report: {
+                run_id: runId,
                 disponibles,
                 incompletos,
                 cancelados,
-                total: disponibles + incompletos + cancelados
+                total: disponibles + incompletos + cancelados,
+                importables_count: importables.length,
+                excluded_count: excluded.length,
+                grouped: {
+                    account_type: sortEntriesDesc(groupedByAccountType),
+                    line_type: sortEntriesDesc(groupedByLineType),
+                    plan: sortEntriesDesc(groupedByPlan),
+                    vendor: sortEntriesDesc(groupedByVendor)
+                },
+                plans_without_cost: sortEntriesDesc(plansWithoutCost),
+                importables,
+                excluded
             }
         });
 
     } catch (error) {
         serverError(res, error, 'Error en simulación');
-    } finally {
-        client.release();
     }
 };
-
 export const getExcelColumns = async (req, res) => {
     try {
         const excelsDir = path.join(__dirname, '../../..', 'elementos_extra', 'excels');
@@ -535,7 +656,7 @@ export const getExcelColumns = async (req, res) => {
             const files = fs.readdirSync(excelsDir).filter(f => f.toLowerCase().endsWith('.xlsx'));
             if (files.length === 0) {
                 return res.status(404).json({
-                    error: 'No se encontró ningún Excel en la carpeta',
+                    error: 'No se encontrÃ³ ningÃºn Excel en la carpeta',
                     path: excelsDir
                 });
             }
@@ -571,3 +692,4 @@ export const getExcelColumns = async (req, res) => {
         serverError(res, error, 'Error al leer el archivo Excel');
     }
 };
+

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+﻿import React, { useState, useRef, useEffect } from "react";
 import * as XLSX from "xlsx";
 import { motion } from "framer-motion";
 import { authFetch } from "@/react-app/utils/auth";
@@ -26,6 +26,39 @@ interface PreviewData {
     disponibles?: number;
     incompletos?: number;
     cancelados?: number;
+    run_id?: string;
+    importables_count?: number;
+    excluded_count?: number;
+    importables?: Array<{
+      import_item_id: string;
+      row_number: number;
+      company_name: string | null;
+      ban_number: string | null;
+      phone: string | null;
+      account_type: string;
+      line_type: string;
+      plan: string;
+      monthly_value: number | null;
+      vendor: string;
+      base: string;
+      is_incomplete?: boolean;
+      missing_fields?: string[];
+    }>;
+    excluded?: Array<{
+      import_item_id: string;
+      reason: string;
+      row_number: number;
+      company_name: string | null;
+      ban_number: string | null;
+      phone: string | null;
+    }>;
+    grouped?: {
+      account_type?: Array<{ key: string; count: number }>;
+      line_type?: Array<{ key: string; count: number }>;
+      plan?: Array<{ key: string; count: number }>;
+      vendor?: Array<{ key: string; count: number }>;
+    };
+    plans_without_cost?: Array<{ key: string; count: number }>;
     details: any[]; // Changed from string[] to any[] to support object details
   }
 }
@@ -73,7 +106,38 @@ export default function ImportadorVisual() {
   const [missingDataApplyAll, setMissingDataApplyAll] = useState(true);
   const [defaultStartDate, setDefaultStartDate] = useState("");
 
-  // Estado para edición en el modal de vista previa
+  const splitImportableRows = (rows: Record<string, any>[]) => {
+    const importables: Record<string, any>[] = [];
+    const excluded: Array<{ rowNumber: number; reason: string }> = [];
+
+    rows.forEach((mapped, index) => {
+      const clientData = mapped?.Clientes || {};
+      const banData = mapped?.BANs || {};
+      const subData = mapped?.Suscriptores || {};
+
+      const clientName = String(clientData.name || '').trim();
+      const banNumber = String(banData.ban_number || '').trim();
+      const phone = String(subData.phone || '').trim();
+      const rawStatus = String(banData.status || '').trim().toUpperCase();
+
+      const isCancelled = rawStatus === 'C' || rawStatus.startsWith('CANCEL') || rawStatus.startsWith('CERR');
+      const isIncomplete = !clientName || !banNumber || !phone;
+
+      if (isCancelled) {
+        excluded.push({ rowNumber: index + 1, reason: 'cancelado' });
+        return;
+      }
+      // Incompletos se incluyen por decisión operativa.
+      if (isIncomplete) {
+        (mapped as any).__isIncomplete = true;
+      }
+      importables.push(mapped);
+    });
+
+    return { importables, excluded };
+  };
+
+  // Estado para ediciÃ³n en el modal de vista previa
   const [editableData, setEditableData] = useState<any[][]>([]);
   const [virtualHeaders, setVirtualHeaders] = useState<string[]>([]);
   const [isActivacionesMode, setIsActivacionesMode] = useState(false);
@@ -107,46 +171,46 @@ export default function ImportadorVisual() {
     setUnmappedColumns(unmapped);
   }, [assigned, excelColumnsInfo]);
 
-  // Función para obtener la etiqueta del frontend según tabla y columna
+  // FunciÃ³n para obtener la etiqueta del frontend segÃºn tabla y columna
   const getFieldLabel = (table: string, col: string): string => {
-    // Mapeo específico por tabla
+    // Mapeo especÃ­fico por tabla
     const labels: Record<string, Record<string, string>> = {
       "Clientes": {
-        "owner_name": "Nombre y Apellido Dueño",
+        "owner_name": "Nombre y Apellido DueÃ±o",
         "name": "Empresa / Subscriber Name",
         "contact_person": "Persona de Contacto",
         "email": "Email",
-        "phone": "Teléfono",
-        "additional_phone": "Teléfono Adicional",
+        "phone": "TelÃ©fono",
+        "additional_phone": "TelÃ©fono Adicional",
         "cellular": "Celular",
-        "address": "Dirección",
+        "address": "DirecciÃ³n",
         "city": "Ciudad",
-        "zip_code": "Código Postal",
+        "zip_code": "CÃ³digo Postal",
         "tax_id": "Tax ID / Seguro Social",
       },
       "BANs": {
-        "ban_number": "Número BAN",
+        "ban_number": "NÃºmero BAN",
         "account_type": "Tipo de Cuenta (ACC_TYPE)",
         "status": "Estado (SUB_STATUS)",
-        "dealer_code": "Código de Dealer",
+        "dealer_code": "CÃ³digo de Dealer",
         "dealer_name": "Nombre de Dealer",
-        "reason_desc": "Razón de Estado (REASON_DESC)",
+        "reason_desc": "RazÃ³n de Estado (REASON_DESC)",
         "sub_status_report": "Reporte de Estado",
       },
       "Suscriptores": {
-        "phone": "Número (SUBSCRIBER_NO)",
+        "phone": "NÃºmero (SUBSCRIBER_NO)",
         "plan": "Plan / Price Plan",
         "monthly_value": "Renta Mensual",
         "remaining_payments": "Plazos Faltantes",
         "contract_term": "Meses Contrato",
         "contract_end_date": "Fecha Fin Contrato",
         "imei": "IMEI / Equipo",
-        "init_activation_date": "Fecha Activación Inicial",
+        "init_activation_date": "Fecha ActivaciÃ³n Inicial",
         "effective_date": "Fecha Efectiva",
-        "activity_code": "Código de Actividad",
+        "activity_code": "CÃ³digo de Actividad",
         "subscriber_name_remote": "Nombre Remoto",
-        "price_code": "Código de Precio",
-        "sub_actv_location": "Ubicación Activación",
+        "price_code": "CÃ³digo de Precio",
+        "sub_actv_location": "UbicaciÃ³n ActivaciÃ³n",
       },
     };
     return labels[table]?.[col] || col;
@@ -199,10 +263,10 @@ export default function ImportadorVisual() {
     },
   ]);
 
-  // Función para verificar existencia de suscriptores
+  // FunciÃ³n para verificar existencia de suscriptores
   const checkSubscribersExistence = async (_phones: string[]) => {
     try {
-      // Obtener todos los suscriptores (optimización: filtrar en cliente)
+      // Obtener todos los suscriptores (optimizaciÃ³n: filtrar en cliente)
       const res = await authFetch('/api/subscribers');
       if (!res.ok) throw new Error("Error consultando suscriptores");
       const allSubscribers = await res.json();
@@ -210,7 +274,7 @@ export default function ImportadorVisual() {
       const existing = new Set<string>();
       allSubscribers.forEach((sub: any) => {
         if (sub.subscriber_number) {
-          // Normalizar: quitar no numéricos y tomar últimos 10
+          // Normalizar: quitar no numÃ©ricos y tomar Ãºltimos 10
           const clean = String(sub.subscriber_number).replace(/[^0-9]/g, '').slice(-10);
           existing.add(clean);
         }
@@ -254,7 +318,7 @@ export default function ImportadorVisual() {
     }
 
     setIsSearchingClients(true);
-    // Mostrar sugerencias vacías mientras busca o si no hay resultados
+    // Mostrar sugerencias vacÃ­as mientras busca o si no hay resultados
     setShowClientSuggestions(true);
 
     try {
@@ -288,7 +352,7 @@ export default function ImportadorVisual() {
     setActivacionesMetadata(prev => ({
       ...prev,
       business_name: client.business_name,
-      // Si el cliente tiene un BAN asociado y estamos buscando por BAN, podríamos querer autocompletarlo también
+      // Si el cliente tiene un BAN asociado y estamos buscando por BAN, podrÃ­amos querer autocompletarlo tambiÃ©n
       // Pero cuidado de no sobrescribir si el usuario ya puso uno diferente.
       // Por ahora solo nombre.
     }));
@@ -307,12 +371,12 @@ export default function ImportadorVisual() {
         const data = new Uint8Array(event.target.result as ArrayBuffer);
         const workbook = XLSX.read(data, { type: "array" });
         const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-        // Mantener celdas vacías con defval: ''
+        // Mantener celdas vacÃ­as con defval: ''
         const jsonData = XLSX.utils.sheet_to_json(firstSheet, { header: 1, defval: "" }) as any[][];
 
         // --- MODO ACTIVACIONES (MANUAL) ---
         if (isActivacionesMode) {
-          console.log("📋 Procesando en Modo Activaciones (Estricto)...");
+          console.log("ðŸ“‹ Procesando en Modo Activaciones (Estricto)...");
 
           // 1. Metadatos (Posiciones Fijas)
           // Vendedor: Fila 3 (idx 2), Col D (idx 3) o C (idx 2)
@@ -325,7 +389,7 @@ export default function ImportadorVisual() {
           // 2. Tabla de Datos (Desde Fila 11 - idx 10)
           // const dataRows = jsonData.slice(10); // Fila 11 en adelante (COMENTADO PORQUE SE REDEFINE ABAJO)
 
-          // --- BÚSQUEDA INTELIGENTE DE COLUMNAS ---
+          // --- BÃšSQUEDA INTELIGENTE DE COLUMNAS ---
           // Buscamos la fila de cabecera (donde dice "NUM CELULAR" o similar)
           let headerRowIdx = 9; // Por defecto fila 10
           let headers = (jsonData[9] || []) as string[];
@@ -339,7 +403,7 @@ export default function ImportadorVisual() {
             }
           }
 
-          // Mapeo dinámico de índices basado en nombres
+          // Mapeo dinÃ¡mico de Ã­ndices basado en nombres
           const idxPhone = headers.findIndex(h => {
             const s = String(h).toUpperCase();
             return s.includes("CELULAR") || s.includes("TELEFONO") || s.includes("PHONE");
@@ -354,7 +418,7 @@ export default function ImportadorVisual() {
           const idxValue = headers.findIndex(h => {
             const s = String(h).toUpperCase();
             // Buscamos "PRECIO PLAN" (sin data) o "VALOR" o "RENTA"
-            // EXCLUIMOS explícitamente "PRECIO DE VENTA" porque eso es el costo del equipo, no la renta mensual
+            // EXCLUIMOS explÃ­citamente "PRECIO DE VENTA" porque eso es el costo del equipo, no la renta mensual
             if (s.includes("PRECIO DE VENTA")) return false;
 
             return (s.includes("PRECIO") && s.includes("PLAN") && !s.includes("DATA")) || s.includes("VALOR") || s.includes("RENTA");
@@ -364,7 +428,7 @@ export default function ImportadorVisual() {
 
           const idxNotes = headers.findIndex(h => String(h).toUpperCase().includes("COMENTARIOS") || String(h).toUpperCase().includes("NOTAS"));
 
-          // Fallbacks (si no encuentra columna, usa los índices fijos que vimos antes)
+          // Fallbacks (si no encuentra columna, usa los Ã­ndices fijos que vimos antes)
           const finalIdxPhone = idxPhone !== -1 ? idxPhone : 0;
           const finalIdxPlan = idxPlan !== -1 ? idxPlan : 6;
           const finalIdxValue = idxValue !== -1 ? idxValue : 7; // Ajustado a 7 (Precio Plan)
@@ -379,13 +443,13 @@ export default function ImportadorVisual() {
           const extractedRows = dataRows
             .filter(row => {
               const phone = row[finalIdxPhone];
-              // Filtrar filas vacías o sin teléfono válido (mínimo 8 dígitos)
+              // Filtrar filas vacÃ­as o sin telÃ©fono vÃ¡lido (mÃ­nimo 8 dÃ­gitos)
               return phone && String(phone).replace(/[^0-9]/g, '').length >= 8;
             })
             .map(row => {
               const cleanPhone = String(row[finalIdxPhone] || "").replace(/[^0-9]/g, '').slice(-10);
 
-              // Cálculo de Fechas
+              // CÃ¡lculo de Fechas
               let contractEndDate = "";
               const months = parseInt(String(row[finalIdxMonths] || "0").replace(/[^0-9]/g, ''), 10);
 
@@ -429,7 +493,7 @@ export default function ImportadorVisual() {
         setColumns(firstRow);
         setPreview(jsonData.slice(1, 10));
 
-        // Inicializar datos editables para archivos normales también
+        // Inicializar datos editables para archivos normales tambiÃ©n
         setEditableData(jsonData.slice(1));
         setVirtualHeaders(firstRow);
 
@@ -439,7 +503,7 @@ export default function ImportadorVisual() {
       reader.readAsArrayBuffer(selectedFile);
     } catch (error) {
       console.error("Error leyendo archivo:", error);
-      alert("Error al procesar el archivo. Asegúrate de que sea un CSV o Excel válido.");
+      alert("Error al procesar el archivo. AsegÃºrate de que sea un CSV o Excel vÃ¡lido.");
     }
   };
 
@@ -472,7 +536,7 @@ export default function ImportadorVisual() {
     const validationErrors: string[] = [];
 
     // Validar campos requeridos
-    // TEMPORALMENTE DESHABILITADO PARA DEPURACIÓN DE CACHÉ
+    // TEMPORALMENTE DESHABILITADO PARA DEPURACIÃ“N DE CACHÃ‰
     /*
     const requiredFields = [
       "Clientes.name",
@@ -487,7 +551,7 @@ export default function ImportadorVisual() {
       }
     }
     */
-    console.log("Validación de campos requeridos omitida en v5.0");
+    console.log("ValidaciÃ³n de campos requeridos omitida en v5.0");
 
     if (validationErrors.length > 0) {
       setValidationResult({ valid: false, errors: validationErrors });
@@ -505,7 +569,7 @@ export default function ImportadorVisual() {
     setValidationResult({ valid: true, errors: [] });
     setIsValidating(false);
 
-    // Generar previsualización
+    // Generar previsualizaciÃ³n
     await generatePreview();
   };
 
@@ -553,13 +617,13 @@ export default function ImportadorVisual() {
         rows = result.rows;
       }
 
-      // --- VALIDACIÓN DE DATOS FALTANTES ---
-      // (Validación de Plazos Faltantes DESACTIVADA - Se asigna automáticamente 0)
+      // --- VALIDACIÃ“N DE DATOS FALTANTES ---
+      // (ValidaciÃ³n de Plazos Faltantes DESACTIVADA - Se asigna automÃ¡ticamente 0)
       const remainingPaymentsCol = assigned["Suscriptores.remaining_payments"];
       if (remainingPaymentsCol) {
         const colIdx = headers.indexOf(remainingPaymentsCol);
         if (colIdx !== -1) {
-          // Auto-asignar 0 a campos vacíos sin mostrar modal
+          // Auto-asignar 0 a campos vacÃ­os sin mostrar modal
           rows.forEach((row, _idx) => {
             const val = row[colIdx];
             if (val === undefined || val === null || String(val).trim() === "") {
@@ -594,7 +658,7 @@ export default function ImportadorVisual() {
               data: rows,
               headers: headers
             });
-            return; // Detener generación de preview
+            return; // Detener generaciÃ³n de preview
           }
         }
       }
@@ -611,11 +675,11 @@ export default function ImportadorVisual() {
         };
       });
 
-      // Mapear datos completos para simulación
+      // Mapear datos completos para simulaciÃ³n
       const mappedData = rows.map((row) => {
         const mapped: Record<string, any> = {};
 
-        // Variables para cálculo de plazos faltantes
+        // Variables para cÃ¡lculo de plazos faltantes
         let calcStartDate: string | null = null;
         let calcMonths: number | null = null;
 
@@ -626,7 +690,7 @@ export default function ImportadorVisual() {
             if (!mapped[table]) mapped[table] = {};
 
             let val = row[colIndex];
-            // Inyectar fecha por defecto si falta y está mapeado
+            // Inyectar fecha por defecto si falta y estÃ¡ mapeado
             if (field === "Suscriptores.contract_start_date" && (!val || String(val).trim() === "") && defaultStartDate) {
               const parts = defaultStartDate.split('/');
               if (parts.length === 3) {
@@ -636,20 +700,20 @@ export default function ImportadorVisual() {
               }
             }
 
-            // CORRECCIÓN DECIMALES: Reemplazar coma por punto en monthly_value
+            // CORRECCIÃ“N DECIMALES: Reemplazar coma por punto en monthly_value
             if (field === "Suscriptores.monthly_value" && val && typeof val === 'string') {
               val = val.replace(',', '.');
             }
 
             mapped[table][col] = val || null;
 
-            // Capturar valores para cálculo
+            // Capturar valores para cÃ¡lculo
             if (field === "Suscriptores.contract_start_date") calcStartDate = val;
             if (field === "Suscriptores.months") calcMonths = parseInt(val, 10);
           }
         }
 
-        // Si NO está asignado pero tenemos defaultStartDate, inyectarlo
+        // Si NO estÃ¡ asignado pero tenemos defaultStartDate, inyectarlo
         if (!assigned["Suscriptores.contract_start_date"] && defaultStartDate) {
           if (!mapped["Suscriptores"]) mapped["Suscriptores"] = {};
           const parts = defaultStartDate.split('/');
@@ -661,29 +725,29 @@ export default function ImportadorVisual() {
           calcStartDate = finalDate;
         }
 
-        // CÁLCULO AUTOMÁTICO DE PLAZOS FALTANTES (remaining_payments)
-        // Si tenemos Fecha Inicio y Duración (Meses), calculamos la diferencia contra HOY
+        // CÃLCULO AUTOMÃTICO DE PLAZOS FALTANTES (remaining_payments)
+        // Si tenemos Fecha Inicio y DuraciÃ³n (Meses), calculamos la diferencia contra HOY
         if (calcStartDate && calcMonths && !isNaN(calcMonths)) {
           try {
             const start = new Date(calcStartDate);
             const today = new Date();
 
-            // Calcular fecha fin teórica
+            // Calcular fecha fin teÃ³rica
             const end = new Date(start);
             end.setMonth(end.getMonth() + calcMonths);
 
-            // Calcular meses restantes con precisión de días
+            // Calcular meses restantes con precisiÃ³n de dÃ­as
             let remaining = 0;
 
-            // Si ya venció, remaining = 0
+            // Si ya venciÃ³, remaining = 0
             if (end > today) {
               // Calcular diferencia en meses
               const yearDiff = end.getFullYear() - today.getFullYear();
               const monthDiff = end.getMonth() - today.getMonth();
               remaining = yearDiff * 12 + monthDiff;
 
-              // Ajuste por días: si el día de hoy es mayor al día de fin, 
-              // significa que ya pasó parte del último mes
+              // Ajuste por dÃ­as: si el dÃ­a de hoy es mayor al dÃ­a de fin, 
+              // significa que ya pasÃ³ parte del Ãºltimo mes
               if (today.getDate() > end.getDate()) {
                 remaining = Math.max(0, remaining - 1);
               }
@@ -692,14 +756,14 @@ export default function ImportadorVisual() {
               remaining = Math.max(0, remaining);
             }
 
-            // Inyectar en mappedData si no existe o sobrescribir si se desea lógica automática
+            // Inyectar en mappedData si no existe o sobrescribir si se desea lÃ³gica automÃ¡tica
             if (!mapped["Suscriptores"]) mapped["Suscriptores"] = {};
 
-            // Solo asignamos si no viene explícitamente del Excel (o si el usuario prefiere el cálculo)
-            // Asumimos que el cálculo tiene prioridad si se usa la fecha por defecto
+            // Solo asignamos si no viene explÃ­citamente del Excel (o si el usuario prefiere el cÃ¡lculo)
+            // Asumimos que el cÃ¡lculo tiene prioridad si se usa la fecha por defecto
             mapped["Suscriptores"]["remaining_payments"] = remaining;
 
-            // También podemos inyectar contract_end_date si el backend lo usa
+            // TambiÃ©n podemos inyectar contract_end_date si el backend lo usa
             mapped["Suscriptores"]["contract_end_date"] = end.toISOString().split('T')[0];
 
           } catch (e) {
@@ -729,21 +793,21 @@ export default function ImportadorVisual() {
           rowsWithoutBAN++;
           if (!businessName || businessName.toString().trim() === "") {
             if (warnings.length < 10) {
-              warnings.push(`Fila ${index + 2}: Sin BAN ni empresa - será omitida`);
+              warnings.push(`Fila ${index + 2}: Sin BAN ni empresa - serÃ¡ omitida`);
             }
           }
         }
       });
 
       if (warnings.length >= 10) {
-        warnings.push(`... y ${rows.length - 10} filas más con posibles advertencias`);
+        warnings.push(`... y ${rows.length - 10} filas mÃ¡s con posibles advertencias`);
       }
 
-      // LLAMADA A SIMULACIÓN
+      // LLAMADA A SIMULACIÃ“N
       let simulation = undefined;
       try {
-        // Procesar en lotes para simulación si es muy grande, pero por ahora enviamos todo
-        // Si es muy grande (>1000), podríamos enviar solo una muestra o hacerlo en backend
+        // Procesar en lotes para simulaciÃ³n si es muy grande, pero por ahora enviamos todo
+        // Si es muy grande (>1000), podrÃ­amos enviar solo una muestra o hacerlo en backend
         const response = await authFetch("/api/importador/simulate", {
           method: "POST",
           json: {
@@ -759,8 +823,8 @@ export default function ImportadorVisual() {
           }
         }
       } catch (simError) {
-        console.error("Error en simulación:", simError);
-        warnings.push("No se pudo conectar con el servidor para verificar duplicados (Simulación fallida).");
+        console.error("Error en simulaciÃ³n:", simError);
+        warnings.push("No se pudo conectar con el servidor para verificar duplicados (SimulaciÃ³n fallida).");
       }
 
       setPreviewData({
@@ -793,7 +857,7 @@ export default function ImportadorVisual() {
 
     let currentData = (window as any).__transformedData;
     if (!currentData) {
-      // Reconstruir formato hoja de cálculo: [headers, ...rows]
+      // Reconstruir formato hoja de cÃ¡lculo: [headers, ...rows]
       currentData = [headers, ...data];
     }
 
@@ -824,7 +888,7 @@ export default function ImportadorVisual() {
     }
 
     // Validar antes de guardar
-    // TEMPORALMENTE DESHABILITADO PARA DEPURACIÓN DE CACHÉ
+    // TEMPORALMENTE DESHABILITADO PARA DEPURACIÃ“N DE CACHÃ‰
     /*
     const requiredFields = [
       "Clientes.name",
@@ -838,9 +902,9 @@ export default function ImportadorVisual() {
       return;
     }
     */
-    console.log("Validación de guardado omitida en v5.0");
+    console.log("ValidaciÃ³n de guardado omitida en v5.0");
 
-    // Si no está confirmado, mostrar modal de previsualización
+    // Si no estÃ¡ confirmado, mostrar modal de previsualizaciÃ³n
     if (!confirmed) {
       await generatePreview();
       return;
@@ -891,7 +955,7 @@ export default function ImportadorVisual() {
         rows = result.rows;
       }
 
-      // Mapear los datos según el mapeo asignado
+      // Mapear los datos segÃºn el mapeo asignado
       const mappedData = rows.map((row) => {
         const mapped: Record<string, any> = {};
         let calcStartDate: string | null = null;
@@ -904,7 +968,7 @@ export default function ImportadorVisual() {
             if (!mapped[table]) mapped[table] = {};
 
             let val = row[colIndex];
-            // Inyectar fecha por defecto si falta y está mapeado
+            // Inyectar fecha por defecto si falta y estÃ¡ mapeado
             if (field === "Suscriptores.contract_start_date" && (!val || String(val).trim() === "") && defaultStartDate) {
               const parts = defaultStartDate.split('/');
               if (parts.length === 3) {
@@ -916,13 +980,13 @@ export default function ImportadorVisual() {
 
             mapped[table][col] = val || null;
 
-            // Capturar para cálculo
+            // Capturar para cÃ¡lculo
             if (field === "Suscriptores.contract_start_date") calcStartDate = val;
             if (field === "Suscriptores.months") calcMonths = parseInt(val, 10);
           }
         }
 
-        // Si NO está asignado pero tenemos defaultStartDate, inyectarlo
+        // Si NO estÃ¡ asignado pero tenemos defaultStartDate, inyectarlo
         if (!assigned["Suscriptores.contract_start_date"] && defaultStartDate) {
           if (!mapped["Suscriptores"]) mapped["Suscriptores"] = {};
           const parts = defaultStartDate.split('/');
@@ -957,22 +1021,29 @@ export default function ImportadorVisual() {
         return;
       }
 
+      const { importables, excluded } = splitImportableRows(mappedData);
+      if (importables.length === 0) {
+        alert("No hay filas importables. Se excluyeron filas canceladas.");
+        setIsSaving(false);
+        return;
+      }
+
       // Procesar en lotes pequeños para evitar Timeouts (504)
       const BATCH_SIZE = 200;
-      const totalBatches = Math.ceil(mappedData.length / BATCH_SIZE);
+      const totalBatches = Math.ceil(importables.length / BATCH_SIZE);
 
       let totalCreated = 0;
       let totalUpdated = 0;
       let totalErrors: string[] = [];
       let totalWarnings: string[] = [];
 
-      // Variable para mostrar progreso en UI (podrías agregar un estado para esto)
-      console.log(`Iniciando importación de ${mappedData.length} filas en ${totalBatches} lotes...`);
+      // Variable para mostrar progreso en UI (podrÃ­as agregar un estado para esto)
+      console.log(`Iniciando importación de ${importables.length} filas importables en ${totalBatches} lotes...`);
 
       for (let i = 0; i < totalBatches; i++) {
         const start = i * BATCH_SIZE;
-        const end = Math.min(start + BATCH_SIZE, mappedData.length);
-        const batch = mappedData.slice(start, end);
+        const end = Math.min(start + BATCH_SIZE, importables.length);
+        const batch = importables.slice(start, end);
 
         // Actualizar mensaje de estado si tuvieras uno
         // setStatusMessage(`Procesando lote ${i + 1} de ${totalBatches}...`);
@@ -987,9 +1058,9 @@ export default function ImportadorVisual() {
           });
 
           if (!response.ok) {
-            // Si falla un lote, registrar error pero intentar continuar o abortar según gravedad
+            // Si falla un lote, registrar error pero intentar continuar o abortar segÃºn gravedad
             console.error(`Error en lote ${i + 1}: ${response.statusText}`);
-            totalErrors.push(`Error crítico en lote ${i + 1}: ${response.statusText}`);
+            totalErrors.push(`Error crÃ­tico en lote ${i + 1}: ${response.statusText}`);
             continue;
           }
 
@@ -1001,7 +1072,7 @@ export default function ImportadorVisual() {
 
           if (result.errors && Array.isArray(result.errors)) {
             result.errors.forEach((msg: string) => {
-              if (msg.includes("ya existe") || msg.includes("ℹ️")) {
+              if (msg.includes("ya existe") || msg.includes("â„¹ï¸")) {
                 totalWarnings.push(msg);
               } else {
                 totalErrors.push(msg);
@@ -1010,36 +1081,40 @@ export default function ImportadorVisual() {
           }
 
         } catch (batchError: any) {
-          console.error(`Excepción en lote ${i + 1}:`, batchError);
+          console.error(`ExcepciÃ³n en lote ${i + 1}:`, batchError);
           totalErrors.push(`Error de red en lote ${i + 1}: ${batchError.message}`);
         }
       }
 
       // Construir resultado final agregado
       const totalProcessed = totalCreated + totalUpdated;
-      const omitted = mappedData.length - totalProcessed;
+      const omitted = importables.length - totalProcessed;
+      if (excluded.length > 0) {
+        const countCancelled = excluded.filter(e => e.reason === 'cancelado').length;
+        totalWarnings.push(`Excluidas antes de guardar: ${excluded.length} filas (${countCancelled} canceladas).`);
+      }
 
       // Mostrar resultado en modal personalizado
       setSaveResult({
         success: totalErrors.length === 0,
-        message: `Proceso completado. Procesadas ${mappedData.length} filas.`,
+        message: `Proceso completado. Procesadas ${importables.length} filas importables.`,
         created: totalCreated,
         updated: totalUpdated,
-        total: mappedData.length,
+        total: importables.length,
         omitted: omitted,
         errors: totalErrors,
         warnings: totalWarnings
       });
 
-      // Disparar evento para refrescar clientes en otras páginas
+      // Disparar evento para refrescar clientes en otras pÃ¡ginas
       if (totalCreated > 0 || totalUpdated > 0) {
         window.dispatchEvent(new CustomEvent('refreshClients'));
         window.dispatchEvent(new CustomEvent('clients-updated'));
       }
 
-      // Limpiar estado solo si no hay errores críticos masivos
+      // Limpiar estado solo si no hay errores crÃ­ticos masivos
       if (totalErrors.length > 0 && totalCreated === 0 && totalUpdated === 0) {
-        // No limpiar si falló todo
+        // No limpiar si fallÃ³ todo
       } else {
         setFile(null);
         setColumns([]);
@@ -1090,17 +1165,17 @@ export default function ImportadorVisual() {
     const validationErrors: string[] = [];
 
     if (!activacionesMetadata.saleDate) validationErrors.push("La fecha de venta es obligatoria.");
-    if (!activacionesMetadata.ban.trim()) validationErrors.push("Número BAN requerido.");
+    if (!activacionesMetadata.ban.trim()) validationErrors.push("NÃºmero BAN requerido.");
     if (!activacionesMetadata.business_name.trim()) validationErrors.push("Empresa/cliente es obligatorio.");
     if (!activacionesMetadata.vendor.trim()) validationErrors.push("Selecciona un vendedor.");
 
     if (activacionesMetadata.vendor && !vendors.some(v => v.id.toString() === activacionesMetadata.vendor)) {
-      validationErrors.push("El vendedor seleccionado no existe en el catálogo.");
+      validationErrors.push("El vendedor seleccionado no existe en el catÃ¡logo.");
     }
 
     activacionesRows.forEach((row, idx) => {
       const cleanPhone = String(row.phone || '').replace(/[^0-9]/g, '');
-      if (!cleanPhone || cleanPhone.length < 8) validationErrors.push(`Fila ${idx + 1}: teléfono inválido (mínimo 8 dígitos).`);
+      if (!cleanPhone || cleanPhone.length < 8) validationErrors.push(`Fila ${idx + 1}: telÃ©fono invÃ¡lido (mÃ­nimo 8 dÃ­gitos).`);
       if (!row.plan || !String(row.plan).trim()) validationErrors.push(`Fila ${idx + 1}: plan requerido.`);
       if (row.monthly_value === undefined || row.monthly_value === null || String(row.monthly_value).toString().trim() === "") {
         validationErrors.push(`Fila ${idx + 1}: valor mensual requerido.`);
@@ -1115,6 +1190,10 @@ export default function ImportadorVisual() {
     setActivacionesErrors([]);
     setIsSaving(true);
     try {
+      const parsedVendorId = activacionesMetadata.vendor.trim()
+        ? parseInt(activacionesMetadata.vendor, 10)
+        : null;
+
       // Construir payload compatible con el backend
       const payload = activacionesRows.map(row => ({
         "BANs": {
@@ -1123,12 +1202,12 @@ export default function ImportadorVisual() {
         },
         "Clientes": {
           "business_name": activacionesMetadata.business_name, // Mapeado a Empresa
-          "vendor_id": parseInt(activacionesMetadata.vendor), // ID del vendedor (INTEGER)
+          "vendor_id": Number.isFinite(parsedVendorId) ? parsedVendorId : null, // ID del vendedor (INTEGER)
           "name": activacionesMetadata.business_name // Fallback
         },
         "Suscriptores": {
           "phone": row.phone,
-          "service_type": row.plan,
+          "plan": row.plan,
           "monthly_value": row.monthly_value,
           "months": row.months,
           "notes": row.notes,
@@ -1169,7 +1248,7 @@ export default function ImportadorVisual() {
         }
       }
 
-      // Filtrar clientes únicos creados
+      // Filtrar clientes Ãºnicos creados
       const uniqueCreatedClients = Array.from(new Map(allCreatedClients.map(item => [item.id, item])).values());
 
       if (uniqueCreatedClients.length > 0) {
@@ -1178,7 +1257,7 @@ export default function ImportadorVisual() {
         setEnrichFormData({ email: '', address: '', city: '', phone: '' });
         setEnrichModalOpen(true);
         setShowActivacionesModal(false); // Cerrar modal de activaciones pero mantener el flujo
-        return; // Detener aquí para procesar enriquecimiento
+        return; // Detener aquÃ­ para procesar enriquecimiento
       }
 
       setSaveResult({
@@ -1206,7 +1285,7 @@ export default function ImportadorVisual() {
       // 1. Verificar que el cliente existe antes de actualizar
       const checkRes = await authFetch(`/api/clients/${currentClient.id}`);
       if (!checkRes.ok) {
-        console.warn(`⚠️ Cliente ${currentClient.id} no existe. Saltando enriquecimiento.`);
+        console.warn(`âš ï¸ Cliente ${currentClient.id} no existe. Saltando enriquecimiento.`);
         // Siguiente o Finalizar sin actualizar
         if (currentEnrichIndex < newClientsToEnrich.length - 1) {
           setCurrentEnrichIndex(prev => prev + 1);
@@ -1216,7 +1295,7 @@ export default function ImportadorVisual() {
           setEnrichModalOpen(false);
           setSaveResult({
             success: true,
-            message: "Importación completada (algunos clientes no pudieron enriquecerse).",
+            message: "ImportaciÃ³n completada (algunos clientes no pudieron enriquecerse).",
             created: newClientsToEnrich.length,
             updated: 0,
             total: newClientsToEnrich.length
@@ -1242,7 +1321,7 @@ export default function ImportadorVisual() {
         throw new Error(`Error actualizando cliente: ${err.error || resClient.statusText}`);
       }
 
-      // NOTA: Se eliminó la creación automática de Referido/Venta por solicitud del usuario.
+      // NOTA: Se eliminÃ³ la creaciÃ³n automÃ¡tica de Referido/Venta por solicitud del usuario.
       // Solo se actualizan los datos del cliente en el CRM.
 
       // Siguiente o Finalizar
@@ -1253,12 +1332,12 @@ export default function ImportadorVisual() {
         setEnrichModalOpen(false);
         setSaveResult({
           success: true,
-          message: "Importación y enriquecimiento completados exitosamente.",
+          message: "ImportaciÃ³n y enriquecimiento completados exitosamente.",
           created: newClientsToEnrich.length,
           updated: 0,
           total: newClientsToEnrich.length
         });
-        // Disparar eventos de actualización
+        // Disparar eventos de actualizaciÃ³n
         window.dispatchEvent(new CustomEvent('refreshClients'));
       }
 
@@ -1295,7 +1374,7 @@ export default function ImportadorVisual() {
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-400 mb-1">Teléfono Contacto</label>
+                <label className="block text-xs font-medium text-gray-400 mb-1">TelÃ©fono Contacto</label>
                 <input
                   type="text"
                   className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-white focus:ring-2 focus:ring-indigo-500 outline-none"
@@ -1306,7 +1385,7 @@ export default function ImportadorVisual() {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-medium text-gray-400 mb-1">Dirección</label>
+                  <label className="block text-xs font-medium text-gray-400 mb-1">DirecciÃ³n</label>
                   <input
                     type="text"
                     className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-white focus:ring-2 focus:ring-indigo-500 outline-none"
@@ -1322,7 +1401,7 @@ export default function ImportadorVisual() {
                     className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-white focus:ring-2 focus:ring-indigo-500 outline-none"
                     value={enrichFormData.city}
                     onChange={e => setEnrichFormData({ ...enrichFormData, city: e.target.value })}
-                    placeholder="Bogotá..."
+                    placeholder="BogotÃ¡..."
                   />
                 </div>
               </div>
@@ -1332,7 +1411,7 @@ export default function ImportadorVisual() {
                   type="submit"
                   className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded-lg font-medium transition-colors flex items-center gap-2"
                 >
-                  {currentEnrichIndex < newClientsToEnrich.length - 1 ? 'Guardar y Siguiente' : 'Finalizar Importación'}
+                  {currentEnrichIndex < newClientsToEnrich.length - 1 ? 'Guardar y Siguiente' : 'Finalizar ImportaciÃ³n'}
                   <Check className="w-4 h-4" />
                 </button>
               </div>
@@ -1345,7 +1424,7 @@ export default function ImportadorVisual() {
         <div className="flex items-center gap-4">
           <div className="flex flex-col">
             <p className="text-base text-gray-200 font-medium hidden sm:block">
-              Subí tu archivo <span className="text-xs text-amber-400 ml-2 font-bold">v5.1.68-NO-REFERIDO</span>
+              SubÃ­ tu archivo <span className="text-xs text-amber-400 ml-2 font-bold">v5.1.68-NO-REFERIDO</span>
             </p>
             <p className="text-[10px] text-gray-500 hidden sm:block">
               * VALIDACIONES DESACTIVADAS
@@ -1353,7 +1432,7 @@ export default function ImportadorVisual() {
             <button
               onClick={() => {
                 if (!isActivacionesMode) {
-                  if (window.confirm("¿Estás seguro de activar el MODO ACTIVACIONES?\n\nEste modo usa un formato estricto para archivos de activaciones.\nAsegúrate de que el archivo cumple con la estructura esperada.")) {
+                  if (window.confirm("Â¿EstÃ¡s seguro de activar el MODO ACTIVACIONES?\n\nEste modo usa un formato estricto para archivos de activaciones.\nAsegÃºrate de que el archivo cumple con la estructura esperada.")) {
                     setIsActivacionesMode(true);
                   }
                 } else {
@@ -1365,7 +1444,7 @@ export default function ImportadorVisual() {
                 : "bg-neutral-700 text-gray-400 border-neutral-600 hover:bg-neutral-600"
                 }`}
             >
-              {isActivacionesMode ? "📋 Modo Activaciones: ON" : "📄 Modo Activaciones: OFF"}
+              {isActivacionesMode ? "ðŸ“‹ Modo Activaciones: ON" : "ðŸ“„ Modo Activaciones: OFF"}
             </button>
           </div>
           <label className="inline-block cursor-pointer">
@@ -1387,16 +1466,16 @@ export default function ImportadorVisual() {
             className="bg-purple-600 hover:bg-purple-500 disabled:bg-purple-800 disabled:cursor-not-allowed text-xs text-white py-1 px-2 rounded border border-purple-500"
             title="Cargar columnas desde el Excel base"
           >
-            {isLoadingExcelColumns ? "⏳ Cargando..." : "📊 Ver Columnas Excel"}
+            {isLoadingExcelColumns ? "â³ Cargando..." : "ðŸ“Š Ver Columnas Excel"}
           </button>
           <button
             onClick={() => window.location.reload()}
             className="bg-neutral-700 hover:bg-neutral-600 text-xs text-gray-300 py-1 px-2 rounded border border-neutral-600"
-            title="Recargar página para borrar caché"
+            title="Recargar pÃ¡gina para borrar cachÃ©"
           >
-            🔄 Recargar
+            ðŸ”„ Recargar
           </button>
-          {file && <p className="text-sm text-amber-300 font-medium truncate max-w-[150px]">📄 {file?.name}</p>}
+          {file && <p className="text-sm text-amber-300 font-medium truncate max-w-[150px]">ðŸ“„ {file?.name}</p>}
         </div>
       </div>
 
@@ -1404,13 +1483,13 @@ export default function ImportadorVisual() {
         <div className="bg-red-950/60 border-4 border-red-600 rounded-lg p-6 mb-6 shadow-2xl">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-2xl font-black text-red-300 flex items-center gap-2">
-              ⚠️ {unmappedColumns.length} COLUMNAS NO MAPEADAS
+              âš ï¸ {unmappedColumns.length} COLUMNAS NO MAPEADAS
             </h3>
             <button
               onClick={() => setExcelColumnsInfo(null)}
               className="text-red-400 hover:text-red-200 text-sm font-bold bg-red-900/50 px-3 py-1 rounded border border-red-600"
             >
-              ✕ Cerrar
+              âœ• Cerrar
             </button>
           </div>
           <p className="text-red-200 text-sm mb-4">
@@ -1420,7 +1499,7 @@ export default function ImportadorVisual() {
             Sin mapear: <span className="font-bold text-red-400">{unmappedColumns.length}</span>
           </p>
           <div className="mb-4">
-            <h4 className="text-red-300 font-bold mb-3 text-lg">📋 Arrastra estas columnas a los campos de la derecha:</h4>
+            <h4 className="text-red-300 font-bold mb-3 text-lg">ðŸ“‹ Arrastra estas columnas a los campos de la derecha:</h4>
             <div className="flex flex-wrap gap-2">
               {unmappedColumns.map((col, idx) => (
                 <motion.span
@@ -1437,7 +1516,7 @@ export default function ImportadorVisual() {
           </div>
           {excelColumnsInfo.sampleRows && excelColumnsInfo.sampleRows.length > 0 && (
             <div className="mt-4">
-              <h4 className="text-red-300 font-semibold mb-2">📊 Vista previa de datos (primeras 5 filas):</h4>
+              <h4 className="text-red-300 font-semibold mb-2">ðŸ“Š Vista previa de datos (primeras 5 filas):</h4>
               <div className="overflow-x-auto border-2 border-red-600 rounded-lg">
                 <table className="min-w-full text-sm text-gray-200 border-collapse">
                   <thead className="bg-red-900">
@@ -1454,7 +1533,7 @@ export default function ImportadorVisual() {
                             className="flex items-center justify-between cursor-grab active:cursor-grabbing"
                           >
                             {col}
-                            <span className="text-xs bg-red-700 px-2 py-1 rounded ml-2">⇅ Arrastrar</span>
+                            <span className="text-xs bg-red-700 px-2 py-1 rounded ml-2">â‡… Arrastrar</span>
                           </motion.div>
                         </th>
                       ))}
@@ -1480,13 +1559,13 @@ export default function ImportadorVisual() {
 
       {excelColumnsInfo && unmappedColumns && unmappedColumns.length === 0 && (
         <div className="bg-green-900/60 border-4 border-green-500 rounded-lg p-6 mb-6 text-center">
-          <p className="text-green-200 font-bold text-xl">✅ Todas las columnas están mapeadas</p>
+          <p className="text-green-200 font-bold text-xl">âœ… Todas las columnas estÃ¡n mapeadas</p>
           <p className="text-green-100 text-sm mt-2">Puedes proceder a verificar y guardar los datos</p>
           <button
             onClick={() => setExcelColumnsInfo(null)}
             className="mt-4 text-green-400 hover:text-green-200 text-sm font-bold bg-green-800/50 px-3 py-1 rounded border border-green-600"
           >
-            ✕ Cerrar
+            âœ• Cerrar
           </button>
         </div>
       )}
@@ -1514,7 +1593,7 @@ export default function ImportadorVisual() {
                   {getFieldLabel(table.table, col)}
                   {assigned[`${table.table}.${col}`] && (
                     <span className="block text-[10px] mt-0.5 text-amber-300 truncate">
-                      ← {assigned[`${table.table}.${col}`] || ''}
+                      â† {assigned[`${table.table}.${col}`] || ''}
                     </span>
                   )}
                 </li>
@@ -1524,10 +1603,10 @@ export default function ImportadorVisual() {
         ))}
       </div>
 
-      {/* Configuración de Fechas */}
+      {/* ConfiguraciÃ³n de Fechas */}
       {file && (
         <div className="bg-neutral-800 rounded-lg p-4 mb-6 border border-neutral-600">
-          <h3 className="text-lg font-semibold text-white mb-3">📅 Configuración de Fechas (Opcional)</h3>
+          <h3 className="text-lg font-semibold text-white mb-3">ðŸ“… ConfiguraciÃ³n de Fechas (Opcional)</h3>
           <div className="flex items-center gap-4">
             <div className="flex-1 max-w-md">
               <label className="block text-sm text-gray-400 mb-1">
@@ -1547,14 +1626,14 @@ export default function ImportadorVisual() {
                 className="w-full bg-neutral-900 border border-neutral-700 rounded px-3 py-2 text-white focus:border-blue-500 focus:outline-none"
               />
               <p className="text-xs text-gray-500 mt-1">
-                Formato: MM/DD/AAAA (Mes/Día/Año). Ej: 12/31/2025. Se usará si falta la fecha.
+                Formato: MM/DD/AAAA (Mes/DÃ­a/AÃ±o). Ej: 12/31/2025. Se usarÃ¡ si falta la fecha.
               </p>
             </div>
           </div>
         </div>
       )}
 
-      {/* Botones de acción */}
+      {/* Botones de acciÃ³n */}
       {file && (
         <div className="flex justify-center gap-4 mb-6">
           <button
@@ -1562,22 +1641,22 @@ export default function ImportadorVisual() {
             disabled={isValidating || isSaving || preview.length === 0}
             className="bg-blue-600 hover:bg-blue-500 disabled:bg-blue-800 disabled:cursor-not-allowed text-white font-semibold py-2 px-6 rounded-lg shadow-md transition-all"
           >
-            {isValidating ? "Verificando..." : "🔍 Verificar Errores"}
+            {isValidating ? "Verificando..." : "ðŸ” Verificar Errores"}
           </button>
           <button
             onClick={() => handleSave(false)}
             disabled={isSaving || isValidating || preview.length === 0}
             className="bg-green-600 hover:bg-green-500 disabled:bg-green-800 disabled:cursor-not-allowed text-white font-semibold py-2 px-6 rounded-lg shadow-md transition-all"
           >
-            {isSaving ? "Guardando..." : "💾 Guardar Datos"}
+            {isSaving ? "Guardando..." : "ðŸ’¾ Guardar Datos"}
           </button>
         </div>
       )}
 
-      {/* Mostrar errores de validación */}
+      {/* Mostrar errores de validaciÃ³n */}
       {validationResult && !validationResult.valid && validationResult.errors.length > 0 && (
         <div className="bg-red-900/40 border border-red-500/50 rounded-lg p-4 mb-6">
-          <h3 className="text-red-200 font-semibold mb-2">❌ Errores encontrados:</h3>
+          <h3 className="text-red-200 font-semibold mb-2">âŒ Errores encontrados:</h3>
           <ul className="list-disc list-inside text-red-100 text-sm space-y-1">
             {validationResult.errors.map((error, idx) => (
               <li key={idx}>{error}</li>
@@ -1586,26 +1665,26 @@ export default function ImportadorVisual() {
         </div>
       )}
 
-      {/* Mostrar éxito de validación */}
+      {/* Mostrar Ã©xito de validaciÃ³n */}
       {validationResult && validationResult.valid && (
         <div className="bg-green-900/40 border border-green-500/50 rounded-lg p-4 mb-6">
-          <p className="text-green-200 font-semibold">✅ Validación exitosa. Puedes proceder a guardar los datos.</p>
+          <p className="text-green-200 font-semibold">âœ… ValidaciÃ³n exitosa. Puedes proceder a guardar los datos.</p>
         </div>
       )}
 
       {preview.length > 0 && (() => {
         // Obtener todas las columnas asignadas
         const assignedColumns = Object.values(assigned);
-        // Filtrar columnas que NO están asignadas
+        // Filtrar columnas que NO estÃ¡n asignadas
         const unassignedColumns = columns.filter(col => !assignedColumns.includes(col));
-        // Obtener índices de las columnas no asignadas
+        // Obtener Ã­ndices de las columnas no asignadas
         const unassignedIndices = columns.map((col, idx) => assignedColumns.includes(col) ? -1 : idx).filter(idx => idx !== -1);
 
         return (
           <div className="space-y-4">
             {unassignedColumns.length === 0 && (
               <div className="bg-green-900/40 border border-green-500/50 rounded-lg p-6 text-center">
-                <p className="text-green-200 font-semibold text-lg">✅ Todas las columnas han sido mapeadas</p>
+                <p className="text-green-200 font-semibold text-lg">âœ… Todas las columnas han sido mapeadas</p>
                 <p className="text-green-100 text-sm mt-2">Puedes proceder a verificar y guardar los datos</p>
               </div>
             )}
@@ -1617,7 +1696,7 @@ export default function ImportadorVisual() {
               <table className="min-w-full text-sm text-gray-200 border border-neutral-700 rounded-md">
                 <thead className="bg-neutral-800">
                   <tr>
-                    {/* Mostrar TODAS las columnas si todo está mapeado, o solo las no asignadas si faltan */}
+                    {/* Mostrar TODAS las columnas si todo estÃ¡ mapeado, o solo las no asignadas si faltan */}
                     {(unassignedColumns.length === 0 ? columns : unassignedColumns).map((col, i) => (
                       <th
                         key={i}
@@ -1634,7 +1713,7 @@ export default function ImportadorVisual() {
                         >
                           {col}
                           <span className="text-xs bg-white/20 px-2 py-0.5 rounded-md ml-2">
-                            ⇅ Arrastrar
+                            â‡… Arrastrar
                           </span>
                         </motion.div>
                       </th>
@@ -1663,7 +1742,7 @@ export default function ImportadorVisual() {
 
       {!preview.length && (
         <p className="text-center text-gray-400 italic">
-          No se ha cargado ningún archivo o no se detectaron filas válidas.
+          No se ha cargado ningÃºn archivo o no se detectaron filas vÃ¡lidas.
         </p>
       )}
 
@@ -1676,7 +1755,7 @@ export default function ImportadorVisual() {
                 <div className="p-2 bg-amber-500/10 rounded-lg">
                   <FileSpreadsheet className="w-6 h-6 text-amber-500" />
                 </div>
-                <h2 className="text-xl font-bold text-white">Vista Previa de Importación</h2>
+                <h2 className="text-xl font-bold text-white">Vista Previa de ImportaciÃ³n</h2>
               </div>
               <button
                 onClick={() => setShowPreviewModal(false)}
@@ -1687,12 +1766,19 @@ export default function ImportadorVisual() {
             </div>
 
             <div className="flex-1 overflow-y-auto p-6 space-y-6">
-              {/* Resumen de Simulación */}
+              {/* Resumen de SimulaciÃ³n */}
               <div className="bg-neutral-800/50 rounded-xl border border-neutral-700 p-6">
                 <div className="flex items-center gap-2 mb-6">
                   <BarChart3 className="w-5 h-5 text-blue-400" />
-                  <h3 className="text-lg font-semibold text-white">Resumen Estimado (Simulación)</h3>
+                  <h3 className="text-lg font-semibold text-white">Resumen Estimado (SimulaciÃ³n)</h3>
                 </div>
+
+                {previewData.simulation?.run_id && (
+                  <div className="mb-4 inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-blue-900/30 border border-blue-700/40">
+                    <span className="text-xs text-blue-300 font-medium">ID corrida:</span>
+                    <span className="text-xs text-blue-100 font-mono">{previewData.simulation.run_id}</span>
+                  </div>
+                )}
 
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
                   <div className="bg-neutral-900/50 p-4 rounded-lg border border-neutral-800 text-center">
@@ -1701,13 +1787,15 @@ export default function ImportadorVisual() {
                   </div>
 
                   <div className="bg-neutral-900/50 p-4 rounded-lg border border-neutral-800 text-center">
-                    <div className="text-2xl font-bold text-green-400 mb-1">{previewData.simulation?.disponibles || 0}</div>
-                    <div className="text-sm text-gray-400 font-medium">Disponibles (con empresa)</div>
+                    <div className="text-2xl font-bold text-green-400 mb-1">
+                      {previewData.simulation?.importables_count ?? previewData.simulation?.disponibles ?? 0}
+                    </div>
+                    <div className="text-sm text-gray-400 font-medium">Listos para importar</div>
                   </div>
 
                   <div className="bg-neutral-900/50 p-4 rounded-lg border border-neutral-800 text-center">
                     <div className="text-2xl font-bold text-amber-400 mb-1">{previewData.simulation?.incompletos || 0}</div>
-                    <div className="text-sm text-gray-400 font-medium">Incompletos (sin empresa)</div>
+                    <div className="text-sm text-gray-400 font-medium">Incompletos (faltan campos clave)</div>
                   </div>
 
                   <div className="bg-neutral-900/50 p-4 rounded-lg border border-neutral-800 text-center">
@@ -1716,6 +1804,115 @@ export default function ImportadorVisual() {
                   </div>
                 </div>
               </div>
+
+              {(previewData.simulation?.grouped || previewData.simulation?.plans_without_cost) && (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <div className="bg-neutral-800/50 rounded-xl border border-neutral-700 p-4">
+                    <h4 className="text-sm font-semibold text-white mb-3">DivisiÃ³n del listado importable</h4>
+                    <div className="space-y-3 text-xs">
+                      <div>
+                        <div className="text-gray-400 mb-1">Por tipo BAN</div>
+                        <div className="flex flex-wrap gap-1">
+                          {(previewData.simulation?.grouped?.account_type || []).slice(0, 8).map((item, idx) => (
+                            <span key={`acct-${idx}`} className="px-2 py-1 rounded bg-blue-900/30 border border-blue-700/40 text-blue-200">
+                              {item.key}: {item.count}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-gray-400 mb-1">Por tipo lÃ­nea</div>
+                        <div className="flex flex-wrap gap-1">
+                          {(previewData.simulation?.grouped?.line_type || []).slice(0, 8).map((item, idx) => (
+                            <span key={`line-${idx}`} className="px-2 py-1 rounded bg-purple-900/30 border border-purple-700/40 text-purple-200">
+                              {item.key}: {item.count}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-gray-400 mb-1">Por vendedor</div>
+                        <div className="flex flex-wrap gap-1">
+                          {(previewData.simulation?.grouped?.vendor || []).slice(0, 8).map((item, idx) => (
+                            <span key={`vendor-${idx}`} className="px-2 py-1 rounded bg-indigo-900/30 border border-indigo-700/40 text-indigo-200">
+                              {item.key}: {item.count}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-neutral-800/50 rounded-xl border border-neutral-700 p-4">
+                    <h4 className="text-sm font-semibold text-white mb-3">Planes sin costo</h4>
+                    <div className="max-h-40 overflow-y-auto pr-1 space-y-1">
+                      {(previewData.simulation?.plans_without_cost || []).length === 0 ? (
+                        <div className="text-xs text-green-300">No hay planes pendientes de costo.</div>
+                      ) : (
+                        (previewData.simulation?.plans_without_cost || []).slice(0, 30).map((item, idx) => (
+                          <div key={`nocost-${idx}`} className="text-xs text-amber-200 flex justify-between border-b border-neutral-800 py-1">
+                            <span className="truncate mr-2">{item.key}</span>
+                            <span className="font-semibold">{item.count}</span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {(previewData.simulation?.importables || []).length > 0 && (
+                <div className="bg-neutral-800/50 rounded-xl border border-neutral-700 overflow-hidden">
+                  <div className="p-4 border-b border-neutral-700 bg-neutral-800">
+                    <h3 className="font-semibold text-white flex items-center gap-2">
+                      <Database className="w-4 h-4 text-green-400" />
+                      Listado listo para importar (sin cancelados; incluye incompletos)
+                    </h3>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm text-left text-gray-300">
+                      <thead className="text-xs text-gray-400 uppercase bg-neutral-900/50">
+                        <tr>
+                          <th className="px-4 py-3">Import ID</th>
+                          <th className="px-4 py-3">Empresa</th>
+                          <th className="px-4 py-3">BAN</th>
+                          <th className="px-4 py-3">Suscriptor</th>
+                          <th className="px-4 py-3">Tipo BAN</th>
+                          <th className="px-4 py-3">Plan</th>
+                          <th className="px-4 py-3">Costo</th>
+                          <th className="px-4 py-3">Vendedor</th>
+                          <th className="px-4 py-3">Estado</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-neutral-700">
+                        {(previewData.simulation?.importables || []).slice(0, 120).map((row, idx) => (
+                          <tr key={`importable-${idx}`} className="hover:bg-neutral-700/30 transition-colors">
+                            <td className="px-4 py-2 font-mono text-green-300 text-xs">{row.import_item_id}</td>
+                            <td className="px-4 py-2">{row.company_name || '-'}</td>
+                            <td className="px-4 py-2 font-mono">{row.ban_number || '-'}</td>
+                            <td className="px-4 py-2 font-mono">{row.phone || '-'}</td>
+                            <td className="px-4 py-2">{row.account_type || '-'}</td>
+                            <td className="px-4 py-2">{row.plan || '-'}</td>
+                            <td className="px-4 py-2">{row.monthly_value != null ? row.monthly_value : 'SIN COSTO'}</td>
+                            <td className="px-4 py-2">{row.vendor || '-'}</td>
+                            <td className="px-4 py-2">
+                              {row.is_incomplete ? (
+                                <span className="inline-flex px-2 py-0.5 rounded bg-amber-900/40 border border-amber-700/40 text-amber-200 text-xs">
+                                  Incompleto
+                                </span>
+                              ) : (
+                                <span className="inline-flex px-2 py-0.5 rounded bg-emerald-900/40 border border-emerald-700/40 text-emerald-200 text-xs">
+                                  Completo
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
 
               {/* Tabla Detallada */}
               {editableData.length > 0 && (
@@ -1730,7 +1927,7 @@ export default function ImportadorVisual() {
                     <table className="w-full text-sm text-left text-gray-300">
                       <thead className="text-xs text-gray-400 uppercase bg-neutral-900/50">
                         <tr>
-                          {/* Renderizado dinámico de cabeceras */}
+                          {/* Renderizado dinÃ¡mico de cabeceras */}
                           {(virtualHeaders.length > 0 ? virtualHeaders : columns).map((header, i) => (
                             <th key={i} className="px-4 py-3 whitespace-nowrap">{header}</th>
                           ))}
@@ -1745,7 +1942,7 @@ export default function ImportadorVisual() {
                             setEditableData(newData);
                           };
 
-                          // Renderizado genérico para archivos normales
+                          // Renderizado genÃ©rico para archivos normales
                           return (
                             <tr key={idx} className="hover:bg-neutral-700/30 transition-colors">
                               {row.map((cell, cellIdx) => (
@@ -1811,7 +2008,7 @@ export default function ImportadorVisual() {
                 ) : (
                   <>
                     <Check className="w-5 h-5" />
-                    Confirmar Importación
+                    Confirmar ImportaciÃ³n
                   </>
                 )}
               </button>
@@ -1825,7 +2022,7 @@ export default function ImportadorVisual() {
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
           <div className="bg-neutral-900 border-2 border-yellow-500 rounded-lg shadow-2xl w-full max-w-md p-6">
             <h2 className="text-xl font-bold text-yellow-400 mb-4">
-              ⚠️ Datos Faltantes Detectados
+              âš ï¸ Datos Faltantes Detectados
             </h2>
             <p className="text-white mb-4">
               Se detectaron <strong>{missingDataState.rows.length}</strong> filas sin valor en el campo:
@@ -1865,7 +2062,7 @@ export default function ImportadorVisual() {
                 className="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-600 ring-offset-gray-800"
               />
               <label htmlFor="applyAll" className="ml-2 text-sm text-gray-300">
-                Aplicar a todos los vacíos ({missingDataState.rows.length})
+                Aplicar a todos los vacÃ­os ({missingDataState.rows.length})
               </label>
             </div>
 
@@ -1880,7 +2077,7 @@ export default function ImportadorVisual() {
                 onClick={() => handleApplyMissingData(missingDataValue, missingDataApplyAll)}
                 className="px-4 py-2 bg-yellow-600 hover:bg-yellow-500 text-white font-semibold rounded shadow-md transition-colors"
               >
-                Aplicar Corrección
+                Aplicar CorrecciÃ³n
               </button>
             </div>
           </div>
@@ -1897,10 +2094,10 @@ export default function ImportadorVisual() {
             <div className="p-6 border-b border-neutral-800 bg-neutral-900/50 flex justify-between items-center">
               <div>
                 <h2 className="text-2xl font-bold text-blue-400 flex items-center gap-2">
-                  📋 Importación de Activaciones
+                  ðŸ“‹ ImportaciÃ³n de Activaciones
                 </h2>
                 <p className="text-gray-400 text-sm mt-1">
-                  Verifica los datos antes de importar. <span className="text-green-400">Verde = Nuevo</span>, <span className="text-blue-400">Azul = Actualización</span>
+                  Verifica los datos antes de importar. <span className="text-green-400">Verde = Nuevo</span>, <span className="text-blue-400">Azul = ActualizaciÃ³n</span>
                 </p>
               </div>
               <button onClick={() => setShowActivacionesModal(false)} className="text-gray-400 hover:text-white">
@@ -1936,7 +2133,7 @@ export default function ImportadorVisual() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-400 mb-1">Número BAN</label>
+                  <label className="block text-xs text-gray-400 mb-1">NÃºmero BAN</label>
                   <input
                     value={activacionesMetadata.ban}
                     onChange={e => setActivacionesMetadata({ ...activacionesMetadata, ban: e.target.value })}
@@ -2003,7 +2200,7 @@ export default function ImportadorVisual() {
                   <thead className="bg-neutral-800 text-gray-300 font-medium">
                     <tr>
                       <th className="px-4 py-2">#</th>
-                      <th className="px-4 py-2">Teléfono</th>
+                      <th className="px-4 py-2">TelÃ©fono</th>
                       <th className="px-4 py-2">Plan</th>
                       <th className="px-4 py-2">Valor</th>
                       <th className="px-4 py-2">Meses</th>
@@ -2064,7 +2261,7 @@ export default function ImportadorVisual() {
                               className="bg-neutral-800 border border-neutral-600 rounded px-2 py-1 text-sm focus:border-white outline-none w-full"
                             >
                               <option value="NEW">Nueva</option>
-                              <option value="REN">Renovación</option>
+                              <option value="REN">RenovaciÃ³n</option>
                             </select>
                           </td>
                           <td className="px-4 py-2">
@@ -2109,13 +2306,13 @@ export default function ImportadorVisual() {
             {/* Header */}
             <div className="flex items-center justify-between p-6 border-b border-neutral-700">
               <h2 className="text-2xl font-bold text-white">
-                {saveResult.success ? "✅ Resultado del Guardado" : "⚠️ Errores al Guardar"}
+                {saveResult.success ? "âœ… Resultado del Guardado" : "âš ï¸ Errores al Guardar"}
               </h2>
               <button
                 onClick={() => setSaveResult(null)}
                 className="text-gray-400 hover:text-white text-2xl font-bold"
               >
-                ×
+                Ã—
               </button>
             </div>
 
@@ -2143,7 +2340,7 @@ export default function ImportadorVisual() {
                   </div>
                 </div>
 
-                {/* Botón de Exportar Errores */}
+                {/* BotÃ³n de Exportar Errores */}
                 {((saveResult.errors && saveResult.errors.length > 0) || (saveResult.warnings && saveResult.warnings.length > 0)) && (
                   <div className="mt-4 flex justify-center">
                     <button
@@ -2159,22 +2356,22 @@ export default function ImportadorVisual() {
                       }}
                       className="bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded flex items-center gap-2 text-sm font-bold transition-colors"
                     >
-                      📥 Descargar Reporte de Errores y Advertencias
+                      ðŸ“¥ Descargar Reporte de Errores y Advertencias
                     </button>
                   </div>
                 )}
               </div>
 
-              {/* Explicación de filas omitidas */}
+              {/* ExplicaciÃ³n de filas omitidas */}
               {saveResult.omitted && saveResult.omitted > 0 && (
                 <div className="mb-6 p-4 bg-orange-900/30 border border-orange-500/50 rounded-lg">
-                  <h3 className="text-orange-400 font-semibold mb-2">📝 Filas Omitidas ({saveResult.omitted}):</h3>
+                  <h3 className="text-orange-400 font-semibold mb-2">ðŸ“ Filas Omitidas ({saveResult.omitted}):</h3>
                   <p className="text-orange-100 text-sm mb-2">Las siguientes filas no se importaron por:</p>
                   <ul className="text-orange-100 text-sm space-y-1 list-disc list-inside">
                     <li>Falta BAN y falta nombre de empresa</li>
-                    <li>BAN inválido (no numérico o vacío)</li>
-                    <li>Falta teléfono del suscriptor cuando hay BAN</li>
-                    <li>Filas vacías o con datos incompletos</li>
+                    <li>BAN invÃ¡lido (no numÃ©rico o vacÃ­o)</li>
+                    <li>Falta telÃ©fono del suscriptor cuando hay BAN</li>
+                    <li>Filas vacÃ­as o con datos incompletos</li>
                   </ul>
                 </div>
               )}
@@ -2183,7 +2380,7 @@ export default function ImportadorVisual() {
               {saveResult.warnings && saveResult.warnings.length > 0 && (
                 <div className="mb-6">
                   <h3 className="text-lg font-semibold text-yellow-400 mb-3">
-                    ℹ️ Advertencias informativas ({saveResult.warnings.length}):
+                    â„¹ï¸ Advertencias informativas ({saveResult.warnings.length}):
                   </h3>
                   <div className="bg-neutral-800 rounded-lg border border-yellow-500/30 p-4 max-h-60 overflow-y-auto">
                     <ul className="space-y-1 text-sm">
@@ -2194,7 +2391,7 @@ export default function ImportadorVisual() {
                       ))}
                       {saveResult.warnings.length > 20 && (
                         <li className="text-yellow-300 font-semibold mt-2">
-                          ... y {saveResult.warnings.length - 20} advertencias más
+                          ... y {saveResult.warnings.length - 20} advertencias mÃ¡s
                         </li>
                       )}
                     </ul>
@@ -2202,11 +2399,11 @@ export default function ImportadorVisual() {
                 </div>
               )}
 
-              {/* Errores críticos */}
+              {/* Errores crÃ­ticos */}
               {saveResult.errors && saveResult.errors.length > 0 && (
                 <div className="mt-6">
                   <h3 className="text-xl font-semibold text-red-400 mb-4">
-                    ❌ Errores críticos ({saveResult.errors.length}):
+                    âŒ Errores crÃ­ticos ({saveResult.errors.length}):
                   </h3>
                   <div className="bg-neutral-800 rounded-lg border border-red-500/30 p-4 max-h-96 overflow-y-auto">
                     <ul className="space-y-2">

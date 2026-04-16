@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import {
   Target,
@@ -14,7 +14,7 @@ import {
   Wallet,
 } from "lucide-react";
 import { useApi } from "../hooks/useApi";
-import { getCurrentUser } from "@/react-app/utils/auth";
+import { authFetch, getCurrentUser } from "@/react-app/utils/auth";
 
 /* ── Types ─────────────────────────────────────────── */
 
@@ -57,6 +57,10 @@ interface PerformanceData {
   vendors: VendorPerformance[];
 }
 
+interface LatestGoalsPeriodResponse {
+  period: string | null;
+}
+
 /* ── Helpers ───────────────────────────────────────── */
 
 const fmt = (n: number) =>
@@ -87,35 +91,83 @@ export default function Metas() {
   const currentUser = getCurrentUser();
   const isAdmin = currentUser?.role === "admin";
   const currentMonth = new Date().toISOString().slice(0, 7);
-  const [selectedMonth, setSelectedMonth] = useState(currentMonth);
+  const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
   const [expandedVendor, setExpandedVendor] = useState<number | null>(null);
+  const [defaultedToLatestPeriod, setDefaultedToLatestPeriod] = useState(false);
 
-  const { data: performanceData, loading } = useApi<PerformanceData>(
-    `/api/goals/performance?month=${selectedMonth}`
-  );
+  const {
+    data: performanceData,
+    loading,
+    execute: loadPerformance,
+  } = useApi<PerformanceData>("/api/goals/performance", { immediate: false });
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadInitialPeriod = async () => {
+      try {
+        const response = await authFetch("/api/goals/latest-period");
+        const payload = (await response.json().catch(() => ({ period: null }))) as LatestGoalsPeriodResponse;
+        const period = payload?.period || currentMonth;
+
+        if (cancelled) return;
+
+        setSelectedMonth(period);
+        setDefaultedToLatestPeriod(Boolean(payload?.period && payload.period !== currentMonth));
+      } catch {
+        if (cancelled) return;
+        setSelectedMonth(currentMonth);
+        setDefaultedToLatestPeriod(false);
+      }
+    };
+
+    void loadInitialPeriod();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentMonth]);
+
+  useEffect(() => {
+    if (!selectedMonth) return;
+    void loadPerformance(`/api/goals/performance?month=${selectedMonth}`);
+  }, [loadPerformance, selectedMonth]);
 
   const summary = performanceData?.summary;
   const vendors = performanceData?.vendors || [];
 
   const monthOptions = useMemo(() => {
     const options = [];
+    const seen = new Set<string>();
     const now = new Date();
     for (let i = 0; i < 12; i++) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const value = d.toISOString().slice(0, 7);
+      seen.add(value);
       options.push({
-        value: d.toISOString().slice(0, 7),
+        value,
         label: d.toLocaleDateString("es-ES", { year: "numeric", month: "long" }),
       });
     }
+
+    if (selectedMonth && !seen.has(selectedMonth)) {
+      const [year, month] = selectedMonth.split("-").map(Number);
+      const selectedDate = new Date(year, month - 1, 1);
+      options.unshift({
+        value: selectedMonth,
+        label: selectedDate.toLocaleDateString("es-ES", { year: "numeric", month: "long" }),
+      });
+    }
+
     return options;
-  }, []);
+  }, [selectedMonth]);
 
   const toggleVendor = (id: number) =>
     setExpandedVendor((prev) => (prev === id ? null : id));
 
   /* ── Render ────────────────────────────────────── */
 
-  if (loading) {
+  if (loading || !selectedMonth) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="text-white text-xl animate-pulse">Cargando metas...</div>
@@ -151,7 +203,10 @@ export default function Metas() {
             <Calendar className="w-5 h-5 text-slate-400" />
             <select
               value={selectedMonth}
-              onChange={(e) => setSelectedMonth(e.target.value)}
+              onChange={(e) => {
+                setSelectedMonth(e.target.value);
+                setDefaultedToLatestPeriod(false);
+              }}
               className="bg-slate-800 border border-slate-700 text-white rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-500"
             >
               {monthOptions.map((opt) => (
@@ -163,6 +218,19 @@ export default function Metas() {
           </div>
         </div>
       </div>
+
+      {defaultedToLatestPeriod && (
+        <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+          Mostrando el último período con metas configuradas:{" "}
+          <span className="font-semibold">
+            {new Date(`${selectedMonth}-01T00:00:00`).toLocaleDateString("es-ES", {
+              year: "numeric",
+              month: "long",
+            })}
+          </span>
+          .
+        </div>
+      )}
 
       {/* ─── Global Summary (admin) ─── */}
       {summary && (

@@ -1,17 +1,17 @@
-import { BrowserRouter as Router, Routes, Route } from "react-router";
+import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router";
 import { PublicClientApplication } from "@azure/msal-browser";
 import { MsalProvider } from "@azure/msal-react";
 import { msalConfig } from "@/react-app/auth/msalConfig";
 
 import ProtectedLayout from "@/react-app/components/ProtectedLayout";
-import AgendaPage from "@/react-app/pages/Agenda";
 import TasksPage from "@/react-app/pages/Tasks";
 import ClientsPage from "@/react-app/pages/Clients";
-import FollowUpPage from "@/react-app/pages/FollowUp";
 import ReportsPage from "@/react-app/pages/Reports";
 import VendorsPage from "@/react-app/pages/Vendors";
 
 import CategoriesPage from "@/react-app/pages/Categories";
+import UsersPermissionsPage from "@/react-app/pages/UsersPermissions";
+import ControlSecurityPage from "@/react-app/pages/ControlSecurity";
 import ProductsPage from "@/react-app/pages/Products";
 import ProfilePage from "@/react-app/pages/Profile";
 import LoginPage from "@/react-app/pages/Login";
@@ -21,14 +21,16 @@ import GoalsConfigPage from "@/react-app/pages/GoalsConfig";
 import AuditLogPage from "@/react-app/pages/AuditLog";
 import ReferidosPage from "@/react-app/pages/Referidos";
 import CorreosPage from "@/react-app/pages/Correos";
-import TarifasPage from "@/react-app/pages/Tarifas";
 import Campaigns from "@/react-app/pages/Campaigns";
 import CampaignWizard from "@/react-app/pages/CampaignWizard";
 import CampaignDetails from "@/react-app/pages/CampaignDetails";
-import SystemHealthButton from "@/react-app/components/SystemHealthButton";
+import SystemTestAgent from "@/react-app/components/SystemTestAgent";
 import SystemStatus from "@/react-app/pages/SystemStatus";
 import DiscrepanciasFixedPage from "@/react-app/pages/DiscrepanciasFixed";
 import TangoComparePage from "@/react-app/pages/TangoCompare";
+import SubscriberBanSync from "@/react-app/pages/SubscriberBanSync";
+import VoiceClientPage from "@/react-app/pages/VoiceClient";
+import FollowUpPage from "@/react-app/pages/FollowUp";
 
 
 // Inicializar MSAL fuera del componente
@@ -43,10 +45,10 @@ try {
 function ProtectedRoutes() {
   return (
     <ProtectedLayout>
-      <SystemHealthButton />
+      <SystemTestAgent />
       <Routes>
-        <Route path="/" element={<AgendaPage />} />
-        <Route path="/panel" element={<AgendaPage />} />
+        <Route path="/" element={<ClientsPage />} />
+        <Route path="/panel" element={<ClientsPage />} />
         <Route path="/tareas" element={<TasksPage />} />
         <Route path="/clientes" element={<ClientsPage />} />
         <Route path="/seguimiento" element={<FollowUpPage />} />
@@ -55,10 +57,12 @@ function ProtectedRoutes() {
         <Route path="/correos" element={<CorreosPage />} />
         <Route path="/vendedores" element={<VendorsPage />} />
         <Route path="/categorias" element={<CategoriesPage />} />
+        <Route path="/usuarios-permisos" element={<UsersPermissionsPage />} />
+        <Route path="/control-seguridad" element={<ControlSecurityPage />} />
         <Route path="/productos" element={<ProductsPage />} />
         <Route path="/metas" element={<MetasPage />} />
         <Route path="/metas/configurar" element={<GoalsConfigPage />} />
-        <Route path="/tarifas" element={<TarifasPage />} />
+        <Route path="/tarifas" element={<Navigate to="/" replace />} />
         <Route path="/campanas" element={<Campaigns />} />
         <Route path="/campanas/nueva" element={<CampaignWizard />} />
         <Route path="/campanas/:id" element={<CampaignDetails />} />
@@ -68,6 +72,8 @@ function ProtectedRoutes() {
         <Route path="/system-status" element={<SystemStatus />} />
         <Route path="/discrepancias" element={<DiscrepanciasFixedPage />} />
         <Route path="/tango" element={<TangoComparePage />} />
+        <Route path="/suscriptores-ban" element={<SubscriberBanSync />} />
+        <Route path="/voz-cliente" element={<VoiceClientPage />} />
 
       </Routes>
     </ProtectedLayout>

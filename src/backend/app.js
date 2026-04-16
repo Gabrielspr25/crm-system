@@ -6,6 +6,7 @@ import { errorHandler, notFound } from './middlewares/errorHandler.js';
 // Rutas
 import authRoutes from './routes/authRoutes.js';
 import userRoutes from './routes/userRoutes.js';
+import permissionRoutes from './routes/permissionRoutes.js';
 import clientRoutes from './routes/clientRoutes.js';
 import vendorRoutes from './routes/vendorRoutes.js';
 import categoryRoutes from './routes/categoryRoutes.js'; // New Import
@@ -38,6 +39,7 @@ app.use(express.json());
 // Rutas API
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/permissions', permissionRoutes);
 app.use('/api/clients', clientRoutes);
 app.use('/api/vendors', vendorRoutes);
 app.use('/api/categories', categoryRoutes); // New Route

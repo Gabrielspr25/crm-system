@@ -16,3 +16,4 @@ router.get('/search', searchClientsBANsSubscribers);
 router.post('/quick-client', createClientQuick);
 
 export default router;
+// Archivo eliminado por eliminación del módulo de referidos

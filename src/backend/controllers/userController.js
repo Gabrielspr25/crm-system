@@ -1,18 +1,34 @@
 import bcrypt from 'bcrypt';
 import { query } from '../database/db.js';
 import { serverError, badRequest, notFound, conflict } from '../middlewares/errorHandler.js';
+import { ensurePermissionSchema } from '../utils/permissionService.js';
 
 export const getUsers = async (req, res) => {
     try {
+        await ensurePermissionSchema(query);
         const users = await query(
-            `SELECT id, username, salesperson_id, created_at, last_login 
-       FROM users_auth 
-       ORDER BY created_at DESC`
+            `SELECT
+                u.id::text AS id,
+                u.username,
+                u.salesperson_id::text AS salesperson_id,
+                s.name AS salesperson_name,
+                s.role AS salesperson_role,
+                u.created_at,
+                u.last_login,
+                (
+                    SELECT COUNT(*)
+                    FROM user_permission_overrides upo
+                    WHERE upo.user_id::text = u.id::text
+                      AND upo.effect <> 'inherit'
+                )::int AS permission_overrides_count
+             FROM users_auth u
+             LEFT JOIN salespeople s ON s.id::text = u.salesperson_id::text
+             ORDER BY u.created_at DESC`
         );
-        // Mapear para frontend que espera role
+
         const mappedUsers = users.map(u => ({
             ...u,
-            role: u.salesperson_id ? 'vendedor' : 'admin',
+            role: String(u.salesperson_role || '').trim().toLowerCase() || (u.salesperson_id ? 'vendedor' : 'admin'),
             is_active: 1 // Fake active
         }));
         res.json(mappedUsers);

@@ -1,1 +1,0 @@
-ALTER TABLE subscribers ADD COLUMN IF NOT EXISTS equipment TEXT;

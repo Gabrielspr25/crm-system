@@ -1,9 +1,11 @@
 import { useState } from 'react';
-import { 
-  Activity, CheckCircle, XCircle, AlertTriangle, RefreshCw, 
+import {
+  Activity, CheckCircle, XCircle, AlertTriangle, RefreshCw,
   Play, User, CreditCard, Users, FileText, Link2, Trash2,
-  ChevronDown, ChevronRight
+  ChevronDown, ChevronRight, DollarSign, BarChart3, Mail,
+  Zap, Database, Gift
 } from 'lucide-react';
+import { authFetch, getCurrentRole } from '@/react-app/utils/auth';
 
 interface TestResult {
   module: string;
@@ -30,17 +32,28 @@ interface SystemTestResponse {
 }
 
 const MODULE_ICONS: Record<string, any> = {
+  'AUTH': User,
   'SETUP': Activity,
   'CLIENTES': User,
   'BANS': CreditCard,
   'SUSCRIPTORES': Users,
   'SEGUIMIENTOS': FileText,
+  'OCR/SYNC': Zap,
   'INTEGRIDAD': Link2,
   'API': Activity,
+  'REPORTES': DollarSign,
+  'COMISIONES': BarChart3,
+  'IMPORTADOR': Database,
+  'WORKFLOW': Activity,
+  'TARIFAS': FileText,
+  'CAMPAÑAS': Mail,
+  'REFERIDOS': Gift,
+  'TANGO': Database,
   'LIMPIEZA': Trash2
 };
 
 export default function SystemTestAgent() {
+  const currentRole = getCurrentRole();
   const [isOpen, setIsOpen] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [results, setResults] = useState<SystemTestResponse | null>(null);
@@ -75,7 +88,7 @@ export default function SystemTestAgent() {
     }, 400);
 
     try {
-      const response = await fetch('/api/system-test/full');
+      const response = await authFetch('/api/system-test/full', { method: 'POST' });
       const data = await response.json();
       
       clearInterval(stepInterval);
@@ -134,6 +147,8 @@ export default function SystemTestAgent() {
     acc[test.module].push({ ...test, originalIndex: index });
     return acc;
   }, {} as Record<string, (TestResult & { originalIndex: number })[]>) || {};
+
+  if (currentRole !== 'admin') return null;
 
   return (
     <>
@@ -303,7 +318,7 @@ export default function SystemTestAgent() {
             {/* Footer */}
             <div className="p-4 border-t border-gray-800 bg-gray-800/30 flex justify-between items-center">
               <p className="text-xs text-gray-500">
-                Este agente prueba: Crear/Editar Clientes, BANs, Suscriptores, Seguimientos
+                Este agente prueba: Clientes, BANs, Suscriptores, Seguimientos, Comisiones, Reportes, Campaas, Referidos, Tango
               </p>
               <button 
                 onClick={runSystemTest}

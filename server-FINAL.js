@@ -36,13 +36,15 @@ import trackingRoutes from './src/backend/routes/trackingRoutes.js';
 import goalsRoutes from './src/backend/routes/goalsRoutes.js';
 import tangoRoutes from './src/backend/routes/tangoRoutes.js';
 import ocrRoutes from './src/backend/routes/ocrRoutes.js';
+import dealWorkflowRoutes from './src/backend/routes/dealWorkflowRoutes.js';
 import { getTangoPool } from './src/backend/database/externalPools.js';
+import { getPermissionCatalogResponse, ensurePermissionSchema, resolvePermissionsForUser, saveUserPermissionOverrides } from './src/backend/utils/permissionService.js';
 console.log('🔍 DEBUG: discrepanciasRoutes imported:', typeof discrepanciasRoutes);
 
 const JWT_SECRET = process.env.JWT_SECRET || 'tango_secret_key_2024';
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'tango_refresh_secret_key_2024';
-const ACCESS_TOKEN_TTL = '12h';
-const REFRESH_TOKEN_TTL = '7d';
+const ACCESS_TOKEN_TTL = null;
+const REFRESH_TOKEN_TTL = null;
 
 if (!process.env.JWT_SECRET || !process.env.JWT_REFRESH_SECRET) {
   console.warn('[SECURITY] JWT secrets are using fallback values. Configure JWT_SECRET and JWT_REFRESH_SECRET in environment.');
@@ -102,6 +104,102 @@ const isPublicRoute = (req) => {
 
 // Functions `toDbId` etc are hoisted so we can use them here
 
+const normalizeAuthenticatedRole = (value, fallbackSalespersonId = null) => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized) return normalized;
+  return fallbackSalespersonId ? 'vendedor' : 'admin';
+};
+
+const hydrateAuthenticatedUser = async (tokenUser) => {
+  const userId = tokenUser?.userId ?? null;
+  const username = String(tokenUser?.username || '').trim();
+
+  if (!userId && !username) {
+    return tokenUser;
+  }
+
+  const rows = await query(
+    `SELECT u.id,
+            u.username,
+            u.salesperson_id,
+            s.name AS salesperson_name,
+            s.role AS salesperson_role
+       FROM users_auth u
+       LEFT JOIN salespeople s ON s.id::text = u.salesperson_id::text
+      WHERE ($1::int IS NOT NULL AND u.id = $1)
+         OR ($2::text <> '' AND u.username = $2)
+      ORDER BY CASE WHEN ($1::int IS NOT NULL AND u.id = $1) THEN 0 ELSE 1 END
+      LIMIT 1`,
+    [userId ? Number(userId) : null, username]
+  );
+
+  if (rows.length === 0) {
+    return {
+      ...tokenUser,
+      userId: toDbId(tokenUser?.userId),
+      salespersonId: toDbId(tokenUser?.salespersonId),
+      role: normalizeAuthenticatedRole(tokenUser?.role, tokenUser?.salespersonId)
+    };
+  }
+
+  const row = rows[0];
+  return {
+    ...tokenUser,
+    userId: toDbId(row.id),
+    username: row.username,
+    salespersonId: toDbId(row.salesperson_id),
+    salespersonName: row.salesperson_name || null,
+    role: normalizeAuthenticatedRole(row.salesperson_role, row.salesperson_id)
+  };
+};
+
+const getVendorScope = async (req) => {
+  const role = normalizeAuthenticatedRole(req.user?.role, req.user?.salespersonId);
+  const salespersonId = String(req.user?.salespersonId || '').trim();
+
+  if (role !== 'vendedor') {
+    return { isVendor: false, salespersonId: '', vendorId: null };
+  }
+
+  if (!salespersonId) {
+    return { isVendor: true, salespersonId: '', vendorId: null };
+  }
+
+  const vendorRows = await query(
+    `SELECT id
+       FROM vendors
+      WHERE salesperson_id::text = $1
+      LIMIT 1`,
+    [salespersonId]
+  ).catch(() => []);
+
+  return {
+    isVendor: true,
+    salespersonId,
+    vendorId: vendorRows[0]?.id ? String(vendorRows[0].id) : null
+  };
+};
+
+const vendorOwnsClient = (clientSalespersonId, scope) => {
+  if (!scope?.isVendor) return true;
+  if (!scope.salespersonId) return false;
+  return String(clientSalespersonId || '').trim() === scope.salespersonId;
+};
+
+const vendorOwnsProspect = (row, scope) => {
+  if (!scope?.isVendor) return true;
+  if (!scope.salespersonId) return false;
+
+  const clientSalespersonId = String(row?.client_salesperson_id || '').trim();
+  const prospectVendorId = String(row?.vendor_id || '').trim();
+
+  if (clientSalespersonId && clientSalespersonId === scope.salespersonId) {
+    return true;
+  }
+
+  return Boolean(scope.vendorId && prospectVendorId && prospectVendorId === scope.vendorId);
+};
+
 const authenticateRequest = async (req, res, next) => {
   if (req.method === 'OPTIONS' || isPublicRoute(req)) {
     return next();
@@ -114,14 +212,19 @@ const authenticateRequest = async (req, res, next) => {
 
   const token = authHeader.slice(7);
   try {
-    const payload = jwt.verify(token, JWT_SECRET);
-    req.user = {
-      userId: toDbId(payload.userId),
-      username: payload.username,
-      salespersonId: toDbId(payload.salespersonId),
-      salespersonName: payload.salespersonName,
-      role: payload.role
-    };
+    const payload = jwt.verify(token, JWT_SECRET, { ignoreExpiration: true });
+    try {
+      req.user = await hydrateAuthenticatedUser(payload);
+    } catch (dbError) {
+      console.error('No se pudo hidratar usuario autenticado desde BD:', dbError);
+      req.user = {
+        userId: toDbId(payload.userId),
+        username: payload.username,
+        salespersonId: toDbId(payload.salespersonId),
+        salespersonName: payload.salespersonName,
+        role: normalizeAuthenticatedRole(payload.role, payload.salespersonId)
+      };
+    }
     return next();
   } catch (error) {
     return res.status(401).json({ error: 'Token inválido o expirado' });
@@ -307,6 +410,7 @@ app.use('/api/tracking', trackingRoutes);
 app.use('/api/goals', goalsRoutes);
 app.use('/api/tango', tangoRoutes);
 app.use('/api/ocr', ocrRoutes);
+app.use('/api', dealWorkflowRoutes);
 console.log('🔍 DEBUG: /api/discrepancias routes mounted');
 
 // System Routes - PROTECTED EXTRA
@@ -332,8 +436,12 @@ const sanitizeUserPayload = (row) => ({
 });
 
 const issueTokens = (payload) => ({
-  accessToken: jwt.sign(payload, JWT_SECRET, { expiresIn: ACCESS_TOKEN_TTL }),
-  refreshToken: jwt.sign(payload, JWT_REFRESH_SECRET, { expiresIn: REFRESH_TOKEN_TTL })
+  accessToken: ACCESS_TOKEN_TTL
+    ? jwt.sign(payload, JWT_SECRET, { expiresIn: ACCESS_TOKEN_TTL })
+    : jwt.sign(payload, JWT_SECRET),
+  refreshToken: REFRESH_TOKEN_TTL
+    ? jwt.sign(payload, JWT_REFRESH_SECRET, { expiresIn: REFRESH_TOKEN_TTL })
+    : jwt.sign(payload, JWT_REFRESH_SECRET)
 });
 
 async function findUserByUsername(username) {
@@ -539,7 +647,12 @@ const PRODUCT_GOALS_SELECT = `
 const TASK_STATUSES = new Set(['pending', 'in_progress', 'done']);
 const TASK_PRIORITIES = new Set(['low', 'normal', 'high']);
 const TASK_COLUMN_TYPES = new Set(['text', 'date', 'number', 'select', 'checkbox']);
+const TASK_KINDS = new Set(['regular', 'client']);
+const CLIENT_TASK_WORKFLOWS = new Set(['mobile', 'fixed', 'custom']);
+const CLIENT_PRODUCT_SOURCE_TYPES = new Set(['manual', 'subscriber_report', 'subscriber', 'sales_history']);
+const LEGACY_TASK_CHECKLIST_REGEX = /(^|\n)\[(x| )\]\s+/i;
 let ensureTasksSchemaPromise = null;
+let ensureClientProductWorkflowSchemaPromise = null;
 
 function normalizeTaskStatus(value) {
   const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
@@ -554,6 +667,29 @@ function normalizeTaskPriority(value) {
 function normalizeTaskColumnType(value) {
   const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
   return TASK_COLUMN_TYPES.has(normalized) ? normalized : 'text';
+}
+
+function hasLegacyClientTaskMetadata({ clientTaskWorkflow = null, workflowSteps = [], notes = null } = {}) {
+  if (typeof clientTaskWorkflow === 'string' && clientTaskWorkflow.trim() !== '') {
+    return true;
+  }
+  if (Array.isArray(workflowSteps) && workflowSteps.length > 0) {
+    return true;
+  }
+  return LEGACY_TASK_CHECKLIST_REGEX.test(String(notes || ''));
+}
+
+function normalizeTaskKind(value, fallback = {}) {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  if (TASK_KINDS.has(normalized)) {
+    return normalized;
+  }
+  return hasLegacyClientTaskMetadata(fallback) ? 'client' : 'regular';
+}
+
+function normalizeClientTaskWorkflow(value) {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return CLIENT_TASK_WORKFLOWS.has(normalized) ? normalized : 'custom';
 }
 
 function cleanTaskColumnKey(value) {
@@ -580,6 +716,85 @@ function normalizeTaskCustomFields(value) {
     normalized[key] = String(rawValue);
   }
   return normalized;
+}
+
+function normalizeTaskWorkflowSteps(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((entry, index) => {
+      if (typeof entry === 'string') {
+        const label = entry.trim();
+        if (!label) return null;
+        return {
+          id: `step-${index + 1}`,
+          label,
+          is_done: false
+        };
+      }
+
+      if (!entry || typeof entry !== 'object') {
+        return null;
+      }
+
+      const label = String(entry.label ?? entry.text ?? '').trim();
+      if (!label) {
+        return null;
+      }
+
+      return {
+        id: String(entry.id || `step-${index + 1}`),
+        label,
+        is_done: Boolean(entry.is_done ?? entry.done)
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 100);
+}
+
+function cleanProductTemplateKey(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .replace(/_+/g, '_')
+    .slice(0, 80);
+}
+
+function normalizeProductTaskSteps(value) {
+  return normalizeTaskWorkflowSteps(value);
+}
+
+function normalizeClientProductSourceType(value) {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return CLIENT_PRODUCT_SOURCE_TYPES.has(normalized) ? normalized : 'manual';
+}
+
+function resolveClientProductWorkflowStatus(workflowSteps, fallbackStatus = 'pending') {
+  const normalizedFallback = normalizeTaskStatus(fallbackStatus);
+  if (!Array.isArray(workflowSteps) || workflowSteps.length === 0) {
+    return normalizedFallback;
+  }
+
+  const completed = workflowSteps.filter((step) => Boolean(step?.is_done)).length;
+  if (completed <= 0) return 'pending';
+  if (completed >= workflowSteps.length) return 'done';
+  return 'in_progress';
+}
+
+function resolveTaskStatusForWorkflow(taskKind, workflowSteps, fallbackStatus = 'pending') {
+  const normalizedFallback = normalizeTaskStatus(fallbackStatus);
+  if (taskKind !== 'client' || !Array.isArray(workflowSteps) || workflowSteps.length === 0) {
+    return normalizedFallback;
+  }
+
+  const completed = workflowSteps.filter((step) => Boolean(step?.is_done)).length;
+  if (completed <= 0) return 'pending';
+  if (completed >= workflowSteps.length) return 'done';
+  return 'in_progress';
 }
 
 function normalizeTaskDate(value) {
@@ -633,6 +848,15 @@ function mapTaskTime(value) {
 }
 
 function mapTaskRow(row) {
+  const rawClientId = row.client_id;
+  const numericClientId = rawClientId === null || rawClientId === undefined ? null : Number(rawClientId);
+  const workflowSteps = normalizeTaskWorkflowSteps(row.workflow_steps);
+  const taskKind = normalizeTaskKind(row.task_kind, {
+    clientTaskWorkflow: row.client_task_workflow,
+    workflowSteps,
+    notes: row.notes
+  });
+
   return {
     id: Number(row.id),
     owner_user_id: row.owner_user_id,
@@ -643,11 +867,16 @@ function mapTaskRow(row) {
     due_date: mapTaskDate(row.due_date),
     follow_up_date: mapTaskDate(row.follow_up_date),
     follow_up_time: mapTaskTime(row.follow_up_time),
-    client_id: row.client_id === null || row.client_id === undefined ? null : Number(row.client_id),
+    client_id: rawClientId === null || rawClientId === undefined
+      ? null
+      : (Number.isNaN(numericClientId) ? String(rawClientId) : numericClientId),
     client_name: row.client_name,
     notes: row.notes,
-    status: normalizeTaskStatus(row.status),
+    status: resolveTaskStatusForWorkflow(taskKind, workflowSteps, row.status),
     priority: normalizeTaskPriority(row.priority),
+    task_kind: taskKind,
+    client_task_workflow: taskKind === 'client' ? normalizeClientTaskWorkflow(row.client_task_workflow) : null,
+    workflow_steps: workflowSteps,
     custom_fields: normalizeTaskCustomFields(row.custom_fields),
     completed_at: mapTaskTimestamp(row.completed_at),
     created_at: mapTaskTimestamp(row.created_at),
@@ -664,6 +893,53 @@ function mapTaskColumnRow(row) {
     options: normalizeTaskColumnOptions(row.options),
     sort_order: Number(row.sort_order ?? 0),
     is_active: Boolean(row.is_active),
+    created_at: mapTaskTimestamp(row.created_at),
+    updated_at: mapTaskTimestamp(row.updated_at)
+  };
+}
+
+function mapProductTemplateRow(row) {
+  return {
+    id: Number(row.id),
+    product_key: row.product_key,
+    product_name: row.product_name,
+    steps: normalizeProductTaskSteps(row.steps),
+    is_active: row.is_active !== false,
+    created_by: row.created_by ? String(row.created_by) : null,
+    updated_by: row.updated_by ? String(row.updated_by) : null,
+    created_at: mapTaskTimestamp(row.created_at),
+    updated_at: mapTaskTimestamp(row.updated_at)
+  };
+}
+
+function mapClientProductWorkflowRow(row) {
+  const numericId = Number(row.id);
+  const workflowSteps = normalizeProductTaskSteps(row.workflow_steps);
+  return {
+    id: Number.isNaN(numericId) ? row.id : numericId,
+    client_id: row.client_id === null || row.client_id === undefined ? null : String(row.client_id),
+    client_name: row.client_name || null,
+    salesperson_id: row.salesperson_id === null || row.salesperson_id === undefined ? null : String(row.salesperson_id),
+    salesperson_name: row.salesperson_name || null,
+    assigned_user_id: row.assigned_user_id === null || row.assigned_user_id === undefined ? null : String(row.assigned_user_id),
+    assigned_username: row.assigned_username || null,
+    assigned_name: row.assigned_name || null,
+    product_key: row.product_key,
+    product_name: row.product_name,
+    source_type: normalizeClientProductSourceType(row.source_type),
+    source_ref: row.source_ref === null || row.source_ref === undefined ? null : String(row.source_ref),
+    source_label: row.source_label || null,
+    subscriber_id: row.subscriber_id === null || row.subscriber_id === undefined ? null : String(row.subscriber_id),
+    ban_number: row.ban_number || null,
+    phone: row.phone || null,
+    line_type: row.line_type || null,
+    sale_type: row.sale_type || null,
+    monthly_value: row.monthly_value === null || row.monthly_value === undefined ? null : Number(row.monthly_value),
+    notes: row.notes || null,
+    workflow_steps: workflowSteps,
+    status: resolveClientProductWorkflowStatus(workflowSteps, row.status),
+    completed_at: mapTaskTimestamp(row.completed_at),
+    created_by: row.created_by ? String(row.created_by) : null,
     created_at: mapTaskTimestamp(row.created_at),
     updated_at: mapTaskTimestamp(row.updated_at)
   };
@@ -719,6 +995,21 @@ async function ensureTasksSchema() {
     `);
 
     await query(`
+      ALTER TABLE crm_tasks
+      ADD COLUMN IF NOT EXISTS task_kind TEXT NOT NULL DEFAULT 'regular'
+    `);
+
+    await query(`
+      ALTER TABLE crm_tasks
+      ADD COLUMN IF NOT EXISTS client_task_workflow TEXT NULL
+    `);
+
+    await query(`
+      ALTER TABLE crm_tasks
+      ADD COLUMN IF NOT EXISTS workflow_steps JSONB NOT NULL DEFAULT '[]'::jsonb
+    `);
+
+    await query(`
       CREATE INDEX IF NOT EXISTS crm_tasks_assigned_idx
       ON crm_tasks(assigned_user_id, status, due_date)
     `);
@@ -726,6 +1017,11 @@ async function ensureTasksSchema() {
     await query(`
       CREATE INDEX IF NOT EXISTS crm_tasks_follow_up_idx
       ON crm_tasks(owner_user_id, follow_up_date, follow_up_time)
+    `);
+
+    await query(`
+      CREATE INDEX IF NOT EXISTS crm_tasks_kind_idx
+      ON crm_tasks(owner_user_id, task_kind, status, due_date)
     `);
 
     await query(`
@@ -755,12 +1051,132 @@ async function ensureTasksSchema() {
     } catch (e) {
       console.warn("Notice: could not alter crm_tasks.client_id to text:", e.message);
     }
+
+    await query(`
+      UPDATE crm_tasks
+         SET task_kind = CASE
+           WHEN COALESCE(client_task_workflow, '') <> '' THEN 'client'
+           WHEN jsonb_array_length(COALESCE(workflow_steps, '[]'::jsonb)) > 0 THEN 'client'
+           WHEN COALESCE(notes, '') ~ '(^|\\n)\\[(x| )\\]\\s+' THEN 'client'
+           ELSE 'regular'
+         END
+       WHERE task_kind IS NULL
+          OR task_kind NOT IN ('regular', 'client')
+          OR (
+            task_kind = 'client'
+            AND COALESCE(client_task_workflow, '') = ''
+            AND jsonb_array_length(COALESCE(workflow_steps, '[]'::jsonb)) = 0
+            AND COALESCE(notes, '') !~ '(^|\\n)\\[(x| )\\]\\s+'
+          )
+    `);
   })().catch((error) => {
     ensureTasksSchemaPromise = null;
     throw error;
   });
 
   return ensureTasksSchemaPromise;
+}
+
+async function ensureClientProductWorkflowSchema() {
+  if (ensureClientProductWorkflowSchemaPromise) {
+    return ensureClientProductWorkflowSchemaPromise;
+  }
+
+  ensureClientProductWorkflowSchemaPromise = (async () => {
+    await query(`
+      CREATE TABLE IF NOT EXISTS crm_product_task_templates (
+        id BIGSERIAL PRIMARY KEY,
+        product_key TEXT NOT NULL UNIQUE,
+        product_name TEXT NOT NULL,
+        steps JSONB NOT NULL DEFAULT '[]'::jsonb,
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+        created_by TEXT NULL,
+        updated_by TEXT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    await query(`
+      CREATE INDEX IF NOT EXISTS crm_product_task_templates_active_idx
+      ON crm_product_task_templates(is_active, product_name)
+    `);
+
+    await query(`
+      CREATE TABLE IF NOT EXISTS crm_client_product_workflows (
+        id BIGSERIAL PRIMARY KEY,
+        client_id TEXT NOT NULL,
+        client_name TEXT NOT NULL,
+        salesperson_id TEXT NULL,
+        assigned_user_id TEXT NULL,
+        product_key TEXT NOT NULL,
+        product_name TEXT NOT NULL,
+        source_type TEXT NULL,
+        source_ref TEXT NULL,
+        source_label TEXT NULL,
+        subscriber_id TEXT NULL,
+        ban_number TEXT NULL,
+        phone TEXT NULL,
+        line_type TEXT NULL,
+        sale_type TEXT NULL,
+        monthly_value NUMERIC NULL,
+        notes TEXT NULL,
+        workflow_steps JSONB NOT NULL DEFAULT '[]'::jsonb,
+        status TEXT NOT NULL DEFAULT 'pending',
+        completed_at TIMESTAMPTZ NULL,
+        created_by TEXT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT crm_client_product_workflows_status_chk CHECK (status IN ('pending', 'in_progress', 'done'))
+      )
+    `);
+
+    await query(`
+      CREATE INDEX IF NOT EXISTS crm_client_product_workflows_client_idx
+      ON crm_client_product_workflows(client_id, status, updated_at DESC)
+    `);
+
+    await query(`
+      CREATE INDEX IF NOT EXISTS crm_client_product_workflows_assigned_idx
+      ON crm_client_product_workflows(assigned_user_id, status, updated_at DESC)
+    `);
+
+    await query(`
+      CREATE INDEX IF NOT EXISTS crm_client_product_workflows_salesperson_idx
+      ON crm_client_product_workflows(salesperson_id, status, updated_at DESC)
+    `);
+  })().catch((error) => {
+    ensureClientProductWorkflowSchemaPromise = null;
+    throw error;
+  });
+
+  return ensureClientProductWorkflowSchemaPromise;
+}
+
+async function resolveDefaultAssignedUserIdForClient(clientId) {
+  const rows = await query(`
+    SELECT c.id,
+           c.name,
+           c.salesperson_id,
+           u.id::text AS assigned_user_id
+      FROM clients c
+      LEFT JOIN users_auth u
+        ON u.salesperson_id::text = c.salesperson_id::text
+     WHERE c.id::text = $1
+     LIMIT 1
+  `, [String(clientId)]);
+
+  if (rows.length === 0) {
+    return null;
+  }
+
+  const row = rows[0];
+  return {
+    client_id: String(row.id),
+    client_name: row.name,
+    salesperson_id: row.salesperson_id ? String(row.salesperson_id) : null,
+    assigned_user_id: row.assigned_user_id ? String(row.assigned_user_id) : null
+  };
 }
 
 // ======================================================
@@ -947,6 +1363,125 @@ app.get('/api/salespeople', authenticateRequest, async (_req, res) => {
 
 app.get('/api/me', (req, res) => {
   res.json(req.user);
+});
+
+app.get('/api/auth/me', (req, res) => {
+  res.json({ user: req.user });
+});
+
+app.get('/api/permissions/catalog', async (_req, res) => {
+  try {
+    res.json(getPermissionCatalogResponse());
+  } catch (error) {
+    serverError(res, error, 'Error obteniendo catalogo de permisos');
+  }
+});
+
+app.get('/api/permissions/me', async (req, res) => {
+  try {
+    const resolved = await resolvePermissionsForUser(query, req.user);
+    res.json(resolved);
+  } catch (error) {
+    serverError(res, error, 'Error obteniendo permisos del usuario actual');
+  }
+});
+
+app.get('/api/permissions/users/:id', requireRole(['admin', 'supervisor']), async (req, res) => {
+  const userId = String(req.params?.id || '').trim();
+  if (!userId) {
+    return res.status(400).json({ error: 'id es requerido' });
+  }
+
+  try {
+    await ensurePermissionSchema(query);
+    const rows = await query(
+      `SELECT u.id::text AS id,
+              u.username,
+              u.salesperson_id::text AS salesperson_id,
+              s.name AS salesperson_name,
+              s.role AS salesperson_role
+         FROM users_auth u
+         LEFT JOIN salespeople s ON s.id::text = u.salesperson_id::text
+        WHERE u.id::text = $1
+        LIMIT 1`,
+      [userId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Usuario no encontrado' });
+    }
+
+    const row = rows[0];
+    const role = String(row.salesperson_role || '').trim().toLowerCase() || (row.salesperson_id ? 'vendedor' : 'admin');
+    const resolved = await resolvePermissionsForUser(query, {
+      userId: row.id,
+      username: row.username,
+      salespersonId: row.salesperson_id,
+      salespersonName: row.salesperson_name || null,
+      role
+    });
+
+    res.json({
+      user: {
+        userId: row.id,
+        username: row.username,
+        salespersonId: row.salesperson_id,
+        salespersonName: row.salesperson_name || null,
+        role
+      },
+      ...resolved
+    });
+  } catch (error) {
+    serverError(res, error, 'Error obteniendo permisos del usuario');
+  }
+});
+
+app.put('/api/permissions/users/:id', requireRole(['admin', 'supervisor']), async (req, res) => {
+  const userId = String(req.params?.id || '').trim();
+  const items = Array.isArray(req.body?.permissions) ? req.body.permissions : [];
+
+  if (!userId) {
+    return res.status(400).json({ error: 'id es requerido' });
+  }
+
+  try {
+    await ensurePermissionSchema(query);
+    const rows = await query(
+      `SELECT u.id::text AS id,
+              u.username,
+              u.salesperson_id::text AS salesperson_id,
+              s.name AS salesperson_name,
+              s.role AS salesperson_role
+         FROM users_auth u
+         LEFT JOIN salespeople s ON s.id::text = u.salesperson_id::text
+        WHERE u.id::text = $1
+        LIMIT 1`,
+      [userId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Usuario no encontrado' });
+    }
+
+    const row = rows[0];
+    const role = String(row.salesperson_role || '').trim().toLowerCase() || (row.salesperson_id ? 'vendedor' : 'admin');
+    const overrides = await saveUserPermissionOverrides(query, req.user?.userId, userId, items);
+    const resolved = await resolvePermissionsForUser(query, {
+      userId: row.id,
+      username: row.username,
+      salespersonId: row.salesperson_id,
+      salespersonName: row.salesperson_name || null,
+      role
+    });
+
+    res.json({
+      user_id: userId,
+      overrides,
+      permissions: resolved.permissions
+    });
+  } catch (error) {
+    serverError(res, error, 'Error guardando permisos del usuario');
+  }
 });
 
 app.put('/api/me/password', async (req, res) => {
@@ -1230,7 +1765,8 @@ app.get('/api/tasks', authenticateRequest, async (req, res) => {
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
     const rows = await query(
       `SELECT t.id, t.owner_user_id, t.assigned_user_id, u.username AS assigned_username, sp.name AS assigned_name,
-              t.title, t.due_date, t.follow_up_date, t.follow_up_time, t.client_id, t.client_name, t.notes, t.status, t.priority, t.custom_fields,
+              t.title, t.due_date, t.follow_up_date, t.follow_up_time, t.client_id, t.client_name, t.notes, t.status, t.priority,
+              t.task_kind, t.client_task_workflow, t.workflow_steps, t.custom_fields,
               t.completed_at, t.created_at, t.updated_at
          FROM crm_tasks t
          LEFT JOIN users_auth u ON u.id::text = t.assigned_user_id::text
@@ -1294,7 +1830,6 @@ app.post('/api/tasks', authenticateRequest, async (req, res) => {
   const followUpTime = normalizeTaskTime(req.body?.follow_up_time);
   const clientName = String(req.body?.client_name || '').trim() || null;
   const notes = String(req.body?.notes || '').trim() || null;
-  const status = normalizeTaskStatus(req.body?.status);
   const priority = normalizeTaskPriority(req.body?.priority);
   const customFields = normalizeTaskCustomFields(req.body?.custom_fields);
   const role = String(req.user?.role || '').toLowerCase();
@@ -1303,6 +1838,23 @@ app.post('/api/tasks', authenticateRequest, async (req, res) => {
   let clientId = null;
   if (req.body?.client_id !== null && req.body?.client_id !== undefined && req.body?.client_id !== '') {
     clientId = req.body.client_id; // Leave it as a string/number (UUID/bigint compatible)
+  }
+
+  const taskKind = normalizeTaskKind(req.body?.task_kind, {
+    clientTaskWorkflow: req.body?.client_task_workflow,
+    workflowSteps: req.body?.workflow_steps,
+    notes
+  });
+  const clientTaskWorkflow = taskKind === 'client'
+    ? normalizeClientTaskWorkflow(req.body?.client_task_workflow)
+    : null;
+  const workflowSteps = taskKind === 'client'
+    ? normalizeTaskWorkflowSteps(req.body?.workflow_steps)
+    : [];
+  const status = resolveTaskStatusForWorkflow(taskKind, workflowSteps, req.body?.status);
+
+  if (taskKind === 'client' && (clientId === null || clientName === null)) {
+    return badRequest(res, 'Las tareas de cliente requieren un cliente valido');
   }
 
   let assignedUserId = ownerUserId;
@@ -1321,10 +1873,35 @@ app.post('/api/tasks', authenticateRequest, async (req, res) => {
     }
 
     const rows = await query(
-      `INSERT INTO crm_tasks (owner_user_id, assigned_user_id, title, due_date, follow_up_date, follow_up_time, client_id, client_name, notes, status, priority, custom_fields, completed_at, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, CASE WHEN $10 = 'done' THEN NOW() ELSE NULL END, NOW(), NOW())
-       RETURNING id, owner_user_id, assigned_user_id, title, due_date, follow_up_date, follow_up_time, client_id, client_name, notes, status, priority, custom_fields, completed_at, created_at, updated_at`,
-      [ownerUserId, assignedUserId, title, dueDate, followUpDate, followUpTime, clientId, clientName, notes, status, priority, JSON.stringify(customFields)]
+      `INSERT INTO crm_tasks (
+         owner_user_id, assigned_user_id, title, due_date, follow_up_date, follow_up_time,
+         client_id, client_name, notes, status, priority, task_kind, client_task_workflow, workflow_steps, custom_fields,
+         completed_at, created_at, updated_at
+       )
+       VALUES (
+         $1, $2, $3, $4, $5, $6,
+         $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15::jsonb,
+         CASE WHEN $10 = 'done' THEN NOW() ELSE NULL END, NOW(), NOW()
+       )
+       RETURNING id, owner_user_id, assigned_user_id, title, due_date, follow_up_date, follow_up_time, client_id, client_name, notes, status, priority,
+                 task_kind, client_task_workflow, workflow_steps, custom_fields, completed_at, created_at, updated_at`,
+      [
+        ownerUserId,
+        assignedUserId,
+        title,
+        dueDate,
+        followUpDate,
+        followUpTime,
+        clientId,
+        clientName,
+        notes,
+        status,
+        priority,
+        taskKind,
+        clientTaskWorkflow,
+        JSON.stringify(workflowSteps),
+        JSON.stringify(customFields)
+      ]
     );
 
     res.status(201).json(mapTaskRow(rows[0]));
@@ -1345,94 +1922,171 @@ app.put('/api/tasks/:id', authenticateRequest, async (req, res) => {
   const role = String(req.user?.role || '').toLowerCase();
   const isPrivileged = role === 'admin' || role === 'supervisor';
 
-  const updates = [];
-  const values = [];
-  let index = 1;
-  let normalizedStatus = null;
-
-  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'title')) {
-    const title = String(req.body.title || '').trim();
-    if (!title) return badRequest(res, 'El titulo no puede estar vacio');
-    updates.push(`title = $${index++}`);
-    values.push(title);
-  }
-
-  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'due_date')) {
-    updates.push(`due_date = $${index++}`);
-    values.push(normalizeTaskDate(req.body.due_date));
-  }
-
-  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'follow_up_date')) {
-    updates.push(`follow_up_date = $${index++}`);
-    values.push(normalizeTaskDate(req.body.follow_up_date));
-  }
-
-  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'follow_up_time')) {
-    updates.push(`follow_up_time = $${index++}`);
-    values.push(normalizeTaskTime(req.body.follow_up_time));
-  }
-
-  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'client_name')) {
-    const clientName = String(req.body.client_name || '').trim();
-    updates.push(`client_name = $${index++}`);
-    values.push(clientName || null);
-  }
-
-  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'client_id')) {
-    updates.push(`client_id = $${index++}`);
-    values.push((req.body.client_id === null || req.body.client_id === '') ? null : req.body.client_id);
-  }
-
-  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'assigned_user_id')) {
-    let assignedUserId = null;
-    if (req.body.assigned_user_id !== null && req.body.assigned_user_id !== undefined && req.body.assigned_user_id !== '') {
-      assignedUserId = String(toDbId(req.body.assigned_user_id));
-    }
-
-    if (!isPrivileged && assignedUserId && !sameId(assignedUserId, currentUserId)) {
-      return res.status(403).json({ error: 'No tienes permisos para asignar tareas a otros usuarios' });
-    }
-
-    updates.push(`assigned_user_id = $${index++}`);
-    values.push(assignedUserId || currentUserId);
-  }
-
-  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'notes')) {
-    const notes = String(req.body.notes || '').trim();
-    updates.push(`notes = $${index++}`);
-    values.push(notes || null);
-  }
-
-  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'status')) {
-    normalizedStatus = normalizeTaskStatus(req.body.status);
-    updates.push(`status = $${index++}`);
-    values.push(normalizedStatus);
-  }
-
-  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'priority')) {
-    updates.push(`priority = $${index++}`);
-    values.push(normalizeTaskPriority(req.body.priority));
-  }
-
-  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'custom_fields')) {
-    updates.push(`custom_fields = $${index++}::jsonb`);
-    values.push(JSON.stringify(normalizeTaskCustomFields(req.body.custom_fields)));
-  }
-
-  if (updates.length === 0) {
-    return badRequest(res, 'No hay campos para actualizar');
-  }
-
-  if (normalizedStatus === 'done') {
-    updates.push(`completed_at = COALESCE(completed_at, NOW())`);
-  } else if (normalizedStatus) {
-    updates.push(`completed_at = NULL`);
-  }
-
-  updates.push('updated_at = NOW()');
-
   try {
     await ensureTasksSchema();
+    const currentRows = await query(
+      `SELECT id, owner_user_id, assigned_user_id, client_id, client_name, notes, status, task_kind, client_task_workflow, workflow_steps
+         FROM crm_tasks
+        WHERE id = $1
+          ${isPrivileged ? '' : 'AND (owner_user_id = $2 OR assigned_user_id = $2)'}`,
+      isPrivileged ? [taskId] : [taskId, currentUserId]
+    );
+
+    if (currentRows.length === 0) {
+      return notFound(res, 'Tarea');
+    }
+
+    const currentTask = currentRows[0];
+    const updates = [];
+    const values = [];
+    let index = 1;
+    let normalizedStatus = null;
+
+    const nextClientId = Object.prototype.hasOwnProperty.call(req.body || {}, 'client_id')
+      ? ((req.body.client_id === null || req.body.client_id === '') ? null : req.body.client_id)
+      : currentTask.client_id;
+    const nextTaskKind = Object.prototype.hasOwnProperty.call(req.body || {}, 'task_kind')
+      ? normalizeTaskKind(req.body.task_kind, {
+        clientTaskWorkflow: Object.prototype.hasOwnProperty.call(req.body || {}, 'client_task_workflow')
+          ? req.body.client_task_workflow
+          : currentTask.client_task_workflow,
+        workflowSteps: Object.prototype.hasOwnProperty.call(req.body || {}, 'workflow_steps')
+          ? req.body.workflow_steps
+          : currentTask.workflow_steps,
+        notes: Object.prototype.hasOwnProperty.call(req.body || {}, 'notes')
+          ? req.body.notes
+          : currentTask.notes
+      })
+      : normalizeTaskKind(currentTask.task_kind, {
+        clientTaskWorkflow: currentTask.client_task_workflow,
+        workflowSteps: currentTask.workflow_steps,
+        notes: currentTask.notes
+      });
+    const nextClientName = Object.prototype.hasOwnProperty.call(req.body || {}, 'client_name')
+      ? (String(req.body.client_name || '').trim() || null)
+      : currentTask.client_name;
+    const nextWorkflowType = Object.prototype.hasOwnProperty.call(req.body || {}, 'client_task_workflow')
+      ? (nextTaskKind === 'client' ? normalizeClientTaskWorkflow(req.body.client_task_workflow) : null)
+      : (nextTaskKind === 'client' ? normalizeClientTaskWorkflow(currentTask.client_task_workflow) : null);
+    const nextWorkflowSteps = Object.prototype.hasOwnProperty.call(req.body || {}, 'workflow_steps')
+      ? (nextTaskKind === 'client' ? normalizeTaskWorkflowSteps(req.body.workflow_steps) : [])
+      : (nextTaskKind === 'client' ? normalizeTaskWorkflowSteps(currentTask.workflow_steps) : []);
+    const requestedStatus = Object.prototype.hasOwnProperty.call(req.body || {}, 'status')
+      ? req.body.status
+      : currentTask.status;
+    const effectiveStatus = resolveTaskStatusForWorkflow(nextTaskKind, nextWorkflowSteps, requestedStatus);
+
+    if (nextTaskKind === 'client' && (nextClientId === null || nextClientName === null)) {
+      return badRequest(res, 'Las tareas de cliente requieren un cliente valido');
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'title')) {
+      const title = String(req.body.title || '').trim();
+      if (!title) return badRequest(res, 'El titulo no puede estar vacio');
+      updates.push(`title = $${index++}`);
+      values.push(title);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'due_date')) {
+      updates.push(`due_date = $${index++}`);
+      values.push(normalizeTaskDate(req.body.due_date));
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'follow_up_date')) {
+      updates.push(`follow_up_date = $${index++}`);
+      values.push(normalizeTaskDate(req.body.follow_up_date));
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'follow_up_time')) {
+      updates.push(`follow_up_time = $${index++}`);
+      values.push(normalizeTaskTime(req.body.follow_up_time));
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'client_name')) {
+      updates.push(`client_name = $${index++}`);
+      values.push(nextClientName);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'client_id')) {
+      updates.push(`client_id = $${index++}`);
+      values.push(nextClientId);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'assigned_user_id')) {
+      let assignedUserId = null;
+      if (req.body.assigned_user_id !== null && req.body.assigned_user_id !== undefined && req.body.assigned_user_id !== '') {
+        assignedUserId = String(toDbId(req.body.assigned_user_id));
+      }
+
+      if (!isPrivileged && assignedUserId && !sameId(assignedUserId, currentUserId)) {
+        return res.status(403).json({ error: 'No tienes permisos para asignar tareas a otros usuarios' });
+      }
+
+      updates.push(`assigned_user_id = $${index++}`);
+      values.push(assignedUserId || currentUserId);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'notes')) {
+      const notes = String(req.body.notes || '').trim();
+      updates.push(`notes = $${index++}`);
+      values.push(notes || null);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'status')) {
+      normalizedStatus = effectiveStatus;
+      updates.push(`status = $${index++}`);
+      values.push(normalizedStatus);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'priority')) {
+      updates.push(`priority = $${index++}`);
+      values.push(normalizeTaskPriority(req.body.priority));
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'task_kind')) {
+      updates.push(`task_kind = $${index++}`);
+      values.push(nextTaskKind);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'client_task_workflow')) {
+      updates.push(`client_task_workflow = $${index++}`);
+      values.push(nextWorkflowType);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'workflow_steps')) {
+      updates.push(`workflow_steps = $${index++}::jsonb`);
+      values.push(JSON.stringify(nextWorkflowSteps));
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'custom_fields')) {
+      updates.push(`custom_fields = $${index++}::jsonb`);
+      values.push(JSON.stringify(normalizeTaskCustomFields(req.body.custom_fields)));
+    }
+
+    if (
+      !Object.prototype.hasOwnProperty.call(req.body || {}, 'status')
+      && (
+        Object.prototype.hasOwnProperty.call(req.body || {}, 'workflow_steps')
+        || Object.prototype.hasOwnProperty.call(req.body || {}, 'task_kind')
+      )
+    ) {
+      normalizedStatus = effectiveStatus;
+      updates.push(`status = $${index++}`);
+      values.push(normalizedStatus);
+    }
+
+    if (updates.length === 0) {
+      return badRequest(res, 'No hay campos para actualizar');
+    }
+
+    if (normalizedStatus === 'done') {
+      updates.push(`completed_at = COALESCE(completed_at, NOW())`);
+    } else if (normalizedStatus) {
+      updates.push(`completed_at = NULL`);
+    }
+
+    updates.push('updated_at = NOW()');
+
     const whereParts = ['id = $' + index];
     values.push(taskId);
     index += 1;
@@ -1446,7 +2100,8 @@ app.put('/api/tasks/:id', authenticateRequest, async (req, res) => {
       `UPDATE crm_tasks
           SET ${updates.join(', ')}
         WHERE ${whereParts.join(' AND ')}
-      RETURNING id, owner_user_id, assigned_user_id, title, due_date, follow_up_date, follow_up_time, client_id, client_name, notes, status, priority, custom_fields, completed_at, created_at, updated_at`,
+      RETURNING id, owner_user_id, assigned_user_id, title, due_date, follow_up_date, follow_up_time, client_id, client_name, notes, status, priority,
+                task_kind, client_task_workflow, workflow_steps, custom_fields, completed_at, created_at, updated_at`,
       values
     );
 
@@ -1489,6 +2144,637 @@ app.delete('/api/tasks/:id', authenticateRequest, async (req, res) => {
     res.json({ success: true });
   } catch (error) {
     serverError(res, error, 'Error eliminando tarea');
+  }
+});
+
+app.get('/api/task-product-templates', authenticateRequest, async (req, res) => {
+  try {
+    await ensureClientProductWorkflowSchema();
+    const role = String(req.user?.role || '').toLowerCase();
+    const includeInactive = (role === 'admin' || role === 'supervisor') && String(req.query.include_inactive || '').trim() === '1';
+    const rows = await query(
+      `SELECT id, product_key, product_name, steps, is_active, created_by, updated_by, created_at, updated_at
+         FROM crm_product_task_templates
+        ${includeInactive ? '' : 'WHERE is_active = TRUE'}
+        ORDER BY LOWER(product_name) ASC`,
+      []
+    );
+    res.json(rows.map(mapProductTemplateRow));
+  } catch (error) {
+    serverError(res, error, 'Error obteniendo plantillas de producto');
+  }
+});
+
+app.post('/api/task-product-templates', authenticateRequest, requireRole(['admin', 'supervisor']), async (req, res) => {
+  const currentUserId = String(req.user?.userId || '').trim() || null;
+  const productName = String(req.body?.product_name || '').trim();
+  const productKey = cleanProductTemplateKey(req.body?.product_key || productName);
+  const steps = normalizeProductTaskSteps(req.body?.steps);
+
+  if (!productName) {
+    return badRequest(res, 'El nombre del producto es obligatorio');
+  }
+  if (!productKey) {
+    return badRequest(res, 'La clave del producto es invalida');
+  }
+  if (steps.length === 0) {
+    return badRequest(res, 'El producto debe tener al menos un paso');
+  }
+
+  try {
+    await ensureClientProductWorkflowSchema();
+    const exists = await query(`SELECT id FROM crm_product_task_templates WHERE product_key = $1`, [productKey]);
+    if (exists.length > 0) {
+      return badRequest(res, 'Ya existe una plantilla para ese producto');
+    }
+
+    const rows = await query(
+      `INSERT INTO crm_product_task_templates (
+         product_key, product_name, steps, is_active, created_by, updated_by, created_at, updated_at
+       )
+       VALUES ($1, $2, $3::jsonb, TRUE, $4, $4, NOW(), NOW())
+       RETURNING id, product_key, product_name, steps, is_active, created_by, updated_by, created_at, updated_at`,
+      [productKey, productName, JSON.stringify(steps), currentUserId]
+    );
+
+    res.status(201).json(mapProductTemplateRow(rows[0]));
+  } catch (error) {
+    serverError(res, error, 'Error creando plantilla de producto');
+  }
+});
+
+app.put('/api/task-product-templates/:id', authenticateRequest, requireRole(['admin', 'supervisor']), async (req, res) => {
+  const templateId = Number(req.params.id);
+  const currentUserId = String(req.user?.userId || '').trim() || null;
+
+  if (Number.isNaN(templateId)) {
+    return badRequest(res, 'ID invalido');
+  }
+
+  try {
+    await ensureClientProductWorkflowSchema();
+    const currentRows = await query(`SELECT * FROM crm_product_task_templates WHERE id = $1`, [templateId]);
+    if (currentRows.length === 0) {
+      return notFound(res, 'Plantilla');
+    }
+
+    const currentTemplate = currentRows[0];
+    const nextProductName = Object.prototype.hasOwnProperty.call(req.body || {}, 'product_name')
+      ? String(req.body.product_name || '').trim()
+      : String(currentTemplate.product_name || '').trim();
+    const nextProductKey = cleanProductTemplateKey(
+      Object.prototype.hasOwnProperty.call(req.body || {}, 'product_key')
+        ? req.body.product_key
+        : (currentTemplate.product_key || nextProductName)
+    );
+    const nextSteps = Object.prototype.hasOwnProperty.call(req.body || {}, 'steps')
+      ? normalizeProductTaskSteps(req.body.steps)
+      : normalizeProductTaskSteps(currentTemplate.steps);
+    const nextIsActive = Object.prototype.hasOwnProperty.call(req.body || {}, 'is_active')
+      ? Boolean(req.body.is_active)
+      : Boolean(currentTemplate.is_active);
+
+    if (!nextProductName) {
+      return badRequest(res, 'El nombre del producto es obligatorio');
+    }
+    if (!nextProductKey) {
+      return badRequest(res, 'La clave del producto es invalida');
+    }
+    if (nextSteps.length === 0) {
+      return badRequest(res, 'El producto debe tener al menos un paso');
+    }
+
+    const duplicated = await query(
+      `SELECT id
+         FROM crm_product_task_templates
+        WHERE product_key = $1
+          AND id <> $2`,
+      [nextProductKey, templateId]
+    );
+    if (duplicated.length > 0) {
+      return badRequest(res, 'Ya existe otra plantilla con esa clave de producto');
+    }
+
+    const rows = await query(
+      `UPDATE crm_product_task_templates
+          SET product_key = $1,
+              product_name = $2,
+              steps = $3::jsonb,
+              is_active = $4,
+              updated_by = $5,
+              updated_at = NOW()
+        WHERE id = $6
+      RETURNING id, product_key, product_name, steps, is_active, created_by, updated_by, created_at, updated_at`,
+      [nextProductKey, nextProductName, JSON.stringify(nextSteps), nextIsActive, currentUserId, templateId]
+    );
+
+    res.json(mapProductTemplateRow(rows[0]));
+  } catch (error) {
+    serverError(res, error, 'Error actualizando plantilla de producto');
+  }
+});
+
+app.delete('/api/task-product-templates/:id', authenticateRequest, requireRole(['admin', 'supervisor']), async (req, res) => {
+  const templateId = Number(req.params.id);
+  if (Number.isNaN(templateId)) {
+    return badRequest(res, 'ID invalido');
+  }
+
+  try {
+    await ensureClientProductWorkflowSchema();
+    const rows = await query(
+      `DELETE FROM crm_product_task_templates
+        WHERE id = $1
+      RETURNING id`,
+      [templateId]
+    );
+
+    if (rows.length === 0) {
+      return notFound(res, 'Plantilla');
+    }
+
+    res.json({ ok: true });
+  } catch (error) {
+    serverError(res, error, 'Error eliminando plantilla de producto');
+  }
+});
+
+app.get('/api/clients/:id/product-workflows', authenticateRequest, async (req, res) => {
+  const clientId = String(req.params.id || '').trim();
+  if (!clientId) {
+    return badRequest(res, 'client_id es obligatorio');
+  }
+
+  try {
+    await ensureClientProductWorkflowSchema();
+    const role = String(req.user?.role || '').toLowerCase();
+    const isVendor = role === 'vendedor';
+    const salespersonId = String(req.user?.salespersonId || '').trim();
+    const clientRows = await query(
+      `SELECT c.id, c.name, c.salesperson_id, sp.name AS salesperson_name
+         FROM clients c
+         LEFT JOIN salespeople sp ON sp.id::text = c.salesperson_id::text
+        WHERE c.id::text = $1
+          ${isVendor && salespersonId ? 'AND (c.salesperson_id::text = $2 OR c.salesperson_id IS NULL)' : ''}`,
+      isVendor && salespersonId ? [clientId, salespersonId] : [clientId]
+    );
+
+    if (clientRows.length === 0) {
+      return notFound(res, 'Cliente');
+    }
+
+    const workflowRows = await query(
+      `SELECT w.*,
+              ua.username AS assigned_username,
+              COALESCE(sa.name, ua.username) AS assigned_name
+         FROM crm_client_product_workflows w
+         LEFT JOIN users_auth ua ON ua.id::text = w.assigned_user_id::text
+         LEFT JOIN salespeople sa ON sa.id::text = ua.salesperson_id::text
+        WHERE w.client_id::text = $1
+        ORDER BY
+          CASE w.status WHEN 'pending' THEN 0 WHEN 'in_progress' THEN 1 ELSE 2 END,
+          w.updated_at DESC,
+          w.created_at DESC`,
+      [clientId]
+    );
+
+    const clientMeta = await resolveDefaultAssignedUserIdForClient(clientId);
+
+    res.json({
+      client: {
+        id: String(clientRows[0].id),
+        name: clientRows[0].name,
+        salesperson_id: clientRows[0].salesperson_id ? String(clientRows[0].salesperson_id) : null,
+        salesperson_name: clientRows[0].salesperson_name || null,
+        default_assigned_user_id: clientMeta?.assigned_user_id || null
+      },
+      workflows: workflowRows.map((row) => mapClientProductWorkflowRow({
+        ...row,
+        client_name: row.client_name || clientRows[0].name,
+        salesperson_id: row.salesperson_id || clientRows[0].salesperson_id,
+        salesperson_name: clientRows[0].salesperson_name || null
+      }))
+    });
+  } catch (error) {
+    serverError(res, error, 'Error obteniendo workflows del cliente');
+  }
+});
+
+app.get('/api/client-product-workflows', authenticateRequest, async (req, res) => {
+  try {
+    await ensureClientProductWorkflowSchema();
+    const role = String(req.user?.role || '').toLowerCase();
+    const isVendor = role === 'vendedor';
+    const salespersonId = String(req.user?.salespersonId || '').trim();
+    const currentUserId = String(req.user?.userId || '').trim();
+    const params = [];
+    const conditions = [];
+
+    const pendingOnly = String(req.query.pending_only || '').trim() === '1';
+    if (pendingOnly) {
+      conditions.push(`w.status <> 'done'`);
+    }
+
+    const status = String(req.query.status || '').trim().toLowerCase();
+    if (TASK_STATUSES.has(status)) {
+      conditions.push(`w.status = $${params.length + 1}`);
+      params.push(status);
+    }
+
+    const clientId = String(req.query.client_id || '').trim();
+    if (clientId) {
+      conditions.push(`w.client_id::text = $${params.length + 1}`);
+      params.push(clientId);
+    }
+
+    const assignedUserId = String(req.query.assigned_user_id || '').trim();
+    if (assignedUserId) {
+      conditions.push(`w.assigned_user_id::text = $${params.length + 1}`);
+      params.push(assignedUserId);
+    }
+
+    const q = String(req.query.q || '').trim();
+    if (q) {
+      conditions.push(`(
+        w.client_name ILIKE $${params.length + 1}
+        OR w.product_name ILIKE $${params.length + 1}
+        OR COALESCE(w.source_label, '') ILIKE $${params.length + 1}
+        OR COALESCE(w.ban_number, '') ILIKE $${params.length + 1}
+        OR COALESCE(w.phone, '') ILIKE $${params.length + 1}
+      )`);
+      params.push(`%${q}%`);
+    }
+
+    if (isVendor && (salespersonId || currentUserId)) {
+      const vendorChecks = [];
+      if (salespersonId) {
+        vendorChecks.push(`c.salesperson_id::text = $${params.length + 1}`);
+        params.push(salespersonId);
+      }
+      if (currentUserId) {
+        vendorChecks.push(`w.assigned_user_id::text = $${params.length + 1}`);
+        params.push(currentUserId);
+      }
+      if (vendorChecks.length > 0) {
+        conditions.push(`(${vendorChecks.join(' OR ')})`);
+      }
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const rows = await query(
+      `SELECT w.*,
+              c.salesperson_id,
+              sp.name AS salesperson_name,
+              ua.username AS assigned_username,
+              COALESCE(sa.name, ua.username) AS assigned_name
+         FROM crm_client_product_workflows w
+         LEFT JOIN clients c ON c.id::text = w.client_id::text
+         LEFT JOIN salespeople sp ON sp.id::text = c.salesperson_id::text
+         LEFT JOIN users_auth ua ON ua.id::text = w.assigned_user_id::text
+         LEFT JOIN salespeople sa ON sa.id::text = ua.salesperson_id::text
+         ${whereClause}
+        ORDER BY
+          CASE w.status WHEN 'pending' THEN 0 WHEN 'in_progress' THEN 1 ELSE 2 END,
+          w.updated_at DESC,
+          w.created_at DESC`,
+      params
+    );
+
+    res.json(rows.map(mapClientProductWorkflowRow));
+  } catch (error) {
+    serverError(res, error, 'Error obteniendo workflows');
+  }
+});
+
+app.post('/api/clients/:id/product-workflows', authenticateRequest, async (req, res) => {
+  const clientId = String(req.params.id || '').trim();
+  const currentUserId = String(req.user?.userId || '').trim();
+  const role = String(req.user?.role || '').toLowerCase();
+  const isPrivileged = role === 'admin' || role === 'supervisor';
+
+  if (!clientId) {
+    return badRequest(res, 'client_id es obligatorio');
+  }
+  if (!currentUserId) {
+    return res.status(401).json({ error: 'Sesion invalida' });
+  }
+
+  try {
+    await ensureClientProductWorkflowSchema();
+    const clientMeta = await resolveDefaultAssignedUserIdForClient(clientId);
+    if (!clientMeta) {
+      return notFound(res, 'Cliente');
+    }
+
+    let productKey = cleanProductTemplateKey(req.body?.product_key);
+    let productName = String(req.body?.product_name || '').trim();
+    let workflowSteps = normalizeProductTaskSteps(req.body?.workflow_steps);
+
+    if (productKey) {
+      const templateRows = await query(
+        `SELECT product_key, product_name, steps
+           FROM crm_product_task_templates
+          WHERE product_key = $1
+          LIMIT 1`,
+        [productKey]
+      );
+      if (templateRows.length > 0) {
+        productKey = templateRows[0].product_key;
+        productName = productName || templateRows[0].product_name;
+        if (workflowSteps.length === 0) {
+          workflowSteps = normalizeProductTaskSteps(templateRows[0].steps);
+        }
+      }
+    }
+
+    if (!productName) {
+      return badRequest(res, 'El producto es obligatorio');
+    }
+    if (!productKey) {
+      productKey = cleanProductTemplateKey(productName);
+    }
+    if (workflowSteps.length === 0) {
+      return badRequest(res, 'El producto seleccionado no tiene pasos configurados');
+    }
+
+    let assignedUserId = null;
+    if (req.body?.assigned_user_id !== null && req.body?.assigned_user_id !== undefined && req.body?.assigned_user_id !== '') {
+      assignedUserId = String(toDbId(req.body.assigned_user_id));
+    } else {
+      assignedUserId = clientMeta.assigned_user_id || currentUserId;
+    }
+
+    if (!isPrivileged && assignedUserId && !sameId(assignedUserId, currentUserId)) {
+      return res.status(403).json({ error: 'No tienes permisos para asignar este workflow a otro usuario' });
+    }
+
+    const sourceType = normalizeClientProductSourceType(req.body?.source_type);
+    const sourceRef = req.body?.source_ref === null || req.body?.source_ref === undefined || req.body?.source_ref === ''
+      ? null
+      : String(req.body.source_ref);
+    const sourceLabel = String(req.body?.source_label || '').trim() || null;
+    const subscriberId = req.body?.subscriber_id === null || req.body?.subscriber_id === undefined || req.body?.subscriber_id === ''
+      ? null
+      : String(req.body.subscriber_id);
+    const banNumber = String(req.body?.ban_number || '').trim() || null;
+    const phone = String(req.body?.phone || '').trim() || null;
+    const lineType = String(req.body?.line_type || '').trim() || null;
+    const saleType = String(req.body?.sale_type || '').trim() || null;
+    const notes = String(req.body?.notes || '').trim() || null;
+    const monthlyValue = req.body?.monthly_value === null || req.body?.monthly_value === undefined || req.body?.monthly_value === ''
+      ? null
+      : Number(req.body.monthly_value);
+    const status = resolveClientProductWorkflowStatus(workflowSteps, req.body?.status);
+
+    const insertedRows = await query(
+      `INSERT INTO crm_client_product_workflows (
+         client_id, client_name, salesperson_id, assigned_user_id, product_key, product_name,
+         source_type, source_ref, source_label, subscriber_id, ban_number, phone, line_type, sale_type,
+         monthly_value, notes, workflow_steps, status, completed_at, created_by, created_at, updated_at
+       )
+       VALUES (
+         $1, $2, $3, $4, $5, $6,
+         $7, $8, $9, $10, $11, $12, $13, $14,
+         $15, $16, $17::jsonb, $18,
+         CASE WHEN $18 = 'done' THEN NOW() ELSE NULL END,
+         $19, NOW(), NOW()
+       )
+       RETURNING id`,
+      [
+        clientMeta.client_id,
+        clientMeta.client_name,
+        clientMeta.salesperson_id,
+        assignedUserId,
+        productKey,
+        productName,
+        sourceType,
+        sourceRef,
+        sourceLabel,
+        subscriberId,
+        banNumber,
+        phone,
+        lineType,
+        saleType,
+        Number.isFinite(monthlyValue) ? monthlyValue : null,
+        notes,
+        JSON.stringify(workflowSteps),
+        status,
+        currentUserId
+      ]
+    );
+
+    const rows = await query(
+      `SELECT w.*,
+              ua.username AS assigned_username,
+              COALESCE(sa.name, ua.username) AS assigned_name
+         FROM crm_client_product_workflows w
+         LEFT JOIN users_auth ua ON ua.id::text = w.assigned_user_id::text
+         LEFT JOIN salespeople sa ON sa.id::text = ua.salesperson_id::text
+        WHERE w.id = $1`,
+      [insertedRows[0].id]
+    );
+
+    res.status(201).json(mapClientProductWorkflowRow(rows[0]));
+  } catch (error) {
+    serverError(res, error, 'Error creando workflow del cliente');
+  }
+});
+
+app.put('/api/client-product-workflows/:id', authenticateRequest, async (req, res) => {
+  const workflowId = Number(req.params.id);
+  const currentUserId = String(req.user?.userId || '').trim();
+  const role = String(req.user?.role || '').toLowerCase();
+  const isPrivileged = role === 'admin' || role === 'supervisor';
+  const salespersonId = String(req.user?.salespersonId || '').trim();
+
+  if (!currentUserId) {
+    return res.status(401).json({ error: 'Sesion invalida' });
+  }
+  if (Number.isNaN(workflowId)) {
+    return badRequest(res, 'ID invalido');
+  }
+
+  try {
+    await ensureClientProductWorkflowSchema();
+    const currentRows = await query(
+      `SELECT w.*, c.salesperson_id AS client_salesperson_id
+         FROM crm_client_product_workflows w
+         LEFT JOIN clients c ON c.id::text = w.client_id::text
+        WHERE w.id = $1`,
+      [workflowId]
+    );
+    if (currentRows.length === 0) {
+      return notFound(res, 'Workflow');
+    }
+
+    const currentWorkflow = currentRows[0];
+    if (!isPrivileged) {
+      const canAccess =
+        sameId(currentWorkflow.assigned_user_id, currentUserId) ||
+        sameId(currentWorkflow.created_by, currentUserId) ||
+        (salespersonId && sameId(currentWorkflow.client_salesperson_id, salespersonId));
+      if (!canAccess) {
+        return res.status(403).json({ error: 'No tienes permisos para editar este workflow' });
+      }
+    }
+
+    const updates = [];
+    const values = [];
+    let index = 1;
+    const nextSteps = Object.prototype.hasOwnProperty.call(req.body || {}, 'workflow_steps')
+      ? normalizeProductTaskSteps(req.body.workflow_steps)
+      : normalizeProductTaskSteps(currentWorkflow.workflow_steps);
+
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'product_name')) {
+      updates.push(`product_name = $${index++}`);
+      values.push(String(req.body.product_name || '').trim() || currentWorkflow.product_name);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'product_key')) {
+      updates.push(`product_key = $${index++}`);
+      values.push(cleanProductTemplateKey(req.body.product_key || currentWorkflow.product_key));
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'source_type')) {
+      updates.push(`source_type = $${index++}`);
+      values.push(normalizeClientProductSourceType(req.body.source_type));
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'source_ref')) {
+      updates.push(`source_ref = $${index++}`);
+      values.push(req.body.source_ref === null || req.body.source_ref === '' ? null : String(req.body.source_ref));
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'source_label')) {
+      updates.push(`source_label = $${index++}`);
+      values.push(String(req.body.source_label || '').trim() || null);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'subscriber_id')) {
+      updates.push(`subscriber_id = $${index++}`);
+      values.push(req.body.subscriber_id === null || req.body.subscriber_id === '' ? null : String(req.body.subscriber_id));
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'ban_number')) {
+      updates.push(`ban_number = $${index++}`);
+      values.push(String(req.body.ban_number || '').trim() || null);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'phone')) {
+      updates.push(`phone = $${index++}`);
+      values.push(String(req.body.phone || '').trim() || null);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'line_type')) {
+      updates.push(`line_type = $${index++}`);
+      values.push(String(req.body.line_type || '').trim() || null);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'sale_type')) {
+      updates.push(`sale_type = $${index++}`);
+      values.push(String(req.body.sale_type || '').trim() || null);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'monthly_value')) {
+      const numericValue = req.body.monthly_value === null || req.body.monthly_value === '' ? null : Number(req.body.monthly_value);
+      updates.push(`monthly_value = $${index++}`);
+      values.push(Number.isFinite(numericValue) ? numericValue : null);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'notes')) {
+      updates.push(`notes = $${index++}`);
+      values.push(String(req.body.notes || '').trim() || null);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'assigned_user_id')) {
+      const requestedAssigned = req.body.assigned_user_id === null || req.body.assigned_user_id === ''
+        ? null
+        : String(toDbId(req.body.assigned_user_id));
+      if (!isPrivileged && requestedAssigned && !sameId(requestedAssigned, currentUserId)) {
+        return res.status(403).json({ error: 'No tienes permisos para reasignar este workflow' });
+      }
+      updates.push(`assigned_user_id = $${index++}`);
+      values.push(requestedAssigned);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'workflow_steps')) {
+      if (nextSteps.length === 0) {
+        return badRequest(res, 'El workflow debe conservar al menos un paso');
+      }
+      updates.push(`workflow_steps = $${index++}::jsonb`);
+      values.push(JSON.stringify(nextSteps));
+    }
+
+    if (
+      Object.prototype.hasOwnProperty.call(req.body || {}, 'workflow_steps') ||
+      Object.prototype.hasOwnProperty.call(req.body || {}, 'status')
+    ) {
+      const nextStatus = resolveClientProductWorkflowStatus(
+        nextSteps,
+        Object.prototype.hasOwnProperty.call(req.body || {}, 'status') ? req.body.status : currentWorkflow.status
+      );
+      updates.push(`status = $${index++}`);
+      values.push(nextStatus);
+      updates.push(nextStatus === 'done' ? `completed_at = COALESCE(completed_at, NOW())` : `completed_at = NULL`);
+    }
+
+    if (updates.length === 0) {
+      return badRequest(res, 'No hay cambios para guardar');
+    }
+
+    updates.push(`updated_at = NOW()`);
+    values.push(workflowId);
+
+    await query(
+      `UPDATE crm_client_product_workflows
+          SET ${updates.join(', ')}
+        WHERE id = $${index}`,
+      values
+    );
+
+    const rows = await query(
+      `SELECT w.*,
+              ua.username AS assigned_username,
+              COALESCE(sa.name, ua.username) AS assigned_name
+         FROM crm_client_product_workflows w
+         LEFT JOIN users_auth ua ON ua.id::text = w.assigned_user_id::text
+         LEFT JOIN salespeople sa ON sa.id::text = ua.salesperson_id::text
+        WHERE w.id = $1`,
+      [workflowId]
+    );
+
+    res.json(mapClientProductWorkflowRow(rows[0]));
+  } catch (error) {
+    serverError(res, error, 'Error actualizando workflow');
+  }
+});
+
+app.delete('/api/client-product-workflows/:id', authenticateRequest, async (req, res) => {
+  const workflowId = Number(req.params.id);
+  const currentUserId = String(req.user?.userId || '').trim();
+  const role = String(req.user?.role || '').toLowerCase();
+  const isPrivileged = role === 'admin' || role === 'supervisor';
+
+  if (Number.isNaN(workflowId)) {
+    return badRequest(res, 'ID invalido');
+  }
+
+  try {
+    await ensureClientProductWorkflowSchema();
+    const currentRows = await query(`SELECT id, assigned_user_id, created_by FROM crm_client_product_workflows WHERE id = $1`, [workflowId]);
+    if (currentRows.length === 0) {
+      return notFound(res, 'Workflow');
+    }
+
+    const currentWorkflow = currentRows[0];
+    if (!isPrivileged && !sameId(currentWorkflow.assigned_user_id, currentUserId) && !sameId(currentWorkflow.created_by, currentUserId)) {
+      return res.status(403).json({ error: 'No tienes permisos para eliminar este workflow' });
+    }
+
+    await query(`DELETE FROM crm_client_product_workflows WHERE id = $1`, [workflowId]);
+    res.json({ ok: true });
+  } catch (error) {
+    serverError(res, error, 'Error eliminando workflow');
   }
 });
 
@@ -1619,6 +2905,157 @@ app.delete('/api/categories/:id', async (req, res) => {
     res.json({ success: true, message: 'Categoría eliminada correctamente' });
   } catch (error) {
     serverError(res, error, 'Error eliminando categoría');
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CATEGORY STEPS (plantillas de pasos por categoría)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// GET /api/categories/:id/steps  → lista pasos de una categoría
+app.get('/api/categories/:id/steps', authenticateRequest, async (req, res) => {
+  try {
+    const rows = await query(
+      `SELECT * FROM category_steps WHERE category_id = $1 ORDER BY step_order ASC, id ASC`,
+      [req.params.id]
+    );
+    res.json(rows);
+  } catch (error) {
+    serverError(res, error, 'Error obteniendo pasos de categoría');
+  }
+});
+
+// POST /api/categories/:id/steps  → crear paso
+app.post('/api/categories/:id/steps', authenticateRequest, requireRole(['admin', 'supervisor']), async (req, res) => {
+  const { step_name, step_order } = req.body || {};
+  if (!step_name || typeof step_name !== 'string' || step_name.trim() === '') {
+    return badRequest(res, 'El nombre del paso es obligatorio');
+  }
+  try {
+    const maxOrder = await query(
+      `SELECT COALESCE(MAX(step_order), 0) AS max_order FROM category_steps WHERE category_id = $1`,
+      [req.params.id]
+    );
+    const order = (step_order != null ? Number(step_order) : maxOrder[0].max_order + 1);
+    const result = await query(
+      `INSERT INTO category_steps (category_id, step_name, step_order)
+       VALUES ($1, $2, $3) RETURNING *`,
+      [req.params.id, step_name.trim(), order]
+    );
+    res.status(201).json(result[0]);
+  } catch (error) {
+    serverError(res, error, 'Error creando paso');
+  }
+});
+
+// PUT /api/category-steps/:stepId  → editar paso
+app.put('/api/category-steps/:stepId', authenticateRequest, requireRole(['admin', 'supervisor']), async (req, res) => {
+  const { step_name, step_order } = req.body || {};
+  try {
+    const updates = [];
+    const values = [];
+    let pi = 1;
+    if (step_name !== undefined) { updates.push(`step_name = $${pi++}`); values.push(step_name.trim()); }
+    if (step_order !== undefined) { updates.push(`step_order = $${pi++}`); values.push(Number(step_order)); }
+    if (updates.length === 0) return badRequest(res, 'Nada que actualizar');
+    values.push(req.params.stepId);
+    const result = await query(
+      `UPDATE category_steps SET ${updates.join(', ')} WHERE id = $${pi} RETURNING *`,
+      values
+    );
+    if (result.length === 0) return res.status(404).json({ error: 'Paso no encontrado' });
+    res.json(result[0]);
+  } catch (error) {
+    serverError(res, error, 'Error actualizando paso');
+  }
+});
+
+// DELETE /api/category-steps/:stepId  → eliminar paso
+app.delete('/api/category-steps/:stepId', authenticateRequest, requireRole(['admin', 'supervisor']), async (req, res) => {
+  try {
+    await query(`DELETE FROM category_steps WHERE id = $1`, [req.params.stepId]);
+    res.json({ success: true });
+  } catch (error) {
+    serverError(res, error, 'Error eliminando paso');
+  }
+});
+
+// PATCH /api/category-steps/reorder  → reordenar pasos de plantilla
+app.patch('/api/category-steps/reorder', authenticateRequest, requireRole(['admin', 'supervisor']), async (req, res) => {
+  const { steps } = req.body || {};
+  if (!Array.isArray(steps)) {
+    return badRequest(res, 'Se esperaba una lista de pasos {step_id, step_order}');
+  }
+  try {
+    await query('BEGIN');
+    for (const s of steps) {
+      await query(
+        `UPDATE category_steps SET step_order = $1 WHERE id = $2`,
+        [Number(s.step_order), s.step_id]
+      );
+    }
+    await query('COMMIT');
+    res.json({ success: true });
+  } catch (error) {
+    await query('ROLLBACK');
+    serverError(res, error, 'Error reordenando pasos');
+  }
+});
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CLIENT STEPS (progreso del cliente en cada paso)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// GET /api/clients/:clientId/steps  → progreso del cliente en todos sus pasos
+app.get('/api/clients/:clientId/steps', authenticateRequest, async (req, res) => {
+  try {
+    const rows = await query(
+      `SELECT
+         cs.id            AS step_id,
+         cs.category_id,
+         cs.step_name,
+         cs.step_order,
+         cat.name         AS category_name,
+         COALESCE(csp.is_done, false) AS is_done,
+         csp.done_at,
+         csp.notes,
+         csp.id           AS client_step_id
+       FROM category_steps cs
+       JOIN categories cat ON cat.id = cs.category_id
+       LEFT JOIN client_steps csp
+              ON csp.category_step_id = cs.id
+             AND csp.client_id = $1
+       ORDER BY cat.name ASC, cs.step_order ASC, cs.id ASC`,
+      [req.params.clientId]
+    );
+    res.json(rows);
+  } catch (error) {
+    serverError(res, error, 'Error obteniendo progreso del cliente');
+  }
+});
+
+// PATCH /api/clients/:clientId/steps/:stepId  → marcar/desmarcar paso
+app.patch('/api/clients/:clientId/steps/:stepId', authenticateRequest, async (req, res) => {
+  const { is_done, notes } = req.body || {};
+  const clientId = String(req.params.clientId);  // UUID
+  const stepId   = Number(req.params.stepId);
+  try {
+    const result = await query(
+      `INSERT INTO client_steps (client_id, category_step_id, is_done, done_at, notes, updated_at)
+       VALUES ($1, $2, $3, $4, $5, NOW())
+       ON CONFLICT (client_id, category_step_id)
+       DO UPDATE SET
+         is_done    = EXCLUDED.is_done,
+         done_at    = CASE WHEN EXCLUDED.is_done THEN COALESCE(client_steps.done_at, NOW()) ELSE NULL END,
+         notes      = COALESCE(EXCLUDED.notes, client_steps.notes),
+         updated_at = NOW()
+       RETURNING *`,
+      [clientId, stepId, Boolean(is_done), is_done ? new Date() : null, notes ?? null]
+    );
+    res.json(result[0]);
+  } catch (error) {
+    serverError(res, error, 'Error actualizando paso del cliente');
   }
 });
 
@@ -2437,7 +3874,7 @@ app.delete('/api/goals/:id', async (req, res) => {
 app.get('/api/follow-up-prospects', authenticateRequest, async (req, res) => {
   try {
     const { include_completed } = req.query;
-    const { role, salespersonId } = req.user;
+    const scope = await getVendorScope(req);
 
     // Construir WHERE clause con filtros
     const conditions = [];
@@ -2448,9 +3885,13 @@ app.get('/api/follow-up-prospects', authenticateRequest, async (req, res) => {
     }
 
     // FILTRO VENDEDOR: Solo sus propios seguimientos
-    if (role === 'vendedor' && salespersonId) {
+    if (scope.isVendor && !scope.salespersonId) {
+      return res.json([]);
+    }
+
+    if (scope.isVendor && scope.salespersonId) {
       conditions.push('c.salesperson_id = $' + (params.length + 1));
-      params.push(salespersonId);
+      params.push(scope.salespersonId);
     }
 
     const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
@@ -2488,15 +3929,20 @@ app.get('/api/follow-up-prospects', authenticateRequest, async (req, res) => {
 app.post('/api/follow-up-prospects', authenticateRequest, async (req, res) => {
   try {
     const { client_id } = req.body;
+    const scope = await getVendorScope(req);
 
     if (!client_id) {
       return res.status(400).json({ error: 'client_id es obligatorio' });
     }
 
     // Verificar que el cliente existe y obtener su nombre
-    const clientData = await query('SELECT id, name FROM clients WHERE id = $1', [client_id]);
+    const clientData = await query('SELECT id, name, salesperson_id FROM clients WHERE id = $1', [client_id]);
     if (clientData.length === 0) {
       return res.status(404).json({ error: 'Cliente no encontrado' });
+    }
+
+    if (scope.isVendor && !vendorOwnsClient(clientData[0].salesperson_id, scope)) {
+      return res.status(403).json({ error: 'No tienes acceso a este cliente para seguimiento' });
     }
 
     const companyName = clientData[0].name || 'Sin nombre';
@@ -2530,6 +3976,22 @@ app.post('/api/follow-up-prospects', authenticateRequest, async (req, res) => {
 app.put('/api/follow-up-prospects/:id/complete', authenticateRequest, async (req, res) => {
   try {
     const { id } = req.params;
+    const scope = await getVendorScope(req);
+    const accessRows = await query(
+      `SELECT fp.id, fp.vendor_id, c.salesperson_id AS client_salesperson_id
+         FROM follow_up_prospects fp
+         LEFT JOIN clients c ON c.id = fp.client_id
+        WHERE fp.id = $1`,
+      [id]
+    );
+
+    if (accessRows.length === 0) {
+      return res.status(404).json({ error: 'Prospecto no encontrado' });
+    }
+
+    if (!vendorOwnsProspect(accessRows[0], scope)) {
+      return res.status(403).json({ error: 'No tienes acceso a este seguimiento' });
+    }
 
     const result = await query(
       `UPDATE follow_up_prospects 
@@ -2554,6 +4016,22 @@ app.put('/api/follow-up-prospects/:id/complete', authenticateRequest, async (req
 app.delete('/api/follow-up-prospects/:id', authenticateRequest, async (req, res) => {
   try {
     const { id } = req.params;
+    const scope = await getVendorScope(req);
+    const accessRows = await query(
+      `SELECT fp.id, fp.vendor_id, c.salesperson_id AS client_salesperson_id
+         FROM follow_up_prospects fp
+         LEFT JOIN clients c ON c.id = fp.client_id
+        WHERE fp.id = $1`,
+      [id]
+    );
+
+    if (accessRows.length === 0) {
+      return res.status(404).json({ error: 'Prospecto no encontrado' });
+    }
+
+    if (!vendorOwnsProspect(accessRows[0], scope)) {
+      return res.status(403).json({ error: 'No tienes acceso a este seguimiento' });
+    }
 
     const result = await query(
       'DELETE FROM follow_up_prospects WHERE id = $1 RETURNING *',
@@ -2597,6 +4075,7 @@ app.get('/api/follow-up-steps', authenticateRequest, async (req, res) => {
 app.put('/api/follow-up-prospects/:id', authenticateRequest, async (req, res) => {
   try {
     const { id } = req.params;
+    const scope = await getVendorScope(req);
     const {
       client_id, priority_id, vendor_id, completed_date,
       fijo_ren, fijo_new, movil_nueva, movil_renovacion,
@@ -2605,6 +4084,31 @@ app.put('/api/follow-up-prospects/:id', authenticateRequest, async (req, res) =>
     } = req.body;
 
     console.log(`[UPDATE PROSPECT ${id}] movil_nueva=${movil_nueva}, movil_renovacion=${movil_renovacion}`);
+    const accessRows = await query(
+      `SELECT fp.id, fp.vendor_id, fp.client_id, c.salesperson_id AS client_salesperson_id
+         FROM follow_up_prospects fp
+         LEFT JOIN clients c ON c.id = fp.client_id
+        WHERE fp.id = $1`,
+      [id]
+    );
+
+    if (accessRows.length === 0) {
+      return res.status(404).json({ error: 'Prospecto no encontrado' });
+    }
+
+    if (!vendorOwnsProspect(accessRows[0], scope)) {
+      return res.status(403).json({ error: 'No tienes acceso a este seguimiento' });
+    }
+
+    if (scope.isVendor && client_id !== undefined && client_id !== null && String(client_id).trim() !== '') {
+      const targetClientRows = await query('SELECT id, salesperson_id FROM clients WHERE id = $1', [client_id]);
+      if (targetClientRows.length === 0) {
+        return res.status(404).json({ error: 'Cliente no encontrado' });
+      }
+      if (!vendorOwnsClient(targetClientRows[0].salesperson_id, scope)) {
+        return res.status(403).json({ error: 'No puedes mover el seguimiento a un cliente ajeno' });
+      }
+    }
 
     // Saneamiento de entradas numéricas y IDs
     const sanitizedVendorCommission = vendor_commission === '' || vendor_commission === null || vendor_commission === undefined ? 0 : parseFloat(vendor_commission);
@@ -2680,6 +4184,22 @@ app.put('/api/follow-up-prospects/:id', authenticateRequest, async (req, res) =>
 app.put('/api/follow-up-prospects/:id/return', authenticateRequest, async (req, res) => {
   try {
     const { id } = req.params;
+    const scope = await getVendorScope(req);
+    const accessRows = await query(
+      `SELECT fp.id, fp.vendor_id, c.salesperson_id AS client_salesperson_id
+         FROM follow_up_prospects fp
+         LEFT JOIN clients c ON c.id = fp.client_id
+        WHERE fp.id = $1`,
+      [id]
+    );
+
+    if (accessRows.length === 0) {
+      return res.status(404).json({ error: 'Prospecto no encontrado' });
+    }
+
+    if (!vendorOwnsProspect(accessRows[0], scope)) {
+      return res.status(403).json({ error: 'No tienes acceso a este seguimiento' });
+    }
 
     const result = await query(
       `UPDATE follow_up_prospects 
@@ -3316,7 +4836,7 @@ app.get('/api/subscriber-reports', authenticateRequest, async (req, res) => {
     await ensureSubscriberReportsWorkflowColumns(pool);
     const reportMonth = normalizeReportMonth(req.query.month);
     const clientId = req.query.client_id ? String(req.query.client_id).trim() : '';
-    const { role, salespersonId } = req.user;
+    const scope = await getVendorScope(req);
     const schema = await detectSubscriberSyncSchema(pool);
     const salespeopleSchema = await detectSalespeopleSchema(pool);
     const workflowSchema = await detectSubscriberReportsWorkflowSchema(pool);
@@ -3334,8 +4854,12 @@ app.get('/api/subscriber-reports', authenticateRequest, async (req, res) => {
     }
 
     // Filtrar por vendedor si no es admin
-    if (role === 'vendedor' && salespersonId) {
-      params.push(salespersonId);
+    if (scope.isVendor && !scope.salespersonId) {
+      return res.json([]);
+    }
+
+    if (scope.isVendor && scope.salespersonId) {
+      params.push(scope.salespersonId);
       conditions.push(`c.salesperson_id = $${params.length}`);
     }
 

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { X, Save, Plus, Trash2, Download, FileSpreadsheet, FileText, ArrowRightLeft, Package, Sparkles, Check } from 'lucide-react';
+import { X, Save, Plus, Trash2, FileSpreadsheet, FileText, ArrowRightLeft, Package, Sparkles, Check, CheckCircle } from 'lucide-react';
 import { authFetch } from '../utils/auth';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
@@ -92,6 +92,8 @@ function getStatusBadge(status: string, days: number, _created_at?: string) {
 }
 
 export default function ComparativaModal({ client, onClose, onRefreshClient }: ComparativaModalProps) {
+  // Notas generales para PDF
+  const [generalNotes, setGeneralNotes] = useState('');
   // Editable actual data
   const [editingActual, setEditingActual] = useState<Record<string, { plan: string; cost: string; expiry: string }>>({});
   const [savingActualId, setSavingActualId] = useState<string | null>(null);
@@ -105,6 +107,7 @@ export default function ComparativaModal({ client, onClose, onRefreshClient }: C
   const [comparativaTitle, setComparativaTitle] = useState('');
   const [savedComparativas, setSavedComparativas] = useState<SavedComparativa[]>([]);
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+  const [clientCheckedAt, setClientCheckedAt] = useState<string | null>(null);
 
   // Init offer rows from client BANs
   useEffect(() => {
@@ -442,9 +445,11 @@ export default function ComparativaModal({ client, onClose, onRefreshClient }: C
       headStyles: { fillColor: [16, 185, 129], textColor: 255, fontStyle: 'bold', fontSize: 9 },
       bodyStyles: { fontSize: 9 },
       alternateRowStyles: { fillColor: [240, 253, 244] },
-      columnStyles: { 3: { halign: 'right' } },
+      columnStyles: { 3: { halign: 'right' }, 4: { cellWidth: 90 } },
       margin: { left: 14, right: 14 },
+      pageBreak: 'auto',
     });
+    // Usar la posición final real de la tabla, aunque haya salto de página
     y = (doc as any).lastAutoTable.finalY + 12;
 
     // Difference summary
@@ -459,8 +464,24 @@ export default function ComparativaModal({ client, onClose, onRefreshClient }: C
     doc.setTextColor(diff < 0 ? 22 : diff > 0 ? 180 : 100, diff < 0 ? 163 : diff > 0 ? 83 : 100, diff < 0 ? 74 : diff > 0 ? 9 : 100);
     doc.text(diffLabel, pw - 22, y + 8, { align: 'right' });
 
+    // Notas generales
+    if (generalNotes && generalNotes.trim().length > 0) {
+      y += 8;
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(16, 185, 129);
+      doc.text('Notas / Observaciones:', 14, y);
+      y += 6;
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(60, 60, 60);
+      const notesLines = doc.splitTextToSize(generalNotes, pw - 28);
+      doc.text(notesLines, 14, y);
+      y += notesLines.length * 6 + 2;
+    }
+
     // Footer - Firma del vendedor
-    y += 28;
+    y += 18;
     doc.setDrawColor(200, 200, 200);
     doc.line(14, y, pw - 14, y);
     y += 6;
@@ -511,6 +532,31 @@ export default function ComparativaModal({ client, onClose, onRefreshClient }: C
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {clientCheckedAt ? (
+              <span className="inline-flex items-center gap-1 px-3 py-2 rounded-lg text-xs font-medium bg-emerald-900/40 text-emerald-300 border border-emerald-500/30">
+                <CheckCircle className="w-3.5 h-3.5" />
+                Actualizado {new Date(clientCheckedAt).toLocaleDateString('es-ES', { day: '2-digit', month: 'short' })}
+              </span>
+            ) : (
+              <button
+                onClick={async () => {
+                  try {
+                    const resp = await authFetch(`/api/clients/${client.id}/mark-checked`, { method: 'PATCH' });
+                    if (resp.ok) {
+                      const data = await resp.json();
+                      setClientCheckedAt(data.last_checked_at);
+                      setMessage({ type: 'success', text: 'Cliente marcado como actualizado ✓' });
+                      setTimeout(() => setMessage(null), 2500);
+                    }
+                  } catch (err) { console.error(err); }
+                }}
+                className="px-3 py-2 rounded-lg text-xs font-medium flex items-center gap-1 bg-gray-700 hover:bg-emerald-700 text-gray-300 hover:text-white border border-gray-600 hover:border-emerald-500 transition-colors"
+                title="Marcar como actualizado"
+              >
+                <CheckCircle className="w-3.5 h-3.5" />
+                Marcar Actualizado
+              </button>
+            )}
             <button onClick={exportToExcel} className="bg-green-700 hover:bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors" title="Descargar Excel">
               <FileSpreadsheet className="w-4 h-4" />
               Excel
@@ -618,7 +664,10 @@ export default function ComparativaModal({ client, onClose, onRefreshClient }: C
                                     <td className="px-3 py-1.5 bg-amber-500/5 border-l border-slate-700">
                                       <input type="date"
                                         value={getActualValue(sub.id, 'expiry', sub)}
-                                        onChange={e => setActualValue(sub.id, 'expiry', e.target.value)}
+                                        onChange={async e => {
+                                          setActualValue(sub.id, 'expiry', e.target.value);
+                                          setTimeout(() => handleSaveActualSubscriber(String(sub.id)), 150);
+                                        }}
                                         className={`w-full bg-slate-800 border text-sm px-2 py-2 rounded outline-none font-mono transition-all ${isEditing ? 'border-amber-500 ring-1 ring-amber-500/20 text-amber-300' : 'border-slate-700 text-slate-300 hover:border-amber-500/50'}`}
                                       />
                                     </td>
@@ -839,21 +888,30 @@ export default function ComparativaModal({ client, onClose, onRefreshClient }: C
         </div>
 
         {/* Footer */}
-        <div className="flex justify-between items-center px-6 py-4 border-t border-gray-700 bg-gray-800/50 shrink-0">
-          <div className="flex items-center gap-3">
-            <button onClick={exportToExcel}
-              className="bg-green-700/80 hover:bg-green-600 text-white px-4 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors">
-              <FileSpreadsheet className="w-4 h-4" /> Descargar Excel
-            </button>
-            <button onClick={exportToPDF}
-              className="bg-red-700/80 hover:bg-red-600 text-white px-4 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors">
-              <FileText className="w-4 h-4" /> Descargar PDF
+        <div className="flex flex-col gap-2 px-6 py-4 border-t border-gray-700 bg-gray-800/50 shrink-0">
+          <textarea
+            className="w-full bg-slate-900 border border-slate-700 text-slate-200 text-sm px-3 py-2 rounded-lg outline-none focus:border-emerald-500 resize-vertical min-h-[48px]"
+            placeholder="Notas u observaciones generales para el PDF..."
+            value={generalNotes}
+            onChange={e => setGeneralNotes(e.target.value)}
+            maxLength={800}
+          />
+          <div className="flex justify-between items-center mt-2">
+            <div className="flex items-center gap-3">
+              <button onClick={exportToExcel}
+                className="bg-green-700/80 hover:bg-green-600 text-white px-4 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors">
+                <FileSpreadsheet className="w-4 h-4" /> Descargar Excel
+              </button>
+              <button onClick={exportToPDF}
+                className="bg-red-700/80 hover:bg-red-600 text-white px-4 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors">
+                <FileText className="w-4 h-4" /> Descargar PDF
+              </button>
+            </div>
+            <button onClick={onClose}
+              className="bg-gray-700 hover:bg-gray-600 text-white px-6 py-2 rounded-lg transition-colors">
+              Cerrar
             </button>
           </div>
-          <button onClick={onClose}
-            className="bg-gray-700 hover:bg-gray-600 text-white px-6 py-2 rounded-lg transition-colors">
-            Cerrar
-          </button>
         </div>
       </div>
     </div>

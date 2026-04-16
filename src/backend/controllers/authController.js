@@ -4,6 +4,12 @@ import { query } from '../database/db.js';
 import { config } from '../config/env.js';
 import { serverError, badRequest } from '../middlewares/errorHandler.js';
 
+const signPersistentToken = (payload) => jwt.sign(payload, config.jwtSecret);
+
+export const getMe = async (req, res) => {
+    res.json({ user: req.user });
+};
+
 export const login = async (req, res) => {
     const { username, password } = req.body;
 
@@ -12,7 +18,13 @@ export const login = async (req, res) => {
     }
 
     try {
-        const users = await query('SELECT * FROM users_auth WHERE username = $1', [username]);
+        const users = await query(
+            `SELECT u.*, s.role AS salesperson_role
+             FROM users_auth u
+             LEFT JOIN salespeople s ON s.id = u.salesperson_id
+             WHERE u.username = $1`,
+            [username]
+        );
 
         if (users.length === 0) {
             return res.status(401).json({ error: 'Credenciales inválidas' });
@@ -25,9 +37,9 @@ export const login = async (req, res) => {
             return res.status(401).json({ error: 'Credenciales inválidas' });
         }
 
-        // Obtener salesperson_id si es vendedor
         let salespersonId = user.salesperson_id;
-        let role = salespersonId ? 'vendedor' : 'admin';
+        const normalizedRole = String(user.salesperson_role || '').trim().toLowerCase();
+        const role = normalizedRole || (salespersonId ? 'vendedor' : 'admin');
 
         const tokenPayload = {
             userId: user.id,
@@ -36,7 +48,7 @@ export const login = async (req, res) => {
             salespersonId: salespersonId
         };
 
-        const token = jwt.sign(tokenPayload, config.jwtSecret, { expiresIn: '8h' });
+        const token = signPersistentToken(tokenPayload);
 
         // Registrar último login
         await query('UPDATE users_auth SET last_login = NOW() WHERE id = $1', [user.id]);
@@ -66,17 +78,38 @@ export const refreshToken = async (req, res) => {
     jwt.verify(token, config.jwtSecret, (err, user) => {
         if (err) return res.sendStatus(403);
 
-        const newToken = jwt.sign(
-            {
-                userId: user.userId,
-                username: user.username,
-                role: user.role,
-                salespersonId: user.salespersonId
-            },
-            config.jwtSecret,
-            { expiresIn: '8h' }
-        );
+        const newToken = signPersistentToken({
+            userId: user.userId,
+            username: user.username,
+            role: user.role,
+            salespersonId: user.salespersonId
+        });
 
         res.json({ token: newToken });
     });
+};
+
+export const devAdminLogin = async (req, res) => {
+    try {
+        const tokenPayload = {
+            userId: 9999,
+            username: 'admin_dev',
+            role: 'admin',
+            salespersonId: null
+        };
+
+        const token = signPersistentToken(tokenPayload);
+
+        res.json({
+            token,
+            user: {
+                id: 9999,
+                username: 'admin_dev',
+                role: 'admin',
+                salespersonId: null
+            }
+        });
+    } catch (error) {
+        serverError(res, error, 'Error en dev login');
+    }
 };

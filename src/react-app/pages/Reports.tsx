@@ -111,6 +111,11 @@ function roundMoney(value?: number | null): number | null {
   return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
 }
 
+function safeMoneyNumber(value: unknown): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function calculateSuggestedVendorCommission(companyEarnings?: number | null, commissionPercentage?: number | null): number | null {
   const earnings = Number(companyEarnings);
   const percentage = Number(commissionPercentage);
@@ -119,14 +124,45 @@ function calculateSuggestedVendorCommission(companyEarnings?: number | null, com
   return roundMoney((earnings * percentage) / 100);
 }
 
+function normalizeClientGroupKey(name?: string | null): string {
+  return String(name || "Sin nombre")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toUpperCase();
+}
+
+function getDefaultReportsMonth(): string {
+  const now = new Date();
+  const lastClosedMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const year = lastClosedMonth.getFullYear();
+  const month = String(lastClosedMonth.getMonth() + 1).padStart(2, "0");
+  return `${year}-${month}`;
+}
+
+function getPreviousMonth(value: string): string | null {
+  const [yearRaw, monthRaw] = String(value || "").split("-");
+  const year = Number(yearRaw);
+  const month = Number(monthRaw);
+
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) {
+    return null;
+  }
+
+  const date = new Date(year, month - 2, 1);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
 export default function Reports() {
   const currentUser = getCurrentUser();
   const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'supervisor';
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedVendor, setSelectedVendor] = useState<string | null>(null);
-  const [selectedMonth, setSelectedMonth] = useState<string>(new Date().toISOString().slice(0, 7));
+  const [selectedMonth, setSelectedMonth] = useState<string>(getDefaultReportsMonth);
   const [viewMode, setViewMode] = useState<'empresa' | 'vendedor'>('empresa');
   const effectiveView = isAdmin ? viewMode : 'vendedor';
+  const [autoAdjustedMonth, setAutoAdjustedMonth] = useState(false);
 
   // Estados para edicion manual
   const [editingVendorComm, setEditingVendorComm] = useState<Record<string, string>>({});
@@ -163,6 +199,19 @@ export default function Reports() {
   useEffect(() => {
     fetchReports(selectedMonth);
   }, [selectedMonth, fetchReports]);
+
+  useEffect(() => {
+    if (autoAdjustedMonth) return;
+    if (selectedMonth !== new Date().toISOString().slice(0, 7)) return;
+    if (!Array.isArray(reportRows)) return;
+    if (reportRows.length > 1) return;
+
+    const fallbackMonth = getPreviousMonth(selectedMonth);
+    if (!fallbackMonth) return;
+
+    setAutoAdjustedMonth(true);
+    setSelectedMonth(fallbackMonth);
+  }, [autoAdjustedMonth, reportRows, selectedMonth]);
 
   const refetchProspects = useCallback(() => fetchReports(selectedMonth), [selectedMonth, fetchReports]);
 
@@ -291,12 +340,16 @@ export default function Reports() {
   const groupedClients = useMemo(() => {
     const map = new Map();
     for (const row of filteredRows) {
-      const key = row.client_id || row.client;
+      const key = effectiveView === 'empresa'
+        ? normalizeClientGroupKey(row.client)
+        : String(row.client_id || row.client || row.id);
       if (!map.has(key)) {
         map.set(key, {
+          group_key: key,
           client_id: row.client_id,
           client: row.client,
           vendor_name: row.vendor_name,
+          vendor_names: new Set([row.vendor_name || 'Desconocido']),
           subscribers: [],
           totalEarnings: 0,
           totalCommission: 0,
@@ -319,6 +372,11 @@ export default function Reports() {
         });
       }
       const g = map.get(key);
+      if (row.client_id && g.client_id && row.client_id !== g.client_id) {
+        g.client_id = null;
+      }
+      g.vendor_names.add(row.vendor_name || 'Desconocido');
+      g.vendor_name = Array.from(g.vendor_names).filter(Boolean).sort().join(' / ');
       g.subscribers.push(row);
       g.totalEarnings += Number(row.company_earnings || 0);
       g.totalCommission += Number(row.vendor_commission || 0);
@@ -329,6 +387,9 @@ export default function Reports() {
         g.latestCaseDate = rowDate;
       }
       if (!g.products && row.products) g.products = row.products;
+      if (g.products && row.products && g.products.prospect_id !== row.products.prospect_id) {
+        g.products = null;
+      }
 
       // Fallback real: contar productos desde líneas sincronizadas de Tango/CRM.
       const account = String(row.account_type || '').trim().toUpperCase().replace(/^CONVERGENTE$/, 'MOVIL');
@@ -350,6 +411,7 @@ export default function Reports() {
         const resolvedLineProducts = resolveLineProducts(g.subscribers || []);
         return {
           ...g,
+          vendor_name: Array.from(g.vendor_names || []).filter(Boolean).sort().join(' / ') || 'Desconocido',
           lineProducts: resolvedLineProducts,
         // Siempre mostrar conteo real de líneas vendidas; conservar campos manuales si existen.
         products: g.products
@@ -368,7 +430,7 @@ export default function Reports() {
         const bd = b.latestCaseDate ? new Date(b.latestCaseDate).getTime() : 0;
         return bd - ad;
       });
-  }, [filteredRows]);
+  }, [effectiveView, filteredRows]);
 
   // Accordion state: expanded client keys
   const [expandedClients, setExpandedClients] = useState<Set<string>>(new Set());
@@ -385,7 +447,7 @@ export default function Reports() {
       return next;
     });
   };
-  const expandAll = () => setExpandedClients(new Set(groupedClients.map(g => g.client_id || g.client)));
+  const expandAll = () => setExpandedClients(new Set(groupedClients.map(g => g.group_key || g.client_id || g.client)));
   const collapseAll = () => setExpandedClients(new Set());
 
   const [saveSuccess, setSaveSuccess] = useState<Record<string, boolean>>({});
@@ -705,9 +767,13 @@ export default function Reports() {
 
   const totals = useMemo(() => {
     return filteredRows.reduce((acc, row) => {
-      const earn = editingCompanyEarn[row.id] !== undefined ? (parseFloat(editingCompanyEarn[row.id]) || 0) : (row.company_earnings || 0);
-      const comm = getEffectiveVendorCommission(row);
-      const paid = editingPaidAmount[row.id] !== undefined ? (parseFloat(editingPaidAmount[row.id]) || 0) : (row.paid_amount || 0);
+      const earn = editingCompanyEarn[row.id] !== undefined
+        ? safeMoneyNumber(parseFloat(editingCompanyEarn[row.id]))
+        : safeMoneyNumber(row.company_earnings);
+      const comm = safeMoneyNumber(getEffectiveVendorCommission(row));
+      const paid = editingPaidAmount[row.id] !== undefined
+        ? safeMoneyNumber(parseFloat(editingPaidAmount[row.id]))
+        : safeMoneyNumber(row.paid_amount);
       return {
         company_earnings: acc.company_earnings + earn,
         vendor_commission: acc.vendor_commission + comm,
@@ -719,16 +785,16 @@ export default function Reports() {
   // Resumen para vista vendedor
   const vendorTotals = useMemo(() => {
     const totalComm = filteredRows.reduce((acc, row) => {
-      const comm = getEffectiveVendorCommission(row);
+      const comm = safeMoneyNumber(getEffectiveVendorCommission(row));
       return acc + comm;
     }, 0);
     const retentionBase = filteredRows.reduce((acc, row) => {
-      const comm = getEffectiveVendorCommission(row);
+      const comm = safeMoneyNumber(getEffectiveVendorCommission(row));
       return acc + (row.withholding_applies !== false ? comm : 0);
     }, 0);
     const retention = parseFloat((retentionBase * 0.10).toFixed(2));
     const net = parseFloat((totalComm - retention).toFixed(2));
-    const paid = totals.paid_amount;
+    const paid = safeMoneyNumber(totals.paid_amount);
     const pending = parseFloat((net - paid).toFixed(2));
     return { totalComm, retention, net, paid, pending };
   }, [totals, filteredRows, editingVendorComm]);
@@ -737,8 +803,10 @@ export default function Reports() {
     const byVendor = new Map<string, { vendor: string; totalComm: number; retention: number; net: number; paid: number; pending: number }>();
     for (const row of filteredRows) {
       const vendorName = row.vendor_name || 'Desconocido';
-      const comm = getEffectiveVendorCommission(row);
-      const paid = editingPaidAmount[row.id] !== undefined ? (parseFloat(editingPaidAmount[row.id]) || 0) : (row.paid_amount || 0);
+      const comm = safeMoneyNumber(getEffectiveVendorCommission(row));
+      const paid = editingPaidAmount[row.id] !== undefined
+        ? safeMoneyNumber(parseFloat(editingPaidAmount[row.id]))
+        : safeMoneyNumber(row.paid_amount);
       const retention = row.withholding_applies !== false ? parseFloat((comm * 0.10).toFixed(2)) : 0;
       const net = parseFloat((comm - retention).toFixed(2));
       const current = byVendor.get(vendorName) || { vendor: vendorName, totalComm: 0, retention: 0, net: 0, paid: 0, pending: 0 };
@@ -838,7 +906,7 @@ export default function Reports() {
       </div>
 
       {/* Resultado del Sync Tango → CRM */}
-      {syncResult && (
+      {effectiveView === 'empresa' && syncResult && (
         <div className="bg-slate-800/70 border border-purple-500/40 p-5 rounded-2xl animate-in fade-in duration-300 space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -859,23 +927,9 @@ export default function Reports() {
             <span className="bg-blue-900/40 text-blue-200 px-3 py-1.5 rounded-lg border border-blue-500/20">📊 {syncResult.stats.reports_upserted} reportes</span>
             {syncResult.stats.errors > 0 && <span className="bg-red-900/40 text-red-200 px-3 py-1.5 rounded-lg border border-red-500/20 font-bold">❌ {syncResult.stats.errors} errores</span>}
           </div>
-          {/* Alerts by level */}
           {syncResult.alerts.length > 0 && (
-            <div className="space-y-1 max-h-64 overflow-y-auto pr-2">
-              {syncResult.alerts.filter(a => a.level === 'warn' && (a.msg.includes('actualizado') || a.msg.includes('vinculado') || a.msg.includes('creado'))).map((a, i) => (
-                <div key={`w${i}`} className="flex items-start gap-2 text-xs bg-yellow-900/20 border border-yellow-500/20 rounded px-3 py-1.5">
-                  <span className="text-yellow-400 font-bold shrink-0">🟡</span>
-                  {a.ban && <span className="text-yellow-300 font-mono shrink-0">[{a.ban}]</span>}
-                  <span className="text-yellow-200">{a.msg}</span>
-                </div>
-              ))}
-              {syncResult.alerts.filter(a => a.level === 'info').map((a, i) => (
-                <div key={`i${i}`} className="flex items-start gap-2 text-xs bg-green-900/20 border border-green-500/20 rounded px-3 py-1.5">
-                  <span className="text-green-400 font-bold shrink-0">🟢</span>
-                  {a.ban && <span className="text-green-300 font-mono shrink-0">[{a.ban}]</span>}
-                  <span className="text-green-200">{a.msg}</span>
-                </div>
-              ))}
+            <div className="rounded-xl border border-slate-700 bg-slate-900/40 px-4 py-3 text-xs text-slate-300">
+              El detalle del sync esta oculto en esta vista. Abre <span className="font-semibold text-white">Informe Tango vs CRM</span> para ver las lineas afectadas.
             </div>
           )}
         </div>
@@ -969,6 +1023,37 @@ export default function Reports() {
               </tfoot>
             </table>
           </div>
+
+          {syncResult?.alerts?.length > 0 && (
+            <div className="border-t border-slate-700">
+              <div className="px-6 py-4 bg-slate-900/40 border-b border-slate-700 space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <h3 className="text-sm font-bold text-purple-300">Detalle del ultimo Sync Tango a CRM</h3>
+                  <span className="text-xs text-slate-400">{syncResult.alerts.length} linea{syncResult.alerts.length === 1 ? '' : 's'}</span>
+                </div>
+                <div className="space-y-1 max-h-64 overflow-y-auto pr-2">
+                  {syncResult.alerts
+                    .filter(a => a.level === 'warn' && (a.msg.includes('actualizado') || a.msg.includes('vinculado') || a.msg.includes('creado')))
+                    .map((a, i) => (
+                      <div key={`cmp-w${i}`} className="flex items-start gap-2 text-xs bg-yellow-900/20 border border-yellow-500/20 rounded px-3 py-1.5">
+                        <span className="text-yellow-400 font-bold shrink-0">🟡</span>
+                        {a.ban && <span className="text-yellow-300 font-mono shrink-0">[{a.ban}]</span>}
+                        <span className="text-yellow-200">{a.msg}</span>
+                      </div>
+                    ))}
+                  {syncResult.alerts
+                    .filter(a => a.level === 'info')
+                    .map((a, i) => (
+                      <div key={`cmp-i${i}`} className="flex items-start gap-2 text-xs bg-green-900/20 border border-green-500/20 rounded px-3 py-1.5">
+                        <span className="text-green-400 font-bold shrink-0">🟢</span>
+                        {a.ban && <span className="text-green-300 font-mono shrink-0">[{a.ban}]</span>}
+                        <span className="text-green-200">{a.msg}</span>
+                      </div>
+                    ))}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Detalle Tango PYMES - cada venta */}
           {tangoDetail && tangoDetail.length > 0 ? (
@@ -1265,7 +1350,7 @@ export default function Reports() {
             </thead>
             <tbody className="bg-gray-900 divide-y divide-gray-800">
               {groupedClients.map(group => {
-                const key = group.client_id || group.client;
+                const key = group.group_key || group.client_id || group.client;
                 const isExpanded = expandedClients.has(key);
                 const prods = group.products;
 

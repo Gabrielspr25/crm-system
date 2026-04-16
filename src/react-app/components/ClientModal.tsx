@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo } from "react";
-import { X, Plus, Hash, Calendar, Edit, Ban } from "lucide-react";
+import { X, Plus, Hash, Calendar, Edit, Ban, Upload } from "lucide-react";
 import { Client, Vendor, CreateClient } from "@/shared/types";
 import { getCurrentUser } from "@/react-app/utils/auth";
+import BanPasteSubscribersModal from "@/react-app/components/BanPasteSubscribersModal";
 
 interface BAN {
   id: number;
@@ -44,6 +45,9 @@ interface ClientModalProps {
   onAddSubscriber?: (banId: number) => void;
   onEditBAN?: (ban: BAN) => void;
   onEditSubscriber?: (subscriber: Subscriber, banId: number) => void;
+  onDeleteBAN?: (banId: number, banNumber: string) => void | Promise<void>;
+  onCancelSubscriber?: (subscriberId: number, phone: string, banId: number) => void | Promise<void>;
+  onRefreshBANs?: () => Promise<void> | void;
   banRequirementPending?: boolean;
 }
 
@@ -57,6 +61,9 @@ export default function ClientModal({
   onAddSubscriber,
   onEditBAN,
   onEditSubscriber,
+  onDeleteBAN,
+  onCancelSubscriber,
+  onRefreshBANs,
   banRequirementPending
 }: ClientModalProps) {
   const [formData, setFormData] = useState<CreateClient>({
@@ -71,6 +78,7 @@ export default function ClientModal({
     city: '',
     zip_code: '',
     tax_id: '',
+    notes: '',
     includes_ban: false,
     vendor_id: undefined,
   });
@@ -78,6 +86,7 @@ export default function ClientModal({
   const [isSaving, setIsSaving] = useState(false);
   const [isSendingToPOS, setIsSendingToPOS] = useState(false);
   const [posSuccessId, setPosSuccessId] = useState<number | null>(null);
+  const [pasteTargetBAN, setPasteTargetBAN] = useState<{ id: number; banNumber: string } | null>(null);
 
   const authUser = getCurrentUser();
   const isVendorUser = authUser?.role === "vendedor";
@@ -144,6 +153,7 @@ export default function ClientModal({
         city: (client as any).city ?? '',
         zip_code: (client as any).zip_code ?? '',
         tax_id: (client as any).tax_id ?? '',
+        notes: (client as any).notes ?? '',
         includes_ban: Boolean(client.includes_ban),
         vendor_id: client.vendor_id ?? undefined,
       });
@@ -162,6 +172,7 @@ export default function ClientModal({
         city: '',
         zip_code: '',
         tax_id: '',
+        notes: '',
         base: 'BD propia',
         includes_ban: false,
         vendor_id: undefined,
@@ -180,15 +191,6 @@ export default function ClientModal({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormMessage(null);
-
-    // Validación obligatoria de vendedor
-    if (!effectiveVendorId) {
-      setFormMessage({ 
-        type: 'error', 
-        text: '⚠️ Debe seleccionar un vendedor asignado. Este campo es obligatorio.' 
-      });
-      return;
-    }
 
     // VALIDACIÓN: Verificar duplicados por nombre (solo al crear nuevo)
     if (!client && formData.name.trim()) {
@@ -484,7 +486,7 @@ export default function ClientModal({
                 {/* Vendedor Asignado */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Vendedor Asignado *
+                    Vendedor Asignado
                   </label>
                   <select
                     value={effectiveVendorId ?? ''}
@@ -496,15 +498,19 @@ export default function ClientModal({
                       }));
                     }}
                     className="w-full px-3 py-2 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-800 dark:bg-gray-800 text-gray-100 dark:text-gray-100"
-                    required
                   >
-                    <option value="">Seleccione un vendedor</option>
+                    <option value="">Sin vendedor asignado</option>
                     {availableVendors.map((vendor) => (
                       <option key={vendor.id} value={vendor.id}>
                         {vendor.name}
                       </option>
                     ))}
                   </select>
+                  {!isVendorUser && (
+                    <p className="mt-2 text-xs text-gray-400">
+                      Opcional. Si lo dejas vacio, el cliente queda en pool sin seguimiento asignado.
+                    </p>
+                  )}
                   {isVendorUser && !client && effectiveVendorId === vendorIdNumber && (
                     <p className="mt-2 text-xs text-green-400 dark:text-green-400">
                       ✅ Auto-asignado a tu usuario. Puedes cambiarlo si es necesario.
@@ -512,6 +518,24 @@ export default function ClientModal({
                   )}
                 </div>
 
+              </div>
+
+              {/* Notas - fuera del grid, ancho completo, expandible */}
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  Notas
+                </label>
+                <textarea
+                  value={formData.notes || ''}
+                  onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                  rows={4}
+                  style={{ resize: 'vertical', minHeight: '100px' }}
+                  className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="Notas adicionales sobre el cliente..."
+                />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {/* Includes BAN */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
@@ -638,6 +662,15 @@ export default function ClientModal({
                           )}
                         </div>
                         <div className="flex items-center space-x-2">
+                          <button
+                            type="button"
+                            onClick={() => setPasteTargetBAN({ id: ban.id, banNumber: ban.ban_number })}
+                            className="px-2 py-1 text-xs rounded bg-indigo-600 hover:bg-indigo-700 text-white transition-colors flex items-center gap-1"
+                            title="Subir imagen/PDF o pegar lista de suscriptores"
+                          >
+                            <Upload className="w-3 h-3" />
+                            Subir/Pegar
+                          </button>
                           {onEditBAN && (
                             <button
                               type="button"
@@ -650,12 +683,8 @@ export default function ClientModal({
                           )}
                           <button
                             type="button"
-                            onClick={() => {
-                              if (confirm('¿Estás seguro de que deseas eliminar este BAN?')) {
-                                // Lógica para eliminar el BAN
-                              }
-                            }}
-                            className="p-1.5 text-red-400 hover:text-red-300 transition-colors"
+                            onClick={() => { if (confirm(`¿Estás seguro de que deseas eliminar el BAN ${ban.ban_number}?`) && onDeleteBAN) { onDeleteBAN(ban.id, ban.ban_number); } }}
+                            className={`p-1.5 text-red-400 hover:text-red-300 transition-colors ${(ban.subscribers || []).some((subscriber) => subscriber.status !== 'cancelado' && subscriber.status !== 'cancelled') ? 'hidden' : ''}`}
                             title="Eliminar BAN"
                           >
                             <Ban className="w-3 h-3" />
@@ -679,6 +708,11 @@ export default function ClientModal({
                                 <div className="font-mono text-xs text-gray-900 dark:text-gray-100">
                                   {subscriber.phone}
                                 </div>
+                                {subscriber.plan && (
+                                  <div className="text-xs font-semibold text-blue-600 dark:text-blue-400">
+                                    {subscriber.plan}
+                                  </div>
+                                )}
                                 {subscriber.service_type && (
                                   <div className="text-xs text-gray-500 dark:text-gray-400">
                                     {subscriber.service_type}
@@ -718,7 +752,7 @@ export default function ClientModal({
                                   </button>
                                   <button
                                     type="button"
-                                    onClick={() => onEditSubscriber(subscriber, ban.id)}
+                                    onClick={() => { if (onCancelSubscriber) { onCancelSubscriber(subscriber.id, subscriber.phone, ban.id); } }}
                                     className="p-1.5 text-red-400 hover:text-red-300 transition-colors"
                                     title="Cancelar Suscriptor"
                                   >
@@ -753,7 +787,19 @@ export default function ClientModal({
                 )}              </div>            </div>
           )}
         </div>
+      <BanPasteSubscribersModal
+        isOpen={Boolean(pasteTargetBAN)}
+        banId={pasteTargetBAN?.id ?? null}
+        banNumber={pasteTargetBAN?.banNumber ?? null}
+        onClose={() => setPasteTargetBAN(null)}
+        onSuccess={async () => {
+          if (onRefreshBANs) {
+            await onRefreshBANs();
+          }
+        }}
+      />
       </div>
     </div>
   );
 }
+

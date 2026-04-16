@@ -1,28 +1,9 @@
 
-import pg from 'pg';
-const { Pool } = pg;
 import { query as localQuery } from '../database/db.js';
 import { success, serverError } from '../utils/responses.js';
+import { getDiscrepanciasPool } from '../database/externalPools.js';
 
-// Pool remoto para Auditoría Pro
-console.log('🔍 [REMOTE POOL] Creando pool para Manual Comparison a 159.203.70.5:5432...');
-const remotePool = new Pool({
-    host: '159.203.70.5',
-    port: 5432,
-    user: 'postgres',
-    password: 'p0stmu7t1',
-    database: 'claropr',
-    connectionTimeoutMillis: 15000,
-    query_timeout: 30000,
-    statement_timeout: 30000,
-    ssl: false,
-    max: 5,
-    idleTimeoutMillis: 30000
-});
-
-remotePool.on('error', (err) => {
-    console.error('🔍 [REMOTE POOL MC] Error en pool:', err);
-});
+/**
 
 /**
  * Compara datos de un Excel contra la base de datos (Local o Remota)
@@ -30,6 +11,7 @@ remotePool.on('error', (err) => {
 export const compareExcelAgainstDB = async (req, res) => {
     try {
         const { data, mode = 'local' } = req.body;
+        const remotePool = mode === 'remote' ? getDiscrepanciasPool() : null;
 
         if (!data || !Array.isArray(data)) {
             return res.status(400).json({ error: 'No se enviaron datos para comparar' });
@@ -48,7 +30,7 @@ export const compareExcelAgainstDB = async (req, res) => {
             let dbData = null;
             let type = 'VALUE_MISMATCH';
 
-if (mode === 'remote') {
+            if (mode === 'remote') {
                 // --- COMPARACIÓN CONTRA SERVIDOR REMOTO (PRODUCCIÓN) ---
                 try {
                     console.log(`🔍 [REMOTE DB] Conectando a 159.203.70.5:5432 para buscar teléfono: ${phone}, BAN: ${banNumber}`);
@@ -59,17 +41,18 @@ if (mode === 'remote') {
                         v.ban,
                         CAST(v.numerocelularactivado AS text) as suscriber,
                         c.nombre as nombre,
-                        v.codigovoz as codigo_voz,
+                        v.codigovoz as price_plan,
                         NULL as valor,
                         v.simcard as simcard,
                         v.emai as imei,
-                        NULL as seguro,
+                        CASE WHEN v.celuseguroexistente THEN 'SI' ELSE 'NO' END as seguro,
+                        v.papper as paper,
                         v.pricecode as price_code
                     FROM venta v
                     LEFT JOIN clientecredito c ON v.clientecreditoid = c.clientecreditoid
                     WHERE v.numerocelularactivado = $1 OR v.ban = $2
                     LIMIT 1
-`, [phone, banNumber]);
+                    `, [phone, banNumber]);
                     
                     const queryTime = Date.now() - startTime;
                     console.log(`🔍 [REMOTE DB] Query completada en ${queryTime}ms, resultados: ${remoteRes.rows.length}`);
@@ -93,14 +76,14 @@ if (mode === 'remote') {
                 // --- COMPARACIÓN CONTRA BASE DE DATOS LOCAL ---
                 const localRes = await localQuery(`
                     SELECT
-                    s.phone, s.plan, s.monthly_value, s.status as status_activation, s.imei,
+                        s.phone, s.plan, s.monthly_value, s.status as status_activation, s.imei,
                         b.ban_number, b.account_type,
                         c.name as client_name
                     FROM subscribers s
                     JOIN bans b ON s.ban_id = b.id
                     JOIN clients c ON b.client_id = c.id
                     WHERE s.phone = $1
-                        `, [phone]);
+                `, [phone]);
 
                 if (localRes.length === 0) {
                     discrepancies.push({
@@ -139,30 +122,29 @@ if (mode === 'remote') {
                     rowDiffs.push({ field: 'Price Code', excel: excelPriceCode, db: dbPriceCode });
                 }
 
-                // 4. Fecha Activación (Normalizando para comparar solo fecha)
+                // 4. Fecha Activación
                 const excelDate = excelSub.init_activation_date ? new Date(excelSub.init_activation_date).toISOString().split('T')[0] : null;
-                const dbDate = dbData.activation_date ? new Date(dbData.activation_date).toISOString().split('T')[0] : null;
+                const dbDate = dbData.fecha ? new Date(dbData.fecha).toISOString().split('T')[0] : null;
                 if (excelDate && dbDate && excelDate !== dbDate) {
                     rowDiffs.push({ field: 'Fecha Activación', excel: excelDate, db: dbDate });
                 }
 
                 // 5. IMSI
                 const excelImsi = String(excelSub.imsi || '').trim();
-                const dbImsi = String(dbData.imsi || '').trim();
+                const dbImsi = String(dbData.simcard || '').trim();
                 if (excelImsi && dbImsi && excelImsi !== dbImsi) {
                     rowDiffs.push({ field: 'IMSI', excel: excelImsi, db: dbImsi });
                 }
 
                 // 6. Product Type (Seguro)
-                const excelProductType = String(excelSub.product_type || excelSub.tipo_celu || '').trim();
-                const dbProductType = String(dbData.product_type || '').trim();
-                if (excelProductType && dbProductType && excelProductType !== dbProductType) {
-                    rowDiffs.push({ field: 'Tipo Seguro', excel: excelProductType, db: dbProductType });
+                const excelSeguro = String(excelSub.tipo_celuseguro || '').trim();
+                const dbSeguro = String(dbData.seguro || '').trim();
+                if (excelSeguro && dbSeguro && excelSeguro !== dbSeguro) {
+                    rowDiffs.push({ field: 'Tipo Seguro', excel: excelSeguro, db: dbSeguro });
                 }
 
             } else {
-                // Comparación específica para Local (Nuestra App)
-
+                // Comparación específica para Local
                 if (banNumber && dbData.ban_number !== banNumber) {
                     rowDiffs.push({ field: 'BAN', excel: banNumber, db: dbData.ban_number });
                 }
@@ -189,12 +171,12 @@ if (mode === 'remote') {
             if (rowDiffs.length > 0 || mode === 'remote') {
                 discrepancies.push({
                     phone,
-                    client: dbData.client_name || dbData.phone,
+                    client: dbData.client_name || dbData.nombre || dbData.phone,
                     type: rowDiffs.length > 0 ? 'VALUE_MISMATCH' : 'MATCH',
                     severity: rowDiffs.length > 0 ? 'medium' : 'low',
                     differences: rowDiffs,
                     excelData: row,
-                    dbData: dbData // Devolvemos todo lo que está en DB para el panel izquierdo
+                    dbData: dbData
                 });
             }
         }
@@ -218,6 +200,7 @@ if (mode === 'remote') {
 export const syncRemoteData = async (req, res) => {
     try {
         const { changes } = req.body;
+        const remotePool = getDiscrepanciasPool();
 
         if (!changes || !Array.isArray(changes)) {
             return res.status(400).json({ error: 'No se enviaron cambios para sincronizar' });

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Plus, Search, Edit, Trash2, Building, Mail, Key, User } from "lucide-react";
+import { Plus, Search, Edit, Trash2, Building, Mail, Key, User, Shield } from "lucide-react";
 import { useApi } from "../hooks/useApi";
 import { authFetch } from "@/react-app/utils/auth";
 
@@ -8,6 +8,8 @@ interface Vendor {
   name: string;
   email: string | null;
   commission_percentage: number;
+  salesperson_id?: string | null;
+  salesperson_role?: "admin" | "supervisor" | "vendedor" | null;
   is_active: number;
   created_at: string;
 }
@@ -39,7 +41,10 @@ export default function Vendors() {
       if (editingVendor) {
         await authFetch(`/api/vendors/${editingVendor.id}`, {
           method: "PUT",
-          json: formData,
+          json: {
+            ...formData,
+            salesperson_id: editingVendor.salesperson_id || null,
+          },
         });
       } else {
         await authFetch("/api/vendors", {
@@ -54,6 +59,7 @@ export default function Vendors() {
       refetchVendors();
     } catch (error) {
       console.error("Error saving vendor:", error);
+      alert("Error al guardar vendedor");
     }
   };
 
@@ -63,7 +69,7 @@ export default function Vendors() {
       name: vendor.name,
       email: vendor.email || "",
       commission_percentage: vendor.commission_percentage?.toString() || "50.00",
-      role: "vendedor",
+      role: vendor.salesperson_role || "vendedor",
       username: "",
       password: "",
     });
@@ -102,13 +108,12 @@ export default function Vendors() {
     });
   };
 
-  // Auto-generar username y password cuando cambia el nombre
   useEffect(() => {
     if (formData.name && !editingVendor) {
       const firstName = formData.name.split(' ')[0].toLowerCase();
       const autoUsername = firstName.replace(/[^a-z0-9]/g, '');
       const autoPassword = `${firstName.charAt(0).toUpperCase()}${firstName.slice(1)}2025!`;
-      
+
       setFormData(prev => ({
         ...prev,
         username: autoUsername,
@@ -127,7 +132,6 @@ export default function Vendors() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Vendedores</h1>
@@ -146,7 +150,6 @@ export default function Vendors() {
         </button>
       </div>
 
-      {/* Search */}
       <div className="relative max-w-md">
         <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
         <input
@@ -158,7 +161,6 @@ export default function Vendors() {
         />
       </div>
 
-      {/* Vendors Grid */}
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
         {filteredVendors.map((vendor) => (
           <div key={vendor.id} className="bg-white dark:bg-slate-800 rounded-xl shadow-lg border border-gray-200 dark:border-slate-700 hover:shadow-xl transition-shadow duration-200">
@@ -179,6 +181,12 @@ export default function Vendors() {
                     <div className="mt-2 inline-flex items-center px-2 py-1 bg-green-50 dark:bg-green-900/20 rounded-lg">
                       <span className="text-xs text-green-700 dark:text-green-300 font-medium">
                         % Comisión: {vendor.commission_percentage || 50}%
+                      </span>
+                    </div>
+                    <div className="mt-2 inline-flex items-center px-2 py-1 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
+                      <Shield className="w-3 h-3 mr-1 text-blue-700 dark:text-blue-300" />
+                      <span className="text-xs text-blue-700 dark:text-blue-300 font-medium">
+                        Perfil: {vendor.salesperson_role || "vendedor"}
                       </span>
                     </div>
                   </div>
@@ -217,7 +225,6 @@ export default function Vendors() {
         </div>
       )}
 
-      {/* Modal */}
       {showModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl p-6 w-full max-w-md mx-4">
@@ -253,6 +260,22 @@ export default function Vendors() {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Perfil *
+                </label>
+                <select
+                  required
+                  value={formData.role}
+                  onChange={(e) => setFormData({ ...formData, role: e.target.value as "admin" | "supervisor" | "vendedor" })}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white"
+                >
+                  <option value="vendedor">Vendedor</option>
+                  <option value="supervisor">Supervisor</option>
+                  <option value="admin">Administrador</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                   % Comisión *
                 </label>
                 <div className="relative">
@@ -276,22 +299,6 @@ export default function Vendors() {
 
               {!editingVendor && (
                 <>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                      Rol *
-                    </label>
-                    <select
-                      required
-                      value={formData.role}
-                      onChange={(e) => setFormData({ ...formData, role: e.target.value as any })}
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white"
-                    >
-                      <option value="vendedor">Vendedor</option>
-                      <option value="supervisor">Supervisor</option>
-                      <option value="admin">Administrador</option>
-                    </select>
-                  </div>
-
                   <div>
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                       <User className="w-4 h-4 inline mr-1" />
@@ -319,7 +326,9 @@ export default function Vendors() {
                       onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                       className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white font-mono"
                     />
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Esta contraseña se usará para el primer login</p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      Esta contraseña se usará para el primer login
+                    </p>
                   </div>
                 </>
               )}
