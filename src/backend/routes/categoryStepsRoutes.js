@@ -9,7 +9,7 @@ router.use(authenticateToken);
 router.get('/', async (req, res) => {
   try {
     const rows = await query(
-      'SELECT id, category_id, step_name, step_order, created_at, updated_at FROM category_steps WHERE category_id=$1 ORDER BY step_order ASC, id ASC',
+      'SELECT id, category_id, step_name, step_order, created_at FROM category_steps WHERE category_id=$1 ORDER BY step_order ASC, id ASC',
       [req.params.id]
     );
     res.json(rows);
@@ -25,7 +25,7 @@ router.post('/', requireRole(['admin', 'supervisor']), async (req, res) => {
       ? Number(step_order)
       : ((await query('SELECT COALESCE(MAX(step_order), 0) + 1 AS n FROM category_steps WHERE category_id=$1', [req.params.id]))[0]?.n ?? 1);
     const rows = await query(
-      'INSERT INTO category_steps (category_id, step_name, step_order, created_at, updated_at) VALUES ($1,$2,$3,NOW(),NOW()) RETURNING *',
+      'INSERT INTO category_steps (category_id, step_name, step_order, created_at) VALUES ($1,$2,$3,NOW()) RETURNING *',
       [req.params.id, step_name.trim(), ord]
     );
     res.status(201).json(rows[0]);
@@ -40,7 +40,6 @@ router.patch('/:stepId', requireRole(['admin', 'supervisor']), async (req, res) 
   if (step_name !== undefined) { sets.push('step_name=$' + i++); vals.push(step_name.trim()); }
   if (step_order !== undefined) { sets.push('step_order=$' + i++); vals.push(Number(step_order)); }
   if (!sets.length) return res.status(400).json({ error: 'Nada que actualizar' });
-  sets.push('updated_at=NOW()');
   vals.push(req.params.stepId);
   try {
     const rows = await query(
