@@ -17,6 +17,17 @@ import importRoutes from './routes/importRoutes.js';
 import aiRoutes from './routes/aiRoutes.js';
 import referidosRoutes from './routes/referidosRoutes.js';
 import discrepanciasRoutes from './routes/discrepanciasRoutes.js';
+import tarifasRoutes from './routes/tarifasRoutes.js';
+import ocrRoutes from './routes/ocrRoutes.js';
+import dealWorkflowRoutes from './routes/dealWorkflowRoutes.js';
+import systemRoutes from './routes/systemRoutes.js';
+import systemTestRoutes from './routes/systemTestRoutes.js';
+import subscriberReportsRoutes from './routes/subscriberReportsRoutes.js';
+import tangoRoutes from './routes/tangoRoutes.js';
+import taskRoutes from './routes/taskRoutes.js';
+import categoryStepsRoutes from './routes/categoryStepsRoutes.js';
+import categoryStepsSingleRoutes from './routes/categoryStepsSingleRoutes.js';
+import clientStepsRoutes from './routes/clientStepsRoutes.js';
 
 const app = express();
 
@@ -38,6 +49,17 @@ app.use('/api/importador', importRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/referidos', referidosRoutes);
 app.use('/api/discrepancias', discrepanciasRoutes);
+app.use('/api/tarifas', tarifasRoutes);
+app.use('/api/ocr', ocrRoutes);
+app.use('/api/system', systemRoutes);
+app.use('/api/system-test', systemTestRoutes);
+app.use('/api/subscriber-reports', subscriberReportsRoutes);
+app.use('/api/tango', tangoRoutes);
+app.use('/api/tasks', taskRoutes);
+app.use('/api/categories/:id/steps', categoryStepsRoutes);
+app.use('/api/category-steps', categoryStepsSingleRoutes);
+app.use('/api/clients/:clientId/steps', clientStepsRoutes);
+app.use('/api', dealWorkflowRoutes);
 
 
 // Ruta de prueba
