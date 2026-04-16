@@ -1,202 +1,94 @@
+import { CheckCircle2, ClipboardList, Download, Loader2, Pencil, Plus, Trash2, Upload, UserCircle2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, CheckSquare, Columns3, Loader2, Pencil, Plus, RefreshCw, Search, Trash2, X, ExternalLink } from "lucide-react";
+import { useLocation, useNavigate } from "react-router";
+import PersonalTaskModal, { type PersonalTaskFormValue } from "@/react-app/components/tasks/PersonalTaskModal";
 import { authFetch, getCurrentUser } from "@/react-app/utils/auth";
-import { Link } from "react-router";
 
-type TaskStatus = "pending" | "in_progress" | "done";
-type TaskTab = "all" | "pending" | "in_progress" | "follow_up" | "done";
-type TaskPriority = "low" | "normal" | "high";
-type ColumnType = "text" | "date" | "number" | "select" | "checkbox";
+const OPEN_CLIENT_INTENT_KEY = "crm_open_client_task_intent";
 
-interface TaskColumn {
-  id: number;
-  column_key: string;
-  label: string;
-  data_type: ColumnType;
-  options: string[];
-  sort_order: number;
+interface TaskAssignee {
+  user_id: string;
+  display_name: string;
+  role: string;
 }
 
-interface TaskItem {
+interface PersonalTaskItem {
   id: number;
   owner_user_id: string;
   assigned_user_id: string | null;
   assigned_username?: string | null;
   assigned_name?: string | null;
   title: string;
-  due_date: string | null;
-  follow_up_date: string | null;
-  follow_up_time: string | null;
-  client_id: string | number | null;
+  due_date?: string | null;
+  follow_up_date?: string | null;
+  follow_up_time?: string | null;
+  notes?: string | null;
+  status: "pending" | "in_progress" | "done";
+  priority: "low" | "normal" | "high";
+  task_kind?: "regular" | "client";
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+interface DealTaskBoardItem {
+  id: number;
+  deal_id: number;
+  step_name: string;
+  step_order: number;
+  status: "pending" | "in_progress" | "done";
+  assigned_to: string | null;
+  assigned_name?: string | null;
+  client_id: string | null;
   client_name: string | null;
-  notes: string | null;
-  status: TaskStatus;
-  priority: TaskPriority;
-  custom_fields: Record<string, string | number | boolean | null>;
+  seller_id?: string | null;
+  seller_name?: string | null;
+  product_type: string;
+  sale_type: string;
+  source_label?: string | null;
+  ban_number?: string | null;
+  phone?: string | null;
+  total_steps: number;
+  completed_steps: number;
+  created_at?: string | null;
+  updated_at?: string | null;
+  deal_created_at?: string | null;
 }
 
-interface TaskDraft {
-  title: string;
-  due_date: string;
-  follow_up_date: string;
-  follow_up_time: string;
-  client_id: string | number | null;
-  client_name: string;
-  assigned_user_id: string | null;
-  notes: string;
-  status: TaskStatus;
-  priority: TaskPriority;
-  custom_fields: Record<string, string | number | boolean | null>;
+interface DealBoardRow extends DealTaskBoardItem {
+  pending_steps: number;
 }
 
-interface ClientSearchResult {
-  id: string | number;
-  name: string;
-  business_name?: string | null;
+interface LegacyWorkflowStep {
+  id?: string | null;
+  label?: string | null;
+  is_done?: boolean | null;
 }
 
-interface TaskAssignee {
-  user_id: string;
-  username: string;
-  display_name: string;
-  role: string;
+interface LegacyClientWorkflowItem {
+  id: number;
+  client_id: string | null;
+  client_name: string | null;
+  salesperson_name?: string | null;
+  assigned_user_id?: string | null;
+  assigned_username?: string | null;
+  assigned_name?: string | null;
+  product_key?: string | null;
+  product_name?: string | null;
+  source_label?: string | null;
+  ban_number?: string | null;
+  phone?: string | null;
+  line_type?: string | null;
+  sale_type?: string | null;
+  workflow_steps?: LegacyWorkflowStep[] | null;
+  status: "pending" | "in_progress" | "done";
+  created_at?: string | null;
+  updated_at?: string | null;
 }
 
-interface ColumnDraft {
-  label: string;
-  data_type: ColumnType;
-  options_text: string;
-}
+type TasksTab = "clientes" | "personales";
+type PersonalStatusFilter = "all" | "pending" | "in_progress" | "done";
 
-const STATUS_OPTIONS: Array<{ value: TaskStatus; label: string }> = [
-  { value: "pending", label: "Pendiente" },
-  { value: "in_progress", label: "En progreso" },
-  { value: "done", label: "Completada" }
-];
-
-const TASK_TABS: Array<{ value: TaskTab; label: string }> = [
-  { value: "all", label: "Todas" },
-  { value: "pending", label: "Pendientes" },
-  { value: "in_progress", label: "En proceso" },
-  { value: "follow_up", label: "Seguimiento" },
-  { value: "done", label: "Completadas" }
-];
-
-const PRIORITY_OPTIONS: Array<{ value: TaskPriority; label: string }> = [
-  { value: "low", label: "Baja" },
-  { value: "normal", label: "Normal" },
-  { value: "high", label: "Alta" }
-];
-
-const COLUMN_TYPES: Array<{ value: ColumnType; label: string }> = [
-  { value: "text", label: "Texto" },
-  { value: "date", label: "Fecha" },
-  { value: "number", label: "Numero" },
-  { value: "select", label: "Lista" },
-  { value: "checkbox", label: "Si/No" }
-];
-
-function defaultByType(type: ColumnType): string | number | boolean | null {
-  return type === "checkbox" ? false : "";
-}
-
-function defaultsForColumns(columns: TaskColumn[]) {
-  return columns.reduce<Record<string, string | number | boolean | null>>((acc, col) => {
-    acc[col.column_key] = defaultByType(col.data_type);
-    return acc;
-  }, {});
-}
-
-function hasTaskFollowUp(task: Pick<TaskItem, "follow_up_date" | "follow_up_time">) {
-  return Boolean(task.follow_up_date || task.follow_up_time);
-}
-
-function getTaskTab(task: TaskItem): Exclude<TaskTab, "all"> {
-  if (task.status === "done") {
-    return hasTaskFollowUp(task) ? "follow_up" : "done";
-  }
-  return task.status;
-}
-
-function getTaskStatusLabel(task: TaskItem) {
-  if (task.status === "done" && hasTaskFollowUp(task)) {
-    return "Seguimiento";
-  }
-  return STATUS_OPTIONS.find((option) => option.value === task.status)?.label || task.status;
-}
-
-function formatFollowUp(task: Pick<TaskItem, "follow_up_date" | "follow_up_time">) {
-  const date = task.follow_up_date || "";
-  const time = task.follow_up_time || "";
-  if (date && time) return `${date} ${time}`;
-  return date || time || "-";
-}
-
-function getTaskAlarmSignature(task: Pick<TaskItem, "id" | "follow_up_date" | "follow_up_time">) {
-  return `${task.id}|${task.follow_up_date || ""}|${task.follow_up_time || ""}`;
-}
-
-function getTaskAlarmAckStorageKey(taskId: number) {
-  return `tasks_alarm_ack_${taskId}`;
-}
-
-function toTaskDayNumber(value?: string | null) {
-  if (!value) return null;
-  const parts = value.split("-").map(Number);
-  if (parts.length !== 3 || parts.some((part) => Number.isNaN(part))) return null;
-  return new Date(parts[0], parts[1] - 1, parts[2]).getTime();
-}
-
-function getTaskFollowUpTimestamp(task: Pick<TaskItem, "follow_up_date" | "follow_up_time">) {
-  if (!task.follow_up_date || !task.follow_up_time) return null;
-  const [year, month, day] = task.follow_up_date.split("-").map(Number);
-  const [hours, minutes] = task.follow_up_time.split(":").map(Number);
-  if ([year, month, day, hours, minutes].some((value) => Number.isNaN(value))) {
-    return null;
-  }
-  return new Date(year, month - 1, day, hours, minutes, 0, 0).getTime();
-}
-
-function getTaskAlarm(task: TaskItem) {
-  const today = new Date();
-  const todayNumber = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
-  const followUpTimestamp = getTaskFollowUpTimestamp(task);
-  const hasFollowUp = hasTaskFollowUp(task);
-  const referenceDate = hasFollowUp ? task.follow_up_date : task.due_date;
-  const referenceNumber = toTaskDayNumber(referenceDate);
-
-  if (!referenceDate || referenceNumber === null) {
-    return { label: "-", tone: "text-slate-500 border-slate-700 bg-slate-800/60" };
-  }
-
-  if (followUpTimestamp !== null && followUpTimestamp <= Date.now()) {
-    return {
-      label: "En alarma",
-      tone: "text-red-100 border-red-400/40 bg-red-500/20"
-    };
-  }
-
-  if (referenceNumber < todayNumber) {
-    return {
-      label: hasFollowUp ? "Seguimiento atrasado" : "Atrasada",
-      tone: "text-red-200 border-red-500/30 bg-red-500/10"
-    };
-  }
-
-  if (referenceNumber === todayNumber) {
-    return {
-      label: hasFollowUp ? "Seguimiento hoy" : "Hoy",
-      tone: "text-amber-200 border-amber-500/30 bg-amber-500/10"
-    };
-  }
-
-  return {
-    label: hasFollowUp ? "Seguimiento proximo" : "Proxima",
-    tone: "text-emerald-200 border-emerald-500/30 bg-emerald-500/10"
-  };
-}
-
-async function requestJson<T>(url: string, init: RequestInit & { json?: unknown } = {}): Promise<T> {
+async function requestJson<T>(url: string, init: RequestInit & { json?: unknown } = {}) {
   const { json, ...rest } = init;
   const response = await authFetch(url, json !== undefined ? { ...rest, json } : rest);
   if (!response.ok) {
@@ -206,917 +98,889 @@ async function requestJson<T>(url: string, init: RequestInit & { json?: unknown 
   return response.json() as Promise<T>;
 }
 
-function NotesChecklistEditor({ notes, onChange }: { notes: string; onChange: (v: string) => void }) {
-  const [mode, setMode] = useState<"text" | "checklist">("checklist");
-  const lines = (notes || "").split("\n");
-
-  if (mode === "text") {
-    return (
-      <div className="space-y-2">
-        <div className="flex justify-end">
-          <button type="button" onClick={() => setMode("checklist")} className="text-xs text-blue-400 font-medium hover:text-blue-300 transition-colors">Modo Checklist</button>
-        </div>
-        <textarea
-          value={notes}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder="Escribe notas aquí... Cada línea puede ser un ítem del checklist."
-          rows={8}
-          style={{ resize: "vertical", minHeight: "200px", maxHeight: "60vh" }}
-          className="w-full rounded-xl border-2 border-blue-500/40 bg-slate-800/90 px-4 py-3 text-sm text-white placeholder-slate-400 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-        />
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-2">
-      <div className="flex justify-end">
-        <button type="button" onClick={() => setMode("text")} className="text-xs text-slate-400 font-medium hover:text-white transition-colors">Modo Texto</button>
-      </div>
-      <div className="space-y-1.5 bg-slate-800/90 p-3 rounded-xl border-2 border-blue-500/40 min-h-[200px] max-h-[60vh] overflow-y-auto">
-        {lines.map((text, idx) => ({ text, idx })).filter(item => item.text.trim() !== "").map(({ text: l, idx: i }) => {
-          const isChecked = l.startsWith("[x] ");
-          const isEmptyCheck = l.startsWith("[ ] ");
-          const hasPrefix = isChecked || isEmptyCheck;
-          const actualText = hasPrefix ? l.slice(4) : l;
-          const checked = isChecked;
-
-          return (
-            <div key={i} className="flex gap-2 items-center group">
-              <input 
-                type="checkbox" 
-                checked={checked} 
-                onChange={(e) => {
-                  const newLines = [...lines];
-                  newLines[i] = (e.target.checked ? "[x] " : "[ ] ") + actualText;
-                  onChange(newLines.join("\n"));
-                }} 
-                className="w-4 h-4 shrink-0 rounded border-slate-600 bg-slate-900 cursor-pointer" 
-              />
-              <input 
-                type="text" 
-                value={actualText} 
-                onChange={(e) => {
-                  const newLines = [...lines];
-                  newLines[i] = (hasPrefix ? l.slice(0, 4) : "[ ] ") + e.target.value;
-                  onChange(newLines.join("\n"));
-                }} 
-                className={`flex-1 bg-transparent border-none text-sm focus:outline-none focus:bg-slate-700/50 rounded px-1.5 py-1 transition-colors ${checked ? "text-slate-500 line-through" : "text-slate-200"}`} 
-              />
-              <button 
-                type="button" 
-                onClick={() => {
-                  const newLines = [...lines];
-                  newLines.splice(i, 1);
-                  onChange(newLines.join("\n"));
-                }} 
-                className="text-slate-600 opacity-0 group-hover:opacity-100 hover:text-red-400 transition-all shrink-0 p-1"
-                title="Eliminar fila"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          );
-        })}
-        {(!lines.length || lines[lines.length - 1] !== '') && (
-          <button 
-             type="button" 
-             onClick={() => {
-               const newLines = [...lines];
-               if (newLines.length > 0 && newLines[0] !== "" && !newLines[newLines.length - 1].startsWith("[ ] ") && !newLines[newLines.length - 1].startsWith("[x] ")) {
-                 onChange((notes ? notes + "\n" : "") + "[ ] ");
-               } else {
-                 onChange((notes ? notes + "\n" : "") + "[ ] ");
-               }
-             }} 
-             className="text-xs text-blue-400 mt-2 px-1 hover:underline flex items-center gap-1"
-          >
-            <Plus className="w-3 h-3" /> Agregar ítem
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-export default function TasksPage() {
-  const authUser = useMemo(() => getCurrentUser(), []);
-  const currentUserId = useMemo(() => String(authUser?.userId || "").trim(), [authUser?.userId]);
-  const userRole = useMemo(() => String(authUser?.role || "").toLowerCase(), [authUser?.role]);
-  const canAssignTasks = userRole === "admin" || userRole === "supervisor";
-
-  const [tasks, setTasks] = useState<TaskItem[]>([]);
-  const [columns, setColumns] = useState<TaskColumn[]>([]);
-  const [assignees, setAssignees] = useState<TaskAssignee[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [query, setQuery] = useState("");
-  const [activeTab, setActiveTab] = useState<TaskTab>("all");
-  const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [columnBusy, setColumnBusy] = useState(false);
-  const [showColumnForm, setShowColumnForm] = useState(false);
-  const [editingTask, setEditingTask] = useState<TaskItem | null>(null);
-  const [quickTaskId, setQuickTaskId] = useState<number | null>(null);
-  const [clientOptions, setClientOptions] = useState<ClientSearchResult[]>([]);
-  const [clientSearchLoading, setClientSearchLoading] = useState(false);
-  const [createClientOpen, setCreateClientOpen] = useState(false);
-  const [editClientOpen, setEditClientOpen] = useState(false);
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [columnDraft, setColumnDraft] = useState<ColumnDraft>({ label: "", data_type: "text", options_text: "" });
-  const [alarmNow, setAlarmNow] = useState(() => Date.now());
-  const [activeAlarmTaskId, setActiveAlarmTaskId] = useState<number | null>(null);
-  const [alarmRescheduleDate, setAlarmRescheduleDate] = useState("");
-  const [alarmRescheduleTime, setAlarmRescheduleTime] = useState("");
-  const [alarmSaving, setAlarmSaving] = useState(false);
-  const [draft, setDraft] = useState<TaskDraft>({
+function buildDefaultTask(currentUserId: string | null): PersonalTaskFormValue {
+  return {
     title: "",
     due_date: "",
     follow_up_date: "",
     follow_up_time: "",
-    client_id: null,
-    client_name: "",
-    assigned_user_id: currentUserId || null,
+    assigned_user_id: currentUserId,
     notes: "",
     status: "pending",
-    priority: "normal",
-    custom_fields: {}
-  });
+    priority: "normal"
+  };
+}
 
-  const assigneeMap = useMemo(() => {
-    const map = new Map<string, TaskAssignee>();
-    assignees.forEach((assignee) => map.set(assignee.user_id, assignee));
-    return map;
-  }, [assignees]);
+function priorityLabel(priority: PersonalTaskItem["priority"]) {
+  if (priority === "high") return "Alta";
+  if (priority === "low") return "Baja";
+  return "Normal";
+}
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+function formatSaleType(value: string) {
+  if (value === "REN") return "Renovacion";
+  if (value === "NEW") return "Nueva";
+  return value || "-";
+}
+
+function dealTaskPriority(task: DealTaskBoardItem) {
+  if (task.status === "in_progress") return 0;
+  if (task.status === "pending") return 1;
+  return 2;
+}
+
+function getLegacyWorkflowProgress(steps: LegacyWorkflowStep[] | null | undefined) {
+  const normalized = Array.isArray(steps) ? steps : [];
+  const total = normalized.length;
+  const completed = normalized.filter((step) => Boolean(step?.is_done)).length;
+  const nextIndex = normalized.findIndex((step) => !step?.is_done);
+  const currentStep = normalized[nextIndex >= 0 ? nextIndex : Math.max(total - 1, 0)] || null;
+
+  return {
+    total,
+    completed,
+    currentLabel: String(currentStep?.label || "Sin pasos"),
+    currentOrder: nextIndex >= 0 ? nextIndex + 1 : total > 0 ? total : 1
+  };
+}
+
+function statusLabel(status: PersonalTaskItem["status"]) {
+  if (status === "done") return "Completada";
+  if (status === "in_progress") return "En progreso";
+  return "Pendiente";
+}
+
+function statusClasses(status: PersonalTaskItem["status"]) {
+  if (status === "done") return "border-emerald-500/30 bg-emerald-500/10 text-emerald-200";
+  if (status === "in_progress") return "border-amber-500/30 bg-amber-500/10 text-amber-200";
+  return "border-slate-600 bg-slate-800 text-slate-200";
+}
+
+function priorityClasses(priority: PersonalTaskItem["priority"]) {
+  if (priority === "high") return "border-red-500/30 bg-red-500/10 text-red-200";
+  if (priority === "low") return "border-slate-600 bg-slate-800 text-slate-300";
+  return "border-blue-500/30 bg-blue-500/10 text-blue-200";
+}
+
+export default function TasksPage() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const currentUser = useMemo(() => getCurrentUser(), []);
+  const currentUserId = String(currentUser?.userId || "").trim() || null;
+  const role = String(currentUser?.role || "").toLowerCase();
+  const canAssignTasks = role === "admin" || role === "supervisor";
+  const hasExplicitTabParam = useMemo(() => new URLSearchParams(location.search).has("tab"), [location.search]);
+
+  const queryTab = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    return params.get("tab") === "personales" ? "personales" : "clientes";
+  }, [location.search]);
+
+  const [activeTab, setActiveTab] = useState<TasksTab>(queryTab);
+  const [loadingClients, setLoadingClients] = useState(true);
+  const [loadingPersonal, setLoadingPersonal] = useState(true);
+  const [savingPersonal, setSavingPersonal] = useState(false);
+  const [deletingPersonalId, setDeletingPersonalId] = useState<number | null>(null);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [personalStatusFilter, setPersonalStatusFilter] = useState<PersonalStatusFilter>("all");
+  const [dealTasks, setDealTasks] = useState<DealTaskBoardItem[]>([]);
+  const [personalTasks, setPersonalTasks] = useState<PersonalTaskItem[]>([]);
+  const [assignees, setAssignees] = useState<TaskAssignee[]>([]);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [editingTask, setEditingTask] = useState<PersonalTaskItem | null>(null);
+  const [draft, setDraft] = useState<PersonalTaskFormValue>(buildDefaultTask(currentUserId));
+  const [importingTasks, setImportingTasks] = useState(false);
+
+  useEffect(() => {
+    setActiveTab(queryTab);
+  }, [queryTab]);
+
+  const syncLocationTab = useCallback((tab: TasksTab) => {
+    const params = new URLSearchParams(location.search);
+    params.set("tab", tab);
+    navigate({ pathname: location.pathname, search: params.toString() }, { replace: true });
+  }, [location.pathname, location.search, navigate]);
+
+  const loadClientWorkflows = useCallback(async () => {
+    setLoadingClients(true);
     try {
-      const [taskRows, columnRows, assigneeRows] = await Promise.all([
-        requestJson<TaskItem[]>("/api/tasks"),
-        requestJson<TaskColumn[]>("/api/tasks/columns"),
-        requestJson<TaskAssignee[]>("/api/tasks/assignees")
+      const [dealTaskResult, legacyResult] = await Promise.allSettled([
+        requestJson<DealTaskBoardItem[]>("/api/deal-tasks?pending_only=1"),
+        requestJson<LegacyClientWorkflowItem[]>("/api/client-product-workflows?pending_only=1")
       ]);
 
-      const sortedColumns = [...columnRows].sort((a, b) => a.sort_order - b.sort_order);
-      const defaults = defaultsForColumns(sortedColumns);
-      const normalizedAssignees = Array.isArray(assigneeRows) ? assigneeRows : [];
-      const fallbackAssignee = normalizedAssignees[0]?.user_id || currentUserId || null;
+      const nextRows: DealTaskBoardItem[] = [];
 
-      setColumns(sortedColumns);
-      setAssignees(normalizedAssignees);
-      setTasks(taskRows.map((task) => ({ ...task, custom_fields: { ...defaults, ...task.custom_fields } })));
-      setDraft((prev) => ({
-        ...prev,
-        assigned_user_id: prev.assigned_user_id || fallbackAssignee,
-        custom_fields: { ...defaults, ...prev.custom_fields }
-      }));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Error cargando tareas");
+      if (dealTaskResult.status === "fulfilled") {
+        nextRows.push(...dealTaskResult.value);
+      } else {
+        console.error("Error cargando tareas pendientes por venta:", dealTaskResult.reason);
+      }
+
+      if (legacyResult.status === "fulfilled") {
+        nextRows.push(
+          ...legacyResult.value.map((workflow) => {
+            const progress = getLegacyWorkflowProgress(workflow.workflow_steps);
+            return {
+              id: workflow.id,
+              deal_id: -Math.abs(Number(workflow.id)),
+              step_name: progress.currentLabel,
+              step_order: progress.currentOrder,
+              status: workflow.status,
+              assigned_to: workflow.assigned_user_id || null,
+              assigned_name: workflow.assigned_name || workflow.assigned_username || null,
+              client_id: workflow.client_id || null,
+              client_name: workflow.client_name || null,
+              seller_id: null,
+              seller_name: workflow.salesperson_name || null,
+              product_type: workflow.product_name || workflow.product_key || "Producto",
+              sale_type: String(workflow.sale_type || workflow.line_type || "").trim().toUpperCase(),
+              source_label: workflow.source_label || null,
+              ban_number: workflow.ban_number || null,
+              phone: workflow.phone || null,
+              total_steps: progress.total,
+              completed_steps: progress.completed,
+              created_at: workflow.created_at || null,
+              updated_at: workflow.updated_at || null,
+              deal_created_at: workflow.created_at || null
+            };
+          })
+        );
+      } else {
+        console.error("Error cargando workflows legacy:", legacyResult.reason);
+      }
+
+      setDealTasks(nextRows);
+    } catch (error) {
+      console.error("Error cargando bandeja de clientes:", error);
+      setDealTasks([]);
     } finally {
-      setLoading(false);
+      setLoadingClients(false);
+    }
+  }, []);
+
+  const loadPersonalTasks = useCallback(async () => {
+    setLoadingPersonal(true);
+    try {
+      const [taskRows, assigneeRows] = await Promise.all([
+        requestJson<PersonalTaskItem[]>("/api/tasks"),
+        requestJson<TaskAssignee[]>("/api/tasks/assignees")
+      ]);
+      setPersonalTasks(taskRows.filter((task) => task.task_kind !== "client"));
+      setAssignees(assigneeRows);
+      setDraft((prev) => ({ ...prev, assigned_user_id: prev.assigned_user_id || currentUserId }));
+    } catch (error) {
+      console.error("Error cargando tareas personales:", error);
+      setPersonalTasks([]);
+      setAssignees([]);
+    } finally {
+      setLoadingPersonal(false);
     }
   }, [currentUserId]);
 
   useEffect(() => {
-    void loadData();
-  }, [loadData]);
+    void Promise.all([loadClientWorkflows(), loadPersonalTasks()]);
+  }, [loadClientWorkflows, loadPersonalTasks]);
 
-  useEffect(() => {
-    const handleRefresh = () => {
-      void loadData();
-    };
-    window.addEventListener("modal-refresh", handleRefresh);
-    window.addEventListener("refreshTasks", handleRefresh);
-    return () => {
-      window.removeEventListener("modal-refresh", handleRefresh);
-      window.removeEventListener("refreshTasks", handleRefresh);
-    };
-  }, [loadData]);
+  const clientRows = useMemo<DealBoardRow[]>(() => {
+    const byDealId = new Map<number, DealBoardRow>();
 
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      setAlarmNow(Date.now());
-    }, 30000);
-    return () => window.clearInterval(timer);
-  }, []);
+    dealTasks.forEach((task) => {
+      const existing = byDealId.get(task.deal_id);
+      const pendingSteps = Math.max(task.total_steps - task.completed_steps, 0);
 
-  useEffect(() => {
-    const defaults = defaultsForColumns(columns);
-    setDraft((prev) => ({ ...prev, custom_fields: { ...defaults, ...prev.custom_fields } }));
-    setTasks((prev) => prev.map((task) => ({ ...task, custom_fields: { ...defaults, ...task.custom_fields } })));
-    setEditingTask((prev) => (prev ? { ...prev, custom_fields: { ...defaults, ...prev.custom_fields } } : prev));
-  }, [columns]);
-
-  const findClientByName = useCallback((value: string) => {
-    const needle = value.trim().toLowerCase();
-    if (!needle) return null;
-    return clientOptions.find((client) => String(client.name || "").trim().toLowerCase() === needle) || null;
-  }, [clientOptions]);
-
-  const searchClients = useCallback(async (value: string) => {
-    const term = value.trim();
-    if (term.length < 2) {
-      setClientOptions([]);
-      return;
-    }
-    setClientSearchLoading(true);
-    try {
-      const rows = await requestJson<ClientSearchResult[]>(`/api/clients/search?q=${encodeURIComponent(term)}`);
-      setClientOptions(Array.isArray(rows) ? rows.slice(0, 20) : []);
-    } catch {
-      setClientOptions([]);
-    } finally {
-      setClientSearchLoading(false);
-    }
-  }, []);
-
-  const filteredTasks = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    return tasks.filter((task) => {
-      if (activeTab === "follow_up") {
-         if (!hasTaskFollowUp(task)) return false;
-      } else if (activeTab !== "all" && task.status !== activeTab) {
-         return false;
+      if (!existing) {
+        byDealId.set(task.deal_id, { ...task, pending_steps: pendingSteps });
+        return;
       }
-      if (!needle) return true;
-      const text = `${task.title} ${task.client_name || ""} ${task.notes || ""} ${task.assigned_name || task.assigned_username || ""} ${Object.values(task.custom_fields || {}).join(" ")}`.toLowerCase();
-      return text.includes(needle);
+
+      const existingPriority = dealTaskPriority(existing);
+      const nextPriority = dealTaskPriority(task);
+      const shouldReplace = nextPriority < existingPriority
+        || (nextPriority === existingPriority && task.step_order < existing.step_order)
+        || (!existing.updated_at && Boolean(task.updated_at));
+
+      if (shouldReplace) {
+        byDealId.set(task.deal_id, { ...task, pending_steps: pendingSteps });
+      } else if (pendingSteps > existing.pending_steps) {
+        byDealId.set(task.deal_id, { ...existing, pending_steps });
+      }
     });
-  }, [activeTab, query, tasks]);
 
-  const taskAlarmSummary = useMemo(() => {
-    return tasks.reduce(
-      (acc, task) => {
-        const alarm = getTaskAlarm(task);
-        if (alarm.label === "En alarma" || alarm.label === "Atrasada" || alarm.label === "Seguimiento atrasado") acc.overdue += 1;
-        else if (alarm.label === "Hoy" || alarm.label === "Seguimiento hoy") acc.today += 1;
-        else if (alarm.label === "Proxima" || alarm.label === "Seguimiento proximo") acc.upcoming += 1;
-        return acc;
-      },
-      { overdue: 0, today: 0, upcoming: 0 }
-    );
-  }, [tasks]);
+    return Array.from(byDealId.values()).sort((left, right) => {
+      const priorityDiff = dealTaskPriority(left) - dealTaskPriority(right);
+      if (priorityDiff !== 0) return priorityDiff;
+      const leftUpdated = left.updated_at ? new Date(left.updated_at).getTime() : 0;
+      const rightUpdated = right.updated_at ? new Date(right.updated_at).getTime() : 0;
+      return rightUpdated - leftUpdated;
+    });
+  }, [dealTasks]);
 
-  const triggeredAlarmTasks = useMemo(() => {
-    return [...tasks]
-      .filter((task) => {
-        const followUpTimestamp = getTaskFollowUpTimestamp(task);
-        if (followUpTimestamp === null || followUpTimestamp > alarmNow) return false;
-        const acknowledgedSignature = window.localStorage.getItem(getTaskAlarmAckStorageKey(task.id));
-        return acknowledgedSignature !== getTaskAlarmSignature(task);
-      })
-      .sort((a, b) => {
-        const aTime = getTaskFollowUpTimestamp(a) ?? Number.MAX_SAFE_INTEGER;
-        const bTime = getTaskFollowUpTimestamp(b) ?? Number.MAX_SAFE_INTEGER;
-        return aTime - bTime;
-      });
-  }, [alarmNow, tasks]);
+  const filteredClientWorkflows = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    return clientRows.filter((workflow) => {
+      if (!term) return true;
+      return [
+        workflow.client_name,
+        workflow.product_type,
+        workflow.sale_type,
+        workflow.step_name,
+        workflow.source_label,
+        workflow.ban_number,
+        workflow.phone,
+        workflow.assigned_name,
+        workflow.seller_name
+      ].some((value) => String(value || "").toLowerCase().includes(term));
+    });
+  }, [clientRows, searchTerm]);
 
-  const activeAlarmTask = useMemo(() => {
-    if (!triggeredAlarmTasks.length) return null;
-    return triggeredAlarmTasks.find((task) => task.id === activeAlarmTaskId) || triggeredAlarmTasks[0];
-  }, [activeAlarmTaskId, triggeredAlarmTasks]);
+  const filteredPersonalTasks = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    return personalTasks.filter((task) => {
+      if (personalStatusFilter !== "all" && task.status !== personalStatusFilter) {
+        return false;
+      }
+      if (!term) return true;
+      return [task.title, task.notes, task.assigned_name, task.assigned_username]
+        .some((value) => String(value || "").toLowerCase().includes(term));
+    });
+  }, [personalStatusFilter, personalTasks, searchTerm]);
+
+  const clientStats = useMemo(() => ({
+    total: clientRows.length,
+    pending: clientRows.filter((workflow) => workflow.status === "pending").length,
+    inProgress: clientRows.filter((workflow) => workflow.status === "in_progress").length
+  }), [clientRows]);
+
+  const personalStats = useMemo(() => ({
+    total: personalTasks.length,
+    pending: personalTasks.filter((task) => task.status === "pending").length,
+    inProgress: personalTasks.filter((task) => task.status === "in_progress").length,
+    done: personalTasks.filter((task) => task.status === "done").length
+  }), [personalTasks]);
 
   useEffect(() => {
-    if (!activeAlarmTask) {
-      setActiveAlarmTaskId(null);
+    if (loadingClients || loadingPersonal || hasExplicitTabParam) {
       return;
     }
-    if (activeAlarmTask.id !== activeAlarmTaskId) {
-      setActiveAlarmTaskId(activeAlarmTask.id);
-      setAlarmRescheduleDate(activeAlarmTask.follow_up_date || "");
-      setAlarmRescheduleTime(activeAlarmTask.follow_up_time || "");
-    }
-  }, [activeAlarmTask, activeAlarmTaskId]);
 
-  const createTask = useCallback(async () => {
-    if (!draft.title.trim()) {
-      alert("El titulo es obligatorio.");
-      return;
+    if (activeTab === "clientes" && clientStats.total === 0 && personalStats.total > 0) {
+      setActiveTab("personales");
+      syncLocationTab("personales");
     }
-    const matchedClient = findClientByName(draft.client_name);
-    const resolvedClientId = draft.client_id ?? (matchedClient ? Number(matchedClient.id) : null);
-    const resolvedClientName = matchedClient ? matchedClient.name : draft.client_name.trim() || null;
-    const resolvedAssigneeId = draft.assigned_user_id || currentUserId || null;
+  }, [
+    activeTab,
+    clientStats.total,
+    hasExplicitTabParam,
+    loadingClients,
+    loadingPersonal,
+    personalStats.total,
+    syncLocationTab
+  ]);
 
-    setSaving(true);
+  const openClientProfile = useCallback((workflow: DealBoardRow) => {
+    if (!workflow.client_id) return;
     try {
-      const created = await requestJson<TaskItem>("/api/tasks", {
+      window.sessionStorage.setItem(
+        OPEN_CLIENT_INTENT_KEY,
+        JSON.stringify({ clientId: workflow.client_id, tab: "pasos" })
+      );
+    } catch {
+      // Ignore session storage failures.
+    }
+    navigate(`/clientes?openClient=${encodeURIComponent(String(workflow.client_id))}&tab=pasos`);
+  }, [navigate]);
+
+  const handleCreatePersonalTask = useCallback(async () => {
+    if (!draft.title.trim()) {
+      window.alert("El titulo es obligatorio.");
+      return;
+    }
+
+    setSavingPersonal(true);
+    try {
+      const created = await requestJson<PersonalTaskItem>("/api/tasks", {
         method: "POST",
         json: {
+          ...draft,
           title: draft.title.trim(),
-          due_date: draft.due_date || null,
-          follow_up_date: draft.follow_up_date || null,
-          follow_up_time: draft.follow_up_time || null,
-          client_id: resolvedClientId,
-          client_name: resolvedClientName,
-          assigned_user_id: resolvedAssigneeId,
-          notes: draft.notes.trim() || null,
-          status: draft.status,
-          priority: draft.priority,
-          custom_fields: draft.custom_fields
+          notes: draft.notes?.trim() || null,
+          task_kind: "regular",
+          client_id: null,
+          client_name: null
         }
       });
-      const assigneeMeta = created.assigned_user_id ? assigneeMap.get(created.assigned_user_id) : null;
-      setTasks((prev) => [{ ...created, assigned_name: created.assigned_name || assigneeMeta?.display_name || null }, ...prev]);
-      setDraft({
-        title: "",
-        due_date: "",
-        follow_up_date: "",
-        follow_up_time: "",
-        client_id: null,
-        client_name: "",
-        assigned_user_id: draft.assigned_user_id || currentUserId || assignees[0]?.user_id || null,
-        notes: "",
-        status: "pending",
-        priority: "normal",
-        custom_fields: defaultsForColumns(columns)
-      });
-      setCreateClientOpen(false);
+      setPersonalTasks((prev) => [created, ...prev]);
+      setDraft(buildDefaultTask(currentUserId));
       setShowCreateModal(false);
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "No se pudo crear la tarea");
+      setActiveTab("personales");
+      syncLocationTab("personales");
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "No se pudo crear la tarea");
     } finally {
-      setSaving(false);
+      setSavingPersonal(false);
     }
-  }, [assigneeMap, assignees, columns, currentUserId, draft, findClientByName]);
+  }, [currentUserId, draft, syncLocationTab]);
 
-  const saveEdit = useCallback(async () => {
+  const handleSavePersonalTask = useCallback(async () => {
     if (!editingTask) return;
-    const matchedClient = findClientByName(editingTask.client_name || "");
-    const resolvedClientId = editingTask.client_id ?? (matchedClient ? Number(matchedClient.id) : null);
-    const resolvedClientName = matchedClient ? matchedClient.name : editingTask.client_name;
-    const resolvedAssigneeId = editingTask.assigned_user_id || currentUserId || null;
+    if (!editingTask.title.trim()) {
+      window.alert("El titulo es obligatorio.");
+      return;
+    }
 
-    setSaving(true);
+    setSavingPersonal(true);
     try {
-      const updated = await requestJson<TaskItem>(`/api/tasks/${editingTask.id}`, {
+      const updated = await requestJson<PersonalTaskItem>(`/api/tasks/${editingTask.id}`, {
         method: "PUT",
         json: {
-          title: editingTask.title,
-          due_date: editingTask.due_date,
-          follow_up_date: editingTask.follow_up_date,
-          follow_up_time: editingTask.follow_up_time,
-          client_id: resolvedClientId,
-          client_name: resolvedClientName,
-          assigned_user_id: resolvedAssigneeId,
-          notes: editingTask.notes,
+          title: editingTask.title.trim(),
+          due_date: editingTask.due_date || null,
+          follow_up_date: editingTask.follow_up_date || null,
+          follow_up_time: editingTask.follow_up_time || null,
+          assigned_user_id: editingTask.assigned_user_id || null,
+          notes: editingTask.notes?.trim() || null,
           status: editingTask.status,
           priority: editingTask.priority,
-          custom_fields: editingTask.custom_fields
+          task_kind: "regular",
+          client_id: null,
+          client_name: null
         }
       });
-      const assigneeMeta = updated.assigned_user_id ? assigneeMap.get(updated.assigned_user_id) : null;
-      setTasks((prev) =>
-        prev.map((task) =>
-          task.id === updated.id
-            ? { ...updated, assigned_name: updated.assigned_name || assigneeMeta?.display_name || null }
-            : task
-        )
-      );
+      setPersonalTasks((prev) => prev.map((task) => (task.id === updated.id ? updated : task)));
       setEditingTask(null);
-      setEditClientOpen(false);
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "No se pudo guardar");
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "No se pudo guardar la tarea");
     } finally {
-      setSaving(false);
+      setSavingPersonal(false);
     }
-  }, [assigneeMap, currentUserId, editingTask, findClientByName]);
+  }, [editingTask]);
 
-  const deleteTask = useCallback(async (id: number) => {
-    if (!window.confirm("Eliminar tarea?")) return;
-    try {
-      await requestJson<{ success: boolean }>(`/api/tasks/${id}`, { method: "DELETE" });
-      setTasks((prev) => prev.filter((task) => task.id !== id));
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "No se pudo eliminar");
-    }
-  }, []);
-
-  const acknowledgeAlarm = useCallback((task: TaskItem) => {
-    window.localStorage.setItem(getTaskAlarmAckStorageKey(task.id), getTaskAlarmSignature(task));
-    setActiveAlarmTaskId(null);
-  }, []);
-
-  const rescheduleAlarm = useCallback(async () => {
-    if (!activeAlarmTask) return;
-    if (!alarmRescheduleDate || !alarmRescheduleTime) {
-      alert("La fecha y la hora de seguimiento son obligatorias para reprogramar.");
+  const handleDeletePersonalTask = useCallback(async (taskId: number) => {
+    if (!window.confirm("Esta seguro de eliminar esta tarea personal?")) {
       return;
     }
-
-    setAlarmSaving(true);
+    setDeletingPersonalId(taskId);
     try {
-      const updated = await requestJson<TaskItem>(`/api/tasks/${activeAlarmTask.id}`, {
-        method: "PUT",
-        json: {
-          follow_up_date: alarmRescheduleDate,
-          follow_up_time: alarmRescheduleTime
-        }
-      });
-      const assigneeMeta = updated.assigned_user_id ? assigneeMap.get(updated.assigned_user_id) : null;
-      window.localStorage.removeItem(getTaskAlarmAckStorageKey(updated.id));
-      setTasks((prev) =>
-        prev.map((task) =>
-          task.id === updated.id
-            ? { ...updated, assigned_name: updated.assigned_name || assigneeMeta?.display_name || null }
-            : task
-        )
-      );
-      setActiveAlarmTaskId(null);
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "No se pudo cambiar la hora");
+      await requestJson(`/api/tasks/${taskId}`, { method: "DELETE" });
+      setPersonalTasks((prev) => prev.filter((task) => task.id !== taskId));
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "No se pudo eliminar la tarea");
     } finally {
-      setAlarmSaving(false);
-    }
-  }, [activeAlarmTask, alarmRescheduleDate, alarmRescheduleTime, assigneeMap]);
-
-  const toggleTaskCompleted = useCallback(async (task: TaskItem) => {
-    setQuickTaskId(task.id);
-    try {
-      const nextStatus: TaskStatus = task.status === "done" ? "pending" : "done";
-      const updated = await requestJson<TaskItem>(`/api/tasks/${task.id}`, {
-        method: "PUT",
-        json: { status: nextStatus }
-      });
-      const assigneeMeta = updated.assigned_user_id ? assigneeMap.get(updated.assigned_user_id) : null;
-      setTasks((prev) =>
-        prev.map((item) =>
-          item.id === updated.id
-            ? { ...updated, assigned_name: updated.assigned_name || assigneeMeta?.display_name || null }
-            : item
-        )
-      );
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "No se pudo actualizar estado");
-    } finally {
-      setQuickTaskId(null);
-    }
-  }, [assigneeMap]);
-
-  const createColumn = useCallback(async () => {
-    if (!columnDraft.label.trim()) {
-      alert("El nombre de la columna es obligatorio.");
-      return;
-    }
-    setColumnBusy(true);
-    try {
-      const created = await requestJson<TaskColumn>("/api/tasks/columns", {
-        method: "POST",
-        json: { label: columnDraft.label.trim(), data_type: columnDraft.data_type, options: columnDraft.options_text }
-      });
-      setColumns((prev) => [...prev, created].sort((a, b) => a.sort_order - b.sort_order));
-      setColumnDraft({ label: "", data_type: "text", options_text: "" });
-      setShowColumnForm(false);
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "No se pudo crear la columna");
-    } finally {
-      setColumnBusy(false);
-    }
-  }, [columnDraft]);
-
-  const deleteColumn = useCallback(async (column: TaskColumn) => {
-    if (!window.confirm(`Eliminar columna "${column.label}"?`)) return;
-    setColumnBusy(true);
-    try {
-      await requestJson<{ success: boolean }>(`/api/tasks/columns/${column.id}`, { method: "DELETE" });
-      setColumns((prev) => prev.filter((item) => item.id !== column.id));
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "No se pudo eliminar la columna");
-    } finally {
-      setColumnBusy(false);
+      setDeletingPersonalId(null);
     }
   }, []);
 
-  if (loading) {
-    return <div className="flex h-64 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-blue-400" /></div>;
-  }
+  const handleQuickStatus = useCallback(async (task: PersonalTaskItem, status: PersonalTaskItem["status"]) => {
+    try {
+      const updated = await requestJson<PersonalTaskItem>(`/api/tasks/${task.id}`, {
+        method: "PUT",
+        json: { status, task_kind: "regular" }
+      });
+      setPersonalTasks((prev) => prev.map((entry) => (entry.id === updated.id ? updated : entry)));
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "No se pudo actualizar la tarea");
+    }
+  }, []);
+
+  const handleExport = useCallback(() => {
+    const rows = personalTasks.map((t) => ({
+      titulo: t.title,
+      prioridad: t.priority,
+      estado: t.status,
+      fecha_limite: t.due_date ?? "",
+      fecha_seguimiento: t.follow_up_date ?? "",
+      hora_seguimiento: t.follow_up_time ?? "",
+      asignado_a: t.assigned_username ?? t.assigned_name ?? "",
+      cliente: "",
+      notas: t.notes ?? "",
+    }));
+    const header = Object.keys(rows[0] ?? {}).join(",");
+    const csv = [
+      header,
+      ...rows.map((r) =>
+        Object.values(r)
+          .map((v) => `"${String(v).replace(/"/g, '""')}"`)
+          .join(",")
+      ),
+    ].join("\n");
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `tareas-personales-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [personalTasks]);
+
+  const handleImport = useCallback(async (file: File) => {
+    setImportingTasks(true);
+    try {
+      const text = await file.text();
+      const lines = text.split(/\r?\n/).filter(Boolean);
+      if (lines.length < 2) { window.alert("El archivo está vacío o no tiene datos."); return; }
+
+      const headers = lines[0].split(",").map((h) => h.replace(/^"|"$/g, "").trim().toLowerCase());
+      const idx = (key: string) => headers.indexOf(key);
+
+      const STATUS_MAP: Record<string, string> = { pending: "pending", pendiente: "pending", in_progress: "in_progress", "en progreso": "in_progress", done: "done", completado: "done", listo: "done" };
+      const PRIORITY_MAP: Record<string, string> = { low: "low", baja: "low", normal: "normal", high: "high", alta: "high" };
+
+      const parseCell = (row: string[], i: number) => (i >= 0 ? (row[i] ?? "").replace(/^"|"$/g, "").trim() : "");
+
+      let imported = 0;
+      let errors = 0;
+      for (let i = 1; i < lines.length; i++) {
+        const row = lines[i].match(/(".*?"|[^,]+|(?<=,)(?=,)|(?<=,)$|^(?=,))/g) ?? lines[i].split(",");
+        const title = parseCell(row, idx("titulo"));
+        if (!title) continue;
+        const status = STATUS_MAP[parseCell(row, idx("estado")).toLowerCase()] ?? "pending";
+        const priority = PRIORITY_MAP[parseCell(row, idx("prioridad")).toLowerCase()] ?? "normal";
+        const due_date = parseCell(row, idx("fecha_limite")) || null;
+        const follow_up_date = parseCell(row, idx("fecha_seguimiento")) || null;
+        const follow_up_time = parseCell(row, idx("hora_seguimiento")) || null;
+        const notes = parseCell(row, idx("notas")) || null;
+        try {
+          const created = await requestJson<PersonalTaskItem>("/api/tasks", {
+            method: "POST",
+            json: { title, status, priority, due_date, follow_up_date, follow_up_time, notes, task_kind: "regular", assigned_user_id: currentUserId }
+          });
+          setPersonalTasks((prev) => [created, ...prev]);
+          imported++;
+        } catch { errors++; }
+      }
+      window.alert(`Importación completada: ${imported} tareas importadas${errors ? `, ${errors} errores` : ""}.`);
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "Error al importar el archivo.");
+    } finally {
+      setImportingTasks(false);
+    }
+  }, [currentUserId]);
 
   return (
-    <div className="space-y-6">
-      <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
-        <h1 className="flex items-center gap-2 text-3xl font-bold text-white"><CheckSquare className="h-8 w-8 text-blue-400" />Tareas Independientes v2026-362</h1>
-        <p className="mt-1 text-sm text-slate-400">Modulo independiente por usuario con fecha limite, seguimiento y columnas personalizadas.</p>
-      </div>
-
-      {error && <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-200">{error}</div>}
-
-      <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
-        <div className="mb-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-3">
-            <button type="button" onClick={() => setShowCreateModal(true)} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-500"><Plus className="h-4 w-4" />Nueva tarea</button>
-            <button type="button" onClick={() => setShowColumnForm((prev) => !prev)} className="inline-flex items-center gap-2 rounded-lg border border-slate-600 bg-slate-800 px-3 py-2.5 text-xs text-slate-200"><Columns3 className="h-4 w-4" />Columnas</button>
-            <button type="button" onClick={() => void loadData()} className="inline-flex items-center gap-2 rounded-lg border border-slate-600 bg-slate-800 px-3 py-2.5 text-xs text-slate-200"><RefreshCw className="h-4 w-4" />Refrescar</button>
+    <div className="mx-auto max-w-7xl space-y-6 p-6">
+      <div className="rounded-3xl border border-slate-800 bg-slate-900/80 p-6 shadow-2xl">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="space-y-2">
+            <div className="inline-flex rounded-full border border-cyan-500/30 bg-cyan-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-cyan-200">
+              Modulo de tareas
+            </div>
+            <h1 className="text-3xl font-semibold text-white">Tareas</h1>
+            <p className="max-w-3xl text-sm leading-6 text-slate-300">
+              Pendientes trae los pasos faltantes de clientes. Tareas personales es independiente: solo depende de lo que creas, editas o eliminas aqui.
+            </p>
           </div>
-          <div className="relative md:w-72"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar..." className="w-full rounded-lg border border-slate-700 bg-slate-800 py-2 pl-9 pr-3 text-sm text-white" /></div>
-        </div>
-        {showColumnForm && (
-          <div className="mb-3 rounded-xl border border-slate-700 bg-slate-900 p-3">
-            <div className="grid grid-cols-1 gap-2 md:grid-cols-4">
-              <input value={columnDraft.label} onChange={(e) => setColumnDraft((prev) => ({ ...prev, label: e.target.value }))} placeholder="Nombre columna" className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white" />
-              <select value={columnDraft.data_type} onChange={(e) => setColumnDraft((prev) => ({ ...prev, data_type: e.target.value as ColumnType }))} className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white">{COLUMN_TYPES.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}</select>
-              <input value={columnDraft.options_text} onChange={(e) => setColumnDraft((prev) => ({ ...prev, options_text: e.target.value }))} placeholder="Opciones separadas por coma" className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white md:col-span-2" />
-            </div>
-            <div className="mt-2 flex flex-wrap gap-2">
-              <button type="button" disabled={columnBusy} onClick={() => void createColumn()} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60">{columnBusy ? "Guardando..." : "Agregar columna"}</button>
-              {columns.map((col) => <button key={col.id} type="button" onClick={() => void deleteColumn(col)} className="inline-flex items-center gap-1 rounded-lg border border-red-500/30 bg-red-500/10 px-2 py-1 text-xs text-red-200"><Trash2 className="h-3 w-3" />{col.label}</button>)}
-            </div>
-          </div>
-        )}
-        <div className="mb-3 flex flex-wrap gap-2">
-            {TASK_TABS.map((tab) => (
-              <button
-                key={tab.value}
-                type="button"
-                onClick={() => setActiveTab(tab.value)}
-                className={`rounded-lg px-3 py-2 text-sm ${
-                  activeTab === tab.value
-                    ? "border border-blue-400/40 bg-blue-500/20 text-blue-100"
-                    : "border border-slate-700 bg-slate-800 text-slate-300"
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
-        </div>
-        <div className="mb-3 flex flex-wrap gap-2 text-xs">
-          <span className="rounded-full border border-red-500/30 bg-red-500/10 px-3 py-1 text-red-200">Atrasadas: {taskAlarmSummary.overdue}</span>
-          <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-amber-200">Hoy: {taskAlarmSummary.today}</span>
-          <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-emerald-200">Proximas: {taskAlarmSummary.upcoming}</span>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-sm">
-            <thead><tr className="border-b border-slate-700 text-left text-xs uppercase tracking-wide text-slate-400"><th className="px-2 py-3">Cliente</th><th className="px-2 py-3">Tarea</th><th className="px-2 py-3">Asignado a</th><th className="px-2 py-3">Fecha limite</th><th className="px-2 py-3">Seguimiento</th><th className="px-2 py-3">Alarma</th><th className="px-2 py-3">Estado</th><th className="px-2 py-3">Prioridad</th>{columns.map((col) => <th key={col.id} className="px-2 py-3">{col.label}</th>)}<th className="px-2 py-3">Acciones</th></tr></thead>
-            <tbody>
-              {filteredTasks.length === 0 ? (
-                <tr><td colSpan={9 + columns.length} className="px-2 py-8 text-center text-slate-500">No hay tareas.</td></tr>
-              ) : (
-                filteredTasks.map((task) => {
-                  const assigneeLabel = task.assigned_name || task.assigned_username || (task.assigned_user_id ? assigneeMap.get(task.assigned_user_id)?.display_name : null) || "-";
-                  const isMine = task.assigned_user_id && currentUserId && String(task.assigned_user_id) === currentUserId;
-                  const alarm = getTaskAlarm(task);
-                  return (
-                    <tr key={task.id} className="border-b border-slate-800">
-                      <td className={`px-2 py-2 ${task.status === "done" ? "text-slate-500" : "text-slate-200"}`}>
-                        {(task.client_id || task.client_name) ? (
-                          <Link to={`/clientes?q=${encodeURIComponent(task.client_id || task.client_name || "")}`} className="flex items-center gap-1 font-medium hover:text-blue-400 transition-colors group">
-                            {task.client_name || "-"} <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
-                          </Link>
-                        ) : (
-                          <div>-</div>
-                        )}
-                        {task.client_id ? <div className="text-[11px] text-slate-500">ID {task.client_id}</div> : null}
-                      </td>
-                      <td className={`px-2 py-2 ${task.status === "done" ? "text-slate-500 line-through" : "text-white"}`}>{task.title}</td>
-                      <td className={`px-2 py-2 ${task.status === "done" ? "text-slate-500" : "text-slate-200"}`}>
-                        <div>{assigneeLabel}</div>
-                        {isMine ? <div className="text-[11px] text-emerald-400">Yo</div> : null}
-                      </td>
-                      <td className={`px-2 py-2 ${task.status === "done" ? "text-slate-500" : "text-slate-200"}`}>{task.due_date || "-"}</td>
-                      <td className={`px-2 py-2 ${task.status === "done" ? "text-blue-200" : "text-slate-200"}`}>{formatFollowUp(task)}</td>
-                      <td className="px-2 py-2">
-                        <span className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-medium ${alarm.tone}`}>{alarm.label}</span>
-                      </td>
-                      <td className="px-2 py-2 text-slate-200">{getTaskStatusLabel(task)}</td>
-                      <td className="px-2 py-2 text-slate-200">{PRIORITY_OPTIONS.find((p) => p.value === task.priority)?.label || task.priority}</td>
-                      {columns.map((col) => <td key={col.id} className="px-2 py-2 text-slate-200">{String(task.custom_fields?.[col.column_key] ?? "-")}</td>)}
-                      <td className="px-2 py-2">
-                        <div className="flex gap-2">
-                          <button
-                            type="button"
-                            onClick={() => void toggleTaskCompleted(task)}
-                            disabled={quickTaskId === task.id}
-                            className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs ${
-                              task.status === "done"
-                                ? "border border-amber-500/30 bg-amber-500/10 text-amber-200"
-                                : "border border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
-                            } disabled:opacity-60`}
-                          >
-                            {quickTaskId === task.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
-                            {task.status === "done" ? "Reabrir" : "Completar"}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setEditingTask({
-                                ...task,
-                                assigned_user_id: task.assigned_user_id || task.owner_user_id || currentUserId || null,
-                                custom_fields: { ...task.custom_fields }
-                              })
-                            }
-                            className="inline-flex items-center gap-1 rounded-lg border border-slate-600 bg-slate-800 px-2 py-1 text-xs text-slate-200"
-                          >
-                            <Pencil className="h-3 w-3" />Editar
-                          </button>
-                          <button type="button" onClick={() => void deleteTask(task.id)} className="inline-flex items-center gap-1 rounded-lg border border-red-500/30 bg-red-500/10 px-2 py-1 text-xs text-red-200"><Trash2 className="h-3 w-3" />Eliminar</button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
 
-      {/* MODAL CREAR TAREA */}
-      {showCreateModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="w-full max-w-6xl rounded-2xl border border-slate-700 bg-slate-900 p-5" style={{ maxHeight: '95vh', overflowY: 'auto' }}>
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-white">Nueva tarea</h3>
-              <button type="button" onClick={() => setShowCreateModal(false)} className="rounded-md p-1 text-slate-300 hover:bg-slate-800"><X className="h-5 w-5" /></button>
-            </div>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              <div className="md:col-span-2">
-                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">Título de la tarea *</label>
-                <input value={draft.title} onChange={(e) => setDraft((prev) => ({ ...prev, title: e.target.value }))} placeholder="Descripción breve de la tarea" className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white" />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">Fecha límite</label>
-                <input type="date" value={draft.due_date} onChange={(e) => setDraft((prev) => ({ ...prev, due_date: e.target.value }))} className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white" />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">Fecha seguimiento</label>
-                <input type="date" value={draft.follow_up_date} onChange={(e) => setDraft((prev) => ({ ...prev, follow_up_date: e.target.value }))} className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white" />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">Hora seguimiento</label>
-                <input type="time" value={draft.follow_up_time} onChange={(e) => setDraft((prev) => ({ ...prev, follow_up_time: e.target.value }))} className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white" />
-              </div>
-              <div className="relative">
-                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">Cliente</label>
-                <input
-                  value={draft.client_name}
-                  onChange={(e) => {
-                    const value = e.target.value;
-                    const matched = findClientByName(value);
-                    setDraft((prev) => ({ ...prev, client_name: value, client_id: matched ? Number(matched.id) : null }));
-                    setCreateClientOpen(true);
-                    void searchClients(value);
-                  }}
-                  onFocus={() => { setCreateClientOpen(true); void searchClients(draft.client_name); }}
-                  onBlur={() => { window.setTimeout(() => setCreateClientOpen(false), 120); }}
-                  placeholder="Buscar cliente..."
-                  className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white"
-                />
-                {clientSearchLoading && <Loader2 className="absolute right-2 top-8 h-4 w-4 animate-spin text-slate-400" />}
-                {createClientOpen && (clientOptions.length > 0 || clientSearchLoading) ? (
-                  <div className="absolute z-30 mt-1 max-h-56 w-full overflow-auto rounded-lg border border-slate-700 bg-slate-900 shadow-xl">
-                    {clientOptions.map((client) => (
-                      <button key={client.id} type="button" onMouseDown={(e) => { e.preventDefault(); setDraft((prev) => ({ ...prev, client_name: client.name, client_id: client.id })); setCreateClientOpen(false); }} className="block w-full border-b border-slate-800 px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-800">
-                        <div className="font-medium">{client.name}</div>
-                        {client.business_name ? <div className="text-xs text-slate-400">{client.business_name}</div> : null}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-              {canAssignTasks ? (
-                <div>
-                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">Asignar a</label>
-                  <select value={draft.assigned_user_id || ""} onChange={(e) => setDraft((prev) => ({ ...prev, assigned_user_id: e.target.value || null }))} className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white">
-                    <option value="">Sin asignar</option>
-                    {assignees.map((a) => <option key={a.user_id} value={a.user_id}>{a.display_name} ({a.role})</option>)}
-                  </select>
-                </div>
-              ) : null}
-              <div>
-                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">Estado</label>
-                <select value={draft.status} onChange={(e) => setDraft((prev) => ({ ...prev, status: e.target.value as TaskStatus }))} className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white">{STATUS_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">Prioridad</label>
-                <select value={draft.priority} onChange={(e) => setDraft((prev) => ({ ...prev, priority: e.target.value as TaskPriority }))} className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white">{PRIORITY_OPTIONS.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}</select>
-              </div>
-            </div>
-            <div className="mt-4">
-              <div className="mb-1 flex items-center justify-between">
-                <label className="block text-xs font-semibold uppercase tracking-wide text-slate-400">Notas</label>
-                <button type="button" onClick={() => setDraft(prev => ({ ...prev, notes: prev.notes + (prev.notes ? '\n\n' : '') + `[${new Date().toLocaleDateString('es-ES')} ${new Date().toLocaleTimeString('es-ES', {hour: '2-digit', minute:'2-digit'})}]: ` }))} className="text-xs text-blue-400 hover:text-blue-300 font-semibold bg-blue-500/10 px-2 py-1 rounded border border-blue-500/30">+ Auto Fecha</button>
-              </div>
-              <NotesChecklistEditor notes={draft.notes} onChange={(v) => setDraft((prev) => ({ ...prev, notes: v }))} />
-            </div>
-            <div className="mt-4 flex justify-end gap-2">
-              <button type="button" onClick={() => setShowCreateModal(false)} className="rounded-lg border border-slate-700 bg-slate-800 px-4 py-2 text-sm text-slate-200">Cancelar</button>
-              <button type="button" disabled={saving} onClick={() => void createTask()} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-60">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}Crear tarea</button>
-            </div>
-          </div>
-        </div>
-      )}
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setShowCreateModal(true);
+                setEditingTask(null);
+                setDraft(buildDefaultTask(currentUserId));
+                setActiveTab("personales");
+                syncLocationTab("personales");
+              }}
+              className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500"
+            >
+              <Plus className="h-4 w-4" />
+              Nueva tarea personal
+            </button>
 
-      {activeAlarmTask && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-xl rounded-2xl border border-red-500/30 bg-slate-950 p-5 shadow-2xl">
-            <div className="mb-4 flex items-start gap-3">
-              <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3">
-                <AlertTriangle className="h-6 w-6 text-red-300" />
-              </div>
-              <div>
-                <h3 className="text-xl font-semibold text-white">Alarma de tarea</h3>
-                <p className="text-sm text-slate-300">Esta pantalla queda bloqueada hasta confirmar la alarma o cambiar la hora.</p>
-              </div>
-            </div>
+            <button
+              type="button"
+              onClick={handleExport}
+              disabled={personalTasks.length === 0}
+              title="Exportar tareas personales a CSV"
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-600 bg-slate-800 px-3 py-2 text-sm font-medium text-slate-200 hover:bg-slate-700 disabled:opacity-40"
+            >
+              <Download className="h-4 w-4" />
+              Exportar
+            </button>
 
-            <div className="grid grid-cols-1 gap-3 rounded-xl border border-slate-800 bg-slate-900/70 p-4 text-sm md:grid-cols-2">
-              <div>
-                <div className="text-xs uppercase tracking-wide text-slate-500">Cliente</div>
-                <div className="mt-1 font-semibold text-white">{activeAlarmTask.client_name || "-"}</div>
-              </div>
-              <div>
-                <div className="text-xs uppercase tracking-wide text-slate-500">Asignado a</div>
-                <div className="mt-1 font-semibold text-white">{activeAlarmTask.assigned_name || activeAlarmTask.assigned_username || "-"}</div>
-              </div>
-              <div className="md:col-span-2">
-                <div className="text-xs uppercase tracking-wide text-slate-500">Tarea</div>
-                <div className="mt-1 font-semibold text-white">{activeAlarmTask.title}</div>
-              </div>
-              <div>
-                <div className="text-xs uppercase tracking-wide text-slate-500">Seguimiento actual</div>
-                <div className="mt-1 font-semibold text-red-200">{formatFollowUp(activeAlarmTask)}</div>
-              </div>
-              <div>
-                <div className="text-xs uppercase tracking-wide text-slate-500">Estado</div>
-                <div className="mt-1 font-semibold text-white">{getTaskStatusLabel(activeAlarmTask)}</div>
-              </div>
-            </div>
-
-            {activeAlarmTask.notes ? (
-              <div className="mt-3 rounded-xl border border-slate-800 bg-slate-900/50 p-3 text-sm text-slate-300">
-                {activeAlarmTask.notes}
-              </div>
-            ) : null}
-
-            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+            <label
+              title="Importar tareas desde CSV"
+              className={`inline-flex cursor-pointer items-center gap-2 rounded-xl border border-slate-600 bg-slate-800 px-3 py-2 text-sm font-medium text-slate-200 hover:bg-slate-700 ${importingTasks ? "opacity-50 pointer-events-none" : ""}`}
+            >
+              {importingTasks ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+              Importar
               <input
-                type="date"
-                value={alarmRescheduleDate}
-                onChange={(e) => setAlarmRescheduleDate(e.target.value)}
-                className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white"
+                type="file"
+                accept=".csv"
+                className="hidden"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (file) await handleImport(file);
+                  e.target.value = "";
+                }}
               />
-              <input
-                type="time"
-                value={alarmRescheduleTime}
-                onChange={(e) => setAlarmRescheduleTime(e.target.value)}
-                className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white"
-              />
-            </div>
-
-            <div className="mt-5 flex flex-wrap justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => acknowledgeAlarm(activeAlarmTask)}
-                className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm font-semibold text-amber-100 hover:bg-amber-500/20"
-              >
-                Confirmar alarma
-              </button>
-              <button
-                type="button"
-                onClick={() => void rescheduleAlarm()}
-                disabled={alarmSaving}
-                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-60"
-              >
-                {alarmSaving ? "Guardando..." : "Cambiar hora"}
-              </button>
-            </div>
+            </label>
+            <button
+              type="button"
+              onClick={() => void Promise.all([loadClientWorkflows(), loadPersonalTasks()])}
+              className="rounded-xl border border-slate-700 bg-slate-800 px-4 py-2 text-sm font-medium text-slate-200 hover:bg-slate-700"
+            >
+              Refrescar
+            </button>
           </div>
         </div>
-      )}
 
-      {editingTask && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="w-full max-w-6xl rounded-2xl border border-slate-700 bg-slate-900 p-5" style={{ maxHeight: '95vh', overflowY: 'auto' }}>
-            <div className="mb-3 flex items-center justify-between"><h3 className="text-lg font-semibold text-white">Editar tarea</h3><button type="button" onClick={() => setEditingTask(null)} className="rounded-md p-1 text-slate-300 hover:bg-slate-800"><X className="h-4 w-4" /></button></div>
-            <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-              <input value={editingTask.title} onChange={(e) => setEditingTask((prev) => (prev ? { ...prev, title: e.target.value } : prev))} className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white" />
-              <input type="date" value={editingTask.due_date || ""} onChange={(e) => setEditingTask((prev) => (prev ? { ...prev, due_date: e.target.value || null } : prev))} className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white" />
-              <input type="date" value={editingTask.follow_up_date || ""} onChange={(e) => setEditingTask((prev) => (prev ? { ...prev, follow_up_date: e.target.value || null } : prev))} className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white" />
-              <input type="time" value={editingTask.follow_up_time || ""} onChange={(e) => setEditingTask((prev) => (prev ? { ...prev, follow_up_time: e.target.value || null } : prev))} className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white" />
-              <div className="relative">
-                <input
-                  value={editingTask.client_name || ""}
-                  onChange={(e) => {
-                    const value = e.target.value;
-                    const matched = findClientByName(value);
-                    setEditingTask((prev) =>
-                      prev ? { ...prev, client_name: value, client_id: matched ? matched.id : null } : prev
-                    );
-                    setEditClientOpen(true);
-                    void searchClients(value);
-                  }}
-                  onFocus={() => {
-                    setEditClientOpen(true);
-                    void searchClients(editingTask.client_name || "");
-                  }}
-                  onBlur={() => {
-                    window.setTimeout(() => setEditClientOpen(false), 120);
-                  }}
-                  placeholder="Cliente (BD)"
-                  className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white"
-                />
-                {clientSearchLoading && <Loader2 className="absolute right-2 top-2.5 h-4 w-4 animate-spin text-slate-400" />}
-                {editClientOpen && (clientOptions.length > 0 || clientSearchLoading) ? (
-                  <div className="absolute z-30 mt-1 max-h-56 w-full overflow-auto rounded-lg border border-slate-700 bg-slate-900 shadow-xl">
-                    {clientOptions.map((client) => (
-                      <button
-                        key={client.id}
-                        type="button"
-                        onMouseDown={(e) => {
-                          e.preventDefault();
-                          setEditingTask((prev) =>
-                            prev ? { ...prev, client_name: client.name, client_id: client.id } : prev
-                          );
-                          setEditClientOpen(false);
-                        }}
-                        className="block w-full border-b border-slate-800 px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-800"
-                      >
-                        <div className="font-medium">{client.name}</div>
-                        {client.business_name ? <div className="text-xs text-slate-400">{client.business_name}</div> : null}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
+        <div className="mt-6 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab("clientes");
+              syncLocationTab("clientes");
+            }}
+            className={`rounded-xl px-4 py-2 text-sm font-medium ${
+              activeTab === "clientes" ? "bg-violet-600 text-white" : "border border-slate-700 bg-slate-800 text-slate-200"
+            }`}
+          >
+            Pendientes ({clientStats.total})
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab("personales");
+              syncLocationTab("personales");
+            }}
+            className={`rounded-xl px-4 py-2 text-sm font-medium ${
+              activeTab === "personales" ? "bg-blue-600 text-white" : "border border-slate-700 bg-slate-800 text-slate-200"
+            }`}
+          >
+            Tareas personales ({personalStats.total})
+          </button>
+        </div>
+
+        {!loadingClients && !loadingPersonal ? (
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab("clientes");
+                syncLocationTab("clientes");
+              }}
+              className={`rounded-2xl border px-4 py-4 text-left transition ${
+                activeTab === "clientes"
+                  ? "border-violet-500/40 bg-violet-500/10"
+                  : "border-slate-800 bg-slate-900/70 hover:border-slate-700"
+              }`}
+            >
+              <div className="text-xs font-semibold uppercase tracking-wide text-violet-200">Pendientes</div>
+              <div className="mt-2 text-2xl font-semibold text-white">{clientStats.total}</div>
+              <div className="mt-1 text-xs text-slate-400">
+                {clientStats.pending} pendientes, {clientStats.inProgress} en proceso
               </div>
-              {canAssignTasks ? (
-                <select
-                  value={editingTask.assigned_user_id || ""}
-                  onChange={(e) => setEditingTask((prev) => (prev ? { ...prev, assigned_user_id: e.target.value || null } : prev))}
-                  className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white"
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab("personales");
+                syncLocationTab("personales");
+              }}
+              className={`rounded-2xl border px-4 py-4 text-left transition ${
+                activeTab === "personales"
+                  ? "border-blue-500/40 bg-blue-500/10"
+                  : "border-slate-800 bg-slate-900/70 hover:border-slate-700"
+              }`}
+            >
+              <div className="text-xs font-semibold uppercase tracking-wide text-blue-200">Personales</div>
+              <div className="mt-2 text-2xl font-semibold text-white">{personalStats.total}</div>
+              <div className="mt-1 text-xs text-slate-400">
+                {personalStats.pending} pendientes, {personalStats.inProgress} en proceso, {personalStats.done} completadas
+              </div>
+            </button>
+          </div>
+        ) : null}
+
+        <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <input
+            value={searchTerm}
+            onChange={(event) => setSearchTerm(event.target.value)}
+            placeholder={activeTab === "clientes" ? "Buscar cliente, producto, vendedor o paso..." : "Buscar tarea personal..."}
+            className="w-full rounded-xl border border-slate-700 bg-slate-950/70 px-4 py-2 text-sm text-white lg:max-w-md"
+          />
+
+          {activeTab === "personales" ? (
+            <div className="flex flex-wrap gap-2">
+              {[
+                { value: "all", label: `Todas (${personalStats.total})` },
+                { value: "pending", label: `Pendientes (${personalStats.pending})` },
+                { value: "in_progress", label: `En proceso (${personalStats.inProgress})` },
+                { value: "done", label: `Completadas (${personalStats.done})` }
+              ].map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setPersonalStatusFilter(option.value as PersonalStatusFilter)}
+                  className={`rounded-full px-3 py-1 text-xs font-medium ${
+                    personalStatusFilter === option.value
+                      ? "bg-blue-600 text-white"
+                      : "border border-slate-700 bg-slate-800 text-slate-300"
+                  }`}
                 >
-                  <option value="">Asignar a...</option>
-                  {assignees.map((assignee) => (
-                    <option key={assignee.user_id} value={assignee.user_id}>
-                      {assignee.display_name} ({assignee.role})
-                    </option>
-                  ))}
-                </select>
-              ) : null}
-              <select value={editingTask.status} onChange={(e) => setEditingTask((prev) => (prev ? { ...prev, status: e.target.value as TaskStatus } : prev))} className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white">{STATUS_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
-              <select value={editingTask.priority} onChange={(e) => setEditingTask((prev) => (prev ? { ...prev, priority: e.target.value as TaskPriority } : prev))} className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white">{PRIORITY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
-            </div>
-            <div className="mt-3">
-              <div className="mb-1 flex items-center justify-between">
-                <label className="block text-xs font-semibold uppercase tracking-wide text-slate-400">Notas</label>
-                <button type="button" onClick={() => setEditingTask(prev => prev ? ({ ...prev, notes: (prev.notes || '') + (prev.notes ? '\n\n' : '') + `[${new Date().toLocaleDateString('es-ES')} ${new Date().toLocaleTimeString('es-ES', {hour: '2-digit', minute:'2-digit'})}]: ` }) : prev)} className="text-xs text-blue-400 hover:text-blue-300 font-semibold bg-blue-500/10 px-2 py-1 rounded border border-blue-500/30">+ Auto Fecha</button>
-              </div>
-              <NotesChecklistEditor notes={editingTask.notes || ""} onChange={(v) => setEditingTask((prev) => (prev ? { ...prev, notes: v } : prev))} />
-            </div>
-            {columns.length > 0 && (
-            <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
-              {columns.map((col) => (
-                <div key={col.id}>
-                  {col.data_type === "checkbox" ? (
-                    <label className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200">
-                      <input
-                        type="checkbox"
-                        checked={Boolean(editingTask.custom_fields[col.column_key])}
-                        onChange={(e) =>
-                          setEditingTask((prev) =>
-                            prev ? { ...prev, custom_fields: { ...prev.custom_fields, [col.column_key]: e.target.checked } } : prev
-                          )
-                        }
-                      />
-                      {col.label}
-                    </label>
-                  ) : col.data_type === "select" ? (
-                    <select
-                      value={String(editingTask.custom_fields[col.column_key] ?? "")}
-                      onChange={(e) =>
-                        setEditingTask((prev) =>
-                          prev ? { ...prev, custom_fields: { ...prev.custom_fields, [col.column_key]: e.target.value } } : prev
-                        )
-                      }
-                      className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white"
-                    >
-                      <option value="">{col.label}</option>
-                      {col.options.map((option) => <option key={option} value={option}>{option}</option>)}
-                    </select>
-                  ) : (
-                    <input
-                      type={col.data_type === "date" ? "date" : col.data_type === "number" ? "number" : "text"}
-                      value={String(editingTask.custom_fields[col.column_key] ?? "")}
-                      onChange={(e) =>
-                        setEditingTask((prev) =>
-                          prev ? { ...prev, custom_fields: { ...prev.custom_fields, [col.column_key]: e.target.value } } : prev
-                        )
-                      }
-                      placeholder={col.label}
-                      className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white"
-                    />
-                  )}
-                </div>
+                  {option.label}
+                </button>
               ))}
             </div>
-            )}
-            <div className="mt-4 flex justify-end gap-2">
-              <button type="button" onClick={() => setEditingTask(null)} className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200">Cancelar</button>
-              <button type="button" disabled={saving} onClick={() => void saveEdit()} className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-60">{saving ? "Guardando..." : "Guardar cambios"}</button>
+          ) : (
+            <div className="flex flex-wrap gap-2 text-xs">
+              <span className="rounded-full border border-slate-600 bg-slate-800 px-3 py-1 text-slate-200">
+                Pendientes: {clientStats.pending}
+              </span>
+              <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-amber-200">
+                En proceso: {clientStats.inProgress}
+              </span>
             </div>
-          </div>
+          )}
+        </div>
+      </div>
+
+      {activeTab === "clientes" ? (
+        <div className="rounded-3xl border border-slate-800 bg-slate-900/80 p-4 shadow-2xl">
+          {loadingClients ? (
+            <div className="flex items-center justify-center gap-2 py-12 text-sm text-slate-400">
+              <Loader2 className="h-4 w-4 animate-spin" />
+                Cargando pasos pendientes...
+            </div>
+          ) : filteredClientWorkflows.length === 0 ? (
+            <div className="py-12 text-center">
+              <ClipboardList className="mx-auto mb-3 h-10 w-10 text-slate-700" />
+              <p className="text-sm text-slate-300">No hay pasos pendientes de clientes.</p>
+              {personalStats.total > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab("personales");
+                    syncLocationTab("personales");
+                  }}
+                  className="mt-4 rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-sm font-medium text-blue-200 hover:bg-blue-500/20"
+                >
+                  Ver tareas personales ({personalStats.total})
+                </button>
+              ) : null}
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[980px] text-sm">
+                <thead>
+                  <tr className="border-b border-slate-800 text-left text-xs uppercase tracking-wide text-slate-400">
+                    <th className="px-3 py-3">Cliente</th>
+                    <th className="px-3 py-3">Vendedor</th>
+                    <th className="px-3 py-3">Producto</th>
+                    <th className="px-3 py-3">Fuente</th>
+                    <th className="px-3 py-3">Progreso</th>
+                    <th className="px-3 py-3">Paso actual</th>
+                    <th className="px-3 py-3">Asignado</th>
+                    <th className="px-3 py-3">Estado</th>
+                    <th className="px-3 py-3">Actualizado</th>
+                    <th className="px-3 py-3 text-right">Accion</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredClientWorkflows.map((workflow) => {
+                    const progressTotal = Math.max(workflow.total_steps, 0);
+                    const progressCompleted = Math.max(workflow.completed_steps, 0);
+                    const progressPercent = progressTotal > 0 ? Math.round((progressCompleted / progressTotal) * 100) : 0;
+                    return (
+                      <tr key={workflow.deal_id} className="border-b border-slate-900/80 text-slate-200">
+                        <td className="px-3 py-3">
+                          <div className="font-medium text-white">{workflow.client_name || "Cliente"}</div>
+                          {workflow.ban_number || workflow.phone ? (
+                            <div className="text-xs text-slate-500">
+                              {[workflow.ban_number ? `BAN ${workflow.ban_number}` : null, workflow.phone].filter(Boolean).join(" • ")}
+                            </div>
+                          ) : null}
+                        </td>
+                        <td className="px-3 py-3">{workflow.seller_name || "-"}</td>
+                        <td className="px-3 py-3">
+                          <div className="font-medium">{workflow.product_type}</div>
+                          <div className="text-xs text-slate-500">{formatSaleType(String(workflow.sale_type || "").trim().toUpperCase())}</div>
+                        </td>
+                        <td className="px-3 py-3 text-slate-300">{workflow.source_label || "Sin vinculo"}</td>
+                        <td className="px-3 py-3">
+                          <div className="text-xs text-slate-300">{progressCompleted}/{progressTotal} pasos</div>
+                          <div className="mt-1 h-2 w-36 overflow-hidden rounded-full bg-slate-800">
+                            <div className="h-full rounded-full bg-violet-500" style={{ width: `${progressPercent}%` }} />
+                          </div>
+                        </td>
+                        <td className="px-3 py-3">
+                          <div className="font-medium text-slate-100">{workflow.step_order}. {workflow.step_name}</div>
+                          <div className="text-xs text-slate-500">{workflow.pending_steps} pasos pendientes</div>
+                        </td>
+                        <td className="px-3 py-3">{workflow.assigned_name || workflow.assigned_to || "Sin asignar"}</td>
+                        <td className="px-3 py-3">
+                          <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+                            workflow.status === "in_progress"
+                              ? "border border-amber-500/30 bg-amber-500/10 text-amber-200"
+                              : "border border-slate-600 bg-slate-800 text-slate-200"
+                          }`}>
+                            {workflow.status === "in_progress" ? "En proceso" : "Pendiente"}
+                          </span>
+                        </td>
+                        <td className="px-3 py-3 text-slate-400">
+                          {workflow.updated_at ? new Date(workflow.updated_at).toLocaleString() : "-"}
+                        </td>
+                        <td className="px-3 py-3 text-right">
+                          <button
+                            type="button"
+                            onClick={() => openClientProfile(workflow)}
+                            className="rounded-lg bg-violet-600 px-3 py-2 text-xs font-semibold text-white hover:bg-violet-500"
+                          >
+                            Abrir cliente
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {loadingPersonal ? (
+            <div className="rounded-3xl border border-slate-800 bg-slate-900/80 p-8 text-center text-sm text-slate-400 shadow-2xl">
+              <div className="inline-flex items-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Cargando tareas personales...
+              </div>
+            </div>
+          ) : filteredPersonalTasks.length === 0 ? (
+            <div className="rounded-3xl border border-slate-800 bg-slate-900/80 p-8 text-center shadow-2xl">
+              <UserCircle2 className="mx-auto mb-3 h-10 w-10 text-slate-700" />
+              <p className="text-sm text-slate-300">No hay tareas personales para este filtro.</p>
+              {clientStats.total > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab("clientes");
+                    syncLocationTab("clientes");
+                  }}
+                  className="mt-4 rounded-xl border border-violet-500/30 bg-violet-500/10 px-4 py-2 text-sm font-medium text-violet-200 hover:bg-violet-500/20"
+                >
+                  Ver clientes pendientes ({clientStats.total})
+                </button>
+              ) : null}
+            </div>
+          ) : (
+            filteredPersonalTasks.map((task) => (
+              <div key={task.id} className="rounded-3xl border border-slate-800 bg-slate-900/80 p-5 shadow-2xl">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className={`text-base font-semibold ${task.status === "done" ? "text-slate-500 line-through" : "text-white"}`}>
+                        {task.title}
+                      </h3>
+                      <span className={`rounded-full border px-2.5 py-1 text-xs font-medium ${statusClasses(task.status)}`}>
+                        {statusLabel(task.status)}
+                      </span>
+                      <span className={`rounded-full border px-2.5 py-1 text-xs font-medium ${priorityClasses(task.priority)}`}>
+                        {priorityLabel(task.priority)}
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap gap-3 text-xs text-slate-400">
+                      {task.assigned_name || task.assigned_username ? <span>Asignado a: {task.assigned_name || task.assigned_username}</span> : null}
+                      {task.due_date ? <span>Vence: {new Date(task.due_date).toLocaleDateString()}</span> : null}
+                      {task.follow_up_date ? (
+                        <span>
+                          Seguimiento: {new Date(task.follow_up_date).toLocaleDateString()}
+                          {task.follow_up_time ? ` ${task.follow_up_time}` : ""}
+                        </span>
+                      ) : null}
+                      {task.updated_at ? <span>Actualizado: {new Date(task.updated_at).toLocaleString()}</span> : null}
+                    </div>
+
+                    {task.notes ? (
+                      <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-3 text-sm whitespace-pre-wrap text-slate-300">
+                        {task.notes}
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    {task.status !== "done" ? (
+                      <button
+                        type="button"
+                        onClick={() => void handleQuickStatus(task, "done")}
+                        className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-medium text-emerald-200"
+                      >
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        Completar
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => void handleQuickStatus(task, "pending")}
+                        className="rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-xs font-medium text-slate-200"
+                      >
+                        Reabrir
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setEditingTask(task)}
+                      className="inline-flex items-center gap-1 rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-xs font-medium text-slate-200"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                      Editar
+                    </button>
+                    <button
+                      type="button"
+                      disabled={deletingPersonalId === task.id}
+                      onClick={() => void handleDeletePersonalTask(task.id)}
+                      className="inline-flex items-center gap-1 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs font-medium text-red-200 disabled:opacity-60"
+                    >
+                      {deletingPersonalId === task.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                      Eliminar
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
         </div>
       )}
+
+      {showCreateModal ? (
+        <PersonalTaskModal
+          heading="Nueva tarea personal"
+          submitLabel="Crear tarea"
+          saving={savingPersonal}
+          canAssignTasks={canAssignTasks}
+          assignees={assignees}
+          value={draft}
+          onChange={setDraft}
+          onClose={() => setShowCreateModal(false)}
+          onSubmit={handleCreatePersonalTask}
+        />
+      ) : null}
+
+      {editingTask ? (
+        <PersonalTaskModal
+          heading="Editar tarea personal"
+          submitLabel="Guardar cambios"
+          saving={savingPersonal}
+          canAssignTasks={canAssignTasks}
+          assignees={assignees}
+          value={{
+            title: editingTask.title,
+            due_date: editingTask.due_date || "",
+            follow_up_date: editingTask.follow_up_date || "",
+            follow_up_time: editingTask.follow_up_time || "",
+            assigned_user_id: editingTask.assigned_user_id || "",
+            notes: editingTask.notes || "",
+            status: editingTask.status,
+            priority: editingTask.priority
+          }}
+          onChange={(nextValue) => setEditingTask((prev) => (prev ? { ...prev, ...nextValue } : prev))}
+          onClose={() => setEditingTask(null)}
+          onSubmit={handleSavePersonalTask}
+        />
+      ) : null}
     </div>
   );
 }
