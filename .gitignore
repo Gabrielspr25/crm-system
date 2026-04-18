@@ -1,16 +1,39 @@
 node_modules/
 dist/
 uploads/
+
+# Secrets / env files (no commitear NUNCA; usar .env.example como referencia)
 .env
+.env.*
+!.env.example
+**/.env
+**/.env.local
+**/.env.*.local
+
+# Archivos de configuracion legacy con credenciales
+**/Configuration.properties
+**/context.xml
+
+# Logs
 *.log
+logs/
 
 # Large files and temp directories
 claropr-root.tar.gz
 temp_claropr_extract/
+_tmp_*/
 *.tar
 *.tar.gz
 *.jar
+*.war
 temp_*.js
 test_*.js
 diagnose_*.sh
 get_prod_schema.sh
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp

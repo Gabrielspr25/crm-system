@@ -2,13 +2,9 @@ import pg from 'pg';
 
 const { Pool } = pg;
 
-const FALLBACK_EXTERNAL_DB = Object.freeze({
-  host: '167.99.12.125',
-  port: 5432,
-  user: 'postgres',
-  password: 'fF00JIRFXc',
-  database: 'claropr',
-});
+// Campos requeridos del pool externo. NO se permiten fallbacks hardcoded.
+// Cada pool (TANGO / POS / DISCREPANCIAS) debe resolver sus valores via env vars.
+const REQUIRED_FIELDS = ['HOST', 'USER', 'PASSWORD', 'NAME'];
 
 const warnedKeys = new Set();
 let tangoPool = null;
@@ -44,11 +40,29 @@ function readEnv(prefixes, suffix, fallbackValue) {
 }
 
 function buildRemoteDbConfig(poolLabel, prefixes) {
-  const host = readEnv(prefixes, 'HOST', FALLBACK_EXTERNAL_DB.host);
-  const port = parsePort(readEnv(prefixes, 'PORT', FALLBACK_EXTERNAL_DB.port), FALLBACK_EXTERNAL_DB.port);
-  const user = readEnv(prefixes, 'USER', FALLBACK_EXTERNAL_DB.user);
-  const password = readEnv(prefixes, 'PASSWORD', FALLBACK_EXTERNAL_DB.password);
-  const database = readEnv(prefixes, 'NAME', FALLBACK_EXTERNAL_DB.database);
+  // Validar que TODOS los campos requeridos esten seteados en alguno de los prefijos.
+  const missing = [];
+  const resolved = {};
+  for (const suffix of REQUIRED_FIELDS) {
+    const value = readEnv(prefixes, suffix, undefined);
+    if (value === undefined) {
+      missing.push(`${prefixes[0]}_${suffix}`);
+    } else {
+      resolved[suffix] = value;
+    }
+  }
+  if (missing.length > 0) {
+    throw new Error(
+      `[${poolLabel}] Faltan variables de entorno requeridas para el pool externo: ${missing.join(', ')}. ` +
+        `Configurar en .env (ver .env.example).`,
+    );
+  }
+
+  const host = resolved.HOST;
+  const port = parsePort(readEnv(prefixes, 'PORT', '5432'), 5432);
+  const user = resolved.USER;
+  const password = resolved.PASSWORD;
+  const database = resolved.NAME;
   const max = parsePort(readEnv(prefixes, 'MAX_CONNECTIONS', '5'), 5);
   const connectionTimeoutMillis = parsePort(readEnv(prefixes, 'CONNECTION_TIMEOUT_MS', '15000'), 15000);
   const queryTimeout = parsePort(readEnv(prefixes, 'QUERY_TIMEOUT_MS', '30000'), 30000);
@@ -58,14 +72,6 @@ function buildRemoteDbConfig(poolLabel, prefixes) {
   const sslEnabled = parseBoolean(readEnv(prefixes, 'SSL', ''), false);
   const rejectUnauthorized = parseBoolean(readEnv(prefixes, 'SSL_REJECT_UNAUTHORIZED', ''), false);
   const ssl = sslEnabled ? { rejectUnauthorized } : false;
-
-  const isUsingFallbackPassword = password === FALLBACK_EXTERNAL_DB.password;
-  if (isUsingFallbackPassword) {
-    warnOnce(
-      `${poolLabel}-fallback-password`,
-      `[${poolLabel}] WARNING: using fallback external DB password. Configure ${prefixes[0]}_PASSWORD (or ${prefixes[1]}_PASSWORD) in environment.`,
-    );
-  }
 
   warnOnce(
     `${poolLabel}-target`,
