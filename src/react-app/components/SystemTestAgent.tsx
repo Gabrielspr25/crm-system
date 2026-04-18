@@ -46,10 +46,24 @@ const MODULE_ICONS: Record<string, any> = {
   'IMPORTADOR': Database,
   'WORKFLOW': Activity,
   'TARIFAS': FileText,
+  'CAMPANAS': Mail,
   'CAMPAÑAS': Mail,
   'REFERIDOS': Gift,
   'TANGO': Database,
-  'LIMPIEZA': Trash2
+  'LIMPIEZA': Trash2,
+  // Nuevos módulos del árbol de permisos
+  'TAREAS': Activity,
+  'VENDEDORES': Users,
+  'PRODUCTOS': CreditCard,
+  'CATEGORIAS': FileText,
+  'METAS': BarChart3,
+  'CORREOS': Mail,
+  'COGNOS': Database,
+  'HISTORIAL': FileText,
+  'PERFIL': User,
+  'USUARIOS': Users,
+  'SEGURIDAD': Zap,
+  'PASOS': Link2,
 };
 
 export default function SystemTestAgent() {
@@ -70,13 +84,19 @@ export default function SystemTestAgent() {
     // Simulación de pasos para feedback visual
     const steps = [
       'Limpiando datos anteriores...',
+      'Verificando autenticación...',
       'Creando cliente de prueba...',
-      'Verificando campos del cliente...',
-      'Creando BAN...',
-      'Creando suscriptor...',
+      'Verificando BANs...',
+      'Verificando suscriptores...',
       'Probando seguimientos...',
-      'Verificando integridad...',
-      'Limpiando datos de prueba...'
+      'Verificando integridad de datos...',
+      'Probando módulo de tareas...',
+      'Verificando vendedores...',
+      'Verificando productos y categorías...',
+      'Comprobando metas y correos...',
+      'Verificando usuarios y seguridad...',
+      'Comprobando Tango y Cognos...',
+      'Limpiando datos de prueba...',
     ];
     
     let stepIndex = 0;

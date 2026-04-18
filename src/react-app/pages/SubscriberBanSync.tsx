@@ -107,6 +107,11 @@ export default function SubscriberBanSync() {
     setError("");
   };
 
+  const replaceImportedText = (nextText: string) => {
+    setClipboardText(nextText.trim());
+    resetResult();
+  };
+
   const extractFromImage = async (file: File) => {
     setOcrLoading(true);
     setError("");
@@ -119,7 +124,7 @@ export default function SubscriberBanSync() {
         setError("No se pudo leer texto en la imagen.");
         return;
       }
-      setClipboardText((prev) => (prev.trim() ? `${prev}\n${text}` : text));
+      replaceImportedText(text);
     } catch (e) {
       console.error("OCR error:", e);
       setError((e as Error)?.message || "Fallo OCR. Intenta con una imagen mas clara.");
@@ -240,7 +245,7 @@ export default function SubscriberBanSync() {
                         const html = await blob.text();
                         const extracted = extractTableFromHtml(html);
                         if (extracted.trim()) {
-                          setClipboardText((prev) => (prev.trim() ? `${prev}\n${extracted}` : extracted));
+                          replaceImportedText(extracted);
                           inserted = true;
                           break;
                         }
@@ -253,7 +258,7 @@ export default function SubscriberBanSync() {
                   if (!inserted) {
                     const text = await navigator.clipboard.readText();
                     if (text.trim()) {
-                      setClipboardText((prev) => (prev.trim() ? `${prev}\n${text}` : text));
+                      replaceImportedText(text);
                       inserted = true;
                     }
                   }
@@ -307,8 +312,7 @@ export default function SubscriberBanSync() {
                 const extracted = extractTableFromHtml(htmlData);
                 if (extracted.trim()) {
                   e.preventDefault();
-                  setClipboardText((prev) => (prev.trim() ? `${prev}\n${extracted}` : extracted));
-                  resetResult();
+                  replaceImportedText(extracted);
                   return;
                 }
               }

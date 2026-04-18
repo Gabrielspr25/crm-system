@@ -74,6 +74,12 @@ export default function BanPasteSubscribersModal({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  const replaceImportedText = (nextText: string) => {
+    setText(nextText.trim());
+    setPreview(null);
+    setError("");
+  };
+
   const appendExtractedText = async (file: File) => {
     setLoading(true);
     setError("");
@@ -86,7 +92,7 @@ export default function BanPasteSubscribersModal({
         setError("No se detectaron suscriptores en la imagen.");
         return;
       }
-      setText((prev) => (prev.trim() ? `${prev}\n${newText}` : newText));
+      replaceImportedText(newText);
     } catch (e: any) {
       setError(e.message || "Error al procesar la imagen.");
     } finally {
@@ -191,7 +197,7 @@ export default function BanPasteSubscribersModal({
                       const html = await blob.text();
                       const extracted = extractTableFromHtml(html);
                       if (extracted.trim()) {
-                        setText((prev) => (prev.trim() ? `${prev}\n${extracted}` : extracted));
+                        replaceImportedText(extracted);
                         inserted = true;
                         break;
                       }
@@ -203,7 +209,7 @@ export default function BanPasteSubscribersModal({
                 if (!inserted) {
                   const clip = await navigator.clipboard.readText();
                   if (clip.trim()) {
-                    setText((prev) => (prev.trim() ? `${prev}\n${clip}` : clip));
+                    replaceImportedText(clip);
                   }
                 }
               } catch (e) {
@@ -266,9 +272,7 @@ export default function BanPasteSubscribersModal({
               const extracted = extractTableFromHtml(htmlData);
               if (extracted && extracted.trim()) {
                 e.preventDefault();
-                setText((prev) => (prev.trim() ? `${prev}\n${extracted}` : extracted));
-                setPreview(null);
-                setError("");
+                replaceImportedText(extracted);
                 return;
               }
             }

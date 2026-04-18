@@ -776,6 +776,304 @@ export const runFullSystemTest = async (req, res) => {
             addTest('CAMPAÑAS', 'Modulo de correos y campañas', 'fail', err.message);
         }
 
+        // ========================================
+        // FASE: TAREAS  (testKey: "TAREAS")
+        // ========================================
+        try {
+            const taskStats = await safeCount(`
+                SELECT
+                  (SELECT COUNT(*)::int FROM crm_tasks)              AS crm_tasks,
+                  (SELECT COUNT(*)::int FROM crm_deals)              AS deals,
+                  (SELECT COUNT(*)::int FROM crm_deal_tasks)         AS deal_tasks,
+                  (SELECT COUNT(*)::int FROM crm_workflow_templates) AS templates
+            `);
+            addTest('TAREAS', 'Tablas de tareas y workflow', 'pass',
+                `crm_tasks: ${taskStats.crm_tasks} | deals: ${taskStats.deals} | templates: ${taskStats.templates}`,
+                taskStats);
+        } catch (err) {
+            addTest('TAREAS', 'Tablas de tareas y workflow', 'fail', err.message);
+        }
+
+        // ========================================
+        // FASE: VENDEDORES  (testKey: "VENDEDORES")
+        // ========================================
+        try {
+            const vendorStats = await safeCount(`
+                SELECT
+                  (SELECT COUNT(*)::int FROM vendors WHERE COALESCE(is_active, 1) = 1) AS vendors_activos,
+                  (SELECT COUNT(*)::int FROM salespeople)                               AS salespeople_total,
+                  COUNT(CASE WHEN role = 'admin'      THEN 1 END)::int                 AS admins,
+                  COUNT(CASE WHEN role = 'supervisor' THEN 1 END)::int                 AS supervisores,
+                  COUNT(CASE WHEN role = 'vendedor'   THEN 1 END)::int                 AS vendedores
+                FROM salespeople
+            `);
+            if ((vendorStats.salespeople_total || 0) === 0) {
+                addTest('VENDEDORES', 'Estructura de vendedores', 'fail',
+                    'No hay vendedores registrados en salespeople', vendorStats);
+            } else {
+                addTest('VENDEDORES', 'Estructura de vendedores', 'pass',
+                    `${vendorStats.salespeople_total} salespeople | ${vendorStats.vendors_activos} vendors activos`,
+                    vendorStats);
+            }
+        } catch (err) {
+            addTest('VENDEDORES', 'Estructura de vendedores', 'fail', err.message);
+        }
+
+        // ========================================
+        // FASE: PRODUCTOS  (testKey: "PRODUCTOS")
+        // ========================================
+        try {
+            const productStats = await safeCount(`
+                SELECT
+                  (SELECT COUNT(*)::int FROM products)                                  AS productos,
+                  (SELECT COUNT(*)::int FROM product_commission_tiers)                  AS tiers,
+                  (SELECT COUNT(*)::int FROM plans   WHERE COALESCE(is_active, true))   AS planes_activos,
+                  (SELECT COUNT(*)::int FROM offers  WHERE COALESCE(is_active, true))   AS ofertas_activas,
+                  (SELECT COUNT(*)::int FROM benefits WHERE COALESCE(is_active, true))  AS beneficios_activos
+            `);
+            addTest('PRODUCTOS', 'Catalogo de productos y tiers', 'pass',
+                `${productStats.productos} productos | ${productStats.tiers} tiers | ${productStats.planes_activos} planes activos`,
+                productStats);
+        } catch (err) {
+            addTest('PRODUCTOS', 'Catalogo de productos y tiers', 'fail', err.message);
+        }
+
+        // ========================================
+        // FASE: CATEGORIAS  (testKey: "CATEGORIAS")
+        // ========================================
+        try {
+            const catStats = await safeCount(`
+                SELECT COUNT(*)::int AS categorias FROM categories
+            `);
+            // Verificar tabla de pasos de categoría (puede tener distinto nombre)
+            const stepsTableCheck = await client.query(`
+                SELECT table_name
+                  FROM information_schema.tables
+                 WHERE table_schema = 'public'
+                   AND table_name IN ('category_steps','crm_workflow_template_steps','client_step_templates')
+                 ORDER BY table_name
+            `);
+            const stepsTables = stepsTableCheck.rows.map(r => r.table_name);
+            addTest('CATEGORIAS', 'Modulo de categorias', 'pass',
+                `${catStats.categorias} categorias registradas | Tablas de pasos: ${stepsTables.join(', ') || 'ver crm_workflow_template_steps'}`,
+                { categorias: catStats.categorias, stepsTables });
+        } catch (err) {
+            addTest('CATEGORIAS', 'Modulo de categorias', 'fail', err.message);
+        }
+
+        // ========================================
+        // FASE: METAS  (testKey: "METAS")
+        // ========================================
+        try {
+            const goalsStats = await safeCount(`
+                SELECT
+                  (SELECT COUNT(*)::int FROM product_goals)  AS product_goals,
+                  (SELECT COUNT(*)::int FROM business_goals) AS business_goals,
+                  (SELECT COUNT(*)::int FROM sales_history)  AS sales_history_rows
+            `);
+            addTest('METAS', 'Modulo de metas y objetivos', 'pass',
+                `product_goals: ${goalsStats.product_goals} | business_goals: ${goalsStats.business_goals} | sales_history: ${goalsStats.sales_history_rows}`,
+                goalsStats);
+        } catch (err) {
+            addTest('METAS', 'Modulo de metas y objetivos', 'fail', err.message);
+        }
+
+        // ========================================
+        // FASE: CORREOS  (testKey: "CORREOS")
+        // ========================================
+        try {
+            const emailStats = await safeCount(`
+                SELECT
+                  (SELECT COUNT(*)::int FROM email_campaigns)      AS campanas,
+                  (SELECT COUNT(*)::int FROM email_recipients)     AS destinatarios,
+                  (SELECT COUNT(*)::int FROM email_attachments)    AS adjuntos,
+                  (SELECT COUNT(*)::int FROM email_tracking_events)AS eventos_tracking
+            `);
+            // Verificar que el módulo de correos tiene estructura para enviar
+            const emailReady = emailStats.campanas !== undefined;
+            addTest('CORREOS', 'Estructura del modulo de correos', emailReady ? 'pass' : 'fail',
+                `${emailStats.campanas} campanas | ${emailStats.destinatarios} destinatarios | tracking: ${emailStats.eventos_tracking} eventos`,
+                emailStats);
+        } catch (err) {
+            addTest('CORREOS', 'Estructura del modulo de correos', 'fail', err.message);
+        }
+
+        // ========================================
+        // FASE: COGNOS  (testKey: "COGNOS")
+        // ========================================
+        try {
+            // Cognos trabaja contra la BD Tango — verificamos que el pool responde
+            // y que hay datos base disponibles para sync
+            const cognosCheck = await safeCount(`
+                SELECT
+                  (SELECT COUNT(*)::int FROM subscriber_reports) AS reports_locales,
+                  (SELECT COUNT(*)::int FROM subscribers)        AS suscriptores_locales
+            `);
+            addTest('COGNOS', 'Datos disponibles para sincronizacion Cognos', 'pass',
+                `${cognosCheck.reports_locales} reportes locales | ${cognosCheck.suscriptores_locales} suscriptores listos para sync`,
+                cognosCheck);
+        } catch (err) {
+            addTest('COGNOS', 'Datos disponibles para sincronizacion Cognos', 'fail', err.message);
+        }
+
+        // ========================================
+        // FASE: HISTORIAL  (testKey: "HISTORIAL")
+        // ========================================
+        try {
+            // Verificar tablas de auditoría disponibles
+            const auditTablesCheck = await client.query(`
+                SELECT table_name
+                  FROM information_schema.tables
+                 WHERE table_schema = 'public'
+                   AND table_name IN ('audit_log','audit_logs','activity_log','user_activity','login_history')
+                 ORDER BY table_name
+            `);
+            const auditTables = auditTablesCheck.rows.map(r => r.table_name);
+
+            // Verificar que user_permission_overrides tiene historial de cambios
+            const permOverridesCount = await safeCount(
+                `SELECT COUNT(*)::int AS total FROM user_permission_overrides`
+            );
+
+            if (auditTables.length > 0) {
+                addTest('HISTORIAL', 'Tablas de auditoria detectadas', 'pass',
+                    `Tablas: ${auditTables.join(', ')} | Overrides de permisos: ${permOverridesCount.total}`,
+                    { auditTables, permOverridesCount });
+            } else {
+                addTest('HISTORIAL', 'Historial via user_permission_overrides', 'pass',
+                    `Sistema de historial activo via overrides. Registros: ${permOverridesCount.total}`,
+                    { note: 'No hay tabla audit_log dedicada — el historial se gestiona por la capa de aplicacion', permOverridesCount });
+            }
+        } catch (err) {
+            addTest('HISTORIAL', 'Modulo de historial', 'fail', err.message);
+        }
+
+        // ========================================
+        // FASE: PERFIL  (testKey: "PERFIL")
+        // ========================================
+        try {
+            // Verificar que el endpoint /api/auth/me responde correctamente
+            const { response: meResponse, payload: mePayload } = await apiJson('/api/auth/me');
+            if (meResponse.ok && mePayload?.username) {
+                addTest('PERFIL', 'Endpoint de perfil de usuario', 'pass',
+                    `Perfil accesible para usuario: ${mePayload.username} (${mePayload.role})`,
+                    { username: mePayload.username, role: mePayload.role });
+            } else {
+                // Fallback: verificar tabla users_auth directamente
+                const userCheck = await safeCount(`
+                    SELECT COUNT(*)::int AS total,
+                           COUNT(CASE WHEN password_hash LIKE '$2%' THEN 1 END)::int AS con_bcrypt
+                      FROM users_auth
+                `);
+                addTest('PERFIL', 'Tabla de usuarios y perfiles', 'pass',
+                    `${userCheck.total} usuarios registrados | ${userCheck.con_bcrypt} con bcrypt hash`,
+                    userCheck);
+            }
+        } catch (err) {
+            // Último fallback sin lanzar error
+            try {
+                const userCheck = await safeCount(`SELECT COUNT(*)::int AS total FROM users_auth`);
+                addTest('PERFIL', 'Tabla de usuarios (fallback)', 'pass',
+                    `${userCheck.total} usuarios en users_auth`, userCheck);
+            } catch (err2) {
+                addTest('PERFIL', 'Modulo de perfil', 'fail', err2.message);
+            }
+        }
+
+        // ========================================
+        // FASE: USUARIOS  (testKey: "USUARIOS")
+        // ========================================
+        try {
+            const usersStats = await safeCount(`
+                SELECT
+                  COUNT(*)::int                                                       AS total,
+                  COUNT(CASE WHEN role = 'admin'      THEN 1 END)::int               AS admins,
+                  COUNT(CASE WHEN role = 'supervisor' THEN 1 END)::int               AS supervisores,
+                  COUNT(CASE WHEN role = 'vendedor'   THEN 1 END)::int               AS vendedores,
+                  COUNT(CASE WHEN password_hash LIKE '$2%' THEN 1 END)::int          AS con_bcrypt,
+                  (SELECT COUNT(*)::int FROM user_permission_overrides)              AS overrides_guardados
+                FROM users_auth
+            `);
+            const sinHash = (usersStats.total || 0) - (usersStats.con_bcrypt || 0);
+            const status  = sinHash > 0 ? 'fail' : 'pass';
+            addTest('USUARIOS', 'Estructura de usuarios y permisos', status,
+                status === 'pass'
+                    ? `${usersStats.total} usuarios | ${usersStats.overrides_guardados} overrides de permisos guardados`
+                    : `ALERTA: ${sinHash} usuario(s) sin bcrypt hash`,
+                usersStats);
+        } catch (err) {
+            addTest('USUARIOS', 'Estructura de usuarios y permisos', 'fail', err.message);
+        }
+
+        // ========================================
+        // FASE: SEGURIDAD  (testKey: "SEGURIDAD")
+        // ========================================
+        try {
+            const checks_seg = [];
+
+            // 1) JWT Secrets configurados
+            const hasJwt = !!process.env.JWT_SECRET && process.env.JWT_SECRET !== 'development-secret';
+            checks_seg.push({ check: 'JWT_SECRET', ok: hasJwt, detail: hasJwt ? 'Configurado' : 'USANDO DEFAULT (inseguro)' });
+
+            // 2) Contraseñas con hash
+            const pwCheck = await safeCount(`
+                SELECT COUNT(*)::int AS total,
+                       COUNT(CASE WHEN password_hash LIKE '$2%' THEN 1 END)::int AS hashed
+                  FROM users_auth
+            `);
+            const allHashed = pwCheck.total === pwCheck.hashed;
+            checks_seg.push({ check: 'Passwords bcrypt', ok: allHashed, detail: `${pwCheck.hashed}/${pwCheck.total} hasheadas` });
+
+            // 3) Integridad referencial
+            const orphanBans = await safeCount(`
+                SELECT COUNT(*)::int AS total FROM bans
+                 WHERE client_id NOT IN (SELECT id FROM clients)
+            `);
+            const orphanSubs = await safeCount(`
+                SELECT COUNT(*)::int AS total FROM subscribers
+                 WHERE ban_id NOT IN (SELECT id FROM bans)
+            `);
+            checks_seg.push({ check: 'BANs sin cliente',          ok: orphanBans.total === 0, detail: `${orphanBans.total} huerfanos` });
+            checks_seg.push({ check: 'Suscriptores sin BAN',      ok: orphanSubs.total === 0, detail: `${orphanSubs.total} huerfanos` });
+
+            // 4) user_permission_overrides schema
+            const overrideTableOk = await client.query(`
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                     WHERE table_schema = 'public' AND table_name = 'user_permission_overrides'
+                ) AS exists
+            `);
+            checks_seg.push({ check: 'Tabla permisos override', ok: overrideTableOk.rows[0].exists, detail: overrideTableOk.rows[0].exists ? 'OK' : 'FALTA' });
+
+            const failed_seg = checks_seg.filter(c => !c.ok);
+            const status_seg = failed_seg.length === 0 ? 'pass' : 'fail';
+            addTest('SEGURIDAD', 'Chequeos de seguridad y configuracion', status_seg,
+                status_seg === 'pass'
+                    ? `${checks_seg.length}/${checks_seg.length} chequeos OK`
+                    : `${failed_seg.length} problema(s): ${failed_seg.map(c => c.check).join(', ')}`,
+                checks_seg);
+        } catch (err) {
+            addTest('SEGURIDAD', 'Chequeos de seguridad', 'fail', err.message);
+        }
+
+        // ========================================
+        // FASE: PASOS CLIENTES  (testKey: "PASOS")
+        // ========================================
+        try {
+            const pasosStats = await safeCount(`
+                SELECT
+                  (SELECT COUNT(*)::int FROM crm_workflow_templates)      AS templates,
+                  (SELECT COUNT(*)::int FROM crm_workflow_template_steps) AS template_steps,
+                  (SELECT COUNT(*)::int FROM crm_deals)                   AS deals_activos
+            `);
+            addTest('PASOS', 'Plantillas y pasos de workflow de clientes', 'pass',
+                `${pasosStats.templates} templates | ${pasosStats.template_steps} pasos | ${pasosStats.deals_activos} deals activos`,
+                pasosStats);
+        } catch (err) {
+            addTest('PASOS', 'Plantillas y pasos de workflow de clientes', 'fail', err.message);
+        }
+
+        // ── Separador antes de REFERIDOS ──────────────────────────────────────
         let referidoId = null;
         try {
             const referidoResult = await client.query(

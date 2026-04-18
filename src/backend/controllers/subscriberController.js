@@ -1291,15 +1291,15 @@ export const pasteSync = async (req, res) => {
                 warnings.push(`${row.phone} ya existe en otro BAN (${conflictBans.join(', ')})`);
             }
 
-            const priceMeta = await resolveMonthlyValue(row.plan_code);
-            if (row.plan_code && priceMeta.value == null) {
+            const nextStatus = row.status_norm || 'activo';
+            const priceMeta = nextStatus === 'cancelado' ? { value: null, source: null } : await resolveMonthlyValue(row.plan_code);
+            if (nextStatus !== 'cancelado' && row.plan_code && priceMeta.value == null) {
                 stats.price_not_found += 1;
                 const priceWarning = `No se encontró precio para plan ${row.plan_code}`;
                 warning = warning ? `${warning} ${priceWarning}` : priceWarning;
                 warnings.push(priceWarning);
             }
 
-            const nextStatus = row.status_norm || 'activo';
             let action = 'sin_cambios';
 
             if (!sameBanSub && conflictBans.length > 0) {

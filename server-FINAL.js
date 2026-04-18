@@ -6074,8 +6074,9 @@ app.post('/api/subscribers/paste-sync', authenticateRequest, async (req, res) =>
 
     const missingPlans = new Set();
     for (const row of parsed.uniqueRows) {
+      const desiredStatus = normalizeStatus(row.status_norm);
       const desiredPlan = row.plan_code || null;
-      if (desiredPlan && resolvePriceFromCatalog(desiredPlan, planCatalog) === null) {
+      if (desiredStatus !== 'cancelado' && desiredPlan && resolvePriceFromCatalog(desiredPlan, planCatalog) === null) {
         missingPlans.add(desiredPlan);
       }
     }
@@ -6090,7 +6091,7 @@ app.post('/api/subscribers/paste-sync', authenticateRequest, async (req, res) =>
       const current = existingByPhone.get(row.phone);
       const desiredStatus = normalizeStatus(row.status_norm);
       const desiredPlan = row.plan_code || null;
-      const resolvedPrice = resolvePriceFromCatalog(desiredPlan, planCatalog);
+      const resolvedPrice = desiredStatus === 'cancelado' ? null : resolvePriceFromCatalog(desiredPlan, planCatalog);
 
       if (current) {
         existingByPhone.delete(row.phone);
