@@ -1,7 +1,7 @@
 {
     "name": "mocha-app",
     "private": true,
-    "version": "2026-403",
+    "version": "2026-404",
     "type": "module",
     "dependencies": {
         "@azure/msal-browser": "^4.27.0",
