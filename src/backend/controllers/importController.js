@@ -82,28 +82,36 @@ export const saveImportData = async (req, res) => {
                         const accountType = String(banData.account_type || '').trim();
                         const phone = String(subData.phone || '').trim();
 
-                        // Mapeo de status a 1 carÃ¡cter (A=Activo, C=Cancelado)
+                        // Mapeo estricto de status a 1 caracter: solo A (Activo) o C (Cancelado).
+                        // Cualquier otro valor (vacio, raro, length=1 distinto, etc.) se rechaza explicitamente.
                         const rawStatus = String(banData.status || '').trim().toUpperCase();
                         let banStatusValue = null;
                         if (rawStatus === 'A' || rawStatus.startsWith('ACTIV')) {
                             banStatusValue = 'A';
                         } else if (rawStatus === 'C' || rawStatus.startsWith('CANCEL') || rawStatus.startsWith('CERR')) {
                             banStatusValue = 'C';
-                        } else if (rawStatus && rawStatus.length === 1) {
-                            banStatusValue = rawStatus; // Ya es 1 carÃ¡cter
                         }
-                        // Si no coincide con nada, queda null
 
 
                         if (!banNumber) {
                             omitted++;
-                            omittedReasons.push(`Fila ${processed}: Falta nÃºmero BAN`);
+                            omittedReasons.push(`Fila ${processed}: Falta numero BAN`);
                             continue;
                         }
 
                         if (!phone) {
                             omitted++;
-                            omittedReasons.push(`Fila ${processed}: Falta telÃ©fono del suscriptor`);
+                            omittedReasons.push(`Fila ${processed}: Falta telefono del suscriptor`);
+                            continue;
+                        }
+
+                        // Rechazar status vacio o no reconocido. Solo A o C son validos.
+                        if (!banStatusValue) {
+                            omitted++;
+                            const reasonMsg = rawStatus === ''
+                                ? `Fila ${processed}: Status del BAN vacio (BAN ${banNumber}); solo se aceptan A o C`
+                                : `Fila ${processed}: Status del BAN no reconocido "${rawStatus}" (BAN ${banNumber}); solo se aceptan A o C`;
+                            omittedReasons.push(reasonMsg);
                             continue;
                         }
 
@@ -300,16 +308,11 @@ export const saveImportData = async (req, res) => {
 
                             const newBan = await client.query(
                                 `INSERT INTO bans (
-                                    ban_number, client_id, account_type, status, 
-                                    dealer_code, dealer_name, reason_desc, sub_status_report,
+                                    ban_number, client_id, account_type, status,
                                     created_at, updated_at
-                                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+                                 ) VALUES ($1, $2, $3, $4, NOW(), NOW())
                                  RETURNING id`,
-                                [
-                                    banNumber, clientId, accountType || null, banStatusValue || null,
-                                    banData.dealer_code || null, banData.dealer_name || null,
-                                    banData.reason_desc || null, banData.sub_status_report || null
-                                ]
+                                [banNumber, clientId, accountType || null, banStatusValue]
                             );
                         }
 
@@ -511,6 +514,7 @@ export const simulateImportData = async (req, res) => {
     let disponibles = 0;
     let incompletos = 0;
     let cancelados = 0;
+    let rechazados_status = 0;
 
     try {
         const now = new Date();
@@ -548,6 +552,8 @@ export const simulateImportData = async (req, res) => {
                 : Number(monthlyValueRaw);
 
             const isCancelled = rawStatus === 'C' || rawStatus.startsWith('CANCEL') || rawStatus.startsWith('CERR');
+            const isActive = rawStatus === 'A' || rawStatus.startsWith('ACTIV');
+            const isInvalidStatus = !isCancelled && !isActive; // vacio o cualquier valor distinto a A/C
             const isIncomplete = !clientName || !banNumber || !phone;
 
             const rowSummary = {
@@ -568,6 +574,20 @@ export const simulateImportData = async (req, res) => {
                 excluded.push({
                     import_item_id: `${runId}-X-${String(excluded.length + 1).padStart(5, '0')}`,
                     reason: 'cancelado',
+                    ...rowSummary
+                });
+                continue;
+            }
+
+            if (isInvalidStatus) {
+                rechazados_status++;
+                excluded.push({
+                    import_item_id: `${runId}-X-${String(excluded.length + 1).padStart(5, '0')}`,
+                    reason: 'status_invalido',
+                    raw_status: banData.status ?? null,
+                    detail: rawStatus === ''
+                        ? 'Status vacio: solo se aceptan A o C'
+                        : `Status no reconocido "${rawStatus}": solo se aceptan A o C`,
                     ...rowSummary
                 });
                 continue;
@@ -627,7 +647,8 @@ export const simulateImportData = async (req, res) => {
                 disponibles,
                 incompletos,
                 cancelados,
-                total: disponibles + incompletos + cancelados,
+                rechazados_status,
+                total: disponibles + incompletos + cancelados + rechazados_status,
                 importables_count: importables.length,
                 excluded_count: excluded.length,
                 grouped: {

@@ -26,6 +26,7 @@ interface PreviewData {
     disponibles?: number;
     incompletos?: number;
     cancelados?: number;
+    rechazados_status?: number;
     run_id?: string;
     importables_count?: number;
     excluded_count?: number;
@@ -192,10 +193,6 @@ export default function ImportadorVisual() {
         "ban_number": "NÃºmero BAN",
         "account_type": "Tipo de Cuenta (ACC_TYPE)",
         "status": "Estado (SUB_STATUS)",
-        "dealer_code": "CÃ³digo de Dealer",
-        "dealer_name": "Nombre de Dealer",
-        "reason_desc": "RazÃ³n de Estado (REASON_DESC)",
-        "sub_status_report": "Reporte de Estado",
       },
       "Suscriptores": {
         "phone": "NÃºmero (SUBSCRIBER_NO)",
@@ -236,11 +233,7 @@ export default function ImportadorVisual() {
       columns: [
         "ban_number",
         "account_type",
-        "status",
-        "dealer_code",
-        "dealer_name",
-        "reason_desc",
-        "sub_status_report"
+        "status"
       ]
     },
     {
@@ -1780,7 +1773,7 @@ export default function ImportadorVisual() {
                   </div>
                 )}
 
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-6">
                   <div className="bg-neutral-900/50 p-4 rounded-lg border border-neutral-800 text-center">
                     <div className="text-3xl font-bold text-blue-400 mb-1">{previewData.totalRows}</div>
                     <div className="text-sm text-gray-400 font-medium">Filas Totales</div>
@@ -1801,6 +1794,11 @@ export default function ImportadorVisual() {
                   <div className="bg-neutral-900/50 p-4 rounded-lg border border-neutral-800 text-center">
                     <div className="text-2xl font-bold text-red-400 mb-1">{previewData.simulation?.cancelados || 0}</div>
                     <div className="text-sm text-gray-400 font-medium">Cancelados (STATUS=C)</div>
+                  </div>
+
+                  <div className="bg-neutral-900/50 p-4 rounded-lg border border-neutral-800 text-center">
+                    <div className="text-2xl font-bold text-orange-400 mb-1">{previewData.simulation?.rechazados_status || 0}</div>
+                    <div className="text-sm text-gray-400 font-medium">Rechazados (status invalido)</div>
                   </div>
                 </div>
               </div>

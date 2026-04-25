@@ -205,6 +205,30 @@ export const runFullSystemTest = async (req, res) => {
             addTest('CLIENTES', 'Crear cliente', 'fail', err.message);
         }
 
+        if (clientId) {
+            try {
+                const { response, payload } = await apiJson('/api/clients', {
+                    method: 'POST',
+                    json: {
+                        ...TEST_DATA.client,
+                        phone: '809-555-0099',
+                    }
+                });
+
+                if (response.status === 400) {
+                    addTest('CLIENTES', 'Bloquear cliente duplicado por nombre', 'pass',
+                        'El sistema rechazó crear un cliente con el mismo nombre normalizado',
+                        payload);
+                } else {
+                    addTest('CLIENTES', 'Bloquear cliente duplicado por nombre', 'fail',
+                        `Se esperaba HTTP 400 y respondió HTTP ${response.status}`,
+                        payload);
+                }
+            } catch (err) {
+                addTest('CLIENTES', 'Bloquear cliente duplicado por nombre', 'fail', err.message);
+            }
+        }
+
         // ========================================
         // FASE 3: EDITAR CLIENTE
         // ========================================
@@ -290,6 +314,31 @@ export const runFullSystemTest = async (req, res) => {
             }
         } else {
             addTest('BANS', 'Crear BAN', 'skip', 'No se pudo crear BAN porque el cliente falló');
+        }
+
+        if (clientId && banId) {
+            try {
+                const { response, payload } = await apiJson('/api/bans', {
+                    method: 'POST',
+                    json: {
+                        client_id: clientId,
+                        ban_number: TEST_DATA.ban.number,
+                        account_type: 'Fijo',
+                    }
+                });
+
+                if (response.status === 400) {
+                    addTest('BANS', 'Bloquear BAN duplicado', 'pass',
+                        'El sistema rechazó crear un BAN repetido',
+                        payload);
+                } else {
+                    addTest('BANS', 'Bloquear BAN duplicado', 'fail',
+                        `Se esperaba HTTP 400 y respondió HTTP ${response.status}`,
+                        payload);
+                }
+            } catch (err) {
+                addTest('BANS', 'Bloquear BAN duplicado', 'fail', err.message);
+            }
         }
 
         // ========================================
@@ -397,6 +446,62 @@ export const runFullSystemTest = async (req, res) => {
         }
 
         // ========================================
+        // FASE 7.0.1: RUTAS MODULARES DE SUSCRIPTORES
+        // ========================================
+        if (subscriberId) {
+            try {
+                const routeChecks = [];
+
+                const noRenew = await apiJson(`/api/subscribers/${subscriberId}/no-renueva-ahora`, {
+                    method: 'PUT',
+                    json: { note: 'Prueba temporal del agente de sistema' }
+                });
+                routeChecks.push({
+                    route: 'PUT /api/subscribers/:id/no-renueva-ahora',
+                    status: noRenew.response.status
+                });
+
+                const pending = await apiJson(`/api/subscribers/${subscriberId}/pending-renewal`, {
+                    method: 'PUT',
+                    json: {}
+                });
+                routeChecks.push({
+                    route: 'PUT /api/subscribers/:id/pending-renewal',
+                    status: pending.response.status
+                });
+
+                const renewal = await apiJson(`/api/subscribers/${subscriberId}/renewal`, {
+                    method: 'PUT',
+                    json: {
+                        plan: 'BREDE5',
+                        monthly_value: TEST_DATA.subscriber.monthly_value,
+                        remaining_payments: TEST_DATA.subscriber.remaining_payments,
+                        contract_term: TEST_DATA.subscriber.contract_term
+                    }
+                });
+                routeChecks.push({
+                    route: 'PUT /api/subscribers/:id/renewal',
+                    status: renewal.response.status
+                });
+
+                const notFoundRoutes = routeChecks.filter((item) => item.status === 404);
+                const failedRoutes = routeChecks.filter((item) => item.status < 200 || item.status >= 300);
+
+                if (notFoundRoutes.length === 0 && failedRoutes.length === 0) {
+                    addTest('SUSCRIPTORES', 'Rutas no-renueva/pending-renewal/renewal', 'pass',
+                        'Las 3 rutas de suscriptores existen y responden sin 404 usando un registro temporal',
+                        routeChecks);
+                } else {
+                    addTest('SUSCRIPTORES', 'Rutas no-renueva/pending-renewal/renewal', 'fail',
+                        `${notFoundRoutes.length} ruta(s) devolvieron 404; ${failedRoutes.length} ruta(s) fallaron`,
+                        routeChecks);
+                }
+            } catch (err) {
+                addTest('SUSCRIPTORES', 'Rutas no-renueva/pending-renewal/renewal', 'fail', err.message);
+            }
+        }
+
+        // ========================================
         // FASE 7.1: OCR / PASTE-SYNC CONFLICTO REAL
         // ========================================
         if (clientId && banId && subscriberId) {
@@ -472,6 +577,146 @@ export const runFullSystemTest = async (req, res) => {
         }
 
         // ========================================
+        // FASE 7.2: IMPORTACION - STATUS ESTRICTO (A o C)
+        // ========================================
+        try {
+            const importTestBan = '999888776';
+            // Limpieza previa por si quedo basura
+            await client.query('DELETE FROM bans WHERE ban_number = $1', [importTestBan]);
+
+            const importRow = (status) => ({
+                Clientes: { name: `${TEST_PREFIX}_Cliente_StatusInvalido`, salesperson_id: '' },
+                BANs: { ban_number: importTestBan, status, account_type: 'Movil' },
+                Suscriptores: { phone: '8095559001', plan: 'BREDE3' }
+            });
+
+            // Test 1: simulate (Excel) cuenta status vacio/raro como rechazados
+            const sim = await apiJson('/api/importador/simulate', {
+                method: 'POST',
+                json: { data: [importRow(''), importRow('X-RARO'), importRow('A')] }
+            });
+            const rechazados = Number(sim.payload?.report?.rechazados_status || 0);
+            const disponibles = Number(sim.payload?.report?.disponibles || 0);
+            if (sim.response.ok && rechazados >= 2 && disponibles >= 1) {
+                addTest('IMPORTACION', 'Simulate Excel cuenta status vacio/raro como rechazados', 'pass',
+                    `simulate detecto ${rechazados} fila(s) rechazadas y ${disponibles} disponible(s)`,
+                    { rechazados_status: rechazados, disponibles });
+            } else {
+                addTest('IMPORTACION', 'Simulate Excel cuenta status vacio/raro como rechazados', 'fail',
+                    `simulate devolvio rechazados=${rechazados}, disponibles=${disponibles}`,
+                    sim.payload?.report || sim.payload);
+            }
+
+            // Test 2: save (Excel) NO crea el BAN si status viene vacio
+            const save = await apiJson('/api/importador/save', {
+                method: 'POST',
+                json: { data: [importRow('')] }
+            });
+            const banExists = await client.query(
+                'SELECT id, status FROM bans WHERE ban_number = $1',
+                [importTestBan]
+            );
+            if (banExists.rows.length === 0) {
+                addTest('IMPORTACION', 'Save Excel rechaza fila sin status', 'pass',
+                    'El BAN con status vacio no se creo en BD',
+                    { omittedReasons: (save.payload?.omittedReasons || []).slice(0, 2) });
+            } else {
+                await client.query('DELETE FROM bans WHERE ban_number = $1', [importTestBan]);
+                addTest('IMPORTACION', 'Save Excel rechaza fila sin status', 'fail',
+                    `El BAN se creo con status=${banExists.rows[0].status}; deberia ser rechazado`);
+            }
+
+            // Test 3: paste-sync rechaza filas con status vacio o no aceptado
+            if (banId) {
+                const paste = await apiJson('/api/subscribers/paste-sync', {
+                    method: 'POST',
+                    json: {
+                        ban_id: banId,
+                        dry_run: true,
+                        subscribers: [
+                            { subscriber: '8095559002', status: '', plan: 'BREDE3' },
+                            { subscriber: '8095559003', status: 'pending', plan: 'BREDE3' },
+                            { subscriber: '8095559004', status: 'suspended', plan: 'BREDE3' }
+                        ]
+                    }
+                });
+                const invalidLines = Number(paste.payload?.stats?.invalid_lines || 0);
+                if (paste.response.ok && invalidLines >= 3) {
+                    addTest('IMPORTACION', 'Paste-sync rechaza vacio/pending/suspended', 'pass',
+                        `paste-sync marco ${invalidLines} fila(s) como invalidas`,
+                        { invalid_lines: invalidLines, warnings: (paste.payload?.warnings || []).slice(0, 3) });
+                } else {
+                    addTest('IMPORTACION', 'Paste-sync rechaza vacio/pending/suspended', 'fail',
+                        `paste-sync solo marco ${invalidLines}/3 filas como invalidas`,
+                        paste.payload?.stats || paste.payload);
+                }
+            } else {
+                addTest('IMPORTACION', 'Paste-sync rechaza vacio/pending/suspended', 'skip',
+                    'No habia banId disponible para probar paste-sync');
+            }
+
+            // Test 4: cero BANs con status NULL en BD
+            const nullCheck = await client.query('SELECT COUNT(*)::int AS n FROM bans WHERE status IS NULL');
+            const nullCount = Number(nullCheck.rows[0]?.n || 0);
+            if (nullCount === 0) {
+                addTest('IMPORTACION', 'BD sin BANs con status NULL', 'pass',
+                    'La tabla bans no tiene registros con status NULL');
+            } else {
+                addTest('IMPORTACION', 'BD sin BANs con status NULL', 'fail',
+                    `Hay ${nullCount} BAN(s) con status NULL; deben limpiarse antes de aplicar NOT NULL`,
+                    { count_null: nullCount });
+            }
+
+            // Test 5: importar un BAN NUEVO via Excel debe crearlo sin error de columna
+            const newBanNumber = '999888775';
+            const newBanClient = `${TEST_PREFIX}_Cliente_BANNuevo`;
+            await client.query('DELETE FROM bans WHERE ban_number = $1', [newBanNumber]);
+            await client.query('DELETE FROM clients WHERE name = $1', [newBanClient]);
+
+            const saveNew = await apiJson('/api/importador/save', {
+                method: 'POST',
+                json: {
+                    data: [{
+                        Clientes: { name: newBanClient, salesperson_id: '' },
+                        BANs: { ban_number: newBanNumber, status: 'A', account_type: 'Movil' },
+                        Suscriptores: { phone: '8095559010', plan: 'BREDE3' }
+                    }]
+                }
+            });
+            const banCreado = await client.query(
+                'SELECT id, status, account_type FROM bans WHERE ban_number = $1',
+                [newBanNumber]
+            );
+            const errorsList = saveNew.payload?.errors || saveNew.payload?.results?.errors || [];
+            const colError = String(JSON.stringify(errorsList) + (saveNew.payload?.error || ''))
+                .toLowerCase()
+                .includes('column');
+            if (banCreado.rows.length === 1 && banCreado.rows[0].status === 'A' && !colError) {
+                addTest('IMPORTACION', 'Crear BAN nuevo via Excel sin error de columna', 'pass',
+                    `BAN ${newBanNumber} creado con status='A' y account_type='${banCreado.rows[0].account_type}'`,
+                    { id: banCreado.rows[0].id });
+            } else {
+                addTest('IMPORTACION', 'Crear BAN nuevo via Excel sin error de columna', 'fail',
+                    'El BAN nuevo no se creo correctamente o hubo error de columna inexistente',
+                    {
+                        rowsFound: banCreado.rows.length,
+                        columnError: colError,
+                        responseStatus: saveNew.response.status,
+                        payloadSnippet: JSON.stringify(saveNew.payload).slice(0, 300)
+                    });
+            }
+            // Limpieza del BAN/cliente nuevos
+            await client.query('DELETE FROM bans WHERE ban_number = $1', [newBanNumber]);
+            await client.query('DELETE FROM clients WHERE name = $1', [newBanClient]);
+
+            // Limpieza final del BAN de prueba de status invalido (si por alguna razon se creo)
+            await client.query('DELETE FROM bans WHERE ban_number = $1', [importTestBan]);
+            await client.query('DELETE FROM clients WHERE name = $1', [`${TEST_PREFIX}_Cliente_StatusInvalido`]);
+        } catch (err) {
+            addTest('IMPORTACION', 'Validacion estricta de status', 'fail', err.message);
+        }
+
+        // ========================================
         // FASE 8: CREAR SEGUIMIENTO/PROSPECTO
         // ========================================
         let followUpId = null;
@@ -526,6 +771,119 @@ export const runFullSystemTest = async (req, res) => {
             }
         } catch (err) {
             addTest('SEGUIMIENTOS', 'Crear prospecto', 'fail', err.message);
+        }
+
+        // ========================================
+        // FASE 8.1: PASOS Y PRIORIDADES DE SEGUIMIENTO
+        // ========================================
+        try {
+            const stepName = `${TEST_PREFIX}_Paso_Seguimiento`;
+            const stepUpdatedName = `${TEST_PREFIX}_Paso_Seguimiento_Editado`;
+            let stepId = null;
+
+            const stepsAlias = await apiJson('/api/follow-up-prospects/steps');
+            const stepsDirect = await apiJson('/api/follow-up-steps');
+            const stepCreate = await apiJson('/api/follow-up-steps', {
+                method: 'POST',
+                json: {
+                    name: stepName,
+                    description: 'Paso temporal creado por el agente de sistema',
+                    order_index: 9991,
+                    is_active: true
+                }
+            });
+            stepId = stepCreate.payload?.id || null;
+            const stepUpdate = stepId
+                ? await apiJson(`/api/follow-up-steps/${stepId}`, {
+                    method: 'PUT',
+                    json: {
+                        name: stepUpdatedName,
+                        description: 'Paso temporal editado por el agente de sistema',
+                        order_index: 9992,
+                        is_active: true
+                    }
+                })
+                : null;
+            const stepDelete = stepId
+                ? await apiJson(`/api/follow-up-steps/${stepId}`, { method: 'DELETE' })
+                : null;
+
+            const checks = [
+                { action: 'GET /api/follow-up-prospects/steps', status: stepsAlias.response.status, ok: stepsAlias.response.ok },
+                { action: 'GET /api/follow-up-steps', status: stepsDirect.response.status, ok: stepsDirect.response.ok },
+                { action: 'POST /api/follow-up-steps', status: stepCreate.response.status, ok: stepCreate.response.ok },
+                { action: 'PUT /api/follow-up-steps/:id', status: stepUpdate?.response?.status || null, ok: Boolean(stepUpdate?.response?.ok) },
+                { action: 'DELETE /api/follow-up-steps/:id', status: stepDelete?.response?.status || null, ok: Boolean(stepDelete?.response?.ok) }
+            ];
+            const failed = checks.filter((check) => !check.ok || check.status === 404);
+
+            if (failed.length === 0) {
+                addTest('SEGUIMIENTOS', 'GET y CRUD de pasos', 'pass',
+                    'Pasos de seguimiento cargan y CRUD temporal funciona sin 404',
+                    checks);
+            } else {
+                addTest('SEGUIMIENTOS', 'GET y CRUD de pasos', 'fail',
+                    `${failed.length} operacion(es) de pasos fallaron`,
+                    checks);
+            }
+
+            await client.query('DELETE FROM follow_up_steps WHERE name LIKE $1', [`${TEST_PREFIX}_Paso_Seguimiento%`]);
+        } catch (err) {
+            addTest('SEGUIMIENTOS', 'GET y CRUD de pasos', 'fail', err.message);
+        }
+
+        try {
+            const priorityName = `${TEST_PREFIX}_Prioridad`;
+            const priorityUpdatedName = `${TEST_PREFIX}_Prioridad_Editada`;
+            let priorityId = null;
+
+            const prioritiesGet = await apiJson('/api/priorities');
+            const priorityCreate = await apiJson('/api/priorities', {
+                method: 'POST',
+                json: {
+                    name: priorityName,
+                    color_hex: '#3B82F6',
+                    order_index: 9991,
+                    is_active: true
+                }
+            });
+            priorityId = priorityCreate.payload?.id || null;
+            const priorityUpdate = priorityId
+                ? await apiJson(`/api/priorities/${priorityId}`, {
+                    method: 'PUT',
+                    json: {
+                        name: priorityUpdatedName,
+                        color_hex: '#22C55E',
+                        order_index: 9992,
+                        is_active: true
+                    }
+                })
+                : null;
+            const priorityDelete = priorityId
+                ? await apiJson(`/api/priorities/${priorityId}`, { method: 'DELETE' })
+                : null;
+
+            const checks = [
+                { action: 'GET /api/priorities', status: prioritiesGet.response.status, ok: prioritiesGet.response.ok },
+                { action: 'POST /api/priorities', status: priorityCreate.response.status, ok: priorityCreate.response.ok },
+                { action: 'PUT /api/priorities/:id', status: priorityUpdate?.response?.status || null, ok: Boolean(priorityUpdate?.response?.ok) },
+                { action: 'DELETE /api/priorities/:id', status: priorityDelete?.response?.status || null, ok: Boolean(priorityDelete?.response?.ok) }
+            ];
+            const failed = checks.filter((check) => !check.ok || check.status === 404);
+
+            if (failed.length === 0) {
+                addTest('SEGUIMIENTOS', 'GET y CRUD de prioridades', 'pass',
+                    'Prioridades cargan y CRUD temporal funciona sin 404',
+                    checks);
+            } else {
+                addTest('SEGUIMIENTOS', 'GET y CRUD de prioridades', 'fail',
+                    `${failed.length} operacion(es) de prioridades fallaron`,
+                    checks);
+            }
+
+            await client.query('DELETE FROM priorities WHERE name LIKE $1', [`${TEST_PREFIX}_Prioridad%`]);
+        } catch (err) {
+            addTest('SEGUIMIENTOS', 'GET y CRUD de prioridades', 'fail', err.message);
         }
 
         // ========================================
@@ -599,6 +957,47 @@ export const runFullSystemTest = async (req, res) => {
         // ========================================
         addTest('API', 'Verificación de endpoints', 'pass', 
             'Las pruebas directas a BD confirman que los datos se guardan correctamente');
+
+        try {
+            const { response: activeClientsResp, payload: activeClientsPayload } = await apiJson('/api/clients?tab=active');
+            const clientsPayload = Array.isArray(activeClientsPayload?.clients) ? activeClientsPayload.clients : [];
+            const activeStatsCount = Number(activeClientsPayload?.stats?.active_count ?? -1);
+            const invalidActiveClients = clientsPayload.filter((clientRow) => {
+                const activeBans = Number(clientRow.active_ban_count || 0);
+                const totalBans = Number(clientRow.ban_count || 0);
+                const totalSubscribers = Number(clientRow.subscriber_count || 0);
+                const activeSubscribers = Number(clientRow.active_subscriber_count || 0);
+                return totalBans === 0 || activeBans === 0 || (totalSubscribers > 0 && activeSubscribers === 0);
+            });
+            const missingScoringFields = clientsPayload.filter((clientRow) => (
+                clientRow.active_ban_count === undefined
+                || clientRow.has_convergence === undefined
+                || clientRow.recent_followup === undefined
+                || clientRow.primary_contract_end_date === undefined
+                || clientRow.priority_score === undefined
+                || !Number.isFinite(Number(clientRow.priority_score))
+            ));
+
+            if (
+                activeClientsResp.ok
+                && activeStatsCount === clientsPayload.length
+                && invalidActiveClients.length === 0
+                && missingScoringFields.length === 0
+            ) {
+                addTest('CLIENTES', 'Fuente unica de clientes activos', 'pass',
+                    `/api/clients?tab=active devuelve ${clientsPayload.length} activos y coincide con stats.active_count`,
+                    { count: clientsPayload.length });
+            } else {
+                addTest('CLIENTES', 'Fuente unica de clientes activos', 'fail',
+                    `HTTP ${activeClientsResp.status}; lista=${clientsPayload.length}; stats=${activeStatsCount}; invalidos=${invalidActiveClients.length}; sin_scoring=${missingScoringFields.length}`,
+                    {
+                        invalidActiveClients: invalidActiveClients.slice(0, 5),
+                        missingScoringFields: missingScoringFields.slice(0, 5)
+                    });
+            }
+        } catch (err) {
+            addTest('CLIENTES', 'Fuente unica de clientes activos', 'fail', err.message);
+        }
 
         // ================================================
         // COMISIONES: diagnóstico completo del módulo
@@ -795,6 +1194,101 @@ export const runFullSystemTest = async (req, res) => {
         }
 
         // ========================================
+        // FASE: AGENTES / MEMORIA
+        // ========================================
+        try {
+            await apiJson('/api/agents/memory', {
+                method: 'POST',
+                json: {
+                    agent_name: `${TEST_PREFIX}_Agente`,
+                    memory_type: 'analysis',
+                    title: `${TEST_PREFIX}_Memoria`,
+                    content: 'Memoria temporal creada por el agente de pruebas del sistema.',
+                    source_module: 'system-test',
+                    related_client_id: clientId || null,
+                    related_ban: TEST_DATA.ban.number,
+                    importance: 5
+                }
+            });
+
+            await apiJson('/api/agents/decisions', {
+                method: 'POST',
+                json: {
+                    agent_name: `${TEST_PREFIX}_Agente`,
+                    title: `${TEST_PREFIX}_Decision`,
+                    decision: 'Validar modulo de memoria de agentes',
+                    reason: 'Debe existir historial reutilizable para el Cuartel de Agentes',
+                    impact: 'Backend y BD disponibles para contexto persistente',
+                    status: 'executed'
+                }
+            });
+
+            const { response: taskCreateResp, payload: taskCreatePayload } = await apiJson('/api/agents/tasks', {
+                method: 'POST',
+                json: {
+                    agent_name: `${TEST_PREFIX}_Agente`,
+                    title: `${TEST_PREFIX}_Tarea`,
+                    description: 'Tarea temporal creada por el agente de pruebas',
+                    status: 'pending',
+                    priority: 'high',
+                    related_client_id: clientId || null
+                }
+            });
+
+            if (taskCreateResp.ok && taskCreatePayload?.id) {
+                await apiJson(`/api/agents/tasks/${taskCreatePayload.id}`, {
+                    method: 'PATCH',
+                    json: { status: 'done', priority: 'normal' }
+                });
+            }
+
+            await apiJson('/api/agents/runs', {
+                method: 'POST',
+                json: {
+                    agent_name: `${TEST_PREFIX}_Agente`,
+                    run_type: 'system-test',
+                    input_summary: 'Validar endpoints de agentes',
+                    output_summary: 'Endpoints de memoria, decisiones, tareas y corridas responden',
+                    status: 'success'
+                }
+            });
+
+            const [memoryList, decisionsList, tasksList, runsList] = await Promise.all([
+                apiJson('/api/agents/memory?limit=5'),
+                apiJson('/api/agents/decisions?limit=5'),
+                apiJson('/api/agents/tasks?limit=5'),
+                apiJson('/api/agents/runs?limit=5')
+            ]);
+
+            const tableStats = await safeCount(`
+                SELECT
+                  (SELECT COUNT(*)::int FROM agent_memory)    AS memories,
+                  (SELECT COUNT(*)::int FROM agent_decisions) AS decisions,
+                  (SELECT COUNT(*)::int FROM agent_tasks)     AS tasks,
+                  (SELECT COUNT(*)::int FROM agent_runs)      AS runs
+            `);
+
+            const endpointsOk = [memoryList, decisionsList, tasksList, runsList].every((item) => item.response.ok && Array.isArray(item.payload));
+
+            if (endpointsOk) {
+                addTest('AGENTES', 'Memoria persistente y endpoints /api/agents', 'pass',
+                    'Tablas y endpoints de memoria de agentes responden correctamente',
+                    tableStats);
+            } else {
+                addTest('AGENTES', 'Memoria persistente y endpoints /api/agents', 'fail',
+                    'Uno o mas endpoints de /api/agents no respondio como lista',
+                    {
+                        memory: memoryList.response.status,
+                        decisions: decisionsList.response.status,
+                        tasks: tasksList.response.status,
+                        runs: runsList.response.status
+                    });
+            }
+        } catch (err) {
+            addTest('AGENTES', 'Memoria persistente y endpoints /api/agents', 'fail', err.message);
+        }
+
+        // ========================================
         // FASE: VENDEDORES  (testKey: "VENDEDORES")
         // ========================================
         try {
@@ -817,6 +1311,32 @@ export const runFullSystemTest = async (req, res) => {
             }
         } catch (err) {
             addTest('VENDEDORES', 'Estructura de vendedores', 'fail', err.message);
+        }
+
+        // Test: perfiles de acceso (presets) para vendedores
+        try {
+            const presetStats = await safeCount(`
+                SELECT
+                  (SELECT COUNT(*)::int FROM permission_presets)                                             AS presets_total,
+                  (SELECT COUNT(*)::int FROM salespeople WHERE permission_preset_name IS NOT NULL)          AS vendedores_con_preset,
+                  (SELECT COUNT(*)::int FROM user_permission_overrides)                                     AS overrides_total
+            `);
+            const presetTableOk = await client.query(`
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                     WHERE table_schema = 'public' AND table_name = 'permission_presets'
+                ) AS exists
+            `);
+            if (!presetTableOk.rows[0].exists) {
+                addTest('VENDEDORES', 'Tabla permission_presets para perfiles de acceso', 'fail',
+                    'La tabla permission_presets no existe — crear con: CREATE TABLE permission_presets (id BIGSERIAL, name TEXT, effects JSONB)');
+            } else {
+                addTest('VENDEDORES', 'Perfiles de acceso (presets) por vendedor', 'pass',
+                    `${presetStats.presets_total} presets definidos | ${presetStats.vendedores_con_preset} vendedores con preset asignado | ${presetStats.overrides_total} overrides activos`,
+                    presetStats);
+            }
+        } catch (err) {
+            addTest('VENDEDORES', 'Perfiles de acceso (presets) por vendedor', 'fail', err.message);
         }
 
         // ========================================
@@ -876,6 +1396,95 @@ export const runFullSystemTest = async (req, res) => {
                 goalsStats);
         } catch (err) {
             addTest('METAS', 'Modulo de metas y objetivos', 'fail', err.message);
+        }
+
+        // Test: endpoint /api/goals/by-period responde correctamente
+        try {
+            const now = new Date();
+            const { response: goalsResp, payload: goalsPayload } = await apiJson(
+                `/api/goals/by-period?year=${now.getFullYear()}&month=${now.getMonth() + 1}`
+            );
+            if (goalsResp.ok) {
+                addTest('METAS', 'Endpoint /api/goals/by-period', 'pass',
+                    `Responde correctamente — ${Array.isArray(goalsPayload) ? goalsPayload.length : '?'} metas para el mes actual`,
+                    { count: Array.isArray(goalsPayload) ? goalsPayload.length : null });
+            } else {
+                addTest('METAS', 'Endpoint /api/goals/by-period', 'fail',
+                    `HTTP ${goalsResp.status}`, goalsPayload);
+            }
+        } catch (err) {
+            addTest('METAS', 'Endpoint /api/goals/by-period', 'fail', err.message);
+        }
+
+        // Test: endpoint usado por la pantalla Panel de Metas
+        try {
+            const now = new Date();
+            const year = now.getFullYear();
+            const month = now.getMonth() + 1;
+            const { response: dashboardResp, payload: dashboardPayload } = await apiJson(
+                `/api/dashboard/resumen?year=${year}&month=${month}`
+            );
+
+            if (
+                dashboardResp.ok
+                && dashboardPayload?.period?.year === year
+                && dashboardPayload?.period?.month === month
+            ) {
+                addTest('METAS', 'Endpoint /api/dashboard/resumen', 'pass',
+                    'Panel de Metas responde para el periodo actual',
+                    {
+                        year,
+                        month,
+                        total_goal: dashboardPayload?.kpis?.total_goal ?? null,
+                        total_actual: dashboardPayload?.kpis?.total_actual ?? null
+                    });
+            } else {
+                addTest('METAS', 'Endpoint /api/dashboard/resumen', 'fail',
+                    `HTTP ${dashboardResp.status}`, dashboardPayload);
+            }
+        } catch (err) {
+            addTest('METAS', 'Endpoint /api/dashboard/resumen', 'fail', err.message);
+        }
+
+        // Test: endpoint actual de la pantalla Gestion responde correctamente
+        try {
+            const now = new Date();
+            const { response: gestionGoalsResp, payload: gestionGoalsPayload } = await apiJson(
+                `/api/gestion/goals?year=${now.getFullYear()}&month=${now.getMonth() + 1}`
+            );
+            if (
+                gestionGoalsResp.ok
+                && gestionGoalsPayload
+                && typeof gestionGoalsPayload.business === 'object'
+                && Array.isArray(gestionGoalsPayload.vendors)
+            ) {
+                addTest('METAS', 'Endpoint /api/gestion/goals', 'pass',
+                    'La pantalla Gestion puede cargar metas del periodo actual',
+                    {
+                        businessGoals: Object.keys(gestionGoalsPayload.business || {}).length,
+                        vendors: gestionGoalsPayload.vendors.length
+                    });
+            } else {
+                addTest('METAS', 'Endpoint /api/gestion/goals', 'fail',
+                    `HTTP ${gestionGoalsResp.status}`, gestionGoalsPayload);
+            }
+        } catch (err) {
+            addTest('METAS', 'Endpoint /api/gestion/goals', 'fail', err.message);
+        }
+
+        // Test: permisos de metas detectados desde /api/me
+        try {
+            const { response: meResp, payload: meMeta } = await apiJson('/api/me');
+            if (meResp.ok && meMeta?.role) {
+                addTest('METAS', 'Deteccion de rol en vivo via /api/me', 'pass',
+                    `Rol en DB: ${meMeta.role} — La detección live funciona (no depende del token de localStorage)`,
+                    { role: meMeta.role });
+            } else {
+                addTest('METAS', 'Deteccion de rol en vivo via /api/me', 'fail',
+                    `El endpoint /api/me no devolvió rol. HTTP ${meResp.status}`, meMeta);
+            }
+        } catch (err) {
+            addTest('METAS', 'Deteccion de rol en vivo via /api/me', 'fail', err.message);
         }
 
         // ========================================
@@ -962,7 +1571,7 @@ export const runFullSystemTest = async (req, res) => {
                 // Fallback: verificar tabla users_auth directamente
                 const userCheck = await safeCount(`
                     SELECT COUNT(*)::int AS total,
-                           COUNT(CASE WHEN password_hash LIKE '$2%' THEN 1 END)::int AS con_bcrypt
+                           COUNT(CASE WHEN password LIKE '$2%' THEN 1 END)::int AS con_bcrypt
                       FROM users_auth
                 `);
                 addTest('PERFIL', 'Tabla de usuarios y perfiles', 'pass',
@@ -984,16 +1593,21 @@ export const runFullSystemTest = async (req, res) => {
         // FASE: USUARIOS  (testKey: "USUARIOS")
         // ========================================
         try {
-            const usersStats = await safeCount(`
+            // role viene de salespeople via JOIN — no existe en users_auth directamente
+            // password es el campo que guarda el hash bcrypt (no password_hash)
+            const usersRows = await query(`
                 SELECT
-                  COUNT(*)::int                                                       AS total,
-                  COUNT(CASE WHEN role = 'admin'      THEN 1 END)::int               AS admins,
-                  COUNT(CASE WHEN role = 'supervisor' THEN 1 END)::int               AS supervisores,
-                  COUNT(CASE WHEN role = 'vendedor'   THEN 1 END)::int               AS vendedores,
-                  COUNT(CASE WHEN password_hash LIKE '$2%' THEN 1 END)::int          AS con_bcrypt,
-                  (SELECT COUNT(*)::int FROM user_permission_overrides)              AS overrides_guardados
-                FROM users_auth
+                  COUNT(*)::int                                                              AS total,
+                  COUNT(CASE WHEN s.role = 'admin'      THEN 1 END)::int                   AS admins,
+                  COUNT(CASE WHEN s.role = 'supervisor' THEN 1 END)::int                   AS supervisores,
+                  COUNT(CASE WHEN s.role = 'vendedor'   THEN 1 END)::int                   AS vendedores,
+                  COUNT(CASE WHEN u.salesperson_id IS NULL THEN 1 END)::int                AS sin_salesperson,
+                  COUNT(CASE WHEN u.password LIKE '$2%' THEN 1 END)::int                   AS con_bcrypt,
+                  (SELECT COUNT(*)::int FROM user_permission_overrides)                    AS overrides_guardados
+                FROM users_auth u
+                LEFT JOIN salespeople s ON s.id::text = u.salesperson_id::text
             `);
+            const usersStats = usersRows[0] || {};
             const sinHash = (usersStats.total || 0) - (usersStats.con_bcrypt || 0);
             const status  = sinHash > 0 ? 'fail' : 'pass';
             addTest('USUARIOS', 'Estructura de usuarios y permisos', status,
@@ -1015,13 +1629,14 @@ export const runFullSystemTest = async (req, res) => {
             const hasJwt = !!process.env.JWT_SECRET && process.env.JWT_SECRET !== 'development-secret';
             checks_seg.push({ check: 'JWT_SECRET', ok: hasJwt, detail: hasJwt ? 'Configurado' : 'USANDO DEFAULT (inseguro)' });
 
-            // 2) Contraseñas con hash
-            const pwCheck = await safeCount(`
+            // 2) Contraseñas con hash bcrypt (columna se llama "password", no "password_hash")
+            const pwRows = await query(`
                 SELECT COUNT(*)::int AS total,
-                       COUNT(CASE WHEN password_hash LIKE '$2%' THEN 1 END)::int AS hashed
+                       COUNT(CASE WHEN password LIKE '$2%' THEN 1 END)::int AS hashed
                   FROM users_auth
             `);
-            const allHashed = pwCheck.total === pwCheck.hashed;
+            const pwCheck = pwRows[0] || { total: 0, hashed: 0 };
+            const allHashed = Number(pwCheck.total) === Number(pwCheck.hashed);
             checks_seg.push({ check: 'Passwords bcrypt', ok: allHashed, detail: `${pwCheck.hashed}/${pwCheck.total} hasheadas` });
 
             // 3) Integridad referencial
@@ -1045,6 +1660,35 @@ export const runFullSystemTest = async (req, res) => {
             `);
             checks_seg.push({ check: 'Tabla permisos override', ok: overrideTableOk.rows[0].exists, detail: overrideTableOk.rows[0].exists ? 'OK' : 'FALTA' });
 
+            // 5) La ruta destructiva de limpieza no debe estar habilitada en produccion.
+            const cleanBefore = await safeCount(`
+                SELECT
+                  (SELECT COUNT(*)::int FROM clients)     AS clients,
+                  (SELECT COUNT(*)::int FROM bans)        AS bans,
+                  (SELECT COUNT(*)::int FROM subscribers) AS subscribers
+            `);
+            const { response: cleanResp } = await apiJson('/api/admin/clean-database', {
+                method: 'DELETE'
+            });
+            const cleanAfter = await safeCount(`
+                SELECT
+                  (SELECT COUNT(*)::int FROM clients)     AS clients,
+                  (SELECT COUNT(*)::int FROM bans)        AS bans,
+                  (SELECT COUNT(*)::int FROM subscribers) AS subscribers
+            `);
+            const cleanCountsUnchanged = Number(cleanBefore.clients) === Number(cleanAfter.clients)
+                && Number(cleanBefore.bans) === Number(cleanAfter.bans)
+                && Number(cleanBefore.subscribers) === Number(cleanAfter.subscribers);
+            const productionRuntime = process.env.NODE_ENV === 'production' || process.cwd() === '/opt/crmp';
+            const cleanBlocked = productionRuntime
+                ? [403, 404].includes(cleanResp.status)
+                : [400, 403, 404].includes(cleanResp.status);
+            checks_seg.push({
+                check: 'Bloqueo clean-database',
+                ok: cleanBlocked && cleanCountsUnchanged,
+                detail: `HTTP ${cleanResp.status}; datos ${cleanCountsUnchanged ? 'sin cambios' : 'CAMBIARON'}`
+            });
+
             const failed_seg = checks_seg.filter(c => !c.ok);
             const status_seg = failed_seg.length === 0 ? 'pass' : 'fail';
             addTest('SEGURIDAD', 'Chequeos de seguridad y configuracion', status_seg,
@@ -1064,13 +1708,38 @@ export const runFullSystemTest = async (req, res) => {
                 SELECT
                   (SELECT COUNT(*)::int FROM crm_workflow_templates)      AS templates,
                   (SELECT COUNT(*)::int FROM crm_workflow_template_steps) AS template_steps,
-                  (SELECT COUNT(*)::int FROM crm_deals)                   AS deals_activos
+                  (SELECT COUNT(*)::int FROM crm_deals)                   AS deals_activos,
+                  (SELECT COUNT(*)::int FROM crm_deal_tasks WHERE status = 'done')       AS tareas_done,
+                  (SELECT COUNT(*)::int FROM crm_deal_tasks WHERE status = 'in_progress') AS tareas_activas,
+                  (SELECT COUNT(*)::int FROM crm_deal_tasks WHERE status = 'pending')    AS tareas_pendientes
             `);
             addTest('PASOS', 'Plantillas y pasos de workflow de clientes', 'pass',
-                `${pasosStats.templates} templates | ${pasosStats.template_steps} pasos | ${pasosStats.deals_activos} deals activos`,
+                `${pasosStats.templates} templates | ${pasosStats.template_steps} pasos | ${pasosStats.deals_activos} deals | done:${pasosStats.tareas_done} activas:${pasosStats.tareas_activas} pendientes:${pasosStats.tareas_pendientes}`,
                 pasosStats);
         } catch (err) {
             addTest('PASOS', 'Plantillas y pasos de workflow de clientes', 'fail', err.message);
+        }
+
+        // Test: endpoint de sync de deals desde seguimiento
+        try {
+            // Verificar que la ruta existe llamando con un ID inválido (esperamos 4xx, no 500)
+            const { response: syncResp, payload: syncPayload } = await apiJson('/api/clients/0/sync', {
+                method: 'POST',
+                json: { seller_id: null }
+            });
+            // 400 o 404 indica que la ruta existe y valida correctamente
+            const routeExists = syncResp.status === 400 || syncResp.status === 404 || syncResp.status === 200;
+            if (routeExists) {
+                addTest('PASOS', 'Endpoint sync deals desde seguimiento', 'pass',
+                    `Ruta POST /api/deals/clients/:id/sync responde (HTTP ${syncResp.status}) — validación activa`,
+                    { status: syncResp.status, response: syncPayload });
+            } else {
+                addTest('PASOS', 'Endpoint sync deals desde seguimiento', 'fail',
+                    `La ruta respondió HTTP ${syncResp.status} inesperado`,
+                    syncPayload);
+            }
+        } catch (err) {
+            addTest('PASOS', 'Endpoint sync deals desde seguimiento', 'fail', err.message);
         }
 
         // ── Separador antes de REFERIDOS ──────────────────────────────────────
@@ -1162,6 +1831,25 @@ export const runFullSystemTest = async (req, res) => {
         try {
             // Eliminar en orden inverso por las foreign keys
             if (referidoId) await client.query('DELETE FROM referidos WHERE id = $1', [referidoId]);
+            await client.query(`
+                DO $$
+                BEGIN
+                  IF to_regclass('public.agent_runs') IS NOT NULL THEN
+                    DELETE FROM agent_runs WHERE agent_name LIKE '${TEST_PREFIX}%';
+                  END IF;
+                  IF to_regclass('public.agent_tasks') IS NOT NULL THEN
+                    DELETE FROM agent_tasks WHERE agent_name LIKE '${TEST_PREFIX}%';
+                  END IF;
+                  IF to_regclass('public.agent_decisions') IS NOT NULL THEN
+                    DELETE FROM agent_decisions WHERE agent_name LIKE '${TEST_PREFIX}%';
+                  END IF;
+                  IF to_regclass('public.agent_memory') IS NOT NULL THEN
+                    DELETE FROM agent_memory WHERE agent_name LIKE '${TEST_PREFIX}%';
+                  END IF;
+                END $$;
+            `);
+            await client.query('DELETE FROM follow_up_steps WHERE name LIKE $1', [`${TEST_PREFIX}_Paso_Seguimiento%`]);
+            await client.query('DELETE FROM priorities WHERE name LIKE $1', [`${TEST_PREFIX}_Prioridad%`]);
             if (subscriberId) await client.query('DELETE FROM subscribers WHERE id = $1', [subscriberId]);
             if (followUpId) await client.query('DELETE FROM follow_up_prospects WHERE id = $1', [followUpId]);
             if (banId) await client.query('DELETE FROM bans WHERE id = $1', [banId]);

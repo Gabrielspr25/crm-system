@@ -85,12 +85,18 @@ function stripTrailingPhoneNoiseFromPlanCode(raw) {
 
 function normalizeIncomingStatus(raw) {
     const value = String(raw || '').trim().toLowerCase();
-    if (!value) return { status: 'activo', warning: 'Status vacío; se asumió activo.' };
-    if (['active', 'activo'].includes(value)) return { status: 'activo', warning: null };
-    if (['canceled', 'cancelled', 'cancelado'].includes(value)) return { status: 'cancelado', warning: null };
-    if (['suspended', 'suspendido'].includes(value)) return { status: 'suspendido', warning: null };
-    if (value === 'pending') return { status: 'activo', warning: 'Status Pending normalizado a activo.' };
-    return { status: 'activo', warning: `Status "${raw}" no reconocido; se asumió activo.` };
+    if (!value) {
+        return { status: null, warning: 'Status vacio; fila rechazada (solo se aceptan A/Activo o C/Cancelado).' };
+    }
+    if (['active', 'activo', 'a'].includes(value)) return { status: 'activo', warning: null };
+    if (['canceled', 'cancelled', 'cancelado', 'c'].includes(value)) return { status: 'cancelado', warning: null };
+    if (['suspended', 'suspendido'].includes(value)) {
+        return { status: null, warning: 'Status Suspended/Suspendido no se acepta; fila rechazada.' };
+    }
+    if (value === 'pending') {
+        return { status: null, warning: 'Status Pending no se acepta; fila rechazada.' };
+    }
+    return { status: null, warning: `Status "${raw}" no reconocido; fila rechazada (solo A/Activo o C/Cancelado).` };
 }
 
 function looksLikePlanCode(line) {
@@ -370,11 +376,10 @@ function normalizePythonOcrRows(items) {
     return (Array.isArray(items) ? items : [])
         .map((item) => {
             const normalizedStatus = normalizeIncomingStatus(item?.status).status;
-            const status = normalizedStatus === 'cancelado'
-                ? 'Canceled'
-                : normalizedStatus === 'suspendido'
-                    ? 'Suspended'
-                    : 'Active';
+            if (!normalizedStatus) {
+                return null; // Status invalido (vacio, suspended, pending, etc.): descartar fila.
+            }
+            const status = normalizedStatus === 'cancelado' ? 'Canceled' : 'Active';
 
             return {
                 subscriber: normalizePhone(item?.subscriber || item?.phone),
@@ -383,7 +388,7 @@ function normalizePythonOcrRows(items) {
                 pricePlan: normalizePlanFromOcr(item?.pricePlan || item?.plan || '')
             };
         })
-        .filter((row) => isStrictValidOcrRow(row));
+        .filter((row) => row && isStrictValidOcrRow(row));
 }
 
 async function runPythonOcrFallback(fileBuffer, originalName = 'ocr-upload.png') {
@@ -1240,8 +1245,8 @@ export const pasteSync = async (req, res) => {
             return count + (String(row.warning || '').includes('Duplicada en el texto') ? 1 : 0);
         }, 0);
         stats.ignored_100_prefix = parseResult.rows.filter(row => row.ignored100).length;
-        stats.invalid_lines = parseResult.rows.filter(row => !row.phone && !row.ignored100).length;
-        stats.valid_rows = validRows.length;
+        stats.invalid_lines = parseResult.rows.filter(row => !row.ignored100 && (!row.phone || !row.status_norm)).length;
+        stats.valid_rows = validRows.filter(row => row.status_norm).length;
 
         const existingSameBan = await query(
             `SELECT id, phone, plan, monthly_value, status, cancel_reason
@@ -1278,6 +1283,12 @@ export const pasteSync = async (req, res) => {
             }
             if (!row.phone) {
                 previewRows.push({ ...row, action: 'invalida' });
+                continue;
+            }
+            if (!row.status_norm) {
+                const reason = row.warning || 'Status invalido (solo A/Activo o C/Cancelado).';
+                previewRows.push({ ...row, action: 'invalida', warning: reason });
+                warnings.push(`${row.phone}: ${reason}`);
                 continue;
             }
 
