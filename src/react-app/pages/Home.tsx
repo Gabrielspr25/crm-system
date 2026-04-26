@@ -82,6 +82,63 @@ const getPrimaryBan = (banNumbers?: string | null) => {
 
 type Action = { label: string; cls: string };
 
+type AlertType = "danger" | "warning" | "info" | "neutral";
+type AlertItem = { type: AlertType; text: string };
+
+const getAlertClass = (type: AlertType) => {
+  switch (type) {
+    case "danger":
+      return "bg-red-500/10 text-red-300 p-2 rounded border border-red-500/20";
+    case "warning":
+      return "bg-amber-500/10 text-amber-300 p-2 rounded border border-amber-500/20";
+    case "info":
+      return "bg-blue-500/10 text-blue-300 p-2 rounded border border-blue-500/20";
+    default:
+      return "bg-slate-500/10 text-slate-300 p-2 rounded border border-slate-500/20";
+  }
+};
+
+type AlertSourceRow = { name: string; total: number; done: number; pct: number };
+
+const buildAlerts = (rows: AlertSourceRow[]): AlertItem[] => {
+  const alerts: AlertItem[] = [];
+
+  for (const row of rows) {
+    if (row.name === "Sin asignar") continue;
+
+    if (row.total >= 3 && row.pct < 40) {
+      alerts.push({
+        type: "danger",
+        text: `Vendedor ${row.name} con bajo desempeño (${row.pct}%)`,
+      });
+    }
+
+    if (row.total >= 5 && row.done === 0) {
+      alerts.push({
+        type: "warning",
+        text: `${row.name} tiene carga alta sin ejecución`,
+      });
+    }
+
+    if (row.total === 0) {
+      alerts.push({
+        type: "info",
+        text: `${row.name} sin tareas asignadas`,
+      });
+    }
+  }
+
+  const unassigned = rows.find((r) => r.name === "Sin asignar");
+  if (unassigned && unassigned.total > 0) {
+    alerts.push({
+      type: "neutral",
+      text: `${unassigned.total} tareas sin asignar`,
+    });
+  }
+
+  return alerts;
+};
+
 // Mapea priority_score numerico al enum TASK_PRIORITIES del backend
 // (low/normal/high/urgent). Sin esto, el backend descartaria un numero
 // y caeria al default 'normal', perdiendo la urgencia real.
@@ -190,6 +247,9 @@ export default function Home() {
     }))
     .sort((a, b) => (b.total - a.total) || a.name.localeCompare(b.name));
 
+  // Alertas inteligentes derivadas del desempeno por vendedor.
+  const alerts = buildAlerts(performanceRows);
+
   const [taskState, setTaskState] = useState<Record<string, TaskState>>({});
   const [completingTaskId, setCompletingTaskId] = useState<number | null>(null);
   const [showCompletedFlag, setShowCompletedFlag] = useState(false);
@@ -261,6 +321,24 @@ export default function Home() {
         <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-200">
           Error cargando dashboard: {error}
         </div>
+      )}
+
+      {alerts.length > 0 && (
+        <section className="space-y-2">
+          <h2 className="text-sm font-semibold uppercase text-slate-400 flex items-center gap-2">
+            Alertas
+            <span className="text-xs text-slate-500 normal-case font-normal">
+              ({alerts.length})
+            </span>
+          </h2>
+          <div className="space-y-1.5">
+            {alerts.map((a, i) => (
+              <div key={i} className={`text-sm ${getAlertClass(a.type)}`}>
+                {a.text}
+              </div>
+            ))}
+          </div>
+        </section>
       )}
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
