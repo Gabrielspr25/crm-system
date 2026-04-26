@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { AlertCircle, Check, ClipboardCheck, ClipboardList, LayoutDashboard, Loader2, Plus, TrendingUp, Users } from "lucide-react";
 import { Link } from "react-router";
 import { useApi } from "@/react-app/hooks/useApi";
-import { authFetch } from "@/react-app/utils/auth";
+import { authFetch, getCurrentUser } from "@/react-app/utils/auth";
 
 type Client = {
   id: string | number;
@@ -132,6 +132,24 @@ export default function Home() {
   const pendingTasks = tasksRaw
     .filter((t) => (t.status || "").toLowerCase() === "pending")
     .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
+
+  // Identidad del usuario logueado para filtrar tareas por vendedor.
+  const currentUser = useMemo(() => getCurrentUser(), []);
+  const role = String(currentUser?.role || "").toLowerCase();
+  const isAdmin = role === "admin" || role === "supervisor";
+  const mySalespersonId = currentUser?.salespersonId ? String(currentUser.salespersonId) : null;
+  const [adminScope, setAdminScope] = useState<"all" | "mine">("all");
+
+  // Vendedor solo ve sus tareas (las sin vendedor quedan ocultas para el vendedor).
+  // Admin/supervisor ve todas; con toggle "mine" filtra a las suyas si tiene salespersonId.
+  const visiblePendingTasks = pendingTasks.filter((task) => {
+    const assigned = task.assigned_salesperson_id ? String(task.assigned_salesperson_id) : null;
+    if (isAdmin) {
+      if (adminScope === "mine") return assigned !== null && assigned === mySalespersonId;
+      return true;
+    }
+    return assigned !== null && assigned === mySalespersonId;
+  });
 
   const [taskState, setTaskState] = useState<Record<string, TaskState>>({});
   const [completingTaskId, setCompletingTaskId] = useState<number | null>(null);
@@ -382,7 +400,7 @@ export default function Home() {
       </section>
 
       <section className="rounded-lg border border-slate-700 bg-slate-800/50 p-4">
-        <div className="flex flex-col gap-1 md:flex-row md:items-center md:justify-between mb-3">
+        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between mb-3">
           <h2 className="text-lg font-semibold text-white flex items-center gap-2">
             <ClipboardList className="w-5 h-5 text-blue-300" />
             Tareas pendientes
@@ -390,17 +408,53 @@ export default function Home() {
               <span className="text-xs text-emerald-300 font-normal ml-2">Completada</span>
             )}
           </h2>
-          <span className="text-sm text-slate-400">
-            {tasksApi.loading ? "-" : `${pendingTasks.length} tareas`}
-          </span>
+          <div className="flex items-center gap-3">
+            {isAdmin && (
+              <div className="inline-flex rounded border border-slate-600 overflow-hidden text-xs">
+                <button
+                  type="button"
+                  onClick={() => setAdminScope("all")}
+                  className={
+                    "px-2 py-1 transition-colors " +
+                    (adminScope === "all"
+                      ? "bg-blue-500/20 text-blue-200"
+                      : "text-slate-300 hover:bg-slate-700/40")
+                  }
+                >
+                  Todas
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAdminScope("mine")}
+                  className={
+                    "px-2 py-1 border-l border-slate-600 transition-colors " +
+                    (adminScope === "mine"
+                      ? "bg-blue-500/20 text-blue-200"
+                      : "text-slate-300 hover:bg-slate-700/40")
+                  }
+                >
+                  Solo mías
+                </button>
+              </div>
+            )}
+            <span className="text-sm text-slate-400">
+              {tasksApi.loading ? "-" : `${visiblePendingTasks.length} tareas`}
+            </span>
+          </div>
         </div>
 
         {tasksApi.loading ? (
           <div className="h-24 flex items-center justify-center text-slate-400">
             <Loader2 className="w-6 h-6 animate-spin" />
           </div>
-        ) : pendingTasks.length === 0 ? (
-          <p className="text-sm text-slate-400 py-6 text-center">No hay tareas pendientes.</p>
+        ) : visiblePendingTasks.length === 0 ? (
+          <p className="text-sm text-slate-400 py-6 text-center">
+            {isAdmin && adminScope === "mine"
+              ? "No tenés tareas asignadas pendientes."
+              : isAdmin
+              ? "No hay tareas pendientes."
+              : "No tenés tareas pendientes asignadas."}
+          </p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -414,7 +468,7 @@ export default function Home() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-700/60">
-                {pendingTasks.slice(0, 5).map((task) => {
+                {visiblePendingTasks.slice(0, 5).map((task) => {
                   const clientId = task.related_client_id ? String(task.related_client_id) : null;
                   const clientName = clientId ? clientNameById.get(clientId) || null : null;
                   const vendorName = clientId ? clientVendorById.get(clientId) || null : null;
