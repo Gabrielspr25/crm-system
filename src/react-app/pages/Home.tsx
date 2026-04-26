@@ -16,6 +16,7 @@ type Client = {
   related_ban?: string | null;
   ban_numbers?: string | null;
   vendor_name?: string | null;
+  salesperson_id?: string | null;
 };
 
 type ClientsResponse = {
@@ -33,6 +34,7 @@ type Task = {
   status?: string | null;
   priority?: string | null;
   related_client_id?: string | null;
+  assigned_salesperson_id?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
 };
@@ -115,10 +117,15 @@ export default function Home() {
     .slice(0, 10);
   const clientsWithoutRecentFollowup = clients.filter((client) => !client.recent_followup);
 
-  // Lookup id -> nombre para enriquecer tareas pendientes sin pegarle de nuevo al backend.
+  // Lookup id -> nombre + vendor para enriquecer tareas pendientes sin pegarle de nuevo al backend.
   const clientNameById = new Map<string, string>();
+  const clientVendorById = new Map<string, string | null>();
   for (const c of clients) {
-    if (c.id != null) clientNameById.set(String(c.id), c.name || "Sin nombre");
+    if (c.id != null) {
+      const cid = String(c.id);
+      clientNameById.set(cid, c.name || "Sin nombre");
+      clientVendorById.set(cid, c.vendor_name || null);
+    }
   }
 
   const tasksRaw = Array.isArray(tasksApi.data) ? tasksApi.data : [];
@@ -164,6 +171,7 @@ export default function Home() {
           status: "pending",
           priority: scoreToPriority(toNumber(client.priority_score)),
           related_client_id: id,
+          assigned_salesperson_id: client.salesperson_id || null,
         },
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -400,6 +408,7 @@ export default function Home() {
                 <tr className="border-b border-slate-700 text-slate-400">
                   <th className="text-left py-2 pr-3 font-semibold">Tarea</th>
                   <th className="text-left py-2 px-3 font-semibold">Cliente</th>
+                  <th className="text-left py-2 px-3 font-semibold">Vendedor</th>
                   <th className="text-center py-2 px-3 font-semibold">Prioridad</th>
                   <th className="text-right py-2 pl-3 font-semibold">Acción</th>
                 </tr>
@@ -408,6 +417,7 @@ export default function Home() {
                 {pendingTasks.slice(0, 5).map((task) => {
                   const clientId = task.related_client_id ? String(task.related_client_id) : null;
                   const clientName = clientId ? clientNameById.get(clientId) || null : null;
+                  const vendorName = clientId ? clientVendorById.get(clientId) || null : null;
                   const priority = String(task.priority || "normal").toLowerCase();
                   const priorityCls = PRIORITY_STYLE[priority] || PRIORITY_STYLE.normal;
                   const isCompleting = completingTaskId === task.id;
@@ -424,6 +434,13 @@ export default function Home() {
                           </Link>
                         ) : (
                           <span className="text-slate-500">-</span>
+                        )}
+                      </td>
+                      <td className="py-2 px-3 text-slate-300">
+                        {task.assigned_salesperson_id || vendorName ? (
+                          <span>{vendorName || "-"}</span>
+                        ) : (
+                          <span className="text-slate-500 italic">Sin vendedor</span>
                         )}
                       </td>
                       <td className="py-2 px-3 text-center">
