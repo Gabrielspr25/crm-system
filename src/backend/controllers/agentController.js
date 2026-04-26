@@ -313,6 +313,30 @@ export const updateAgentTask = async (req, res) => {
 
     try {
         await ensureAgentMemorySchema();
+
+        // Pre-check de existencia + permisos antes del UPDATE.
+        const existing = await query(
+            'SELECT id, assigned_salesperson_id FROM agent_tasks WHERE id = $1',
+            [id]
+        );
+        if (existing.length === 0) {
+            return res.status(404).json({ error: 'Tarea de agente no encontrada' });
+        }
+
+        const role = String(req.user?.role || '').toLowerCase();
+        const isAdmin = role === 'admin' || role === 'supervisor';
+        if (!isAdmin) {
+            const taskAssigned = existing[0].assigned_salesperson_id
+                ? String(existing[0].assigned_salesperson_id)
+                : null;
+            const mySalespersonId = req.user?.salespersonId
+                ? String(req.user.salespersonId)
+                : null;
+            if (!mySalespersonId || taskAssigned !== mySalespersonId) {
+                return res.status(403).json({ error: 'No autorizado para modificar esta tarea' });
+            }
+        }
+
         const rows = await query(`UPDATE agent_tasks SET ${updates.join(', ')} WHERE id = $${index} RETURNING *`, values);
         if (rows.length === 0) return res.status(404).json({ error: 'Tarea de agente no encontrada' });
         res.json(rows[0]);
