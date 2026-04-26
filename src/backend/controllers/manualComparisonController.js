@@ -76,7 +76,7 @@ export const compareExcelAgainstDB = async (req, res) => {
                 // --- COMPARACIÓN CONTRA BASE DE DATOS LOCAL ---
                 const localRes = await localQuery(`
                     SELECT
-                        s.phone, s.plan, s.monthly_value, s.status as status_activation, s.imei,
+                        s.phone, s.plan, s.monthly_value, s.status as status_activation,
                         b.ban_number, b.account_type,
                         c.name as client_name
                     FROM subscribers s
