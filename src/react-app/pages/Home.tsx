@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { AlertCircle, BarChart3, Check, ChevronDown, ClipboardCheck, ClipboardList, LayoutDashboard, Loader2, Plus, TrendingUp, Users } from "lucide-react";
+import { AlertCircle, BarChart3, Check, ChevronDown, ClipboardCheck, ClipboardList, LayoutDashboard, Loader2, Plus, Target, TrendingUp, Users } from "lucide-react";
 import { Link } from "react-router";
 import { useApi } from "@/react-app/hooks/useApi";
 import { authFetch, getCurrentUser } from "@/react-app/utils/auth";
@@ -45,6 +45,34 @@ const PRIORITY_STYLE: Record<string, string> = {
   normal: "bg-blue-500/15 text-blue-200 border-blue-500/30",
   low: "bg-slate-500/15 text-slate-300 border-slate-500/30",
 };
+
+type GoalVendor = {
+  vendor_id?: number | null;
+  vendor_name?: string | null;
+  salesperson_id?: string | null;
+  total_goal?: number | null;
+  total_earned?: number | null;
+  percentage?: number | null;
+  remaining?: number | null;
+};
+
+type GoalsResponse = {
+  period?: string;
+  summary?: {
+    total_goal?: number | null;
+    total_earned?: number | null;
+    total_percentage?: number | null;
+  };
+  vendors?: GoalVendor[];
+};
+
+const formatUSD = (n: number) =>
+  new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Number.isFinite(n) ? n : 0);
 
 // Mismo umbral que usa el backend (clientController.js: SCORING_EXPIRING_DAYS).
 const EXPIRING_DAYS = 90;
@@ -167,6 +195,9 @@ type TaskState = "idle" | "creating" | "created" | "error";
 export default function Home() {
   const { data, loading, error } = useApi<ClientsResponse>("/api/clients?tab=active");
   const tasksApi = useApi<Task[]>("/api/agents/tasks?limit=500");
+  // Endpoint existente. Mes hardcodeado a 2026-04 (unico periodo con datos en prod
+  // segun el diagnostico). El endpoint ya filtra por rol server-side.
+  const goalsApi = useApi<GoalsResponse>("/api/goals/performance?month=2026-04");
   const clients = Array.isArray(data?.clients) ? data.clients : [];
   const activeCount = data?.stats?.active_count != null ? toNumber(data.stats.active_count) : clients.length;
   const topPriorityClients = [...clients]
@@ -249,6 +280,28 @@ export default function Home() {
 
   // Alertas inteligentes derivadas del desempeno por vendedor.
   const alerts = buildAlerts(performanceRows);
+
+  // Datos derivados para acordeon "Metas comerciales".
+  const goalsRaw = goalsApi.data;
+  const goalsVendorsAll = Array.isArray(goalsRaw?.vendors) ? goalsRaw.vendors : [];
+  const goalsVendors = goalsVendorsAll
+    .filter((v) => Number(v.total_goal || 0) > 0)
+    .map((v) => ({
+      vendor_id: v.vendor_id ?? null,
+      vendor_name: String(v.vendor_name || "Sin nombre"),
+      total_goal: Number(v.total_goal || 0),
+      total_earned: Number(v.total_earned || 0),
+      percentage: Number(v.percentage || 0),
+      remaining: Number(v.remaining || 0),
+    }))
+    .sort((a, b) => b.total_goal - a.total_goal);
+  const goalsSummary = goalsRaw?.summary || null;
+  const goalsTotalGoal = Number(goalsSummary?.total_goal || 0);
+  const goalsTotalEarned = Number(goalsSummary?.total_earned || 0);
+  const goalsTotalPct = Number(goalsSummary?.total_percentage || 0);
+  const goalsRemaining = Math.max(0, goalsTotalGoal - goalsTotalEarned);
+  const goalsMaxBar = goalsVendors.reduce((max, v) => Math.max(max, v.total_goal), 0) || 1;
+  const goalsAllZeroEarned = goalsVendors.length > 0 && goalsVendors.every((v) => v.total_earned === 0);
 
   const [taskState, setTaskState] = useState<Record<string, TaskState>>({});
   const [completingTaskId, setCompletingTaskId] = useState<number | null>(null);
@@ -576,7 +629,152 @@ export default function Home() {
         </div>
       </details>
 
-      {/* (5) Top 10 clientes — acordeón colapsado */}
+      {/* (5) Metas comerciales — acordeón colapsado */}
+      <details className="rounded-lg border border-slate-700 bg-slate-800/50 group">
+        <summary className="cursor-pointer p-4 flex items-center justify-between list-none [&::-webkit-details-marker]:hidden gap-3">
+          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+            <Target className="w-5 h-5 text-emerald-300" />
+            Metas comerciales
+          </h2>
+          <div className="flex items-center gap-3">
+            <span className="text-sm text-slate-400">
+              {goalsApi.loading
+                ? "-"
+                : goalsRaw?.period
+                ? `Periodo ${goalsRaw.period}`
+                : "Sin datos"}
+            </span>
+            <ChevronDown className="w-4 h-4 text-slate-400 transition-transform group-open:rotate-180" />
+          </div>
+        </summary>
+        <div className="p-4 pt-0">
+          {goalsApi.loading ? (
+            <div className="h-24 flex items-center justify-center text-slate-400">
+              <Loader2 className="w-6 h-6 animate-spin" />
+            </div>
+          ) : goalsApi.error ? (
+            <p className="text-sm text-slate-400 py-6 text-center">
+              No se pudieron cargar las metas en este momento.
+            </p>
+          ) : goalsVendors.length === 0 ? (
+            <p className="text-sm text-slate-400 py-6 text-center">
+              Sin metas cargadas para este periodo.
+            </p>
+          ) : (
+            <div className="space-y-4">
+              {/* Resumen global */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="rounded-lg border border-slate-700 bg-slate-900/40 p-3">
+                  <p className="text-xs uppercase font-semibold text-slate-400">Meta total</p>
+                  <p className="text-xl font-bold text-white mt-1">{formatUSD(goalsTotalGoal)}</p>
+                </div>
+                <div className="rounded-lg border border-slate-700 bg-slate-900/40 p-3">
+                  <p className="text-xs uppercase font-semibold text-slate-400">Vendido</p>
+                  <p className="text-xl font-bold text-emerald-300 mt-1">{formatUSD(goalsTotalEarned)}</p>
+                </div>
+                <div className="rounded-lg border border-slate-700 bg-slate-900/40 p-3">
+                  <p className="text-xs uppercase font-semibold text-slate-400">% Avance</p>
+                  <p className={`text-xl font-bold mt-1 ${
+                    goalsTotalPct >= 70
+                      ? "text-emerald-300"
+                      : goalsTotalPct >= 40
+                      ? "text-amber-300"
+                      : goalsTotalPct > 0
+                      ? "text-red-300"
+                      : "text-slate-500"
+                  }`}>
+                    {goalsTotalGoal > 0 ? `${goalsTotalPct.toFixed(1)}%` : "—"}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-slate-700 bg-slate-900/40 p-3">
+                  <p className="text-xs uppercase font-semibold text-slate-400">Restante</p>
+                  <p className="text-xl font-bold text-amber-300 mt-1">{formatUSD(goalsRemaining)}</p>
+                </div>
+              </div>
+
+              {goalsAllZeroEarned && (
+                <div className="rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                  Metas cargadas, pero el avance vendido todavía no se está alimentando.
+                </div>
+              )}
+
+              {/* Gráfica por vendedor */}
+              <div>
+                <h3 className="text-sm font-semibold text-slate-300 mb-2">Por vendedor</h3>
+                <div className="space-y-3">
+                  {goalsVendors.map((v) => {
+                    const goalPct = (v.total_goal / goalsMaxBar) * 100;
+                    const earnedPct = (v.total_earned / goalsMaxBar) * 100;
+                    return (
+                      <div key={`${v.vendor_id}-${v.vendor_name}`}>
+                        <div className="flex justify-between text-xs text-slate-300 mb-1">
+                          <span className="font-medium">{v.vendor_name}</span>
+                          <span className="text-slate-400">
+                            {formatUSD(v.total_earned)} / {formatUSD(v.total_goal)}
+                          </span>
+                        </div>
+                        <div className="relative w-full bg-slate-900/60 rounded-full h-2 overflow-hidden border border-slate-700">
+                          <div
+                            className="absolute top-0 left-0 h-full bg-slate-500/40"
+                            style={{ width: `${goalPct}%` }}
+                          />
+                          {v.total_earned > 0 && (
+                            <div
+                              className="absolute top-0 left-0 h-full bg-emerald-400"
+                              style={{ width: `${earnedPct}%` }}
+                            />
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Tabla simple */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-700 text-slate-400">
+                      <th className="text-left py-2 pr-3 font-semibold">Vendedor</th>
+                      <th className="text-right py-2 px-3 font-semibold">Meta</th>
+                      <th className="text-right py-2 px-3 font-semibold">Vendido</th>
+                      <th className="text-right py-2 px-3 font-semibold">Restante</th>
+                      <th className="text-right py-2 pl-3 font-semibold">%</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-700/60">
+                    {goalsVendors.map((v) => {
+                      const pct = Number(v.percentage || 0);
+                      const pctCls =
+                        pct >= 70
+                          ? "text-emerald-300"
+                          : pct >= 40
+                          ? "text-amber-300"
+                          : pct > 0
+                          ? "text-red-300"
+                          : "text-slate-500";
+                      return (
+                        <tr key={`tbl-${v.vendor_id}-${v.vendor_name}`} className="text-slate-200">
+                          <td className="py-2 pr-3 font-medium">{v.vendor_name}</td>
+                          <td className="py-2 px-3 text-right text-slate-300">{formatUSD(v.total_goal)}</td>
+                          <td className="py-2 px-3 text-right text-emerald-300">{formatUSD(v.total_earned)}</td>
+                          <td className="py-2 px-3 text-right text-amber-300">{formatUSD(v.remaining)}</td>
+                          <td className={`py-2 pl-3 text-right font-semibold ${pctCls}`}>
+                            {v.total_goal > 0 ? `${pct.toFixed(1)}%` : "—"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      </details>
+
+      {/* (6) Top 10 clientes — acordeón colapsado */}
       <details className="rounded-lg border border-slate-700 bg-slate-800/50 group">
         <summary className="cursor-pointer p-4 flex items-center justify-between list-none [&::-webkit-details-marker]:hidden gap-3">
           <h2 className="text-lg font-semibold text-white flex items-center gap-2">
