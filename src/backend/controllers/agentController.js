@@ -124,8 +124,48 @@ const listRows = async (table, req, res) => {
 
 export const getAgentMemory = (req, res) => listRows('agent_memory', req, res);
 export const getAgentDecisions = (req, res) => listRows('agent_decisions', req, res);
-export const getAgentTasks = (req, res) => listRows('agent_tasks', req, res);
 export const getAgentRuns = (req, res) => listRows('agent_runs', req, res);
+
+/**
+ * Lista tareas filtrando por rol del usuario autenticado:
+ * - admin/supervisor: ve todas (incluidas las que tienen assigned_salesperson_id NULL).
+ * - vendedor: solo las asignadas a su salesperson_id; las que no tienen vendedor quedan ocultas.
+ * - vendedor sin salesperson_id mapeado: array vacio (estricto).
+ */
+export const getAgentTasks = async (req, res) => {
+    try {
+        await ensureAgentMemorySchema();
+        const limit = Math.min(Math.max(Number(req.query.limit || 100), 1), 500);
+
+        const role = String(req.user?.role || '').toLowerCase();
+        const isAdmin = role === 'admin' || role === 'supervisor';
+        const mySalespersonId = req.user?.salespersonId ? String(req.user.salespersonId) : null;
+
+        let rows;
+        if (isAdmin) {
+            rows = await query(
+                `SELECT * FROM agent_tasks ORDER BY created_at DESC, id DESC LIMIT $1`,
+                [limit]
+            );
+        } else {
+            if (!mySalespersonId) {
+                return res.json([]);
+            }
+            rows = await query(
+                `SELECT * FROM agent_tasks
+                  WHERE assigned_salesperson_id = $1
+                  ORDER BY created_at DESC, id DESC
+                  LIMIT $2`,
+                [mySalespersonId, limit]
+            );
+        }
+
+        res.json(rows);
+    } catch (error) {
+        console.error('[agents] Error listando tareas:', error);
+        res.status(500).json({ error: 'Error listando tareas de agente' });
+    }
+};
 
 export const createAgentMemory = async (req, res) => {
     const agentName = trimRequired(req.body?.agent_name);
