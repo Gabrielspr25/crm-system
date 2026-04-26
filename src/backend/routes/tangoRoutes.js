@@ -295,17 +295,80 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
     // ── 0. Load salespeople for vendedor mapping ──
     const spResult = await crmPool.query(`SELECT id, name FROM salespeople`);
     const salespeople = spResult.rows; // [{id, name}, ...]
+    const vendorResult = await crmPool.query(`SELECT id, name FROM vendors`);
+    const vendors = vendorResult.rows; // [{id, name}, ...]
+    const vendorByName = new Map();
 
     function normalizeName(name) {
       return (name || '').trim().toLowerCase().replace(/\s+/g, ' ');
     }
-    function findSalesperson(vendedorTango) {
+
+    for (const vendor of vendors) {
+      const key = normalizeName(vendor.name);
+      if (key && !vendorByName.has(key)) vendorByName.set(key, vendor);
+    }
+
+    const mappingResult = await crmPool.query(`
+      SELECT
+        vsm.vendor_id,
+        vsm.salesperson_id,
+        v.name AS vendor_name,
+        sp.name AS salesperson_name
+      FROM vendor_salesperson_mapping vsm
+      JOIN vendors v ON v.id = vsm.vendor_id
+      JOIN salespeople sp ON sp.id = vsm.salesperson_id
+      ORDER BY vsm.vendor_id, vsm.created_at DESC NULLS LAST, sp.name ASC
+    `);
+    const salespersonByVendorId = new Map();
+    const duplicateMappingVendors = new Set();
+    for (const mapping of mappingResult.rows) {
+      const vendorId = String(mapping.vendor_id);
+      if (salespersonByVendorId.has(vendorId)) {
+        duplicateMappingVendors.add(vendorId);
+        continue;
+      }
+      salespersonByVendorId.set(vendorId, mapping);
+    }
+    for (const vendorId of duplicateMappingVendors) {
+      const mapping = salespersonByVendorId.get(vendorId);
+      console.warn(
+        `[SYNC] vendor_salesperson_mapping tiene multiples filas para vendor_id ${vendorId}; ` +
+        `se usara ${mapping?.salesperson_name || mapping?.salesperson_id || 'primer mapping'}`
+      );
+    }
+
+    const missingVendorMappingKeys = new Set();
+    function logMissingVendorMapping(vendorId, vendorName, banNum) {
+      const key = `${vendorId || ''}|${normalizeName(vendorName)}`;
+      if (missingVendorMappingKeys.has(key)) return;
+      missingVendorMappingKeys.add(key);
+      const label = vendorName || (vendorId ? `vendor_id ${vendorId}` : 'vendedor sin nombre');
+      const msg = `Vendedor Tango sin vendor_salesperson_mapping: ${label}${vendorId ? ` (${vendorId})` : ''}`;
+      console.warn(`[SYNC] ${msg}`);
+      alert('warn', banNum || '', msg);
+    }
+
+    function findSalesperson(vendedorTango, tangoVendorId, banNum) {
+      const vendorId = tangoVendorId === null || tangoVendorId === undefined ? '' : String(tangoVendorId).trim();
+      if (vendorId) {
+        const mapping = salespersonByVendorId.get(vendorId);
+        if (mapping?.salesperson_id) return mapping.salesperson_id;
+        logMissingVendorMapping(vendorId, vendedorTango, banNum);
+      }
+
       if (!vendedorTango) return null;
       const vt = normalizeName(vendedorTango);
-      // Exact match (case/space-insensitive)
+
+      const vendor = vendorByName.get(vt);
+      if (vendor) {
+        const mapping = salespersonByVendorId.get(String(vendor.id));
+        if (mapping?.salesperson_id) return mapping.salesperson_id;
+        logMissingVendorMapping(vendor.id, vendedorTango, banNum);
+      }
+
+      // Fallback by salesperson name only when there is no official mapping.
       let sp = salespeople.find(s => normalizeName(s.name) === vt);
       if (sp) return sp.id;
-      // First-name match (case/space-insensitive)
       const firstName = vt.split(' ')[0];
       sp = salespeople.find(s => normalizeName(s.name).startsWith(firstName));
       if (sp) return sp.id;
@@ -329,6 +392,7 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
         COALESCE(v.comisionclaro, 0)::numeric(12,2) AS com_empresa,
         COALESCE(v.comisionvendedor, 0)::numeric(12,2) AS com_vendedor,
         v.fechaactivacion,
+        v.vendedorid AS tango_vendor_id,
         COALESCE(TRIM(cc.nombre), 'SIN NOMBRE') AS cliente,
         COALESCE(TRIM(vd.nombre), '') AS vendedor
       FROM venta v
@@ -469,7 +533,7 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
             alert('info', banNum, `BAN actualizado a tipo ${desiredAccountType}`);
           }
           const clientRecord = clientById.get(clientId);
-          const spId = findSalesperson(v.vendedor);
+          const spId = findSalesperson(v.vendedor, v.tango_vendor_id, banNum);
           const sourceClientName = String(v.cliente || '').trim();
           const currentClientName = String(clientRecord?.name || '').trim();
           const shouldBackfillClientName = Boolean(sourceClientName) && (
@@ -507,7 +571,7 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
             stats.clients_matched++;
 
             // Forzar update de salesperson si Tango trae vendedor y es diferente o null en CRM
-            const spId = findSalesperson(v.vendedor);
+            const spId = findSalesperson(v.vendedor, v.tango_vendor_id, banNum);
             if (spId && clientRecord.salesperson_id !== spId) {
               await crmPool.query(`UPDATE clients SET salesperson_id = $1 WHERE id = $2`, [spId, clientId]);
               alert('info', banNum, `Vendedor actualizado: ${v.vendedor} → cliente ${v.cliente}`);
@@ -515,7 +579,7 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
             }
           } else {
             // Create client
-            const spId = findSalesperson(v.vendedor);
+            const spId = findSalesperson(v.vendedor, v.tango_vendor_id, banNum);
             if (!spId && v.vendedor) {
               alert('error', banNum, `Vendedor '${v.vendedor}' sin match en salespeople`);
             }
