@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { AlertCircle, Check, ClipboardCheck, ClipboardList, LayoutDashboard, Loader2, Plus, TrendingUp, Users } from "lucide-react";
+import { AlertCircle, BarChart3, Check, ClipboardCheck, ClipboardList, LayoutDashboard, Loader2, Plus, TrendingUp, Users } from "lucide-react";
 import { Link } from "react-router";
 import { useApi } from "@/react-app/hooks/useApi";
 import { authFetch, getCurrentUser } from "@/react-app/utils/auth";
@@ -109,7 +109,7 @@ type TaskState = "idle" | "creating" | "created" | "error";
 
 export default function Home() {
   const { data, loading, error } = useApi<ClientsResponse>("/api/clients?tab=active");
-  const tasksApi = useApi<Task[]>("/api/agents/tasks?limit=200");
+  const tasksApi = useApi<Task[]>("/api/agents/tasks?limit=500");
   const clients = Array.isArray(data?.clients) ? data.clients : [];
   const activeCount = data?.stats?.active_count != null ? toNumber(data.stats.active_count) : clients.length;
   const topPriorityClients = [...clients]
@@ -150,6 +150,45 @@ export default function Home() {
     }
     return assigned !== null && assigned === mySalespersonId;
   });
+
+  // Lookup salesperson_id -> vendor_name desde clientes ya cargados.
+  // No se hace fetch adicional; salespersons sin cliente activo aparecen con id corto.
+  const vendorNameBySpId = new Map<string, string>();
+  for (const c of clients) {
+    if (c.salesperson_id && c.vendor_name) {
+      vendorNameBySpId.set(String(c.salesperson_id), c.vendor_name);
+    }
+  }
+
+  // Agrupar todas las tareas (no solo pending) por assigned_salesperson_id
+  // para construir la tabla de desempeno por vendedor.
+  type PerfRow = { key: string; name: string; total: number; done: number; pending: number; pct: number };
+  const perfBuckets = new Map<string, { total: number; done: number; pending: number }>();
+  for (const t of tasksRaw) {
+    const key = t.assigned_salesperson_id ? String(t.assigned_salesperson_id) : "unassigned";
+    const status = String(t.status || "").toLowerCase();
+    let bucket = perfBuckets.get(key);
+    if (!bucket) {
+      bucket = { total: 0, done: 0, pending: 0 };
+      perfBuckets.set(key, bucket);
+    }
+    bucket.total += 1;
+    if (status === "done") bucket.done += 1;
+    else if (status === "pending") bucket.pending += 1;
+  }
+  const performanceRows: PerfRow[] = Array.from(perfBuckets.entries())
+    .map(([key, stats]) => ({
+      key,
+      name:
+        key === "unassigned"
+          ? "Sin asignar"
+          : vendorNameBySpId.get(key) || `${key.slice(0, 8)}…`,
+      total: stats.total,
+      done: stats.done,
+      pending: stats.pending,
+      pct: stats.total > 0 ? Math.round((stats.done / stats.total) * 100) : 0,
+    }))
+    .sort((a, b) => (b.total - a.total) || a.name.localeCompare(b.name));
 
   const [taskState, setTaskState] = useState<Record<string, TaskState>>({});
   const [completingTaskId, setCompletingTaskId] = useState<number | null>(null);
@@ -521,6 +560,73 @@ export default function Home() {
                           )}
                           {isCompleting ? "Completando…" : "Completar"}
                         </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section className="rounded-lg border border-slate-700 bg-slate-800/50 p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+            <BarChart3 className="w-5 h-5 text-indigo-300" />
+            Desempeño por vendedor
+          </h2>
+          <span className="text-sm text-slate-400">
+            {tasksApi.loading
+              ? "-"
+              : `${performanceRows.length} ${performanceRows.length === 1 ? "vendedor" : "vendedores"}`}
+          </span>
+        </div>
+
+        {tasksApi.loading ? (
+          <div className="h-24 flex items-center justify-center text-slate-400">
+            <Loader2 className="w-6 h-6 animate-spin" />
+          </div>
+        ) : performanceRows.length === 0 ? (
+          <p className="text-sm text-slate-400 py-6 text-center">
+            Sin actividad registrada en tareas.
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-700 text-slate-400">
+                  <th className="text-left py-2 pr-3 font-semibold">Vendedor</th>
+                  <th className="text-center py-2 px-3 font-semibold">Total</th>
+                  <th className="text-center py-2 px-3 font-semibold">Completadas</th>
+                  <th className="text-center py-2 px-3 font-semibold">Pendientes</th>
+                  <th className="text-right py-2 pl-3 font-semibold">% Cumplimiento</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-700/60">
+                {performanceRows.map((row) => {
+                  const pctCls =
+                    row.total === 0
+                      ? "text-slate-500"
+                      : row.pct >= 70
+                      ? "text-emerald-300"
+                      : row.pct >= 40
+                      ? "text-amber-300"
+                      : "text-red-300";
+                  return (
+                    <tr key={row.key} className="text-slate-200">
+                      <td className="py-2 pr-3 font-medium">
+                        {row.key === "unassigned" ? (
+                          <span className="text-slate-400 italic">{row.name}</span>
+                        ) : (
+                          row.name
+                        )}
+                      </td>
+                      <td className="py-2 px-3 text-center text-slate-300">{row.total}</td>
+                      <td className="py-2 px-3 text-center text-emerald-300">{row.done}</td>
+                      <td className="py-2 px-3 text-center text-amber-300">{row.pending}</td>
+                      <td className={`py-2 pl-3 text-right font-semibold ${pctCls}`}>
+                        {row.total > 0 ? `${row.pct}%` : "—"}
                       </td>
                     </tr>
                   );
