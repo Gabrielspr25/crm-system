@@ -63,13 +63,6 @@ const CRM_FIELDS: CRMField[] = [
   { table: "Suscriptores", field: "contract_term",            label: "Meses Contrato" },
   { table: "Suscriptores", field: "contract_end_date",        label: "Fecha Fin Contrato" },
   { table: "Suscriptores", field: "line_type",                label: "Tipo de Línea (NEW/REN)" },
-  { table: "Suscriptores", field: "imei",                     label: "IMEI / Equipo" },
-  { table: "Suscriptores", field: "init_activation_date",     label: "Fecha Activación Inicial" },
-  { table: "Suscriptores", field: "effective_date",           label: "Fecha Efectiva" },
-  { table: "Suscriptores", field: "activity_code",            label: "Código de Actividad" },
-  { table: "Suscriptores", field: "subscriber_name_remote",   label: "Nombre Remoto" },
-  { table: "Suscriptores", field: "price_code",               label: "Código de Precio" },
-  { table: "Suscriptores", field: "sub_actv_location",        label: "Ubicación Activación" },
 ];
 
 const TABLE_COLORS: Record<CRMTable, string> = {
@@ -185,7 +178,6 @@ export default function ImportNew() {
       { pattern: /^(tax|seguro social|tax_id)/i,          table: "Clientes",     field: "tax_id" },
       { pattern: /^(email|correo)/i,                      table: "Clientes",     field: "email" },
       { pattern: /^(vendedor|vendor|salesperson)/i,       table: "Clientes",     field: "salesperson_id" },
-      { pattern: /^(imei|equipo)/i,                       table: "Suscriptores", field: "imei" },
       { pattern: /^(vence|end_date|fecha fin|contract_end)/i, table: "Suscriptores", field: "contract_end_date" },
       { pattern: /^(type|line_type|tipo linea|tipo de linea)/i, table: "Suscriptores", field: "line_type" },
       { pattern: /^(plazos|remaining)/i,                  table: "Suscriptores", field: "remaining_payments" },

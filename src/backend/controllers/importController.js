@@ -329,15 +329,6 @@ export const saveImportData = async (req, res) => {
                                 const remainingPayments = subData.remaining_payments ? parseInt(String(subData.remaining_payments).replace(/[^0-9]/g, '')) : null;
                                 const contractEndDate = subData.contract_end_date || null;
 
-                                // Campos originales
-                                const imei = subData.imei || null;
-                                const initActivationDate = subData.init_activation_date || null;
-                                const effectiveDate = subData.effective_date || null;
-                                const activityCode = subData.activity_code || null;
-                                const subscriberNameRemote = subData.subscriber_name_remote || null;
-                                const priceCode = subData.price_code || null;
-                                const subActvLocation = subData.sub_actv_location || null;
-
                                 if (clientId && !clientSalesStats.has(clientId)) {
                                     clientSalesStats.set(clientId, {
                                         salesperson_id: finalVendorId,
@@ -352,28 +343,19 @@ export const saveImportData = async (req, res) => {
 
                                 if (existingSub.rows.length > 0) {
                                     await client.query(
-                                        `UPDATE subscribers 
-                                         SET ban_id = $1, 
+                                        `UPDATE subscribers
+                                         SET ban_id = $1,
                                              plan = COALESCE($2, plan),
                                              monthly_value = COALESCE($3, monthly_value),
                                              remaining_payments = COALESCE($4, remaining_payments),
                                              contract_term = COALESCE($5, contract_term),
                                              contract_end_date = COALESCE($6, contract_end_date),
                                              line_type = COALESCE($7, line_type),
-                                             imei = COALESCE($9, imei),
-                                             init_activation_date = COALESCE($10, init_activation_date),
-                                             effective_date = COALESCE($11, effective_date),
-                                             activity_code = COALESCE($12, activity_code),
-                                             subscriber_name_remote = COALESCE($13, subscriber_name_remote),
-                                             price_code = COALESCE($14, price_code),
-                                             sub_actv_location = COALESCE($15, sub_actv_location),
                                              updated_at = NOW()
                                          WHERE id = $8`,
                                         [
                                             banId, plan, monthlyValue, remainingPayments, contractTerm,
-                                            contractEndDate, lineType, existingSub.rows[0].id,
-                                            imei, initActivationDate, effectiveDate, activityCode,
-                                            subscriberNameRemote, priceCode, subActvLocation
+                                            contractEndDate, lineType, existingSub.rows[0].id
                                         ]
                                     );
                                     if (stats) {
@@ -387,18 +369,14 @@ export const saveImportData = async (req, res) => {
                                 } else {
                                     await client.query(
                                         `INSERT INTO subscribers (
-                                            ban_id, phone, plan, monthly_value, 
+                                            ban_id, phone, plan, monthly_value,
                                             remaining_payments, contract_term, contract_end_date,
-                                            line_type, imei, init_activation_date, effective_date,
-                                            activity_code, subscriber_name_remote, price_code,
-                                            sub_actv_location,
+                                            line_type,
                                             created_at, updated_at
-                                         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW())`,
+                                         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())`,
                                         [
                                             banId, phone, plan, monthlyValue, remainingPayments,
-                                            contractTerm, contractEndDate, lineType, imei,
-                                            initActivationDate, effectiveDate, activityCode,
-                                            subscriberNameRemote, priceCode, subActvLocation
+                                            contractTerm, contractEndDate, lineType
                                         ]
                                     );
                                     if (stats) {

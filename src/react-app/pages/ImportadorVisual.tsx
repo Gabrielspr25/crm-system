@@ -201,13 +201,6 @@ export default function ImportadorVisual() {
         "remaining_payments": "Plazos Faltantes",
         "contract_term": "Meses Contrato",
         "contract_end_date": "Fecha Fin Contrato",
-        "imei": "IMEI / Equipo",
-        "init_activation_date": "Fecha ActivaciÃ³n Inicial",
-        "effective_date": "Fecha Efectiva",
-        "activity_code": "CÃ³digo de Actividad",
-        "subscriber_name_remote": "Nombre Remoto",
-        "price_code": "CÃ³digo de Precio",
-        "sub_actv_location": "UbicaciÃ³n ActivaciÃ³n",
       },
     };
     return labels[table]?.[col] || col;
@@ -242,16 +235,9 @@ export default function ImportadorVisual() {
         "phone",
         "plan",
         "monthly_value",
-        "imei",
-        "init_activation_date",
-        "effective_date",
-        "activity_code",
-        "subscriber_name_remote",
         "contract_term",
         "contract_end_date",
-        "remaining_payments",
-        "price_code",
-        "sub_actv_location"
+        "remaining_payments"
       ]
     },
   ]);
