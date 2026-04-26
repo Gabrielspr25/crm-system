@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { AlertCircle, ClipboardCheck, LayoutDashboard, Loader2, Plus, TrendingUp, Users } from "lucide-react";
+import { AlertCircle, Check, ClipboardCheck, ClipboardList, LayoutDashboard, Loader2, Plus, TrendingUp, Users } from "lucide-react";
 import { Link } from "react-router";
 import { useApi } from "@/react-app/hooks/useApi";
 import { authFetch } from "@/react-app/utils/auth";
@@ -23,6 +23,25 @@ type ClientsResponse = {
   stats?: {
     active_count?: number | string | null;
   };
+};
+
+type Task = {
+  id: number;
+  agent_name?: string | null;
+  title?: string | null;
+  description?: string | null;
+  status?: string | null;
+  priority?: string | null;
+  related_client_id?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+const PRIORITY_STYLE: Record<string, string> = {
+  urgent: "bg-red-500/15 text-red-200 border-red-500/30",
+  high: "bg-amber-500/15 text-amber-200 border-amber-500/30",
+  normal: "bg-blue-500/15 text-blue-200 border-blue-500/30",
+  low: "bg-slate-500/15 text-slate-300 border-slate-500/30",
 };
 
 // Mismo umbral que usa el backend (clientController.js: SCORING_EXPIRING_DAYS).
@@ -88,6 +107,7 @@ type TaskState = "idle" | "creating" | "created" | "error";
 
 export default function Home() {
   const { data, loading, error } = useApi<ClientsResponse>("/api/clients?tab=active");
+  const tasksApi = useApi<Task[]>("/api/agents/tasks?limit=200");
   const clients = Array.isArray(data?.clients) ? data.clients : [];
   const activeCount = data?.stats?.active_count != null ? toNumber(data.stats.active_count) : clients.length;
   const topPriorityClients = [...clients]
@@ -95,7 +115,38 @@ export default function Home() {
     .slice(0, 10);
   const clientsWithoutRecentFollowup = clients.filter((client) => !client.recent_followup);
 
+  // Lookup id -> nombre para enriquecer tareas pendientes sin pegarle de nuevo al backend.
+  const clientNameById = new Map<string, string>();
+  for (const c of clients) {
+    if (c.id != null) clientNameById.set(String(c.id), c.name || "Sin nombre");
+  }
+
+  const tasksRaw = Array.isArray(tasksApi.data) ? tasksApi.data : [];
+  const pendingTasks = tasksRaw
+    .filter((t) => (t.status || "").toLowerCase() === "pending")
+    .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
+
   const [taskState, setTaskState] = useState<Record<string, TaskState>>({});
+  const [completingTaskId, setCompletingTaskId] = useState<number | null>(null);
+  const [showCompletedFlag, setShowCompletedFlag] = useState(false);
+
+  const handleCompleteTask = async (taskId: number) => {
+    setCompletingTaskId(taskId);
+    try {
+      const response = await authFetch(`/api/agents/tasks/${taskId}`, {
+        method: "PATCH",
+        json: { status: "done" },
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      await tasksApi.refetch();
+      setShowCompletedFlag(true);
+      window.setTimeout(() => setShowCompletedFlag(false), 2500);
+    } catch (err) {
+      console.error("Error marcando tarea como completada:", err);
+    } finally {
+      setCompletingTaskId(null);
+    }
+  };
 
   const handleCreateTask = async (client: Client, banPrimary: string, actionLabel: string) => {
     const id = String(client.id);
@@ -117,6 +168,8 @@ export default function Home() {
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       setTaskState((prev) => ({ ...prev, [id]: "created" }));
+      // Refetch del widget de tareas pendientes para que aparezca de inmediato.
+      void tasksApi.refetch();
       window.setTimeout(() => {
         setTaskState((prev) => ({ ...prev, [id]: "idle" }));
       }, 3000);
@@ -316,6 +369,93 @@ export default function Home() {
                 </div>
               </Link>
             ))}
+          </div>
+        )}
+      </section>
+
+      <section className="rounded-lg border border-slate-700 bg-slate-800/50 p-4">
+        <div className="flex flex-col gap-1 md:flex-row md:items-center md:justify-between mb-3">
+          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+            <ClipboardList className="w-5 h-5 text-blue-300" />
+            Tareas pendientes
+            {showCompletedFlag && (
+              <span className="text-xs text-emerald-300 font-normal ml-2">Completada</span>
+            )}
+          </h2>
+          <span className="text-sm text-slate-400">
+            {tasksApi.loading ? "-" : `${pendingTasks.length} tareas`}
+          </span>
+        </div>
+
+        {tasksApi.loading ? (
+          <div className="h-24 flex items-center justify-center text-slate-400">
+            <Loader2 className="w-6 h-6 animate-spin" />
+          </div>
+        ) : pendingTasks.length === 0 ? (
+          <p className="text-sm text-slate-400 py-6 text-center">No hay tareas pendientes.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-700 text-slate-400">
+                  <th className="text-left py-2 pr-3 font-semibold">Tarea</th>
+                  <th className="text-left py-2 px-3 font-semibold">Cliente</th>
+                  <th className="text-center py-2 px-3 font-semibold">Prioridad</th>
+                  <th className="text-right py-2 pl-3 font-semibold">Acción</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-700/60">
+                {pendingTasks.slice(0, 5).map((task) => {
+                  const clientId = task.related_client_id ? String(task.related_client_id) : null;
+                  const clientName = clientId ? clientNameById.get(clientId) || null : null;
+                  const priority = String(task.priority || "normal").toLowerCase();
+                  const priorityCls = PRIORITY_STYLE[priority] || PRIORITY_STYLE.normal;
+                  const isCompleting = completingTaskId === task.id;
+                  return (
+                    <tr key={task.id} className="text-slate-200">
+                      <td className="py-2 pr-3 font-medium">{task.title || "Sin título"}</td>
+                      <td className="py-2 px-3 text-slate-300">
+                        {clientName ? (
+                          <Link
+                            to={`/clientes?openClient=${clientId}`}
+                            className="text-blue-300 hover:text-blue-200"
+                          >
+                            {clientName}
+                          </Link>
+                        ) : (
+                          <span className="text-slate-500">-</span>
+                        )}
+                      </td>
+                      <td className="py-2 px-3 text-center">
+                        <span className={`text-xs rounded border px-2 py-1 ${priorityCls}`}>
+                          {priority}
+                        </span>
+                      </td>
+                      <td className="py-2 pl-3 text-right">
+                        <button
+                          type="button"
+                          onClick={() => handleCompleteTask(task.id)}
+                          disabled={isCompleting}
+                          className={
+                            "inline-flex items-center gap-1 rounded border px-2 py-1 text-xs font-medium transition-colors " +
+                            (isCompleting
+                              ? "bg-slate-500/15 text-slate-300 border-slate-500/30 cursor-wait"
+                              : "bg-emerald-500/15 text-emerald-200 border-emerald-500/30 hover:bg-emerald-500/25")
+                          }
+                        >
+                          {isCompleting ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <Check className="w-3 h-3" />
+                          )}
+                          {isCompleting ? "Completando…" : "Completar"}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         )}
       </section>
