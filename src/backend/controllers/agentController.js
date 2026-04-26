@@ -241,6 +241,15 @@ export const createAgentTask = async (req, res) => {
         return res.status(400).json({ error: 'agent_name y title son obligatorios' });
     }
 
+    // Vendedor no puede asignar tareas a otros: assigned_salesperson_id se fuerza
+    // al propio salespersonId del usuario, ignorando lo enviado por el frontend.
+    // Admin/supervisor pueden asignar libremente (cualquier UUID o null).
+    const role = String(req.user?.role || '').toLowerCase();
+    const isAdmin = role === 'admin' || role === 'supervisor';
+    const assignedFinal = isAdmin
+        ? trimOrNull(req.body?.assigned_salesperson_id)
+        : (req.user?.salespersonId ? String(req.user.salespersonId) : null);
+
     try {
         await ensureAgentMemorySchema();
         const rows = await query(
@@ -256,7 +265,7 @@ export const createAgentTask = async (req, res) => {
                 pick(req.body?.priority, TASK_PRIORITIES, 'normal'),
                 normalizeDate(req.body?.due_date),
                 trimOrNull(req.body?.related_client_id),
-                trimOrNull(req.body?.assigned_salesperson_id)
+                assignedFinal
             ]
         );
         res.status(201).json(rows[0]);
