@@ -1,6 +1,8 @@
-import { AlertCircle, LayoutDashboard, Loader2, TrendingUp, Users } from "lucide-react";
+import { useState } from "react";
+import { AlertCircle, ClipboardCheck, LayoutDashboard, Loader2, Plus, TrendingUp, Users } from "lucide-react";
 import { Link } from "react-router";
 import { useApi } from "@/react-app/hooks/useApi";
+import { authFetch } from "@/react-app/utils/auth";
 
 type Client = {
   id: string | number;
@@ -59,6 +61,16 @@ const getPrimaryBan = (banNumbers?: string | null) => {
 
 type Action = { label: string; cls: string };
 
+// Mapea priority_score numerico al enum TASK_PRIORITIES del backend
+// (low/normal/high/urgent). Sin esto, el backend descartaria un numero
+// y caeria al default 'normal', perdiendo la urgencia real.
+const scoreToPriority = (score: number): string => {
+  if (score >= 90) return "urgent";
+  if (score >= 70) return "high";
+  if (score >= 30) return "normal";
+  return "low";
+};
+
 const suggestedAction = (client: Client): Action => {
   if (!client.recent_followup) {
     return { label: "Llamar hoy", cls: "bg-red-500/15 text-red-200 border-red-500/30" };
@@ -72,6 +84,8 @@ const suggestedAction = (client: Client): Action => {
   return { label: "Mantener", cls: "bg-emerald-500/15 text-emerald-200 border-emerald-500/30" };
 };
 
+type TaskState = "idle" | "creating" | "created" | "error";
+
 export default function Home() {
   const { data, loading, error } = useApi<ClientsResponse>("/api/clients?tab=active");
   const clients = Array.isArray(data?.clients) ? data.clients : [];
@@ -80,6 +94,40 @@ export default function Home() {
     .sort((a, b) => toNumber(b.priority_score) - toNumber(a.priority_score))
     .slice(0, 10);
   const clientsWithoutRecentFollowup = clients.filter((client) => !client.recent_followup);
+
+  const [taskState, setTaskState] = useState<Record<string, TaskState>>({});
+
+  const handleCreateTask = async (client: Client, banPrimary: string, actionLabel: string) => {
+    const id = String(client.id);
+    setTaskState((prev) => ({ ...prev, [id]: "creating" }));
+    try {
+      const response = await authFetch("/api/agents/tasks", {
+        method: "POST",
+        json: {
+          agent_name: "Ventas",
+          title: "Seguimiento cliente",
+          description:
+            `Cliente: ${client.name || "Sin nombre"}\n` +
+            `BAN: ${banPrimary}\n` +
+            `Accion sugerida: ${actionLabel}`,
+          status: "pending",
+          priority: scoreToPriority(toNumber(client.priority_score)),
+          related_client_id: id,
+        },
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      setTaskState((prev) => ({ ...prev, [id]: "created" }));
+      window.setTimeout(() => {
+        setTaskState((prev) => ({ ...prev, [id]: "idle" }));
+      }, 3000);
+    } catch (err) {
+      console.error("Error creando tarea:", err);
+      setTaskState((prev) => ({ ...prev, [id]: "error" }));
+      window.setTimeout(() => {
+        setTaskState((prev) => ({ ...prev, [id]: "idle" }));
+      }, 3000);
+    }
+  };
 
   return (
     <div className="space-y-5 animate-in fade-in duration-500">
@@ -140,13 +188,15 @@ export default function Home() {
                     <th className="text-center py-2 px-3 font-semibold">Score</th>
                     <th className="text-center py-2 px-3 font-semibold">Seguimiento</th>
                     <th className="text-center py-2 px-3 font-semibold">Convergencia</th>
-                    <th className="text-left py-2 pl-3 font-semibold">Acción sugerida</th>
+                    <th className="text-left py-2 px-3 font-semibold">Acción sugerida</th>
+                    <th className="text-right py-2 pl-3 font-semibold">Tarea</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-700/60">
                   {topPriorityClients.map((client) => {
                     const ban = getPrimaryBan(client.ban_numbers);
                     const action = suggestedAction(client);
+                    const tState = taskState[String(client.id)] || "idle";
                     return (
                       <tr key={client.id} className="text-slate-200">
                         <td className="py-2 pr-3">
@@ -178,10 +228,49 @@ export default function Home() {
                             <span className="text-xs text-slate-400">No</span>
                           )}
                         </td>
-                        <td className="py-2 pl-3">
+                        <td className="py-2 px-3">
                           <span className={`text-xs rounded border px-2 py-1 font-medium ${action.cls}`}>
                             {action.label}
                           </span>
+                        </td>
+                        <td className="py-2 pl-3 text-right">
+                          <button
+                            type="button"
+                            onClick={() => handleCreateTask(client, ban.primary, action.label)}
+                            disabled={tState === "creating" || tState === "created"}
+                            className={
+                              "inline-flex items-center gap-1 rounded border px-2 py-1 text-xs font-medium transition-colors " +
+                              (tState === "created"
+                                ? "bg-emerald-500/15 text-emerald-200 border-emerald-500/30"
+                                : tState === "error"
+                                ? "bg-red-500/15 text-red-200 border-red-500/30 hover:bg-red-500/20"
+                                : tState === "creating"
+                                ? "bg-slate-500/15 text-slate-300 border-slate-500/30 cursor-wait"
+                                : "bg-slate-700/40 text-slate-200 border-slate-600 hover:border-blue-400/50 hover:text-blue-200")
+                            }
+                          >
+                            {tState === "creating" ? (
+                              <>
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                                Creando…
+                              </>
+                            ) : tState === "created" ? (
+                              <>
+                                <ClipboardCheck className="w-3 h-3" />
+                                Tarea creada
+                              </>
+                            ) : tState === "error" ? (
+                              <>
+                                <AlertCircle className="w-3 h-3" />
+                                Reintentar
+                              </>
+                            ) : (
+                              <>
+                                <Plus className="w-3 h-3" />
+                                Crear tarea
+                              </>
+                            )}
+                          </button>
                         </td>
                       </tr>
                     );
