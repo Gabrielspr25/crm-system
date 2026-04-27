@@ -13,7 +13,7 @@ import {
   Sun,
   Moon,
   Upload,
-  Target,
+
   Mail,
   Layers,
   Activity,
@@ -26,7 +26,10 @@ import {
   ChevronRight,
   Mic,
   ShieldCheck,
-  KeyRound
+  KeyRound,
+  Settings2,
+  Bot,
+  Calendar
 } from "lucide-react";
 
 
@@ -48,6 +51,7 @@ type NavItem = {
 
 const navigation: NavItem[] = [
   { name: "Panel General", href: "/", icon: LayoutDashboard, permissionKey: "nav.dashboard", roles: ["admin", "supervisor", "vendedor"] },
+  { name: "Mi día", href: "/mi-dia", icon: Calendar, roles: ["admin", "supervisor", "vendedor"] },
   { name: "Tareas", href: "/tareas", icon: CheckSquare, permissionKey: "nav.tasks", roles: ["admin", "supervisor", "vendedor"] },
   { name: "Clientes", href: "/clientes", icon: Users, permissionKey: "nav.clients", roles: ["admin", "supervisor", "vendedor"] },
   { name: "Correos", href: "/correos", icon: Mail, permissionKey: "nav.emails", roles: ["admin", "supervisor", "vendedor"] },
@@ -55,18 +59,23 @@ const navigation: NavItem[] = [
   { name: "Vendedores", href: "/vendedores", icon: Building2, permissionKey: "nav.vendors", roles: ["admin", "supervisor"] },
   { name: "Productos", href: "/productos", icon: Package, permissionKey: "nav.products", roles: ["admin", "supervisor"] },
   { name: "Categorías", href: "/categorias", icon: Folder, roles: ["admin"] },
-  { name: "Metas", href: "/metas", icon: Target, permissionKey: "nav.goals", roles: ["admin", "supervisor"] },
+  { name: "Panel de Metas", href: "/panel-metas", icon: BarChart3, permissionKey: "nav.dashboard_metas", roles: ["admin", "supervisor"] },
+  { name: "Metas", href: "/gestion", icon: Settings2, roles: ["admin", "supervisor"] },
   { name: "Comisiones", href: "/reportes", icon: BarChart3, permissionKey: "nav.reports", roles: ["admin", "supervisor", "vendedor"] },
   { name: "Cognos", href: "/discrepancias", icon: AlertTriangle, permissionKey: "nav.cognos", roles: ["admin", "supervisor"] },
   { name: "Historial", href: "/historial", icon: FileText, permissionKey: "nav.audit", roles: ["admin"] },
   { name: "Importador", href: "/importador", icon: Upload, permissionKey: "nav.importer", roles: ["admin", "supervisor"] },
+  { name: "Import New", href: "/importador-nuevo", icon: Upload, permissionKey: "nav.import_new", roles: ["admin", "supervisor"] },
   { name: "Tango", href: "/tango", icon: Activity, permissionKey: "nav.tango", roles: ["admin"] },
-  { name: "Reglas y Procesos", href: "/reglas-procesos", icon: FileText, roles: ["admin", "supervisor"], external: true },
+  { name: "Cuartel de Agentes", href: "/cuartel-agentes", icon: Bot, roles: ["admin", "supervisor"] },
+  { name: "Seguridad", href: "/control-seguridad", icon: ShieldCheck, roles: ["admin"] },
+  { name: "Permisos", href: "/usuarios-permisos", icon: KeyRound, roles: ["admin"] },
+  { name: "Reglas y Procesos", href: "/reglas-procesos", icon: FileText, permissionKey: "nav.rules_processes", roles: ["admin", "supervisor"], external: true },
   { name: "Perfil", href: "/perfil", icon: UserCircle2, permissionKey: "nav.profile", roles: ["admin", "supervisor", "vendedor"] },
   { name: "Ofertas Web", href: "https://ofertas.ss-group.cloud", icon: Layers, external: true },
 ];
 
-const commercialSetupHrefs = new Set(["/vendedores", "/productos", "/categorias"]);
+const commercialSetupHrefs = new Set(["/vendedores", "/productos", "/categorias", "/gestion", "/panel-metas"]);
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -206,8 +215,8 @@ export default function Layout({ children }: LayoutProps) {
                   <a
                     key={item.name}
                     href={finalHref}
-                    target={item.href.startsWith("http") ? "_blank" : undefined}
-                    rel={item.href.startsWith("http") ? "noopener noreferrer" : undefined}
+                    target="_blank"
+                    rel="noopener noreferrer"
                     className={className}
                     onClick={() => setSidebarOpen(false)}
                   >
