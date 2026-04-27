@@ -96,7 +96,7 @@ type DescuadreData = {
   lastChecked: string;
 };
 
-// Etiqueta amigable para ventatipoid (FASE 1: 138-141 + 25, 26).
+// Etiqueta amigable para ventatipoid (FASE 1 + FASE 2).
 const VENTATIPO_LABELS: Record<number, string> = {
   138: "Móvil REN (PYMES)",
   139: "Móvil NEW (PYMES)",
@@ -104,6 +104,20 @@ const VENTATIPO_LABELS: Record<number, string> = {
   141: "Fijo NEW (PYMES)",
   25: "Móvil NEW (Claro Update)",
   26: "Móvil REN (Claro Update)",
+  121: "Fijo NEW (2 Play)",
+  41: "Fijo NEW (3 Play)", 42: "Fijo NEW (3 Play)", 43: "Fijo NEW (3 Play)",
+  44: "Fijo NEW (3 Play)", 45: "Fijo NEW (3 Play)", 46: "Fijo NEW (3 Play)",
+  47: "Fijo NEW (3 Play)", 48: "Fijo NEW (3 Play)", 49: "Fijo NEW (3 Play)",
+  50: "Fijo NEW (3 Play)",
+};
+
+// Cutoff para descuadres: solo trabajamos desde 2026-01-01 en adelante.
+// Las ventas Tango anteriores son ruido historico y se ignoran en UI.
+const DESCUADRE_CUTOFF = "2026-01-01";
+
+const isExternalSaleFrom2026 = (s: ExternalSale): boolean => {
+  if (!s.fechaactivacion) return false;
+  return s.fechaactivacion >= DESCUADRE_CUTOFF;
 };
 
 // Mismo umbral que usa el backend (clientController.js: SCORING_EXPIRING_DAYS).
@@ -521,25 +535,47 @@ export default function Home() {
               </div>
             )}
 
-            {descuadreState === "success" && descuadreData && (
+            {descuadreState === "success" && descuadreData && (() => {
+              // Filtramos external_sales para mostrar solo desde 2026-01-01.
+              // Las ventas anteriores (historicas) se ignoran como ruido.
+              const sample2026 = descuadreData.sample.filter(isExternalSaleFrom2026);
+              const motivos2026 = sample2026.reduce<Record<string, number>>((acc, s) => {
+                acc[s.motivo] = (acc[s.motivo] || 0) + 1;
+                return acc;
+              }, {});
+              const hasAnyVisible = sample2026.length > 0;
+              return (
               <div className="space-y-3">
                 {descuadreData.count === 0 ? (
                   <p className="text-sm text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 rounded p-2">
                     Sin descuadre. Todas las ventas Tango filtradas están en CRM.
                   </p>
+                ) : !hasAnyVisible ? (
+                  <div className="space-y-2">
+                    <p className="text-sm text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 rounded p-2">
+                      Sin descuadre desde 2026-01-01. Todas las ventas Tango recientes están en CRM.
+                    </p>
+                    <p className="text-xs text-slate-500">
+                      Total reportado por el sync (incluye históricos): {descuadreData.count.toLocaleString("es-PR")}.
+                    </p>
+                  </div>
                 ) : (
                   <div className="space-y-2">
                     <p className="text-sm text-amber-200">
-                      <strong className="text-amber-100">{descuadreData.count.toLocaleString("es-PR")}</strong> ventas Tango fuera del CRM.
+                      <strong className="text-amber-100">{sample2026.length.toLocaleString("es-PR")}</strong> ventas Tango desde 2026-01-01 fuera del CRM
+                      <span className="text-xs text-slate-500"> (en muestra de {descuadreData.sample.length.toLocaleString("es-PR")})</span>
                     </p>
                     <div className="text-xs text-slate-400 space-y-0.5">
-                      {Object.entries(descuadreData.motivos).map(([motivo, n]) => (
+                      {Object.entries(motivos2026).map(([motivo, n]) => (
                         <div key={motivo}>
                           <span className="text-slate-500">{motivo}:</span>{" "}
                           <span className="text-slate-300">{Number(n).toLocaleString("es-PR")}</span>
                         </div>
                       ))}
                     </div>
+                    <p className="text-xs text-slate-500 italic">
+                      Total reportado por el sync (incluye históricos pre-2026): {descuadreData.count.toLocaleString("es-PR")}.
+                    </p>
                   </div>
                 )}
 
@@ -556,22 +592,22 @@ export default function Home() {
                     <RefreshCw className="w-4 h-4" />
                     Verificar de nuevo
                   </button>
-                  {descuadreData.count > 0 && descuadreData.sample.length > 0 && (
+                  {hasAnyVisible && (
                     <button
                       type="button"
                       onClick={() => setShowDescuadreDetail((v) => !v)}
                       className="inline-flex items-center gap-2 rounded border border-amber-500/40 bg-amber-500/15 hover:bg-amber-500/25 text-amber-200 px-3 py-1.5 text-sm font-medium transition-colors"
                     >
-                      {showDescuadreDetail ? "Ocultar detalle" : `Ver detalle (${descuadreData.sample.length} ejemplos)`}
+                      {showDescuadreDetail ? "Ocultar detalle" : `Ver detalle (${sample2026.length} casos 2026+)`}
                     </button>
                   )}
                 </div>
 
-                {showDescuadreDetail && descuadreData.count > 0 && descuadreData.sample.length > 0 && (
+                {showDescuadreDetail && hasAnyVisible && (
                   <div className="space-y-2">
                     {descuadreData.truncated && (
                       <p className="text-xs text-slate-400">
-                        Mostrando primeros {descuadreData.sample.length.toLocaleString("es-PR")} de {descuadreData.count.toLocaleString("es-PR")} (truncado).
+                        Sample del backend truncado a {descuadreData.sample.length.toLocaleString("es-PR")} de {descuadreData.count.toLocaleString("es-PR")} totales (incluye pre-2026). Acá se muestran solo los {sample2026.length.toLocaleString("es-PR")} con fechaactivacion ≥ 2026-01-01.
                       </p>
                     )}
                     <div className="overflow-x-auto">
@@ -581,12 +617,13 @@ export default function Home() {
                             <th className="text-left py-2 pr-3 font-semibold">BAN</th>
                             <th className="text-left py-2 px-3 font-semibold">Cliente</th>
                             <th className="text-left py-2 px-3 font-semibold">Vendedor</th>
+                            <th className="text-left py-2 px-3 font-semibold">Fecha</th>
                             <th className="text-right py-2 px-3 font-semibold">Monto</th>
                             <th className="text-left py-2 pl-3 font-semibold">Tipo</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-700/60">
-                          {descuadreData.sample.map((s, i) => {
+                          {sample2026.map((s, i) => {
                             const tipoLabel = VENTATIPO_LABELS[s.ventatipoid] || `Tipo ${s.ventatipoid}`;
                             return (
                               <tr key={`${s.tango_ventaid}-${i}`} className="text-slate-200">
@@ -604,6 +641,7 @@ export default function Home() {
                                 </td>
                                 <td className="py-2 px-3 text-slate-300 text-xs">{s.cliente || "-"}</td>
                                 <td className="py-2 px-3 text-slate-300 text-xs">{s.vendedor || "-"}</td>
+                                <td className="py-2 px-3 text-slate-400 text-xs">{s.fechaactivacion || "-"}</td>
                                 <td className="py-2 px-3 text-right text-slate-300 text-xs">{formatUSD(Number(s.com_empresa || 0))}</td>
                                 <td className="py-2 pl-3 text-slate-400 text-xs">{tipoLabel}</td>
                               </tr>
@@ -615,7 +653,8 @@ export default function Home() {
                   </div>
                 )}
               </div>
-            )}
+              );
+            })()}
           </div>
         </details>
       )}
