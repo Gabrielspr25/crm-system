@@ -157,7 +157,8 @@ const getPrimaryBan = (banNumbers?: string | null) => {
 type Action = { label: string; cls: string };
 
 type AlertType = "danger" | "warning" | "info" | "neutral";
-type AlertItem = { type: AlertType; text: string };
+type AlertKind = "unassigned_tasks";
+type AlertItem = { type: AlertType; text: string; kind?: AlertKind };
 
 const getAlertClass = (type: AlertType) => {
   switch (type) {
@@ -207,6 +208,7 @@ const buildAlerts = (rows: AlertSourceRow[]): AlertItem[] => {
     alerts.push({
       type: "neutral",
       text: `${unassigned.total} tareas sin asignar`,
+      kind: "unassigned_tasks",
     });
   }
 
@@ -326,6 +328,17 @@ export default function Home() {
 
   // Alertas inteligentes derivadas del desempeno por vendedor.
   const alerts = buildAlerts(performanceRows);
+
+  // Detalle de la alerta "tareas sin asignar": top 5 mas recientes,
+  // solo status pending y assigned_salesperson_id null/vacio.
+  const unassignedTasksDetail = tasksRaw
+    .filter((t) => {
+      const noAssignee = !t.assigned_salesperson_id;
+      const isPending = String(t.status || "").toLowerCase() === "pending";
+      return noAssignee && isPending;
+    })
+    .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
+    .slice(0, 5);
 
   // Datos derivados para acordeon "Metas comerciales".
   const goalsRaw = goalsApi.data;
@@ -463,11 +476,55 @@ export default function Home() {
             </span>
           </h2>
           <div className="space-y-1.5">
-            {alerts.map((a, i) => (
-              <div key={i} className={`text-sm ${getAlertClass(a.type)}`}>
-                {a.text}
-              </div>
-            ))}
+            {alerts.map((a, i) => {
+              if (a.kind === "unassigned_tasks") {
+                return (
+                  <details key={i} className={`text-sm ${getAlertClass(a.type)} group`}>
+                    <summary className="cursor-pointer flex items-center justify-between list-none [&::-webkit-details-marker]:hidden">
+                      <span>{a.text}</span>
+                      <ChevronDown className="w-4 h-4 transition-transform group-open:rotate-180 opacity-70" />
+                    </summary>
+                    <div className="mt-2 pt-2 border-t border-slate-500/20 space-y-1">
+                      {unassignedTasksDetail.length === 0 ? (
+                        <p className="text-xs text-slate-400 italic">
+                          No hay tareas pending sin asignar (la cuenta refleja todos los estados).
+                        </p>
+                      ) : (
+                        unassignedTasksDetail.map((t) => {
+                          const clientId = t.related_client_id ? String(t.related_client_id) : null;
+                          const clientName = clientId ? clientNameById.get(clientId) || null : null;
+                          return (
+                            <div key={t.id} className="flex items-start justify-between gap-2 text-xs">
+                              <div className="flex-1 min-w-0">
+                                {clientName && clientId ? (
+                                  <Link
+                                    to={`/clientes?openClient=${clientId}`}
+                                    className="text-blue-300 hover:text-blue-200 font-medium"
+                                  >
+                                    {clientName}
+                                  </Link>
+                                ) : (
+                                  <span className="text-slate-500">— sin cliente</span>
+                                )}
+                                <span className="text-slate-400"> · {t.title || "Sin título"}</span>
+                              </div>
+                              <span className="text-slate-500 whitespace-nowrap shrink-0">
+                                {formatDate(t.created_at || null)}
+                              </span>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </details>
+                );
+              }
+              return (
+                <div key={i} className={`text-sm ${getAlertClass(a.type)}`}>
+                  {a.text}
+                </div>
+              );
+            })}
           </div>
         </section>
       )}
