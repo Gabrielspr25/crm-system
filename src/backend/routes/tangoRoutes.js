@@ -255,6 +255,8 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
   const alerts = [];
   const stats = {
     tango_ventas: 0,
+    tango_ventas_validas: 0,
+    tango_ventas_external: 0,
     clients_created: 0,
     clients_matched: 0,
     bans_created: 0,
@@ -263,6 +265,7 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
     subscribers_updated: 0,
     subscribers_merged: 0,
     subscribers_deactivated: 0,
+    subscribers_would_have_deactivated: 0,
     reports_upserted: 0,
     errors: 0,
   };
@@ -375,13 +378,39 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
       return null;
     }
 
-    // ── 1. Fetch ALL active PYMES ventas from Tango ──
+    // ── 0b. Tipos permitidos (FASE 1 estricta) ──
+    // FASE 1: solo PYMES (138-141) + Claro Update (25, 26).
+    // FASE 2 (no incluida todavia): 121 (2 Play), 41-50 (3 Play *).
+    const MOBILE_TIPOS = [138, 139, 25, 26];
+    const FIJO_TIPOS = [140, 141];
+    const REN_TIPOS = [138, 140, 26];
+    // NEW: 139, 141, 25 (cualquier ventatipoid no-REN cae en NEW por default)
+
+    // ── 1. Pre-load CRM bans + clients ANTES del fetch Tango ──
+    // Necesario para aplicar el filtro 2 (BAN debe existir en CRM).
+    const banRows = await crmPool.query(
+      `SELECT id, ban_number, client_id, account_type FROM bans`
+    );
+    const banByNumber = new Map();
+    for (const b of banRows.rows) banByNumber.set(b.ban_number, b);
+
+    const clientRows = await crmPool.query(
+      `SELECT id, name, salesperson_id FROM clients`
+    );
+    const clientByName = new Map();
+    const clientById = new Map();
+    for (const c of clientRows.rows) {
+      clientByName.set((c.name || '').trim().toUpperCase(), c);
+      clientById.set(c.id, c);
+    }
+
+    // ── 2. Fetch ventas Tango con filtro 1 (ventatipoid permitido) ──
     const tangoResult = await legacyPool.query(`
       SELECT DISTINCT
         v.ventaid,
         TRIM(v.ban::text) AS ban,
         CASE
-          WHEN v.ventatipoid IN (138, 139)
+          WHEN v.ventatipoid IN (138, 139, 25, 26)
             THEN COALESCE(NULLIF(TRIM(v.numerocelularactivado::text), ''), NULLIF(TRIM(v.status), ''))
           ELSE COALESCE(NULLIF(TRIM(v.status), ''), NULLIF(TRIM(v.numerocelularactivado::text), ''))
         END AS phone,
@@ -399,24 +428,64 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
       LEFT JOIN clientecredito cc ON v.clientecreditoid = cc.clientecreditoid
       LEFT JOIN tipoplan tp ON v.codigovoz = tp.codigovoz
       LEFT JOIN vendedor vd ON v.vendedorid = vd.vendedorid
-      WHERE v.ventatipoid IN (138, 139, 140, 141)
+      WHERE v.ventatipoid IN (138, 139, 140, 141, 25, 26)
         AND v.activo = true
-        AND (v.ventatipoid IN (138, 139) OR v.fechaactivacion >= '2026-01-01')
+        AND (v.ventatipoid IN (138, 139, 25, 26) OR v.fechaactivacion >= '2026-01-01')
       ORDER BY COALESCE(TRIM(cc.nombre), 'SIN NOMBRE'), TRIM(v.ban::text), v.ventaid
     `);
-    stats.tango_ventas = tangoResult.rows.length;
-    console.log(`[SYNC] ${stats.tango_ventas} ventas activas en Tango`);
+    console.log(`[SYNC] ${tangoResult.rows.length} ventas Tango pasaron filtro 1 (ventatipoid)`);
 
+    // ── 3. Filtro 2 en JS: BAN debe existir en CRM. Las que no, van a external_sales. ──
+    const externalSales = [];
+    const ventasValidas = [];
+    for (const v of tangoResult.rows) {
+      const banNum = String(v.ban || '').trim();
+      if (!banNum) {
+        externalSales.push({
+          tango_ventaid: Number(v.ventaid),
+          ban: '',
+          ventatipoid: Number(v.ventatipoid),
+          fechaactivacion: v.fechaactivacion ? String(v.fechaactivacion).slice(0, 10) : null,
+          vendedor: v.vendedor || null,
+          cliente: v.cliente || null,
+          com_empresa: Number(v.com_empresa || 0),
+          com_vendedor: Number(v.com_vendedor || 0),
+          motivo: 'sin_ban',
+        });
+        continue;
+      }
+      if (!banByNumber.has(banNum)) {
+        externalSales.push({
+          tango_ventaid: Number(v.ventaid),
+          ban: banNum,
+          ventatipoid: Number(v.ventatipoid),
+          fechaactivacion: v.fechaactivacion ? String(v.fechaactivacion).slice(0, 10) : null,
+          vendedor: v.vendedor || null,
+          cliente: v.cliente || null,
+          com_empresa: Number(v.com_empresa || 0),
+          com_vendedor: Number(v.com_vendedor || 0),
+          motivo: 'ban_no_existe_en_crm',
+        });
+        continue;
+      }
+      ventasValidas.push(v);
+    }
+    stats.tango_ventas = tangoResult.rows.length;
+    stats.tango_ventas_validas = ventasValidas.length;
+    stats.tango_ventas_external = externalSales.length;
+    console.log(`[SYNC] ${stats.tango_ventas} totales | ${stats.tango_ventas_validas} válidas | ${stats.tango_ventas_external} external (BAN no existe en CRM)`);
+
+    // ── 4. Pre-procesamiento sobre ventasValidas ──
     const banTypeByBan = new Map();
     const activePhonesByBan = new Map();
-    for (const row of tangoResult.rows) {
+    for (const row of ventasValidas) {
       const banNum = String(row.ban || '').trim();
       if (!banNum) continue;
 
       const ventaTipo = Number(row.ventatipoid);
       const current = banTypeByBan.get(banNum) || { hasMobile: false, hasFijo: false };
-      if (ventaTipo === 138 || ventaTipo === 139) current.hasMobile = true;
-      if (ventaTipo === 140 || ventaTipo === 141) current.hasFijo = true;
+      if (MOBILE_TIPOS.includes(ventaTipo)) current.hasMobile = true;
+      if (FIJO_TIPOS.includes(ventaTipo)) current.hasFijo = true;
       banTypeByBan.set(banNum, current);
 
       const normalizedPhone = String(row.phone || '').replace(/\D/g, '');
@@ -435,23 +504,6 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
       return null;
     };
 
-    // ── 2. Pre-load CRM bans + clients for fast lookup ──
-    const banRows = await crmPool.query(
-      `SELECT id, ban_number, client_id, account_type FROM bans`
-    );
-    const banByNumber = new Map();
-    for (const b of banRows.rows) banByNumber.set(b.ban_number, b);
-
-    const clientRows = await crmPool.query(
-      `SELECT id, name, salesperson_id FROM clients`
-    );
-    const clientByName = new Map();
-    const clientById = new Map();
-    for (const c of clientRows.rows) {
-      clientByName.set((c.name || '').trim().toUpperCase(), c);
-      clientById.set(c.id, c);
-    }
-
     // ── 3. Pre-load existing tango_ventaid subscribers ──
     const existingSubs = await crmPool.query(
       `SELECT id, tango_ventaid, ban_id, phone, plan, line_type, monthly_value, contract_term, contract_end_date, status
@@ -461,32 +513,30 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
     const subByVentaId = new Map();
     for (const s of existingSubs.rows) subByVentaId.set(Number(s.tango_ventaid), s);
 
-    // ── 3b. Cleanup: remove CRM subscribers whose Tango ventas are now inactive ──
+    // ── 3b. Cleanup DESACTIVADO TEMPORALMENTE ──
+    // Solo loguea lo que hubiera borrado. NO ejecuta DELETE.
+    // Para reactivar, descomentar las queries DELETE y restaurar subByVentaId.delete().
     const activeVentaIds = new Set(tangoResult.rows.map(v => Number(v.ventaid)));
-    let deactivated = 0;
+    const wouldDelete = [];
     for (const [ventaId, sub] of subByVentaId) {
       if (!activeVentaIds.has(ventaId)) {
-        // This subscriber's Tango venta is no longer active — remove report + subscriber
-        await crmPool.query(`DELETE FROM subscriber_reports WHERE subscriber_id = $1`, [sub.id]);
-        await crmPool.query(`DELETE FROM subscribers WHERE id = $1`, [sub.id]);
-        subByVentaId.delete(ventaId);
-        deactivated++;
-        alert('warn', sub.phone || '', `Venta ${ventaId} ya no activa en Tango → subscriber eliminado`);
+        wouldDelete.push({ ventaid: ventaId, subscriber_id: sub.id, phone: sub.phone || null });
+        alert('warn', sub.phone || '', `[CLEANUP DESACTIVADO] Venta ${ventaId} ya no activa en Tango — habria eliminado subscriber id ${sub.id}`);
       }
     }
-    if (deactivated > 0) {
-      stats.subscribers_deactivated = deactivated;
-      console.log(`[SYNC] ${deactivated} subscribers eliminados (ventas inactivas en Tango)`);
+    stats.subscribers_would_have_deactivated = wouldDelete.length;
+    if (wouldDelete.length > 0) {
+      console.log(`[SYNC] CLEANUP DESACTIVADO: habria eliminado ${wouldDelete.length} subscribers`);
     }
 
-    // ── 4. Process each venta ──
-    for (const v of tangoResult.rows) {
+    // ── 5. Process each venta valida ──
+    for (const v of ventasValidas) {
       try {
         const banNum = v.ban;
         const ventaTipo = Number(v.ventatipoid);
-        const isMobile = ventaTipo === 138 || ventaTipo === 139;
-        const isFijo = ventaTipo === 140 || ventaTipo === 141;
-        const lineType = (ventaTipo === 138 || ventaTipo === 140) ? 'REN' : 'NEW';
+        const isMobile = MOBILE_TIPOS.includes(ventaTipo);
+        const isFijo = FIJO_TIPOS.includes(ventaTipo);
+        const lineType = REN_TIPOS.includes(ventaTipo) ? 'REN' : 'NEW';
         const monthVal = v.fechaactivacion
           ? new Date(v.fechaactivacion).toISOString().slice(0, 7) + '-01'
           : null;
@@ -519,92 +569,62 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
         }
 
         // ── PASO 1: Resolver Client + BAN ──
-        let banRecord = banByNumber.get(banNum);
-        let clientId;
+        // El filtro 2 garantiza que banByNumber.has(banNum) === true.
+        // Defensa: si no se encuentra, se loguea como bug y se salta (no se crea nada).
+        const banRecord = banByNumber.get(banNum);
+        if (!banRecord) {
+          alert('error', banNum, `Bug: venta ${v.ventaid} paso filtro 2 pero BAN no encontrado al procesar`);
+          externalSales.push({
+            tango_ventaid: Number(v.ventaid),
+            ban: banNum,
+            ventatipoid: Number(v.ventatipoid),
+            fechaactivacion: v.fechaactivacion ? String(v.fechaactivacion).slice(0, 10) : null,
+            vendedor: v.vendedor || null,
+            cliente: v.cliente || null,
+            com_empresa: Number(v.com_empresa || 0),
+            com_vendedor: Number(v.com_vendedor || 0),
+            motivo: 'bug_ban_perdido_en_loop',
+          });
+          continue;
+        }
+        const clientId = banRecord.client_id;
+        stats.bans_matched++;
 
-        if (banRecord) {
-          clientId = banRecord.client_id;
-          stats.bans_matched++;
-          const currentAccountType = String(banRecord.account_type || '').trim().toUpperCase();
-          const desiredAccountType = desiredAccountTypeForBan(banNum);
-          if (desiredAccountType && currentAccountType !== desiredAccountType) {
-            await crmPool.query(`UPDATE bans SET account_type = $1, updated_at = NOW() WHERE id = $2`, [desiredAccountType, banRecord.id]);
-            banRecord.account_type = desiredAccountType;
-            alert('info', banNum, `BAN actualizado a tipo ${desiredAccountType}`);
-          }
-          const clientRecord = clientById.get(clientId);
-          const spId = findSalesperson(v.vendedor, v.tango_vendor_id, banNum);
-          const sourceClientName = String(v.cliente || '').trim();
-          const currentClientName = String(clientRecord?.name || '').trim();
-          const shouldBackfillClientName = Boolean(sourceClientName) && (
-            !currentClientName ||
-            currentClientName.toUpperCase() === 'SIN NOMBRE'
-          );
+        const currentAccountType = String(banRecord.account_type || '').trim().toUpperCase();
+        const desiredAccountType = desiredAccountTypeForBan(banNum);
+        if (desiredAccountType && currentAccountType !== desiredAccountType) {
+          await crmPool.query(`UPDATE bans SET account_type = $1, updated_at = NOW() WHERE id = $2`, [desiredAccountType, banRecord.id]);
+          banRecord.account_type = desiredAccountType;
+          alert('info', banNum, `BAN actualizado a tipo ${desiredAccountType}`);
+        }
+        const clientRecord = clientById.get(clientId);
+        const spId = findSalesperson(v.vendedor, v.tango_vendor_id, banNum);
+        const sourceClientName = String(v.cliente || '').trim();
+        const currentClientName = String(clientRecord?.name || '').trim();
+        const shouldBackfillClientName = Boolean(sourceClientName) && (
+          !currentClientName ||
+          currentClientName.toUpperCase() === 'SIN NOMBRE'
+        );
 
-          if (shouldBackfillClientName) {
-            await crmPool.query(`UPDATE clients SET name = $1 WHERE id = $2`, [sourceClientName, clientId]);
-            alert('info', banNum, `Nombre de cliente recuperado desde Tango: ${sourceClientName}`);
-            if (clientRecord) {
-              clientRecord.name = sourceClientName;
-            } else {
-              clientById.set(clientId, { id: clientId, name: sourceClientName, salesperson_id: spId || null });
-            }
-            clientByName.set(sourceClientName.toUpperCase(), clientById.get(clientId));
-          }
-
-          if (spId && (!clientRecord?.salesperson_id || clientRecord.salesperson_id !== spId)) {
-            await crmPool.query(`UPDATE clients SET salesperson_id = $1 WHERE id = $2`, [spId, clientId]);
-            alert('info', banNum, `Vendedor actualizado: ${v.vendedor} → cliente ${clientRecord?.name || v.cliente}`);
-            if (clientRecord) {
-              clientRecord.salesperson_id = spId;
-            } else {
-              clientById.set(clientId, { id: clientId, name: v.cliente, salesperson_id: spId });
-            }
-          }
-        } else {
-          // BAN no existe → buscar/crear cliente, luego crear BAN
-          const clientNameUpper = (v.cliente || 'SIN NOMBRE').toUpperCase();
-          let clientRecord = clientByName.get(clientNameUpper);
-
+        if (shouldBackfillClientName) {
+          await crmPool.query(`UPDATE clients SET name = $1 WHERE id = $2`, [sourceClientName, clientId]);
+          alert('info', banNum, `Nombre de cliente recuperado desde Tango: ${sourceClientName}`);
           if (clientRecord) {
-            clientId = clientRecord.id;
-            stats.clients_matched++;
-
-            // Forzar update de salesperson si Tango trae vendedor y es diferente o null en CRM
-            const spId = findSalesperson(v.vendedor, v.tango_vendor_id, banNum);
-            if (spId && clientRecord.salesperson_id !== spId) {
-              await crmPool.query(`UPDATE clients SET salesperson_id = $1 WHERE id = $2`, [spId, clientId]);
-              alert('info', banNum, `Vendedor actualizado: ${v.vendedor} → cliente ${v.cliente}`);
-              clientRecord.salesperson_id = spId; // Mantener actualizado en cache
-            }
+            clientRecord.name = sourceClientName;
           } else {
-            // Create client
-            const spId = findSalesperson(v.vendedor, v.tango_vendor_id, banNum);
-            if (!spId && v.vendedor) {
-              alert('error', banNum, `Vendedor '${v.vendedor}' sin match en salespeople`);
-            }
-            const newClient = await crmPool.query(
-              `INSERT INTO clients (name, salesperson_id) VALUES ($1, $2) RETURNING id`,
-              [v.cliente, spId]
-            );
-            clientId = newClient.rows[0].id;
-            const newClientRecord = { id: clientId, name: v.cliente, salesperson_id: spId };
-            clientByName.set(clientNameUpper, newClientRecord);
-            clientById.set(clientId, newClientRecord);
-            stats.clients_created++;
-            alert('info', banNum, `Cliente creado: ${v.cliente}`);
+            clientById.set(clientId, { id: clientId, name: sourceClientName, salesperson_id: spId || null });
           }
+          clientByName.set(sourceClientName.toUpperCase(), clientById.get(clientId));
+        }
 
-          // Create BAN
-          const accountType = desiredAccountTypeForBan(banNum) || (isFijo ? 'FIJO' : 'PYMES');
-          const newBan = await crmPool.query(
-            `INSERT INTO bans (client_id, ban_number, account_type, status) VALUES ($1, $2, $3, 'A') RETURNING id`,
-            [clientId, banNum, accountType]
-          );
-          banRecord = { id: newBan.rows[0].id, ban_number: banNum, client_id: clientId, account_type: accountType };
-          banByNumber.set(banNum, banRecord);
-          stats.bans_created++;
-          alert('info', banNum, `BAN creado: ${banNum} (${accountType}) bajo ${v.cliente}`);
+        if (spId && (!clientRecord?.salesperson_id || clientRecord.salesperson_id !== spId)) {
+          await crmPool.query(`UPDATE clients SET salesperson_id = $1 WHERE id = $2`, [spId, clientId]);
+          alert('info', banNum, `Vendedor actualizado: ${v.vendedor} → cliente ${clientRecord?.name || v.cliente}`);
+          if (clientRecord) {
+            clientRecord.salesperson_id = spId;
+          } else {
+            clientById.set(clientId, { id: clientId, name: v.cliente, salesperson_id: spId });
+          }
         }
 
         // ── PASO 2: Resolver Subscriber via tango_ventaid ──
@@ -753,13 +773,21 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
         }
 
         // ── PASO 3: Upsert subscriber_report ──
+        // Protege company_earnings cargado manualmente: solo se actualiza si es NULL o = 0.
+        // vendor_commission se sigue actualizando siempre (acordado con negocio).
         await crmPool.query(`
           INSERT INTO subscriber_reports (subscriber_id, report_month, company_earnings, vendor_commission, created_at, updated_at)
           VALUES ($1, $2::date, $3, $4, NOW(), NOW())
           ON CONFLICT (subscriber_id, report_month)
-          DO UPDATE SET company_earnings = EXCLUDED.company_earnings,
-                        vendor_commission = EXCLUDED.vendor_commission,
-                        updated_at = NOW()
+          DO UPDATE SET
+            company_earnings = CASE
+              WHEN subscriber_reports.company_earnings IS NULL
+                OR subscriber_reports.company_earnings = 0
+              THEN EXCLUDED.company_earnings
+              ELSE subscriber_reports.company_earnings
+            END,
+            vendor_commission = EXCLUDED.vendor_commission,
+            updated_at = NOW()
         `, [subscriberId, monthVal, comEmpresa, comVendedor]);
         stats.reports_upserted++;
 
@@ -974,9 +1002,30 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
       console.error('[SYNC] Error limpiando duplicados legacy:', mergeErr);
     }
 
-    // ── 5. Summary ──
+    // ── 6. Summary ──
     console.log(`[SYNC] Completado:`, JSON.stringify(stats));
-    res.json({ success: true, stats, alerts });
+
+    const externalMotivos = externalSales.reduce((acc, e) => {
+      acc[e.motivo] = (acc[e.motivo] || 0) + 1;
+      return acc;
+    }, {});
+
+    res.json({
+      success: true,
+      stats,
+      alerts,
+      external_sales: {
+        count: externalSales.length,
+        sample: externalSales.slice(0, 200),
+        truncated: externalSales.length > 200,
+        motivos: externalMotivos,
+      },
+      cleanup_disabled: {
+        would_have_deactivated: wouldDelete.length,
+        sample: wouldDelete.slice(0, 200),
+        truncated: wouldDelete.length > 200,
+      },
+    });
 
   } catch (error) {
     console.error('[SYNC] Error general:', error);
