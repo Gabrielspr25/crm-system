@@ -378,13 +378,13 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
       return null;
     }
 
-    // ── 0b. Tipos permitidos (FASE 1 estricta) ──
-    // FASE 1: solo PYMES (138-141) + Claro Update (25, 26).
-    // FASE 2 (no incluida todavia): 121 (2 Play), 41-50 (3 Play *).
+    // ── 0b. Tipos permitidos (FASE 2) ──
+    // FASE 1: PYMES (138-141) + Claro Update (25, 26).
+    // FASE 2: + 2 Play (121) + 3 Play (41-50). Todos cuentan como fijo_new.
     const MOBILE_TIPOS = [138, 139, 25, 26];
-    const FIJO_TIPOS = [140, 141];
+    const FIJO_TIPOS = [140, 141, 121, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50];
     const REN_TIPOS = [138, 140, 26];
-    // NEW: 139, 141, 25 (cualquier ventatipoid no-REN cae en NEW por default)
+    // NEW: 139, 141, 25, 121, 41-50 (cualquier ventatipoid no-REN cae en NEW por default)
 
     // ── 1. Pre-load CRM bans + clients ANTES del fetch Tango ──
     // Necesario para aplicar el filtro 2 (BAN debe existir en CRM).
@@ -428,7 +428,12 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
       LEFT JOIN clientecredito cc ON v.clientecreditoid = cc.clientecreditoid
       LEFT JOIN tipoplan tp ON v.codigovoz = tp.codigovoz
       LEFT JOIN vendedor vd ON v.vendedorid = vd.vendedorid
-      WHERE v.ventatipoid IN (138, 139, 140, 141, 25, 26)
+      WHERE v.ventatipoid IN (
+          138, 139, 140, 141,
+          25, 26,
+          121,
+          41, 42, 43, 44, 45, 46, 47, 48, 49, 50
+        )
         AND v.activo = true
         AND (v.ventatipoid IN (138, 139, 25, 26) OR v.fechaactivacion >= '2026-01-01')
       ORDER BY COALESCE(TRIM(cc.nombre), 'SIN NOMBRE'), TRIM(v.ban::text), v.ventaid
