@@ -6,6 +6,7 @@ import {
   CheckSquare,
   Loader2,
   Phone,
+  ShieldAlert,
   Target,
 } from "lucide-react";
 import { useApi } from "@/react-app/hooks/useApi";
@@ -232,6 +233,23 @@ export default function MyDay() {
         )}
       </header>
 
+      {overdueTasks.length > 0 && (
+        <div className="bg-red-900/40 border-2 border-red-500 rounded-lg p-4 flex items-start gap-3">
+          <ShieldAlert className="w-6 h-6 text-red-300 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-base font-semibold text-red-100">
+              Tienes {overdueTasks.length} tarea
+              {overdueTasks.length === 1 ? "" : "s"} atrasada
+              {overdueTasks.length === 1 ? "" : "s"} — resuélvela
+              {overdueTasks.length === 1 ? "" : "s"} antes de continuar
+            </p>
+            <p className="text-xs text-red-200/80 mt-0.5">
+              Las acciones recomendadas se desbloquean cuando estés al día.
+            </p>
+          </div>
+        </div>
+      )}
+
       <section className="bg-slate-800/50 border border-slate-700 rounded-lg p-4">
         <h2 className="text-sm font-semibold uppercase text-slate-400 flex items-center gap-2 mb-3">
           <CheckSquare className="w-4 h-4" />
@@ -391,6 +409,7 @@ export default function MyDay() {
         )}
       </section>
 
+      {overdueTasks.length === 0 && (
       <section className="bg-slate-800/50 border border-slate-700 rounded-lg p-4">
         <h2 className="text-sm font-semibold uppercase text-slate-400 flex items-center gap-2 mb-3">
           <AlertTriangle className="w-4 h-4" />
@@ -430,6 +449,7 @@ export default function MyDay() {
           </ul>
         )}
       </section>
+      )}
 
       {hasError && (
         <div className="bg-red-900/30 border border-red-700 text-red-200 text-xs rounded p-3">
