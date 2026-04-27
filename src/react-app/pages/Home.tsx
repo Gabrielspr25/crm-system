@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { AlertCircle, BarChart3, Check, ChevronDown, ClipboardCheck, ClipboardList, LayoutDashboard, Loader2, Plus, Target, TrendingUp, Users } from "lucide-react";
+import { AlertCircle, BarChart3, Check, ChevronDown, ClipboardCheck, ClipboardList, LayoutDashboard, Loader2, Plus, RefreshCw, ShieldAlert, Target, TrendingUp, Users } from "lucide-react";
 import { Link } from "react-router";
 import { useApi } from "@/react-app/hooks/useApi";
 import { authFetch, getCurrentUser } from "@/react-app/utils/auth";
@@ -73,6 +73,38 @@ const formatUSD = (n: number) =>
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(Number.isFinite(n) ? n : 0);
+
+type ExternalSale = {
+  tango_ventaid: number;
+  ban: string;
+  ventatipoid: number;
+  fechaactivacion: string | null;
+  vendedor: string | null;
+  cliente: string | null;
+  com_empresa: number;
+  com_vendedor: number;
+  motivo: string;
+};
+
+type DescuadreState = "idle" | "loading" | "success" | "error";
+
+type DescuadreData = {
+  count: number;
+  sample: ExternalSale[];
+  motivos: Record<string, number>;
+  truncated: boolean;
+  lastChecked: string;
+};
+
+// Etiqueta amigable para ventatipoid (FASE 1: 138-141 + 25, 26).
+const VENTATIPO_LABELS: Record<number, string> = {
+  138: "Móvil REN (PYMES)",
+  139: "Móvil NEW (PYMES)",
+  140: "Fijo REN (PYMES)",
+  141: "Fijo NEW (PYMES)",
+  25: "Móvil NEW (Claro Update)",
+  26: "Móvil REN (Claro Update)",
+};
 
 // Mismo umbral que usa el backend (clientController.js: SCORING_EXPIRING_DAYS).
 const EXPIRING_DAYS = 90;
@@ -307,6 +339,38 @@ export default function Home() {
   const [completingTaskId, setCompletingTaskId] = useState<number | null>(null);
   const [showCompletedFlag, setShowCompletedFlag] = useState(false);
 
+  // Estado del acordeon "Descuadre CRM vs Tango". Solo admin/supervisor lo ven.
+  // No se persiste; se reinicia en cada carga del panel.
+  const [descuadreState, setDescuadreState] = useState<DescuadreState>("idle");
+  const [descuadreData, setDescuadreData] = useState<DescuadreData | null>(null);
+  const [descuadreError, setDescuadreError] = useState<string | null>(null);
+  const [showDescuadreDetail, setShowDescuadreDetail] = useState(false);
+
+  const handleDescuadreCheck = async () => {
+    setDescuadreState("loading");
+    setDescuadreError(null);
+    try {
+      const response = await authFetch("/api/tango/sync", { method: "POST" });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const json = await response.json();
+      const ext = json.external_sales || {};
+      setDescuadreData({
+        count: Number(ext.count || 0),
+        sample: Array.isArray(ext.sample) ? ext.sample : [],
+        motivos: ext.motivos || {},
+        truncated: Boolean(ext.truncated),
+        lastChecked: new Date().toLocaleTimeString("es-PR", { hour: "2-digit", minute: "2-digit" }),
+      });
+      setDescuadreState("success");
+    } catch (err) {
+      console.error("Error verificando descuadre:", err);
+      setDescuadreError(err instanceof Error ? err.message : "Error desconocido");
+      setDescuadreState("error");
+    }
+  };
+
   const handleCompleteTask = async (taskId: number) => {
     setCompletingTaskId(taskId);
     try {
@@ -392,6 +456,168 @@ export default function Home() {
             ))}
           </div>
         </section>
+      )}
+
+      {/* (1.5) Descuadre CRM vs Tango — solo admin/supervisor */}
+      {isAdmin && (
+        <details className="rounded-lg border border-slate-700 bg-slate-800/50 group" open={descuadreState === "success" && descuadreData !== null && descuadreData.count > 0}>
+          <summary className="cursor-pointer p-4 flex items-center justify-between list-none [&::-webkit-details-marker]:hidden gap-3">
+            <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+              <ShieldAlert className={`w-5 h-5 ${descuadreState === "success" && descuadreData && descuadreData.count > 0 ? "text-amber-300" : "text-slate-400"}`} />
+              Descuadre CRM vs Tango
+            </h2>
+            <div className="flex items-center gap-3">
+              {descuadreState === "success" && descuadreData && (
+                <span className={`text-sm ${descuadreData.count > 0 ? "text-amber-300" : "text-emerald-300"}`}>
+                  {descuadreData.count > 0
+                    ? `${descuadreData.count.toLocaleString("es-PR")} fuera`
+                    : "Sin descuadre"}
+                </span>
+              )}
+              <ChevronDown className="w-4 h-4 text-slate-400 transition-transform group-open:rotate-180" />
+            </div>
+          </summary>
+          <div className="p-4 pt-0">
+            {descuadreState === "idle" && (
+              <div className="space-y-3">
+                <p className="text-sm text-slate-400">
+                  Detecta ventas que están en Tango pero no en el CRM
+                  (BAN no existe en CRM o venta sin BAN).
+                </p>
+                <p className="text-xs text-amber-200/80 bg-amber-500/10 border border-amber-500/20 rounded p-2">
+                  Ejecutar verificación dispara un sync con Tango (puede tardar unos segundos).
+                </p>
+                <button
+                  type="button"
+                  onClick={handleDescuadreCheck}
+                  className="inline-flex items-center gap-2 rounded border border-blue-500/40 bg-blue-500/15 hover:bg-blue-500/25 text-blue-200 px-3 py-1.5 text-sm font-medium transition-colors"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  Ejecutar verificación de descuadre (sync Tango)
+                </button>
+              </div>
+            )}
+
+            {descuadreState === "loading" && (
+              <div className="h-24 flex items-center justify-center gap-2 text-slate-400">
+                <Loader2 className="w-5 h-5 animate-spin" />
+                <span className="text-sm">Sincronizando con Tango...</span>
+              </div>
+            )}
+
+            {descuadreState === "error" && (
+              <div className="space-y-3">
+                <p className="text-sm text-red-300 bg-red-500/10 border border-red-500/30 rounded p-2">
+                  Error: {descuadreError || "no se pudo completar el sync"}
+                </p>
+                <button
+                  type="button"
+                  onClick={handleDescuadreCheck}
+                  className="inline-flex items-center gap-2 rounded border border-red-500/40 bg-red-500/15 hover:bg-red-500/25 text-red-200 px-3 py-1.5 text-sm font-medium"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  Reintentar
+                </button>
+              </div>
+            )}
+
+            {descuadreState === "success" && descuadreData && (
+              <div className="space-y-3">
+                {descuadreData.count === 0 ? (
+                  <p className="text-sm text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 rounded p-2">
+                    Sin descuadre. Todas las ventas Tango filtradas están en CRM.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    <p className="text-sm text-amber-200">
+                      <strong className="text-amber-100">{descuadreData.count.toLocaleString("es-PR")}</strong> ventas Tango fuera del CRM.
+                    </p>
+                    <div className="text-xs text-slate-400 space-y-0.5">
+                      {Object.entries(descuadreData.motivos).map(([motivo, n]) => (
+                        <div key={motivo}>
+                          <span className="text-slate-500">{motivo}:</span>{" "}
+                          <span className="text-slate-300">{Number(n).toLocaleString("es-PR")}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex items-center gap-3 text-xs text-slate-500">
+                  <span>Última verificación: {descuadreData.lastChecked}</span>
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={handleDescuadreCheck}
+                    className="inline-flex items-center gap-2 rounded border border-slate-600 bg-slate-700/40 hover:border-blue-400/50 text-slate-200 hover:text-blue-200 px-3 py-1.5 text-sm font-medium transition-colors"
+                  >
+                    <RefreshCw className="w-4 h-4" />
+                    Verificar de nuevo
+                  </button>
+                  {descuadreData.count > 0 && descuadreData.sample.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setShowDescuadreDetail((v) => !v)}
+                      className="inline-flex items-center gap-2 rounded border border-amber-500/40 bg-amber-500/15 hover:bg-amber-500/25 text-amber-200 px-3 py-1.5 text-sm font-medium transition-colors"
+                    >
+                      {showDescuadreDetail ? "Ocultar detalle" : `Ver detalle (${descuadreData.sample.length} ejemplos)`}
+                    </button>
+                  )}
+                </div>
+
+                {showDescuadreDetail && descuadreData.count > 0 && descuadreData.sample.length > 0 && (
+                  <div className="space-y-2">
+                    {descuadreData.truncated && (
+                      <p className="text-xs text-slate-400">
+                        Mostrando primeros {descuadreData.sample.length.toLocaleString("es-PR")} de {descuadreData.count.toLocaleString("es-PR")} (truncado).
+                      </p>
+                    )}
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-slate-700 text-slate-400">
+                            <th className="text-left py-2 pr-3 font-semibold">BAN</th>
+                            <th className="text-left py-2 px-3 font-semibold">Cliente</th>
+                            <th className="text-left py-2 px-3 font-semibold">Vendedor</th>
+                            <th className="text-right py-2 px-3 font-semibold">Monto</th>
+                            <th className="text-left py-2 pl-3 font-semibold">Tipo</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-700/60">
+                          {descuadreData.sample.map((s, i) => {
+                            const tipoLabel = VENTATIPO_LABELS[s.ventatipoid] || `Tipo ${s.ventatipoid}`;
+                            return (
+                              <tr key={`${s.tango_ventaid}-${i}`} className="text-slate-200">
+                                <td className="py-2 pr-3">
+                                  {s.ban ? (
+                                    <Link
+                                      to={`/clientes?searchBan=${encodeURIComponent(s.ban)}`}
+                                      className="text-blue-300 hover:text-blue-200 font-mono text-xs"
+                                    >
+                                      {s.ban}
+                                    </Link>
+                                  ) : (
+                                    <span className="text-slate-500 italic text-xs">sin BAN</span>
+                                  )}
+                                </td>
+                                <td className="py-2 px-3 text-slate-300 text-xs">{s.cliente || "-"}</td>
+                                <td className="py-2 px-3 text-slate-300 text-xs">{s.vendedor || "-"}</td>
+                                <td className="py-2 px-3 text-right text-slate-300 text-xs">{formatUSD(Number(s.com_empresa || 0))}</td>
+                                <td className="py-2 pl-3 text-slate-400 text-xs">{tipoLabel}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </details>
       )}
 
       {/* (2) Resumen ejecutivo — acordeón abierto */}
