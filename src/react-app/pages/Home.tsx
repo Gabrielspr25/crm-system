@@ -3,6 +3,7 @@ import { AlertCircle, BarChart3, Check, ChevronDown, ClipboardCheck, ClipboardLi
 import { Link } from "react-router";
 import { useApi } from "@/react-app/hooks/useApi";
 import { authFetch, getCurrentUser } from "@/react-app/utils/auth";
+import { isPermissionAllowed } from "@/react-app/utils/permissions";
 
 type Client = {
   id: string | number;
@@ -33,6 +34,7 @@ type Task = {
   description?: string | null;
   status?: string | null;
   priority?: string | null;
+  due_date?: string | null;
   related_client_id?: string | null;
   assigned_salesperson_id?: string | null;
   created_at?: string | null;
@@ -325,6 +327,76 @@ export default function Home() {
       pct: stats.total > 0 ? Math.round((stats.done / stats.total) * 100) : 0,
     }))
     .sort((a, b) => (b.total - a.total) || a.name.localeCompare(b.name));
+
+  // Gate del bloque "Actividad de vendedores hoy" — usa el arbol de permisos
+  // existente (vendors.view), no roles hardcodeados.
+  const canSeeTeamActivity = isPermissionAllowed("vendors.view", currentUser);
+
+  // Actividad operativa por vendedor (hoy). Solo se construye si el permiso
+  // esta otorgado para no gastar ciclos en datos que no se van a renderizar.
+  type ActivityState = "red" | "green" | "amber" | "gray";
+  type ActivityRow = {
+    key: string;
+    name: string;
+    pending: number;
+    overdue: number;
+    doneToday: number;
+    state: ActivityState;
+  };
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const activityRows: ActivityRow[] = canSeeTeamActivity
+    ? (() => {
+        type Bucket = { pending: number; overdue: number; doneToday: number };
+        const buckets = new Map<string, Bucket>();
+        for (const t of tasksRaw) {
+          const key = t.assigned_salesperson_id
+            ? String(t.assigned_salesperson_id)
+            : "unassigned";
+          let bucket = buckets.get(key);
+          if (!bucket) {
+            bucket = { pending: 0, overdue: 0, doneToday: 0 };
+            buckets.set(key, bucket);
+          }
+          const status = String(t.status || "").toLowerCase();
+          const dueKey = t.due_date ? String(t.due_date).slice(0, 10) : null;
+          const updKey = t.updated_at
+            ? String(t.updated_at).slice(0, 10)
+            : null;
+          if (status === "pending") {
+            bucket.pending += 1;
+            if (dueKey && dueKey < todayKey) bucket.overdue += 1;
+          } else if (status === "done" && updKey === todayKey) {
+            bucket.doneToday += 1;
+          }
+        }
+        return Array.from(buckets.entries())
+          .map(([key, b]) => {
+            const name =
+              key === "unassigned"
+                ? "Sin asignar"
+                : vendorNameBySpId.get(key) || `${key.slice(0, 8)}…`;
+            let state: ActivityState;
+            if (b.overdue > 0) state = "red";
+            else if (b.doneToday > 0) state = "green";
+            else if (b.pending > 0) state = "amber";
+            else state = "gray";
+            return {
+              key,
+              name,
+              pending: b.pending,
+              overdue: b.overdue,
+              doneToday: b.doneToday,
+              state,
+            };
+          })
+          .sort(
+            (a, b) =>
+              b.overdue - a.overdue ||
+              b.pending - a.pending ||
+              a.name.localeCompare(b.name),
+          );
+      })()
+    : [];
 
   // Alertas inteligentes derivadas del desempeno por vendedor.
   const alerts = buildAlerts(performanceRows);
@@ -950,6 +1022,104 @@ export default function Home() {
           )}
         </div>
       </details>
+
+      {/* (4.5) Actividad de vendedores hoy — solo con permiso vendors.view */}
+      {canSeeTeamActivity && (
+        <details className="rounded-lg border border-slate-700 bg-slate-800/50 group">
+          <summary className="cursor-pointer p-4 flex items-center justify-between list-none [&::-webkit-details-marker]:hidden gap-3">
+            <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+              <Users className="w-5 h-5 text-blue-300" />
+              Actividad de vendedores hoy
+              <span className="text-sm font-normal text-slate-400">
+                ({activityRows.length}{" "}
+                {activityRows.length === 1 ? "vendedor" : "vendedores"})
+              </span>
+            </h2>
+            <ChevronDown className="w-4 h-4 text-slate-400 transition-transform group-open:rotate-180" />
+          </summary>
+          <div className="border-t border-slate-700 p-4">
+            {tasksApi.loading ? (
+              <p className="text-sm text-slate-400 italic">Cargando...</p>
+            ) : activityRows.length === 0 ? (
+              <p className="text-sm text-slate-400 italic">
+                Sin actividad registrada.
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-xs uppercase text-slate-400 border-b border-slate-700">
+                      <th className="py-2 pr-3 font-medium">Vendedor</th>
+                      <th className="py-2 px-3 text-center font-medium">
+                        Pendientes
+                      </th>
+                      <th className="py-2 px-3 text-center font-medium">
+                        Atrasadas
+                      </th>
+                      <th className="py-2 px-3 text-center font-medium">
+                        Hechas hoy
+                      </th>
+                      <th className="py-2 pl-3 text-right font-medium">
+                        Estado
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {activityRows.map((row) => {
+                      const stateLabel =
+                        row.state === "red"
+                          ? "Atrasado"
+                          : row.state === "green"
+                            ? "Al día"
+                            : row.state === "amber"
+                              ? "Pendiente"
+                              : "Sin actividad";
+                      const stateCls =
+                        row.state === "red"
+                          ? "text-red-300 bg-red-500/10 border-red-500/30"
+                          : row.state === "green"
+                            ? "text-emerald-300 bg-emerald-500/10 border-emerald-500/30"
+                            : row.state === "amber"
+                              ? "text-amber-300 bg-amber-500/10 border-amber-500/30"
+                              : "text-slate-400 bg-slate-500/10 border-slate-500/30";
+                      return (
+                        <tr
+                          key={row.key}
+                          className="border-b border-slate-700/50 last:border-0"
+                        >
+                          <td className="py-2 pr-3 text-slate-100">
+                            {row.name}
+                          </td>
+                          <td className="py-2 px-3 text-center text-slate-300">
+                            {row.pending}
+                          </td>
+                          <td
+                            className={`py-2 px-3 text-center font-semibold ${row.overdue > 0 ? "text-red-300" : "text-slate-500"}`}
+                          >
+                            {row.overdue}
+                          </td>
+                          <td
+                            className={`py-2 px-3 text-center font-semibold ${row.doneToday > 0 ? "text-emerald-300" : "text-slate-500"}`}
+                          >
+                            {row.doneToday}
+                          </td>
+                          <td className="py-2 pl-3 text-right">
+                            <span
+                              className={`inline-block text-xs px-2 py-0.5 rounded border ${stateCls}`}
+                            >
+                              {stateLabel}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </details>
+      )}
 
       {/* (5) Metas comerciales — acordeón colapsado */}
       <details className="rounded-lg border border-slate-700 bg-slate-800/50 group">
