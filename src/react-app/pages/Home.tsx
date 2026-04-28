@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { AlertCircle, BarChart3, Check, ChevronDown, ClipboardCheck, ClipboardList, LayoutDashboard, Loader2, Plus, RefreshCw, ShieldAlert, Target, TrendingUp, Users } from "lucide-react";
 import { Link } from "react-router";
 import { useApi } from "@/react-app/hooks/useApi";
@@ -277,6 +277,17 @@ export default function Home() {
   const isAdmin = role === "admin" || role === "supervisor";
   const mySalespersonId = currentUser?.salespersonId ? String(currentUser.salespersonId) : null;
   const [adminScope, setAdminScope] = useState<"all" | "mine">("all");
+  const [expandedActivityKeys, setExpandedActivityKeys] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const toggleActivityExpand = (key: string) => {
+    setExpandedActivityKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
 
   // Vendedor solo ve sus tareas (las sin vendedor quedan ocultas para el vendedor).
   // Admin/supervisor ve todas; con toggle "mine" filtra a las suyas si tiene salespersonId.
@@ -397,6 +408,33 @@ export default function Home() {
           );
       })()
     : [];
+
+  // Detalle de tareas atrasadas por vendedor (top 5, ordenadas por due_date asc).
+  // Solo se materializa si el bloque es visible.
+  const OVERDUE_DETAIL_LIMIT = 5;
+  const overdueDetailByVendor = canSeeTeamActivity
+    ? (() => {
+        const grouped = new Map<string, Task[]>();
+        for (const t of tasksRaw) {
+          const status = String(t.status || "").toLowerCase();
+          if (status !== "pending") continue;
+          const dueKey = t.due_date ? String(t.due_date).slice(0, 10) : null;
+          if (!dueKey || dueKey >= todayKey) continue;
+          const key = t.assigned_salesperson_id
+            ? String(t.assigned_salesperson_id)
+            : "unassigned";
+          const list = grouped.get(key) || [];
+          list.push(t);
+          grouped.set(key, list);
+        }
+        for (const list of grouped.values()) {
+          list.sort((a, b) =>
+            String(a.due_date || "").localeCompare(String(b.due_date || "")),
+          );
+        }
+        return grouped;
+      })()
+    : new Map<string, Task[]>();
 
   // Alertas inteligentes derivadas del desempeno por vendedor.
   const alerts = buildAlerts(performanceRows);
@@ -1059,8 +1097,11 @@ export default function Home() {
                       <th className="py-2 px-3 text-center font-medium">
                         Hechas hoy
                       </th>
-                      <th className="py-2 pl-3 text-right font-medium">
+                      <th className="py-2 px-3 text-right font-medium">
                         Estado
+                      </th>
+                      <th className="py-2 pl-3 text-right font-medium w-24">
+                        {/* acciones */}
                       </th>
                     </tr>
                   </thead>
@@ -1082,35 +1123,121 @@ export default function Home() {
                             : row.state === "amber"
                               ? "text-amber-300 bg-amber-500/10 border-amber-500/30"
                               : "text-slate-400 bg-slate-500/10 border-slate-500/30";
+                      const isExpanded = expandedActivityKeys.has(row.key);
+                      const overdueList =
+                        overdueDetailByVendor.get(row.key) || [];
+                      const visibleOverdue = overdueList.slice(
+                        0,
+                        OVERDUE_DETAIL_LIMIT,
+                      );
+                      const extraOverdue = Math.max(
+                        0,
+                        overdueList.length - OVERDUE_DETAIL_LIMIT,
+                      );
                       return (
-                        <tr
-                          key={row.key}
-                          className="border-b border-slate-700/50 last:border-0"
-                        >
-                          <td className="py-2 pr-3 text-slate-100">
-                            {row.name}
-                          </td>
-                          <td className="py-2 px-3 text-center text-slate-300">
-                            {row.pending}
-                          </td>
-                          <td
-                            className={`py-2 px-3 text-center font-semibold ${row.overdue > 0 ? "text-red-300" : "text-slate-500"}`}
-                          >
-                            {row.overdue}
-                          </td>
-                          <td
-                            className={`py-2 px-3 text-center font-semibold ${row.doneToday > 0 ? "text-emerald-300" : "text-slate-500"}`}
-                          >
-                            {row.doneToday}
-                          </td>
-                          <td className="py-2 pl-3 text-right">
-                            <span
-                              className={`inline-block text-xs px-2 py-0.5 rounded border ${stateCls}`}
+                        <Fragment key={row.key}>
+                          <tr className="border-b border-slate-700/50 last:border-0">
+                            <td className="py-2 pr-3 text-slate-100">
+                              {row.name}
+                            </td>
+                            <td className="py-2 px-3 text-center text-slate-300">
+                              {row.pending}
+                            </td>
+                            <td
+                              className={`py-2 px-3 text-center font-semibold ${row.overdue > 0 ? "text-red-300" : "text-slate-500"}`}
                             >
-                              {stateLabel}
-                            </span>
-                          </td>
-                        </tr>
+                              {row.overdue}
+                            </td>
+                            <td
+                              className={`py-2 px-3 text-center font-semibold ${row.doneToday > 0 ? "text-emerald-300" : "text-slate-500"}`}
+                            >
+                              {row.doneToday}
+                            </td>
+                            <td className="py-2 px-3 text-right">
+                              <span
+                                className={`inline-block text-xs px-2 py-0.5 rounded border ${stateCls}`}
+                              >
+                                {stateLabel}
+                              </span>
+                            </td>
+                            <td className="py-2 pl-3 text-right">
+                              {row.overdue > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    toggleActivityExpand(row.key)
+                                  }
+                                  className="text-xs text-blue-300 hover:text-blue-200 underline-offset-2 hover:underline"
+                                >
+                                  {isExpanded
+                                    ? "Ocultar"
+                                    : `Ver atrasadas (${row.overdue})`}
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                          {isExpanded && row.overdue > 0 && (
+                            <tr className="bg-slate-900/40 border-b border-slate-700/50">
+                              <td colSpan={6} className="py-3 px-4">
+                                {visibleOverdue.length === 0 ? (
+                                  <p className="text-xs text-slate-400 italic">
+                                    Sin detalle disponible.
+                                  </p>
+                                ) : (
+                                  <ul className="space-y-1.5">
+                                    {visibleOverdue.map((t) => {
+                                      const cid = t.related_client_id
+                                        ? String(t.related_client_id)
+                                        : null;
+                                      const cname = cid
+                                        ? clientNameById.get(cid) || null
+                                        : null;
+                                      return (
+                                        <li
+                                          key={t.id}
+                                          className="text-xs flex items-start justify-between gap-3"
+                                        >
+                                          <div className="flex-1 min-w-0">
+                                            <span className="text-slate-100">
+                                              {t.title || "Sin título"}
+                                            </span>
+                                            {cname && cid ? (
+                                              <>
+                                                <span className="text-slate-500">
+                                                  {" · "}
+                                                </span>
+                                                <Link
+                                                  to={`/clientes?openClient=${cid}`}
+                                                  className="text-blue-300 hover:text-blue-200"
+                                                >
+                                                  {cname}
+                                                </Link>
+                                              </>
+                                            ) : (
+                                              <span className="text-slate-500">
+                                                {" · sin cliente"}
+                                              </span>
+                                            )}
+                                          </div>
+                                          <span className="text-red-300 whitespace-nowrap shrink-0">
+                                            Vencía{" "}
+                                            {formatDate(t.due_date || null)}
+                                          </span>
+                                        </li>
+                                      );
+                                    })}
+                                    {extraOverdue > 0 && (
+                                      <li className="text-xs text-slate-400 italic pt-1">
+                                        +{extraOverdue} más atrasada
+                                        {extraOverdue === 1 ? "" : "s"}
+                                      </li>
+                                    )}
+                                  </ul>
+                                )}
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
                       );
                     })}
                   </tbody>
