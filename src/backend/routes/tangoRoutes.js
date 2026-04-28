@@ -518,6 +518,21 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
     const subByVentaId = new Map();
     for (const s of existingSubs.rows) subByVentaId.set(Number(s.tango_ventaid), s);
 
+    // ── 3a. Pre-cargar fechaactivacion de Tango para los tango_ventaid existentes en CRM. ──
+    // Usado por PASO 1.5 (resolución de conflictos por phone_norm: la fecha más reciente gana).
+    const fechaByVentaid = new Map();
+    const existingVentaids = [...subByVentaId.keys()].filter((vid) => Number.isFinite(vid));
+    if (existingVentaids.length > 0) {
+      const fechaResult = await legacyPool.query(
+        `SELECT ventaid, fechaactivacion FROM venta WHERE ventaid = ANY($1::bigint[])`,
+        [existingVentaids]
+      );
+      for (const r of fechaResult.rows) {
+        const f = r.fechaactivacion ? String(r.fechaactivacion).slice(0, 10) : null;
+        if (f) fechaByVentaid.set(Number(r.ventaid), f);
+      }
+    }
+
     // ── 3b. Cleanup DESACTIVADO TEMPORALMENTE ──
     // Solo loguea lo que hubiera borrado. NO ejecuta DELETE.
     // Para reactivar, descomentar las queries DELETE y restaurar subByVentaId.delete().
@@ -734,6 +749,106 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
               stats.subscribers_updated++;
               matched = true;
               alert('info', banNum, `Subscriber vinculado por comisión: ${oldPhone} → ventaid ${v.ventaid}${phone ? ` (phone: ${phone})` : ''}`);
+            }
+          }
+
+          // ── PASO 1.5: Resolver conflicto por phone_norm (última fecha gana) ──
+          // Constraint phone_norm_uniq es GLOBAL: el mismo phone NO puede existir en
+          // dos filas. Antes del INSERT, verificamos si existe otro subscriber con ese
+          // phone en otro tango_ventaid (mismo BAN o no). Si Tango trae fecha más
+          // reciente con margen >3 días, movemos/actualizamos el existente. Si Tango
+          // es más viejo o equivalente, se ignora como histórico.
+          if (!matched && phone) {
+            const conflict = await crmPool.query(
+              `SELECT s.id, s.ban_id, s.tango_ventaid, s.created_at, s.updated_at, b.ban_number
+                 FROM subscribers s
+                 LEFT JOIN bans b ON b.id = s.ban_id
+                WHERE s.phone_norm = $1
+                  AND (s.tango_ventaid IS NULL OR s.tango_ventaid <> $2)
+                LIMIT 1`,
+              [phone, v.ventaid]
+            );
+
+            if (conflict.rows.length > 0) {
+              const c = conflict.rows[0];
+
+              // 1) Obtener fecha existente (PRIORIDAD: tango_ventaid → created_at → updated_at)
+              let existingDate = null;
+              if (c.tango_ventaid && fechaByVentaid.get(Number(c.tango_ventaid))) {
+                existingDate = fechaByVentaid.get(Number(c.tango_ventaid));
+              } else if (c.created_at) {
+                existingDate = c.created_at.toISOString().slice(0, 10);
+              } else if (c.updated_at) {
+                existingDate = c.updated_at.toISOString().slice(0, 10);
+              }
+
+              const newDate = v.fechaactivacion
+                ? String(v.fechaactivacion).slice(0, 10)
+                : null;
+
+              const sameBan = String(c.ban_id) === String(banRecord.id);
+
+              if (!newDate || !existingDate) {
+                alert('warn', banNum, `No se pudo comparar fechas para phone ${phone}`);
+                continue;
+              }
+
+              const newDateObj = new Date(newDate);
+              const existingDateObj = new Date(existingDate);
+
+              // Filtro de seguridad: solo mover si la diferencia supera 3 días
+              const diffDays = Math.abs((newDateObj - existingDateObj) / (1000 * 60 * 60 * 24));
+
+              if (newDateObj > existingDateObj && diffDays > 3) {
+                // Tango más reciente → UPDATE del existente
+                await crmPool.query(
+                  `UPDATE subscribers
+                     SET ban_id=$1,
+                         phone=$2,
+                         plan=$3,
+                         line_type=$4,
+                         monthly_value=$5,
+                         tango_ventaid=$6,
+                         contract_term=$7,
+                         contract_end_date=$8,
+                         status='activo',
+                         cancel_reason=NULL,
+                         updated_at=NOW()
+                   WHERE id=$9`,
+                  [
+                    banRecord.id,
+                    phone,
+                    planCode,
+                    lineType,
+                    monthlyValue,
+                    v.ventaid,
+                    contractTerm,
+                    contractEndDate,
+                    c.id,
+                  ]
+                );
+
+                subscriberId = c.id;
+                subByVentaId.set(Number(v.ventaid), { id: c.id, tango_ventaid: v.ventaid });
+                stats.subscribers_updated++;
+                matched = true;
+
+                alert(
+                  sameBan ? 'info' : 'warn',
+                  banNum,
+                  sameBan
+                    ? `Renovación: ventaid ${c.tango_ventaid || '∅'} → ${v.ventaid} (${existingDate} → ${newDate})`
+                    : `Movimiento: phone ${phone} de BAN ${c.ban_number} → ${banNum} (${existingDate} → ${newDate})`
+                );
+              } else {
+                // Venta vieja o diferencia <= 3 días → ignorar
+                alert(
+                  'info',
+                  banNum,
+                  `Histórico ignorado: phone ${phone} ya en BAN ${c.ban_number} (${existingDate}) vs Tango ${newDate}`
+                );
+                continue;
+              }
             }
           }
 
