@@ -569,6 +569,9 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
         const isMobile = MOBILE_TIPOS.includes(ventaTipo);
         const isFijo = FIJO_TIPOS.includes(ventaTipo);
         const lineType = REN_TIPOS.includes(ventaTipo) ? 'REN' : 'NEW';
+        // Tipo real de línea según ventatipoid Tango (independiente del account_type
+        // del BAN). Manda en comisiones/metas; CONVERGENTE solo es atributo del BAN.
+        const lineKind = isMobile ? 'movil' : (isFijo ? 'fijo' : null);
         const monthVal = v.fechaactivacion
           ? new Date(v.fechaactivacion).toISOString().slice(0, 7) + '-01'
           : null;
@@ -679,6 +682,7 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
             changes.push(`contract_end_date: '${existingSub.contract_end_date}'→'${contractEndDate}'`);
           }
           if ((existingSub.status || '').toLowerCase() !== 'activo') changes.push(`status: '${existingSub.status}'→'activo'`);
+          if ((existingSub.line_kind || null) !== lineKind) changes.push(`line_kind: '${existingSub.line_kind || '∅'}'→'${lineKind || '∅'}'`);
 
           if (changes.length > 0) {
             await crmPool.query(`
@@ -690,11 +694,12 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
                   monthly_value=$5,
                   contract_term=$6,
                   contract_end_date=$7,
+                  line_kind=$8,
                   status='activo',
                   cancel_reason=NULL,
                   updated_at=NOW()
-              WHERE id=$8
-            `, [banRecord.id, actualPhone, planCode, lineType, monthlyValue, contractTerm, contractEndDate, subscriberId]);
+              WHERE id=$9
+            `, [banRecord.id, actualPhone, planCode, lineType, monthlyValue, contractTerm, contractEndDate, lineKind, subscriberId]);
             stats.subscribers_updated++;
             alert('warn', banNum, `Subscriber actualizado (ventaid ${v.ventaid}): ${changes.join(', ')}`);
           }
@@ -716,11 +721,12 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
                     monthly_value=$4,
                     contract_term=$5,
                     contract_end_date=$6,
+                    line_kind=$7,
                     status='activo',
                     cancel_reason=NULL,
                     updated_at=NOW()
-                WHERE id=$7
-              `, [v.ventaid, planCode, lineType, monthlyValue, contractTerm, contractEndDate, subscriberId]);
+                WHERE id=$8
+              `, [v.ventaid, planCode, lineType, monthlyValue, contractTerm, contractEndDate, lineKind, subscriberId]);
               subByVentaId.set(Number(v.ventaid), { id: subscriberId, tango_ventaid: v.ventaid });
               stats.subscribers_updated++;
               matched = true;
@@ -752,11 +758,12 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
                     monthly_value=$5,
                     contract_term=$6,
                     contract_end_date=$7,
+                    line_kind=$8,
                     status='activo',
                     cancel_reason=NULL,
                     updated_at=NOW()
-                WHERE id=$8
-              `, [v.ventaid, newPhone, planCode, lineType, monthlyValue, contractTerm, contractEndDate, subscriberId]);
+                WHERE id=$9
+              `, [v.ventaid, newPhone, planCode, lineType, monthlyValue, contractTerm, contractEndDate, lineKind, subscriberId]);
               subByVentaId.set(Number(v.ventaid), { id: subscriberId, tango_ventaid: v.ventaid });
               stats.subscribers_updated++;
               matched = true;
@@ -821,10 +828,11 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
                          tango_ventaid=$6,
                          contract_term=$7,
                          contract_end_date=$8,
+                         line_kind=$9,
                          status='activo',
                          cancel_reason=NULL,
                          updated_at=NOW()
-                   WHERE id=$9`,
+                   WHERE id=$10`,
                   [
                     banRecord.id,
                     phone,
@@ -834,6 +842,7 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
                     v.ventaid,
                     contractTerm,
                     contractEndDate,
+                    lineKind,
                     c.id,
                   ]
                 );
@@ -874,8 +883,8 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
               alert('info', banNum, `Venta ${v.ventaid} Fijo sin teléfono, se deja en blanco`);
             }
             const newSub = await crmPool.query(`
-              INSERT INTO subscribers (ban_id, phone, plan, line_type, monthly_value, tango_ventaid, contract_term, contract_end_date, status)
-              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'activo')
+              INSERT INTO subscribers (ban_id, phone, plan, line_type, monthly_value, tango_ventaid, contract_term, contract_end_date, line_kind, status)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'activo')
               ON CONFLICT (tango_ventaid) DO UPDATE SET
                 ban_id = EXCLUDED.ban_id,
                 phone = CASE WHEN subscribers.phone LIKE 'LINEA-%' OR subscribers.phone LIKE 'SIN-TEL-%' OR subscribers.phone LIKE 'FIJO-%'
@@ -885,11 +894,12 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
                 monthly_value = EXCLUDED.monthly_value,
                 contract_term = EXCLUDED.contract_term,
                 contract_end_date = EXCLUDED.contract_end_date,
+                line_kind = EXCLUDED.line_kind,
                 status = 'activo',
                 cancel_reason = NULL,
                 updated_at = NOW()
               RETURNING id, (xmax = 0) AS was_inserted
-            `, [banRecord.id, subPhone, planCode, lineType, monthlyValue, v.ventaid, contractTerm, contractEndDate]);
+            `, [banRecord.id, subPhone, planCode, lineType, monthlyValue, v.ventaid, contractTerm, contractEndDate, lineKind]);
             subscriberId = newSub.rows[0].id;
             const wasInserted = newSub.rows[0].was_inserted;
             subByVentaId.set(Number(v.ventaid), { id: subscriberId, tango_ventaid: v.ventaid });

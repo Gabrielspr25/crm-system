@@ -7,6 +7,7 @@ interface SubscriberReport {
   subscriber_id: string;
   phone: string;
   line_type?: string | null;
+  line_kind?: 'movil' | 'fijo' | null;
   sale_type?: string | null;
   salesperson_commission_percentage?: number | null;
   suggested_vendor_commission?: number | null;
@@ -38,17 +39,24 @@ interface SubscriberReport {
   } | null;
 }
 
-function formatSaleTypeLabel(accountType?: string | null, lineType?: string | null, saleType?: string | null): string {
+function formatSaleTypeLabel(accountType?: string | null, lineType?: string | null, saleType?: string | null, lineKind?: string | null): string {
   const exact = String(saleType || '').trim().toUpperCase();
   if (exact === 'FIJO_REN') return 'Fijo REN';
   if (exact === 'FIJO_NEW') return 'Fijo NEW';
   if (exact === 'MOVIL_RENOVACION') return 'Móvil REN';
   if (exact === 'MOVIL_NUEVA') return 'Móvil NEW';
 
-  const account = String(accountType || '').trim().toUpperCase().replace(/^CONVERGENTE$/, 'MOVIL');
   const line = String(lineType || '').trim().toUpperCase();
   const isRen = line === 'REN';
 
+  // line_kind manda: viene de Tango ventatipoid y refleja el tipo real de la
+  // línea independiente del account_type del BAN (CONVERGENTE no implica móvil).
+  const kind = String(lineKind || '').trim().toLowerCase();
+  if (kind === 'fijo') return isRen ? 'Fijo REN' : 'Fijo NEW';
+  if (kind === 'movil') return isRen ? 'Móvil REN' : 'Móvil NEW';
+
+  // Fallback heurístico (subscribers viejos sin line_kind clasificado)
+  const account = String(accountType || '').trim().toUpperCase().replace(/^CONVERGENTE$/, 'MOVIL');
   if (account === 'FIJO' || account === 'FIXED') {
     return isRen ? 'Fijo REN' : 'Fijo NEW';
   }
@@ -87,10 +95,23 @@ function resolveLineProducts(rows: SubscriberReport[]) {
       return;
     }
 
-    const account = String(row.account_type || '').trim().toUpperCase().replace(/^CONVERGENTE$/, 'MOVIL');
-    const phone = String(row.phone || '').trim().toUpperCase();
     const lineType = String(row.line_type || '').trim().toUpperCase();
     const isRen = lineType === 'REN';
+
+    // line_kind manda: tipo real de la línea desde Tango.
+    const kind = String(row.line_kind || '').trim().toLowerCase();
+    if (kind === 'fijo') {
+      if (isRen) counts.fijo_ren += 1; else counts.fijo_new += 1;
+      return;
+    }
+    if (kind === 'movil') {
+      if (isRen) counts.movil_renovacion += 1; else counts.movil_nueva += 1;
+      return;
+    }
+
+    // Fallback heurístico (sin line_kind clasificado todavía)
+    const account = String(row.account_type || '').trim().toUpperCase().replace(/^CONVERGENTE$/, 'MOVIL');
+    const phone = String(row.phone || '').trim().toUpperCase();
     const isFijo = account === 'FIJO' || account === 'FIXED' || phone.startsWith('FIJO-');
     const isMovil = account === 'PYMES' || account === 'UPDATE' || account === 'MOVIL' || account === 'MÃ“VIL' || account === 'MOBILE';
 
@@ -391,19 +412,27 @@ export default function Reports() {
         g.products = null;
       }
 
-      // Fallback real: contar productos desde líneas sincronizadas de Tango/CRM.
-      const account = String(row.account_type || '').trim().toUpperCase().replace(/^CONVERGENTE$/, 'MOVIL');
-      const phone = String(row.phone || '').trim().toUpperCase();
+      // Conteo de productos por línea: line_kind manda. Fallback heurístico para
+      // subscribers sin line_kind clasificado todavía.
       const lineType = String(row.line_type || '').trim().toUpperCase();
       const isRen = lineType === 'REN';
-      const isFijo = account === 'FIJO' || account === 'FIXED' || phone.startsWith('FIJO-');
-      const isMovil = account === 'PYMES' || account === 'UPDATE' || account === 'MOVIL' || account === 'MÓVIL' || account === 'MOBILE';
-      if (isFijo) {
-        if (isRen) g.lineProducts.fijo_ren += 1;
-        else g.lineProducts.fijo_new += 1;
-      } else if (isMovil) {
-        if (isRen) g.lineProducts.movil_renovacion += 1;
-        else g.lineProducts.movil_nueva += 1;
+      const kind = String(row.line_kind || '').trim().toLowerCase();
+      if (kind === 'fijo') {
+        if (isRen) g.lineProducts.fijo_ren += 1; else g.lineProducts.fijo_new += 1;
+      } else if (kind === 'movil') {
+        if (isRen) g.lineProducts.movil_renovacion += 1; else g.lineProducts.movil_nueva += 1;
+      } else {
+        const account = String(row.account_type || '').trim().toUpperCase().replace(/^CONVERGENTE$/, 'MOVIL');
+        const phone = String(row.phone || '').trim().toUpperCase();
+        const isFijo = account === 'FIJO' || account === 'FIXED' || phone.startsWith('FIJO-');
+        const isMovil = account === 'PYMES' || account === 'UPDATE' || account === 'MOVIL' || account === 'MÓVIL' || account === 'MOBILE';
+        if (isFijo) {
+          if (isRen) g.lineProducts.fijo_ren += 1;
+          else g.lineProducts.fijo_new += 1;
+        } else if (isMovil) {
+          if (isRen) g.lineProducts.movil_renovacion += 1;
+          else g.lineProducts.movil_nueva += 1;
+        }
       }
     }
     return Array.from(map.values())
@@ -1458,7 +1487,7 @@ export default function Reports() {
                                 : <span className="text-xs text-slate-300 font-mono">{row.phone}</span>
                               }
                               <span className="text-[10px] font-semibold uppercase rounded px-2 py-0.5 bg-cyan-950/70 text-cyan-300 border border-cyan-700/60">
-                                {formatSaleTypeLabel(row.account_type, row.line_type, row.sale_type)}
+                                {formatSaleTypeLabel(row.account_type, row.line_type, row.sale_type, row.line_kind)}
                               </span>
                             </div>
                           </td>

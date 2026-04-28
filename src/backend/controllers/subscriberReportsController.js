@@ -41,6 +41,7 @@ export const getSubscriberReports = async (req, res) => {
                 sr.paid_date,
                 s.phone,
                 s.line_type,
+                s.line_kind,
                 s.monthly_value,
                 NULL::text AS sale_type,
                 NULL::date AS activation_date,
