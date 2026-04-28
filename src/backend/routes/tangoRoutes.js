@@ -5,6 +5,18 @@ import { authenticateToken, requireRole } from '../middlewares/auth.js';
 
 const router = Router();
 
+// Normaliza fechas a string ISO 'YYYY-MM-DD'. El driver pg devuelve columnas
+// `date` como objetos Date — String(Date) produce 'Day Mon DD …' que rompe
+// comparaciones cross-formato. Esta utilidad las uniforma.
+function toIsoDate(val) {
+  if (!val) return null;
+  if (val instanceof Date) {
+    if (Number.isNaN(val.getTime())) return null;
+    return val.toISOString().slice(0, 10);
+  }
+  return String(val).slice(0, 10);
+}
+
 function ensureAuthenticated(req, res, next) {
   if (req.user) return next();
   return authenticateToken(req, res, next);
@@ -528,7 +540,7 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
         [existingVentaids]
       );
       for (const r of fechaResult.rows) {
-        const f = r.fechaactivacion ? String(r.fechaactivacion).slice(0, 10) : null;
+        const f = toIsoDate(r.fechaactivacion);
         if (f) fechaByVentaid.set(Number(r.ventaid), f);
       }
     }
@@ -777,14 +789,12 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
               if (c.tango_ventaid && fechaByVentaid.get(Number(c.tango_ventaid))) {
                 existingDate = fechaByVentaid.get(Number(c.tango_ventaid));
               } else if (c.created_at) {
-                existingDate = c.created_at.toISOString().slice(0, 10);
+                existingDate = toIsoDate(c.created_at);
               } else if (c.updated_at) {
-                existingDate = c.updated_at.toISOString().slice(0, 10);
+                existingDate = toIsoDate(c.updated_at);
               }
 
-              const newDate = v.fechaactivacion
-                ? String(v.fechaactivacion).slice(0, 10)
-                : null;
+              const newDate = toIsoDate(v.fechaactivacion);
 
               const sameBan = String(c.ban_id) === String(banRecord.id);
 
