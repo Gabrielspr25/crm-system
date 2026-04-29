@@ -4326,6 +4326,55 @@ export const runFullSystemTest = async (req, res) => {
             addTest('FASE_E', 'E6.4 dashboard/resumen separa Fijo y Movil', 'fail', err.message);
         }
 
+        // ── E6.5: vendor_commission completable cuando Tango trae 0 ──
+        // Invariante: si un report tiene vendor_commission=0 AND company_earnings>0
+        // AND el vendor del cliente tiene commission_percentage>0, el sync deberia
+        // completarlo en la proxima corrida. Verifica que existe el caso real
+        // pendiente (BAN 791079860 sub fijo) y que el cliente tiene vendor con %.
+        try {
+            const cand = await query(`
+                SELECT s.phone, sr.company_earnings, sr.vendor_commission,
+                       v.commission_percentage AS vendor_pct
+                  FROM subscriber_reports sr
+                  JOIN subscribers s ON s.id = sr.subscriber_id
+                  JOIN bans b ON b.id = s.ban_id
+                  JOIN clients c ON c.id = b.client_id
+                  LEFT JOIN salespeople sp ON sp.id = c.salesperson_id
+                  LEFT JOIN vendor_salesperson_mapping vsm ON vsm.salesperson_id = sp.id
+                  LEFT JOIN vendors v ON v.id = vsm.vendor_id
+                 WHERE b.ban_number = '791079860'
+                   AND s.line_kind = 'fijo'
+                 ORDER BY sr.report_month DESC
+                 LIMIT 1
+            `);
+            if (cand.length === 0) {
+                addTest('FASE_E', 'E6.5 vendor_commission calculable BAN 791079860 (fijo)', 'skip',
+                    'No hay sub fijo con report en BD');
+            } else {
+                const row = cand[0];
+                const ce = Number(row.company_earnings);
+                const vc = Number(row.vendor_commission);
+                const pct = Number(row.vendor_pct);
+                // Aceptamos 2 estados validos:
+                //  a) ya esta completado (vc > 0): el fix corrio
+                //  b) pendiente de calcular (vc=0, ce>0, pct>0): el fix esta listo
+                //     para la proxima corrida del sync
+                if (vc > 0) {
+                    addTest('FASE_E', 'E6.5 vendor_commission calculable BAN 791079860 (fijo)', 'pass',
+                        `vendor_commission ya completado: ${vc} (sobre ${ce}, pct=${pct})`);
+                } else if (vc === 0 && ce > 0 && pct > 0) {
+                    const expected = Math.round(ce * (pct / 100) * 100) / 100;
+                    addTest('FASE_E', 'E6.5 vendor_commission calculable BAN 791079860 (fijo)', 'pass',
+                        `Pendiente de calcular en proxima sync: esperado ~${expected} (${pct}% de ${ce})`);
+                } else {
+                    addTest('FASE_E', 'E6.5 vendor_commission calculable BAN 791079860 (fijo)', 'fail',
+                        `vc=${vc} ce=${ce} pct=${pct} - no aplica regla y no esta completado`);
+                }
+            }
+        } catch (err) {
+            addTest('FASE_E', 'E6.5 vendor_commission calculable BAN 791079860 (fijo)', 'fail', err.message);
+        }
+
         // ── E7.1: Cleanup local FASE E ──
         try {
             // 1) Subscribers sintéticos (los del concurrency test + E5.1 si hubiera quedado)

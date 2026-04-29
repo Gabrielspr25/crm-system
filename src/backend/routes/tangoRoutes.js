@@ -545,6 +545,28 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
       }
     }
 
+    // ── 3a.bis: Pre-cargar commission_percentage por salesperson ──
+    // Usado para calcular vendor_commission cuando Tango trae com_vendedor=NULL/0.
+    // La regla: si Tango omite comision pero hay company_earnings > 0, completar
+    // con vendor.commission_percentage del salesperson asignado al cliente.
+    // No cambia categoria (line_kind/account_type sigue intacto).
+    const vendorPctBySpId = new Map();
+    try {
+      const pctRows = await crmPool.query(`
+        SELECT vsm.salesperson_id::text AS sp_id, v.commission_percentage::numeric AS pct
+          FROM vendors v
+          JOIN vendor_salesperson_mapping vsm ON vsm.vendor_id = v.id
+         WHERE v.commission_percentage IS NOT NULL
+           AND v.commission_percentage > 0
+      `);
+      for (const r of pctRows.rows) {
+        vendorPctBySpId.set(String(r.sp_id), Number(r.pct));
+      }
+    } catch (err) {
+      // tabla puede no existir en alguna instalación — sigue sin map (regla = no calcula)
+      console.warn('[SYNC] No se pudo pre-cargar vendor commission_percentage:', err.message);
+    }
+
     // ── 3b. Cleanup DESACTIVADO TEMPORALMENTE ──
     // Solo loguea lo que hubiera borrado. NO ejecuta DELETE.
     // Para reactivar, descomentar las queries DELETE y restaurar subByVentaId.delete().
@@ -914,7 +936,25 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
 
         // ── PASO 3: Upsert subscriber_report ──
         // Protege company_earnings cargado manualmente: solo se actualiza si es NULL o = 0.
-        // vendor_commission se sigue actualizando siempre (acordado con negocio).
+        //
+        // vendor_commission: si Tango trae comVendedor > 0, se usa tal cual.
+        // Si Tango trae 0/NULL Y hay company_earnings > 0 Y conocemos el % del
+        // vendor asignado al cliente, calculamos: company * (pct/100). No cambia
+        // categoria (line_kind/account_type intactos), solo completa el monto.
+        let effectiveVendorCommission = comVendedor;
+        let pctUsed = null;
+        if ((!comVendedor || comVendedor <= 0) && comEmpresa > 0) {
+          const spIdForVendor = clientRecord?.salesperson_id || spId || null;
+          if (spIdForVendor) {
+            const pct = vendorPctBySpId.get(String(spIdForVendor));
+            if (pct && pct > 0) {
+              pctUsed = pct;
+              effectiveVendorCommission = Math.round(comEmpresa * (pct / 100) * 100) / 100;
+              alert('info', banNum,
+                `Venta ${v.ventaid}: vendor_commission calculado ${effectiveVendorCommission} (${pct}% de ${comEmpresa})`);
+            }
+          }
+        }
         await crmPool.query(`
           INSERT INTO subscriber_reports (subscriber_id, report_month, company_earnings, vendor_commission, created_at, updated_at)
           VALUES ($1, $2::date, $3, $4, NOW(), NOW())
@@ -926,10 +966,18 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
               THEN EXCLUDED.company_earnings
               ELSE subscriber_reports.company_earnings
             END,
-            vendor_commission = EXCLUDED.vendor_commission,
+            vendor_commission = CASE
+              WHEN subscriber_reports.vendor_commission IS NULL
+                OR subscriber_reports.vendor_commission = 0
+              THEN EXCLUDED.vendor_commission
+              ELSE subscriber_reports.vendor_commission
+            END,
             updated_at = NOW()
-        `, [subscriberId, monthVal, comEmpresa, comVendedor]);
+        `, [subscriberId, monthVal, comEmpresa, effectiveVendorCommission]);
         stats.reports_upserted++;
+        if (pctUsed !== null) {
+          stats.vendor_commission_calculated = (stats.vendor_commission_calculated || 0) + 1;
+        }
 
       } catch (ventaErr) {
         alert('error', v.ban || '', `Venta ${v.ventaid}: ${ventaErr.message}`);
