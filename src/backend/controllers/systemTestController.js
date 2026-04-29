@@ -155,6 +155,13 @@ export const runFullSystemTest = async (req, res) => {
         // FASE PHONE_NORM: rangos reservados (BANs 999111001-003, phones 7874444444/55555/66666)
         await client.query(`DELETE FROM subscribers WHERE phone IN ('7874444444','7874455555','7874466666')`);
         await client.query(`DELETE FROM bans WHERE ban_number IN ('999111001','999111002','999111003')`);
+        // FASE A: rangos reservados (BANs 999222001-003, phones 7878881111/2222/3333)
+        await client.query(`DELETE FROM subscriber_reports WHERE report_month = '2099-01-01'::date`);
+        await client.query(`DELETE FROM subscribers WHERE phone IN ('7878881111','7878882222','7878883333')`);
+        await client.query(`DELETE FROM bans WHERE ban_number IN ('999222001','999222002','999222003')`);
+        await client.query(`DELETE FROM user_permission_overrides WHERE user_id IN (SELECT id FROM users_auth WHERE username LIKE '${TEST_PREFIX}%')`).catch(() => {});
+        await client.query(`DELETE FROM users_auth WHERE username LIKE '${TEST_PREFIX}%'`);
+        await client.query(`DELETE FROM salespeople WHERE name LIKE '${TEST_PREFIX}%'`);
         await client.query(`DELETE FROM follow_up_prospects WHERE company_name LIKE '${TEST_PREFIX}%'`);
         await client.query(`DELETE FROM clients WHERE name LIKE '${TEST_PREFIX}%'`);
 
@@ -2000,6 +2007,451 @@ export const runFullSystemTest = async (req, res) => {
             addTest('PHONE_NORM', 'Cleanup datos sinteticos PHONE_NORM', 'fail', err.message);
         }
 
+        // ============================================================
+        // FASE A: AUTH + PERMISOS + CRUD operativo (subs/comisiones/BANs)
+        // ============================================================
+        // Rangos reservados:
+        //   User auth:  ${TEST_PREFIX}user_a (pwd TestPass2026!)
+        //   Clientes:   ${TEST_PREFIX}_FaseA_C{1,2}_*
+        //   BANs:       999222001-003
+        //   Phones:     7878881111 / 2222 / 3333
+        //   Reports:    report_month = '2099-01-01'
+        const FA_USER = `${TEST_PREFIX}user_a`;
+        const FA_PASS = 'TestPass2026!';
+        const PFX_FA = `${TEST_PREFIX}_FaseA`;
+        const fa = {
+            userId: null, salespersonId: null, userToken: null,
+            c1: null, c2: null,
+            banA: null, banB: null, banC: null,
+            subA: null
+        };
+
+        // ── Helper: apiJson con un token específico ──
+        const apiJsonAs = async (token, path, options = {}) => {
+            const { json, headers, ...rest } = options;
+            const requestHeaders = {
+                Accept: 'application/json',
+                Authorization: `Bearer ${token}`,
+                ...(headers || {})
+            };
+            let body = rest.body;
+            if (json !== undefined) {
+                body = JSON.stringify(json);
+                requestHeaders['Content-Type'] = 'application/json';
+            }
+            const response = await fetch(`${API_BASE_URL}${path}`, { ...rest, headers: requestHeaders, body });
+            const raw = await response.text();
+            let payload = null;
+            try { payload = raw ? JSON.parse(raw) : null; } catch { payload = { raw }; }
+            return { response, payload };
+        };
+
+        // ── A0.1: Crear user sintético ──
+        try {
+            const { response, payload } = await apiJson('/api/users', {
+                method: 'POST',
+                json: { username: FA_USER, password: FA_PASS, role: 'vendedor' }
+            });
+            if (!response.ok) throw new Error(`HTTP ${response.status} ${payload?.error || ''}`);
+            fa.userId = payload?.id || null;
+            // Recuperar salesperson_id auto-generado para limpieza posterior
+            const sp = await query('SELECT salesperson_id FROM users_auth WHERE id = $1', [fa.userId]);
+            fa.salespersonId = sp[0]?.salesperson_id || null;
+            if (fa.userId) {
+                addTest('FASE_A', 'A0.1 Crear user sintetico', 'pass',
+                    `User ${FA_USER} creado`, { userId: fa.userId, salespersonId: fa.salespersonId });
+            } else {
+                addTest('FASE_A', 'A0.1 Crear user sintetico', 'fail', 'No se obtuvo userId');
+            }
+        } catch (err) {
+            addTest('FASE_A', 'A0.1 Crear user sintetico', 'fail', err.message);
+        }
+
+        // ── A1.1: Login con credenciales validas ──
+        try {
+            const { response, payload } = await apiJson('/api/auth/login', {
+                method: 'POST',
+                json: { username: FA_USER, password: FA_PASS }
+            });
+            if (response.ok && payload?.token) {
+                fa.userToken = payload.token;
+                addTest('FASE_A', 'A1.1 Login credenciales validas', 'pass',
+                    'HTTP 200 + token JWT recibido', { username: FA_USER });
+            } else {
+                addTest('FASE_A', 'A1.1 Login credenciales validas', 'fail',
+                    `HTTP ${response.status}: ${payload?.error || 'sin token'}`);
+            }
+        } catch (err) {
+            addTest('FASE_A', 'A1.1 Login credenciales validas', 'fail', err.message);
+        }
+
+        // ── A1.2: Login con password incorrecto ──
+        try {
+            const { response } = await apiJson('/api/auth/login', {
+                method: 'POST',
+                json: { username: FA_USER, password: 'WRONG_PASSWORD' }
+            });
+            if (response.status === 401) {
+                addTest('FASE_A', 'A1.2 Login credenciales invalidas rechazado', 'pass',
+                    'HTTP 401 como esperado');
+            } else {
+                addTest('FASE_A', 'A1.2 Login credenciales invalidas rechazado', 'fail',
+                    `Esperado 401, obtenido ${response.status}`);
+            }
+        } catch (err) {
+            addTest('FASE_A', 'A1.2 Login credenciales invalidas rechazado', 'fail', err.message);
+        }
+
+        // ── A1.3: GET /api/auth/me con token nuevo ──
+        try {
+            if (!fa.userToken) throw new Error('No hay token (A1.1 fallo)');
+            const { response, payload } = await apiJsonAs(fa.userToken, '/api/auth/me');
+            // Endpoint devuelve { user: { username, ... }, role, salespersonId }
+            const usernameInPayload = payload?.user?.username || payload?.username;
+            if (response.ok && usernameInPayload === FA_USER) {
+                addTest('FASE_A', 'A1.3 /api/auth/me devuelve user del token', 'pass',
+                    `username coincide: ${usernameInPayload}`);
+            } else {
+                addTest('FASE_A', 'A1.3 /api/auth/me devuelve user del token', 'fail',
+                    `HTTP ${response.status} o username no coincide`, payload);
+            }
+        } catch (err) {
+            addTest('FASE_A', 'A1.3 /api/auth/me devuelve user del token', 'fail', err.message);
+        }
+
+        // ── A2.1: GET /api/permissions/catalog ──
+        try {
+            const { response, payload } = await apiJson('/api/permissions/catalog');
+            const arr = Array.isArray(payload?.permissions) ? payload.permissions : [];
+            const ok = response.ok && arr.length > 0 && arr[0]?.key && arr[0]?.module;
+            if (ok) {
+                addTest('FASE_A', 'A2.1 Catalogo permisos disponible', 'pass',
+                    `${arr.length} permisos en catalogo`);
+            } else {
+                addTest('FASE_A', 'A2.1 Catalogo permisos disponible', 'fail',
+                    `HTTP ${response.status} o shape invalido`, { sample: arr[0] });
+            }
+        } catch (err) {
+            addTest('FASE_A', 'A2.1 Catalogo permisos disponible', 'fail', err.message);
+        }
+
+        // ── A2.2: GET /api/permissions/me ──
+        try {
+            const { response, payload } = await apiJson('/api/permissions/me');
+            const map = payload?.permissions || {};
+            const sample = map['nav.dashboard'];
+            if (response.ok && sample && typeof sample.allowed === 'boolean') {
+                addTest('FASE_A', 'A2.2 /api/permissions/me snapshot admin', 'pass',
+                    `nav.dashboard.allowed=${sample.allowed}`, { role: payload?.role });
+            } else {
+                addTest('FASE_A', 'A2.2 /api/permissions/me snapshot admin', 'fail',
+                    `HTTP ${response.status} o shape invalido`, { sample });
+            }
+        } catch (err) {
+            addTest('FASE_A', 'A2.2 /api/permissions/me snapshot admin', 'fail', err.message);
+        }
+
+        // ── A2.3: PUT override deny nav.tango para user sintetico ──
+        try {
+            if (!fa.userId) throw new Error('No hay userId (A0.1 fallo)');
+            const { response, payload } = await apiJson(`/api/permissions/users/${fa.userId}`, {
+                method: 'PUT',
+                json: { permissions: [{ permission_key: 'nav.clients', effect: 'deny' }] }
+            });
+            if (response.ok) {
+                addTest('FASE_A', 'A2.3 PUT override deny nav.clients', 'pass',
+                    'Override guardado', { user_id: fa.userId });
+            } else {
+                addTest('FASE_A', 'A2.3 PUT override deny nav.clients', 'fail',
+                    `HTTP ${response.status} ${payload?.error || ''}`);
+            }
+        } catch (err) {
+            addTest('FASE_A', 'A2.3 PUT override deny nav.clients', 'fail', err.message);
+        }
+
+        // ── A2.4: GET refleja override ──
+        try {
+            if (!fa.userId) throw new Error('No hay userId');
+            const { response, payload } = await apiJson(`/api/permissions/users/${fa.userId}`);
+            // El override puede aparecer en .overrides (lista cruda) o .permissions (resolución).
+            // Aceptamos cualquiera de los dos como evidencia de persistencia.
+            const overrides = payload?.overrides || {};
+            const overrideEntry = overrides['nav.clients'];
+            const navTango = payload?.permissions?.['nav.clients'];
+            const sawDeny =
+                (overrideEntry && String(overrideEntry.effect || '').toLowerCase() === 'deny') ||
+                (navTango && navTango.effect === 'deny') ||
+                (navTango && navTango.allowed === false && navTango.source === 'override');
+            if (response.ok && sawDeny) {
+                addTest('FASE_A', 'A2.4 GET refleja override deny', 'pass',
+                    'Override deny visible en respuesta',
+                    { override: overrideEntry, resolved: navTango });
+            } else {
+                addTest('FASE_A', 'A2.4 GET refleja override deny', 'fail',
+                    `No se encontro evidencia de deny en /users/${fa.userId}`,
+                    { override: overrideEntry, resolved: navTango });
+            }
+        } catch (err) {
+            addTest('FASE_A', 'A2.4 GET refleja override deny', 'fail', err.message);
+        }
+
+        // ── A2.5: Limpiar override (effect inherit) ──
+        try {
+            if (!fa.userId) throw new Error('No hay userId');
+            const { response } = await apiJson(`/api/permissions/users/${fa.userId}`, {
+                method: 'PUT',
+                json: { permissions: [{ permission_key: 'nav.clients', effect: 'inherit' }] }
+            });
+            if (response.ok) {
+                addTest('FASE_A', 'A2.5 Override limpiado (inherit)', 'pass', 'Override revertido');
+            } else {
+                addTest('FASE_A', 'A2.5 Override limpiado (inherit)', 'fail', `HTTP ${response.status}`);
+            }
+        } catch (err) {
+            addTest('FASE_A', 'A2.5 Override limpiado (inherit)', 'fail', err.message);
+        }
+
+        // ── Setup A4-A6: clientes + BANs + subscriber sintético ──
+        try {
+            const c1Resp = await apiJson('/api/clients', {
+                method: 'POST',
+                json: { name: `${PFX_FA}_C1_BANs`, owner_name: `${PFX_FA}_C1_Owner` }
+            });
+            fa.c1 = c1Resp.payload?.id || null;
+            const c2Resp = await apiJson('/api/clients', {
+                method: 'POST',
+                json: { name: `${PFX_FA}_C2_Cross`, owner_name: `${PFX_FA}_C2_Owner` }
+            });
+            fa.c2 = c2Resp.payload?.id || null;
+
+            const banAResp = await apiJson('/api/bans', {
+                method: 'POST',
+                json: { client_id: fa.c1, ban_number: '999222001', account_type: 'MOVIL' }
+            });
+            fa.banA = banAResp.payload?.id || null;
+            const banBResp = await apiJson('/api/bans', {
+                method: 'POST',
+                json: { client_id: fa.c1, ban_number: '999222002', account_type: 'MOVIL' }
+            });
+            fa.banB = banBResp.payload?.id || null;
+            const banCResp = await apiJson('/api/bans', {
+                method: 'POST',
+                json: { client_id: fa.c2, ban_number: '999222003', account_type: 'MOVIL' }
+            });
+            fa.banC = banCResp.payload?.id || null;
+
+            const subAResp = await apiJson('/api/subscribers', {
+                method: 'POST',
+                json: { ban_id: fa.banA, phone: '7878881111', plan: 'FATEST', monthly_value: 30.00 }
+            });
+            fa.subA = subAResp.payload?.id || null;
+
+            if (fa.c1 && fa.c2 && fa.banA && fa.banB && fa.banC && fa.subA) {
+                addTest('FASE_A', 'Setup A4-A6 (clientes/BANs/sub)', 'pass',
+                    'Clientes, BANs y subscriber sintetico creados',
+                    { c1: fa.c1, c2: fa.c2, banA: fa.banA, banB: fa.banB, banC: fa.banC, subA: fa.subA });
+            } else {
+                addTest('FASE_A', 'Setup A4-A6 (clientes/BANs/sub)', 'fail',
+                    'Algun recurso no se creo',
+                    { c1: fa.c1, c2: fa.c2, banA: fa.banA, banB: fa.banB, banC: fa.banC, subA: fa.subA });
+            }
+        } catch (err) {
+            addTest('FASE_A', 'Setup A4-A6 (clientes/BANs/sub)', 'fail', err.message);
+        }
+
+        // ── A4.1: Cancelar subscriber ──
+        try {
+            if (!fa.subA) throw new Error('No hay subA');
+            const { response } = await apiJson(`/api/subscribers/${fa.subA}/cancel`, {
+                method: 'PUT',
+                json: { cancel_reason: 'test_FaseA' }
+            });
+            const verify = await query('SELECT status, cancel_reason FROM subscribers WHERE id = $1', [fa.subA]);
+            const row = verify[0];
+            if (response.ok && row?.status === 'cancelado' && row?.cancel_reason === 'test_FaseA') {
+                addTest('FASE_A', 'A4.1 Cancelar subscriber', 'pass',
+                    `status=${row.status}, reason=${row.cancel_reason}`);
+            } else {
+                addTest('FASE_A', 'A4.1 Cancelar subscriber', 'fail',
+                    `HTTP ${response.status} status=${row?.status} reason=${row?.cancel_reason}`);
+            }
+        } catch (err) {
+            addTest('FASE_A', 'A4.1 Cancelar subscriber', 'fail', err.message);
+        }
+
+        // ── A4.2: Reactivar subscriber ──
+        try {
+            if (!fa.subA) throw new Error('No hay subA');
+            const { response } = await apiJson(`/api/subscribers/${fa.subA}/reactivate`, {
+                method: 'PUT'
+            });
+            const verify = await query('SELECT status, cancel_reason FROM subscribers WHERE id = $1', [fa.subA]);
+            const row = verify[0];
+            if (response.ok && row?.status === 'activo' && !row?.cancel_reason) {
+                addTest('FASE_A', 'A4.2 Reactivar subscriber', 'pass',
+                    `status=${row.status}, reason=${row.cancel_reason || 'NULL'}`);
+            } else {
+                addTest('FASE_A', 'A4.2 Reactivar subscriber', 'fail',
+                    `HTTP ${response.status} status=${row?.status} reason=${row?.cancel_reason}`);
+            }
+        } catch (err) {
+            addTest('FASE_A', 'A4.2 Reactivar subscriber', 'fail', err.message);
+        }
+
+        // ── A4.3: Cross-BAN duplicate (mismo phone en otro BAN debe rechazar) ──
+        try {
+            if (!fa.banB) throw new Error('No hay banB');
+            const { response, payload } = await apiJson('/api/subscribers', {
+                method: 'POST',
+                json: { ban_id: fa.banB, phone: '7878881111', plan: 'FATEST', monthly_value: 30.00 }
+            });
+            const errMsg = String(payload?.error || '').toLowerCase();
+            const is4xx = response.status >= 400 && response.status < 500;
+            const sayDup = errMsg.includes('ya existe') || errMsg.includes('duplica') || errMsg.includes('duplicate');
+            if (is4xx && sayDup) {
+                addTest('FASE_A', 'A4.3 Cross-BAN duplicado rechazado', 'pass',
+                    `HTTP ${response.status} con mensaje de duplicado`, { error: payload?.error });
+            } else {
+                addTest('FASE_A', 'A4.3 Cross-BAN duplicado rechazado', 'fail',
+                    `Esperado 4xx + 'ya existe', obtenido HTTP ${response.status}`, { payload });
+            }
+        } catch (err) {
+            addTest('FASE_A', 'A4.3 Cross-BAN duplicado rechazado', 'fail', err.message);
+        }
+
+        // ── A5.1: PUT report con paid_amount ──
+        try {
+            if (!fa.subA) throw new Error('No hay subA');
+            const { response, payload } = await apiJson(`/api/subscriber-reports/${fa.subA}`, {
+                method: 'PUT',
+                json: {
+                    report_month: '2099-01-01',
+                    company_earnings: 100.00,
+                    vendor_commission: 30.00,
+                    paid_amount: 30.00,
+                    paid_date: '2099-01-15'
+                }
+            });
+            if (response.ok && payload?.subscriber_id === fa.subA) {
+                addTest('FASE_A', 'A5.1 Marcar report pagado', 'pass',
+                    'Report con paid_amount/paid_date persistido');
+            } else {
+                addTest('FASE_A', 'A5.1 Marcar report pagado', 'fail',
+                    `HTTP ${response.status}`, payload);
+            }
+        } catch (err) {
+            addTest('FASE_A', 'A5.1 Marcar report pagado', 'fail', err.message);
+        }
+
+        // ── A5.2: GET por mes refleja is_paid ──
+        try {
+            const { response, payload } = await apiJson('/api/subscriber-reports?month=2099-01');
+            const rows = Array.isArray(payload) ? payload : [];
+            const found = rows.find((r) => String(r.subscriber_id) === String(fa.subA));
+            if (response.ok && found && found.is_paid === true) {
+                addTest('FASE_A', 'A5.2 GET reporte refleja is_paid=true', 'pass',
+                    `subscriber_id=${fa.subA}, paid_amount=${found.paid_amount}`);
+            } else {
+                addTest('FASE_A', 'A5.2 GET reporte refleja is_paid=true', 'fail',
+                    `No encontro fila o is_paid no es true`, { found });
+            }
+        } catch (err) {
+            addTest('FASE_A', 'A5.2 GET reporte refleja is_paid=true', 'fail', err.message);
+        }
+
+        // ── A5.3: /comparison responde ──
+        try {
+            const { response } = await apiJson('/api/subscriber-reports/comparison');
+            if (response.ok) {
+                addTest('FASE_A', 'A5.3 /comparison responde', 'pass', 'HTTP 200');
+            } else {
+                addTest('FASE_A', 'A5.3 /comparison responde', 'fail', `HTTP ${response.status}`);
+            }
+        } catch (err) {
+            addTest('FASE_A', 'A5.3 /comparison responde', 'fail', err.message);
+        }
+
+        // ── A6.1: Editar account_type del BAN-C ──
+        try {
+            if (!fa.banC) throw new Error('No hay banC');
+            const { response, payload } = await apiJson(`/api/bans/${fa.banC}`, {
+                method: 'PUT',
+                json: { account_type: 'PYMES' }
+            });
+            const verify = await query('SELECT account_type FROM bans WHERE id = $1', [fa.banC]);
+            if (response.ok && verify[0]?.account_type === 'PYMES') {
+                addTest('FASE_A', 'A6.1 Editar account_type de BAN', 'pass',
+                    'account_type cambiado a PYMES');
+            } else {
+                addTest('FASE_A', 'A6.1 Editar account_type de BAN', 'fail',
+                    `HTTP ${response.status} account_type=${verify[0]?.account_type}`, payload);
+            }
+        } catch (err) {
+            addTest('FASE_A', 'A6.1 Editar account_type de BAN', 'fail', err.message);
+        }
+
+        // ── A6.2: DELETE BAN sin subs (BAN-C) ──
+        try {
+            if (!fa.banC) throw new Error('No hay banC');
+            const { response } = await apiJson(`/api/bans/${fa.banC}`, { method: 'DELETE' });
+            const verify = await query('SELECT id FROM bans WHERE id = $1', [fa.banC]);
+            if (response.ok && verify.length === 0) {
+                addTest('FASE_A', 'A6.2 Eliminar BAN sin subs', 'pass', 'BAN eliminado');
+                fa.banC = null; // ya no existe
+            } else {
+                addTest('FASE_A', 'A6.2 Eliminar BAN sin subs', 'fail',
+                    `HTTP ${response.status} o BAN sigue existiendo`);
+            }
+        } catch (err) {
+            addTest('FASE_A', 'A6.2 Eliminar BAN sin subs', 'fail', err.message);
+        }
+
+        // ── A6.3: DELETE BAN con subs activos (BAN-A) debe rechazar ──
+        try {
+            if (!fa.banA) throw new Error('No hay banA');
+            const { response, payload } = await apiJson(`/api/bans/${fa.banA}`, { method: 'DELETE' });
+            const verify = await query('SELECT id FROM bans WHERE id = $1', [fa.banA]);
+            const errMsg = String(payload?.error || '').toLowerCase();
+            const is4xx = response.status >= 400 && response.status < 500;
+            const saysActive = errMsg.includes('lineas activas') || errMsg.includes('líneas activas') || errMsg.includes('activas');
+            if (is4xx && saysActive && verify.length === 1) {
+                addTest('FASE_A', 'A6.3 DELETE BAN con subs activos rechazado', 'pass',
+                    `HTTP ${response.status} con mensaje, BAN preservado`, { error: payload?.error });
+            } else {
+                addTest('FASE_A', 'A6.3 DELETE BAN con subs activos rechazado', 'fail',
+                    `Esperado 4xx + 'activas' + BAN preservado, obtenido HTTP ${response.status}`,
+                    { payload, banExiste: verify.length === 1 });
+            }
+        } catch (err) {
+            addTest('FASE_A', 'A6.3 DELETE BAN con subs activos rechazado', 'fail', err.message);
+        }
+
+        // ── A7.1: Cleanup local de FASE A ──
+        try {
+            // 1) Reportes del subscriber sintetico
+            if (fa.subA) await client.query('DELETE FROM subscriber_reports WHERE subscriber_id = $1', [fa.subA]);
+            // 2) Subscribers de los BANs sintéticos
+            const banIdsFA = [fa.banA, fa.banB, fa.banC].filter(Boolean);
+            if (banIdsFA.length > 0) {
+                await client.query('DELETE FROM subscribers WHERE ban_id = ANY($1::uuid[])', [banIdsFA]);
+                await client.query('DELETE FROM bans WHERE id = ANY($1::uuid[])', [banIdsFA]);
+            }
+            // 3) Clientes sintéticos
+            await client.query(`DELETE FROM clients WHERE name LIKE '${PFX_FA}_%'`);
+            // 4) Permission overrides + user sintético + salesperson auto-generado
+            if (fa.userId) {
+                await client.query('DELETE FROM user_permission_overrides WHERE user_id = $1', [fa.userId]).catch(() => {});
+                await client.query('DELETE FROM users_auth WHERE id = $1', [fa.userId]);
+            }
+            if (fa.salespersonId) {
+                await client.query('DELETE FROM salespeople WHERE id = $1', [fa.salespersonId]).catch(() => {});
+            }
+            addTest('FASE_A', 'A7.1 Cleanup local FASE A', 'pass',
+                'Datos sinteticos FASE A eliminados (user, salesperson, clientes, BANs, subs, reports, overrides)');
+        } catch (err) {
+            addTest('FASE_A', 'A7.1 Cleanup local FASE A', 'fail', err.message);
+        }
+
         // ========================================
         // FASE 12: LIMPIEZA FINAL
         // ========================================
@@ -2029,8 +2481,12 @@ export const runFullSystemTest = async (req, res) => {
             if (followUpId) await client.query('DELETE FROM follow_up_prospects WHERE id = $1', [followUpId]);
             if (banId) await client.query('DELETE FROM bans WHERE id = $1', [banId]);
             if (clientId) await client.query('DELETE FROM clients WHERE id = $1', [clientId]);
-            
-            addTest('LIMPIEZA', 'Eliminar datos de prueba', 'pass', 
+            // Defensa adicional: cualquier user_auth/salesperson sintetico (FASE A)
+            await client.query(`DELETE FROM user_permission_overrides WHERE user_id IN (SELECT id FROM users_auth WHERE username LIKE '${TEST_PREFIX}%')`).catch(() => {});
+            await client.query(`DELETE FROM users_auth WHERE username LIKE '${TEST_PREFIX}%'`);
+            await client.query(`DELETE FROM salespeople WHERE name LIKE '${TEST_PREFIX}%'`);
+
+            addTest('LIMPIEZA', 'Eliminar datos de prueba', 'pass',
                 'Todos los datos de prueba fueron eliminados correctamente');
         } catch (err) {
             addTest('LIMPIEZA', 'Eliminar datos', 'fail', err.message);
