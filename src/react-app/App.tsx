@@ -17,17 +17,14 @@ import ControlSecurityPage from "@/react-app/pages/ControlSecurity";
 import ProductsPage from "@/react-app/pages/Products";
 import ProfilePage from "@/react-app/pages/Profile";
 import LoginPage from "@/react-app/pages/Login";
-import ImportadorVisual from "@/react-app/pages/ImportadorVisual";
 import ImportNew from "@/react-app/pages/ImportNew";
 import AuditLogPage from "@/react-app/pages/AuditLog";
-import ReferidosPage from "@/react-app/pages/Referidos";
 import CorreosPage from "@/react-app/pages/Correos";
 import Campaigns from "@/react-app/pages/Campaigns";
 import CampaignWizard from "@/react-app/pages/CampaignWizard";
 import CampaignDetails from "@/react-app/pages/CampaignDetails";
 import SystemTestAgent from "@/react-app/components/SystemTestAgent";
 import SystemStatus from "@/react-app/pages/SystemStatus";
-import DiscrepanciasFixedPage from "@/react-app/pages/DiscrepanciasFixed";
 import TangoComparePage from "@/react-app/pages/TangoCompare";
 import SubscriberBanSync from "@/react-app/pages/SubscriberBanSync";
 import VoiceClientPage from "@/react-app/pages/VoiceClient";
@@ -58,7 +55,6 @@ function ProtectedRoutes() {
         <Route path="/clientes" element={<ClientsPage />} />
         <Route path="/seguimiento" element={<FollowUpPage />} />
         <Route path="/reportes" element={<ReportsPage />} />
-        <Route path="/referidos" element={<ReferidosPage />} />
         <Route path="/correos" element={<CorreosPage />} />
         <Route path="/vendedores" element={<VendorsPage />} />
         <Route path="/categorias" element={<CategoriesPage />} />
@@ -70,11 +66,9 @@ function ProtectedRoutes() {
         <Route path="/campanas/nueva" element={<CampaignWizard />} />
         <Route path="/campanas/:id" element={<CampaignDetails />} />
         <Route path="/perfil" element={<ProfilePage />} />
-        <Route path="/importador" element={<ImportadorVisual />} />
         <Route path="/importador-nuevo" element={<ImportNew />} />
         <Route path="/historial" element={<AuditLogPage />} />
         <Route path="/system-status" element={<SystemStatus />} />
-        <Route path="/discrepancias" element={<DiscrepanciasFixedPage />} />
         <Route path="/tango" element={<TangoComparePage />} />
         <Route path="/suscriptores-ban" element={<SubscriberBanSync />} />
         <Route path="/voz-cliente" element={<VoiceClientPage />} />

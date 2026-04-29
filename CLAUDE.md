@@ -169,6 +169,16 @@ app.use('/api/vendors', vendorRoutes);
 
 - **Abril 2026:** Gabriel solicita panel general de informes con KPIs, metas, ranking de vendedores, embudo de ventas, tendencia y alertas.
 
+- **2026-04-29 — Módulos retirados.** Se retira acceso a 3 módulos no operativos:
+  - **Importador viejo** (`/importador`, `ImportadorVisual.tsx`) — Import New (`/importador-nuevo`) lo reemplaza.
+  - **Cognos** (`/discrepancias`, endpoint `/api/discrepancias`) — sin uso operativo.
+  - **Referidos** (`/referidos`, endpoint `/api/referidos`) — sin uso operativo.
+
+  Razón: limpieza pre-lanzamiento. Backend `/api/importador` se mantiene porque
+  Import New lo reusa. Archivos físicos quedan en `legacy/*.bak` (no eliminados).
+  BD intacta — datos históricos (`referidos`, tablas relacionadas) se conservan.
+  Tests del agente sistema correspondientes pasan a `skip` con razón "módulo retirado".
+
 ---
 
-*Actualizado: 2026-04-25 — Gabriel Sánchez / SS Group*
+*Actualizado: 2026-04-29 — Gabriel Sánchez / SS Group*

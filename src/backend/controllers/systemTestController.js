@@ -1773,44 +1773,11 @@ export const runFullSystemTest = async (req, res) => {
             addTest('PASOS', 'Endpoint sync deals desde seguimiento', 'fail', err.message);
         }
 
-        // ── Separador antes de REFERIDOS ──────────────────────────────────────
+        // ── REFERIDOS — modulo retirado 2026-04-29 (frontend + endpoint) ──
+        // BD `referidos` se conserva pero el modulo no se opera. Test queda skip.
         let referidoId = null;
-        try {
-            const referidoResult = await client.query(
-                `INSERT INTO referidos (nombre, email, tipo, suscriptor, vendedor, notas, imei, estado, fecha)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
-                 RETURNING id, nombre, estado, vendedor`,
-                [
-                    `${TEST_PREFIX}_Referido`,
-                    'referido@test.com',
-                    'Masivo',
-                    '809-555-7777',
-                    req.user?.username || 'system-test',
-                    'Referido de prueba',
-                    '',
-                    'Pendiente'
-                ]
-            );
-            referidoId = referidoResult.rows[0]?.id || null;
-            results.createdIds.referidoId = referidoId;
-            await client.query(
-                `UPDATE referidos
-                    SET estado = 'Contactado',
-                        notas = 'Referido actualizado por agente QA',
-                        updated_at = CURRENT_TIMESTAMP
-                  WHERE id = $1`,
-                [referidoId]
-            );
-            const verifyReferido = await client.query(
-                `SELECT id, nombre, estado, notas, vendedor FROM referidos WHERE id = $1`,
-                [referidoId]
-            );
-            addTest('REFERIDOS', 'Crear y editar referido', 'pass',
-                'El modulo de referidos permite crear y actualizar registros',
-                verifyReferido.rows[0] || null);
-        } catch (err) {
-            addTest('REFERIDOS', 'Crear y editar referido', 'fail', err.message);
-        }
+        addTest('REFERIDOS', 'Crear y editar referido', 'skip',
+            'Modulo retirado 2026-04-29 (frontend + endpoint /api/referidos desmontado). Tabla referidos preservada.');
 
         try {
             const tangoPool = getTangoPool();
@@ -3742,39 +3709,11 @@ export const runFullSystemTest = async (req, res) => {
             addTest('FASE_D', 'D3.1 GET tiers-fixed por producto', 'fail', err.message);
         }
 
-        // ── D4.1: GET /api/discrepancias responde array ──
-        try {
-            const { response, payload } = await apiJson('/api/discrepancias');
-            if (response.ok && Array.isArray(payload)) {
-                addTest('FASE_D', 'D4.1 GET discrepancias responde array', 'pass',
-                    `${payload.length} discrepancias`);
-            } else if (response.status >= 500) {
-                addTest('FASE_D', 'D4.1 GET discrepancias responde array', 'skip',
-                    `HTTP ${response.status} - controller con bug preexistente (BOOLEAN=INTEGER)`);
-            } else {
-                addTest('FASE_D', 'D4.1 GET discrepancias responde array', 'fail',
-                    `HTTP ${response.status}`);
-            }
-        } catch (err) {
-            addTest('FASE_D', 'D4.1 GET discrepancias responde array', 'fail', err.message);
-        }
-
-        // ── D4.2: GET /api/discrepancias con query param responde ──
-        try {
-            const { response, payload } = await apiJson('/api/discrepancias?month=2099-01');
-            if (response.ok && Array.isArray(payload)) {
-                addTest('FASE_D', 'D4.2 GET discrepancias con filtro responde', 'pass',
-                    `${payload.length} discrepancias para 2099-01`);
-            } else if (response.status >= 500) {
-                addTest('FASE_D', 'D4.2 GET discrepancias con filtro responde', 'skip',
-                    `HTTP ${response.status} - controller con bug preexistente`);
-            } else {
-                addTest('FASE_D', 'D4.2 GET discrepancias con filtro responde', 'fail',
-                    `HTTP ${response.status}`);
-            }
-        } catch (err) {
-            addTest('FASE_D', 'D4.2 GET discrepancias con filtro responde', 'fail', err.message);
-        }
+        // ── D4.1/D4.2: Cognos retirado 2026-04-29 (endpoint desmontado) ──
+        addTest('FASE_D', 'D4.1 GET discrepancias responde array', 'skip',
+            'Modulo Cognos retirado 2026-04-29 (endpoint /api/discrepancias desmontado)');
+        addTest('FASE_D', 'D4.2 GET discrepancias con filtro responde', 'skip',
+            'Modulo Cognos retirado 2026-04-29');
 
         // ── D5.1: GET /api/importador/excel-columns responde shape ──
         try {
@@ -3822,62 +3761,11 @@ export const runFullSystemTest = async (req, res) => {
             addTest('FASE_D', 'D5.2 POST simulate con duplicados shape', 'fail', err.message);
         }
 
-        // ── D6.0: Crear referido sintetico (setup para D6.1/D6.2) ──
-        try {
-            const { response, payload } = await apiJson('/api/referidos', {
-                method: 'POST',
-                json: {
-                    subscriber_name: `${PFX_FD}_Ref`,
-                    referrer_name: 'test_referrer',
-                    phone: '7879993333',
-                    notes: 'referido sintetico FASE D'
-                }
-            });
-            fd.referidoId = payload?.id || null;
-            if (response.ok && fd.referidoId) {
-                // No countamos como test propio, es setup; pero registramos para visibilidad
-            }
-        } catch {
-            // setup silente
-        }
-
-        // ── D6.1: GET /api/referidos/search responde array ──
-        try {
-            const { response, payload } = await apiJson(`/api/referidos/search?q=${encodeURIComponent(`${PFX_FD}_Ref`)}`);
-            const arr = Array.isArray(payload) ? payload : (payload?.results || payload?.data || []);
-            if (response.ok && Array.isArray(arr)) {
-                addTest('FASE_D', 'D6.1 GET referidos/search responde', 'pass',
-                    `${arr.length} resultados`);
-            } else if (response.status >= 500) {
-                addTest('FASE_D', 'D6.1 GET referidos/search responde', 'skip',
-                    `HTTP ${response.status} - controller con bug preexistente (column contact_name)`);
-            } else {
-                addTest('FASE_D', 'D6.1 GET referidos/search responde', 'fail',
-                    `HTTP ${response.status}`);
-            }
-        } catch (err) {
-            addTest('FASE_D', 'D6.1 GET referidos/search responde', 'fail', err.message);
-        }
-
-        // ── D6.2: DELETE referido sintetico ──
-        try {
-            if (!fd.referidoId) {
-                addTest('FASE_D', 'D6.2 DELETE referido', 'skip',
-                    'D6.0 setup fallo o referido no disponible');
-            } else {
-                const { response } = await apiJson(`/api/referidos/${fd.referidoId}`, { method: 'DELETE' });
-                const verify = await query('SELECT id FROM referidos WHERE id = $1', [fd.referidoId]);
-                if (response.ok && verify.length === 0) {
-                    addTest('FASE_D', 'D6.2 DELETE referido', 'pass', 'referido eliminado');
-                    fd.referidoId = null;
-                } else {
-                    addTest('FASE_D', 'D6.2 DELETE referido', 'fail',
-                        `HTTP ${response.status} o referido sigue existiendo`);
-                }
-            }
-        } catch (err) {
-            addTest('FASE_D', 'D6.2 DELETE referido', 'fail', err.message);
-        }
+        // ── D6.1/D6.2: Referidos retirado 2026-04-29 (endpoint desmontado) ──
+        addTest('FASE_D', 'D6.1 GET referidos/search responde', 'skip',
+            'Modulo Referidos retirado 2026-04-29 (endpoint /api/referidos desmontado)');
+        addTest('FASE_D', 'D6.2 DELETE referido', 'skip',
+            'Modulo Referidos retirado 2026-04-29');
 
         // ── D7.1: POST /api/ocr/process sin file rechaza ──
         try {
