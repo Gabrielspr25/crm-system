@@ -159,6 +159,10 @@ export const runFullSystemTest = async (req, res) => {
         await client.query(`DELETE FROM subscriber_reports WHERE report_month = '2099-01-01'::date`);
         await client.query(`DELETE FROM subscribers WHERE phone IN ('7878881111','7878882222','7878883333')`);
         await client.query(`DELETE FROM bans WHERE ban_number IN ('999222001','999222002','999222003')`);
+        // FASE B: cleanup defensivo (tareas, pasos cliente con prefijo)
+        await client.query(`DELETE FROM crm_tasks WHERE title LIKE '${TEST_PREFIX}%'`).catch(() => {});
+        await client.query(`DELETE FROM crm_tasks WHERE owner_user_id IN (SELECT id FROM users_auth WHERE username LIKE '${TEST_PREFIX}%')`).catch(() => {});
+        await client.query(`DELETE FROM client_steps WHERE client_id IN (SELECT id FROM clients WHERE name LIKE '${TEST_PREFIX}%')`).catch(() => {});
         await client.query(`DELETE FROM user_permission_overrides WHERE user_id IN (SELECT id FROM users_auth WHERE username LIKE '${TEST_PREFIX}%')`).catch(() => {});
         await client.query(`DELETE FROM users_auth WHERE username LIKE '${TEST_PREFIX}%'`);
         await client.query(`DELETE FROM salespeople WHERE name LIKE '${TEST_PREFIX}%'`);
@@ -2450,6 +2454,488 @@ export const runFullSystemTest = async (req, res) => {
                 'Datos sinteticos FASE A eliminados (user, salesperson, clientes, BANs, subs, reports, overrides)');
         } catch (err) {
             addTest('FASE_A', 'A7.1 Cleanup local FASE A', 'fail', err.message);
+        }
+
+        // ============================================================
+        // FASE B: Tareas + Seguimiento + Pasos cliente + Tango sync
+        // ============================================================
+        // Datos sinteticos:
+        //   User auth:  ${TEST_PREFIX}user_b (pwd TestPassB2026!)
+        //   Cliente:    ${TEST_PREFIX}_FaseB_C1_Tasks
+        //   Tareas:     title LIKE ${TEST_PREFIX}_FaseB_Task%
+        //   Prospect:   company_name = ${TEST_PREFIX}_FaseB_Prospect
+        // Tango sync E2E: solo se ejecuta si RUN_TANGO_SYNC_TEST=true
+        //                 (por defecto skip — no modifica datos reales).
+        const FB_USER = `${TEST_PREFIX}user_b`;
+        const FB_PASS = 'TestPassB2026!';
+        const PFX_FB = `${TEST_PREFIX}_FaseB`;
+        const fb = {
+            userId: null, salespersonId: null,
+            c1: null,
+            taskId: null,
+            followUpId: null
+        };
+
+        // ── B0.1: Crear user sintetico + cliente sintetico para FASE B ──
+        try {
+            const u = await apiJson('/api/users', {
+                method: 'POST',
+                json: { username: FB_USER, password: FB_PASS, role: 'vendedor' }
+            });
+            if (!u.response.ok) throw new Error(`POST /api/users: HTTP ${u.response.status} ${u.payload?.error || ''}`);
+            fb.userId = u.payload?.id || null;
+            const sp = await query('SELECT salesperson_id FROM users_auth WHERE id = $1', [fb.userId]);
+            fb.salespersonId = sp[0]?.salesperson_id || null;
+
+            const c = await apiJson('/api/clients', {
+                method: 'POST',
+                json: { name: `${PFX_FB}_C1_Tasks`, owner_name: `${PFX_FB}_C1_Owner` }
+            });
+            if (!c.response.ok) throw new Error(`POST /api/clients: HTTP ${c.response.status}`);
+            fb.c1 = c.payload?.id || null;
+
+            if (fb.userId && fb.c1) {
+                addTest('FASE_B', 'B0.1 Setup user + cliente sinteticos', 'pass',
+                    'Recursos sinteticos creados', { userId: fb.userId, c1: fb.c1 });
+            } else {
+                addTest('FASE_B', 'B0.1 Setup user + cliente sinteticos', 'fail',
+                    'Algun recurso no se creo', { userId: fb.userId, c1: fb.c1 });
+            }
+        } catch (err) {
+            addTest('FASE_B', 'B0.1 Setup user + cliente sinteticos', 'fail', err.message);
+        }
+
+        // ── B1.1: Crear tarea personal ──
+        try {
+            const { response, payload } = await apiJson('/api/tasks', {
+                method: 'POST',
+                json: {
+                    title: `${PFX_FB}_Task_1`,
+                    due_date: '2099-12-31',
+                    priority: 'normal',
+                    notes: 'tarea sintetica FASE B'
+                }
+            });
+            if (!response.ok || !payload?.id) {
+                throw new Error(`HTTP ${response.status} ${payload?.error || ''}`);
+            }
+            fb.taskId = payload.id;
+            const verify = await query('SELECT status, title FROM crm_tasks WHERE id = $1', [fb.taskId]);
+            if (verify[0]?.status === 'pending' && String(verify[0]?.title || '').includes('FaseB_Task_1')) {
+                addTest('FASE_B', 'B1.1 Crear tarea personal', 'pass',
+                    `Tarea ${fb.taskId} creada con status=pending`);
+            } else {
+                addTest('FASE_B', 'B1.1 Crear tarea personal', 'fail',
+                    `BD shape inesperado`, verify[0]);
+            }
+        } catch (err) {
+            addTest('FASE_B', 'B1.1 Crear tarea personal', 'fail', err.message);
+        }
+
+        // ── B1.2: PUT status pending -> in_progress ──
+        try {
+            if (!fb.taskId) throw new Error('No hay taskId');
+            const { response } = await apiJson(`/api/tasks/${fb.taskId}`, {
+                method: 'PUT',
+                json: { status: 'in_progress' }
+            });
+            const verify = await query('SELECT status FROM crm_tasks WHERE id = $1', [fb.taskId]);
+            if (response.ok && verify[0]?.status === 'in_progress') {
+                addTest('FASE_B', 'B1.2 Cambiar status a in_progress', 'pass',
+                    'status=in_progress');
+            } else {
+                addTest('FASE_B', 'B1.2 Cambiar status a in_progress', 'fail',
+                    `HTTP ${response.status} status=${verify[0]?.status}`);
+            }
+        } catch (err) {
+            addTest('FASE_B', 'B1.2 Cambiar status a in_progress', 'fail', err.message);
+        }
+
+        // ── B1.3: PUT status -> done (verifica completed_at) ──
+        try {
+            if (!fb.taskId) throw new Error('No hay taskId');
+            const { response } = await apiJson(`/api/tasks/${fb.taskId}`, {
+                method: 'PUT',
+                json: { status: 'done' }
+            });
+            const verify = await query('SELECT status, completed_at FROM crm_tasks WHERE id = $1', [fb.taskId]);
+            if (response.ok && verify[0]?.status === 'done' && verify[0]?.completed_at) {
+                addTest('FASE_B', 'B1.3 Marcar tarea done setea completed_at', 'pass',
+                    `status=done, completed_at=${verify[0].completed_at}`);
+            } else {
+                addTest('FASE_B', 'B1.3 Marcar tarea done setea completed_at', 'fail',
+                    `HTTP ${response.status} status=${verify[0]?.status} completed_at=${verify[0]?.completed_at}`);
+            }
+        } catch (err) {
+            addTest('FASE_B', 'B1.3 Marcar tarea done setea completed_at', 'fail', err.message);
+        }
+
+        // ── B1.4: DELETE tarea ──
+        try {
+            if (!fb.taskId) throw new Error('No hay taskId');
+            const { response } = await apiJson(`/api/tasks/${fb.taskId}`, { method: 'DELETE' });
+            const verify = await query('SELECT id FROM crm_tasks WHERE id = $1', [fb.taskId]);
+            if (response.ok && verify.length === 0) {
+                addTest('FASE_B', 'B1.4 DELETE tarea', 'pass', 'Tarea eliminada');
+                fb.taskId = null;
+            } else {
+                addTest('FASE_B', 'B1.4 DELETE tarea', 'fail',
+                    `HTTP ${response.status} o tarea sigue en BD`);
+            }
+        } catch (err) {
+            addTest('FASE_B', 'B1.4 DELETE tarea', 'fail', err.message);
+        }
+
+        // ── B2.1: GET /api/deal-tasks?pending_only=1 ──
+        try {
+            const { response, payload } = await apiJson('/api/deal-tasks?pending_only=1');
+            if (response.ok && Array.isArray(payload)) {
+                addTest('FASE_B', 'B2.1 GET deal-tasks responde array', 'pass',
+                    `${payload.length} deal_tasks pending`);
+            } else {
+                addTest('FASE_B', 'B2.1 GET deal-tasks responde array', 'fail',
+                    `HTTP ${response.status} o no es array`);
+            }
+        } catch (err) {
+            addTest('FASE_B', 'B2.1 GET deal-tasks responde array', 'fail', err.message);
+        }
+
+        // ── B2.2: GET /api/workflow-templates ──
+        try {
+            const { response, payload } = await apiJson('/api/workflow-templates');
+            if (response.ok && Array.isArray(payload)) {
+                addTest('FASE_B', 'B2.2 GET workflow-templates responde array', 'pass',
+                    `${payload.length} templates`);
+            } else {
+                addTest('FASE_B', 'B2.2 GET workflow-templates responde array', 'fail',
+                    `HTTP ${response.status} o no es array`);
+            }
+        } catch (err) {
+            addTest('FASE_B', 'B2.2 GET workflow-templates responde array', 'fail', err.message);
+        }
+
+        // ── B2.3: GET /api/clients/:id/deals (cliente sintetico, sin deals) ──
+        try {
+            if (!fb.c1) throw new Error('No hay c1');
+            const { response, payload } = await apiJson(`/api/clients/${fb.c1}/deals`);
+            if (response.ok && Array.isArray(payload)) {
+                addTest('FASE_B', 'B2.3 GET deals del cliente sintetico', 'pass',
+                    `${payload.length} deals (esperado 0)`);
+            } else {
+                addTest('FASE_B', 'B2.3 GET deals del cliente sintetico', 'fail',
+                    `HTTP ${response.status} o no es array`);
+            }
+        } catch (err) {
+            addTest('FASE_B', 'B2.3 GET deals del cliente sintetico', 'fail', err.message);
+        }
+
+        // ── B3: Pasos cliente (skip si no hay category_steps) ──
+        let firstStepId = null;
+        try {
+            const stepCount = await query('SELECT COUNT(*)::int AS n FROM category_steps');
+            if (Number(stepCount[0]?.n || 0) === 0) {
+                addTest('FASE_B', 'B3.1 GET pasos del cliente', 'skip',
+                    'Sin category_steps en BD - test omitido');
+                addTest('FASE_B', 'B3.2 PATCH paso is_done=true', 'skip',
+                    'Sin category_steps - test omitido');
+                addTest('FASE_B', 'B3.3 GET refleja paso done', 'skip',
+                    'Sin category_steps - test omitido');
+            } else {
+                if (!fb.c1) throw new Error('No hay c1');
+                // B3.1
+                const r1 = await apiJson(`/api/clients/${fb.c1}/steps`);
+                if (r1.response.ok && Array.isArray(r1.payload) && r1.payload.length > 0) {
+                    firstStepId = r1.payload[0]?.step_id || null;
+                    addTest('FASE_B', 'B3.1 GET pasos del cliente', 'pass',
+                        `${r1.payload.length} pasos disponibles`);
+                } else {
+                    addTest('FASE_B', 'B3.1 GET pasos del cliente', 'fail',
+                        `HTTP ${r1.response.status} o array vacio`);
+                }
+
+                // B3.2
+                if (firstStepId) {
+                    const r2 = await apiJson(`/api/clients/${fb.c1}/steps/${firstStepId}`, {
+                        method: 'PATCH',
+                        json: { is_done: true, notes: 'test_FaseB' }
+                    });
+                    if (r2.response.ok) {
+                        addTest('FASE_B', 'B3.2 PATCH paso is_done=true', 'pass',
+                            `step ${firstStepId} marcado done`);
+                    } else {
+                        addTest('FASE_B', 'B3.2 PATCH paso is_done=true', 'fail',
+                            `HTTP ${r2.response.status}`);
+                    }
+
+                    // B3.3
+                    const r3 = await apiJson(`/api/clients/${fb.c1}/steps`);
+                    const found = Array.isArray(r3.payload)
+                        ? r3.payload.find((s) => String(s.step_id) === String(firstStepId))
+                        : null;
+                    if (r3.response.ok && found && found.is_done === true && found.done_at) {
+                        addTest('FASE_B', 'B3.3 GET refleja paso done', 'pass',
+                            `is_done=true, done_at=${found.done_at}`);
+                    } else {
+                        addTest('FASE_B', 'B3.3 GET refleja paso done', 'fail',
+                            `Paso no muestra is_done=true`, found);
+                    }
+                } else {
+                    addTest('FASE_B', 'B3.2 PATCH paso is_done=true', 'fail',
+                        'No se obtuvo firstStepId de B3.1');
+                    addTest('FASE_B', 'B3.3 GET refleja paso done', 'fail',
+                        'No se obtuvo firstStepId de B3.1');
+                }
+            }
+        } catch (err) {
+            addTest('FASE_B', 'B3 Pasos cliente', 'fail', err.message);
+        }
+
+        // ── B4.1: Crear follow-up prospect (requiere vendor_id real) ──
+        let fbVendorId = null;
+        try {
+            if (!fb.c1) throw new Error('No hay c1');
+            // POST /api/follow-up-prospects exige vendor_id; tomar uno existente.
+            const vRows = await query('SELECT id FROM vendors ORDER BY created_at ASC LIMIT 1');
+            fbVendorId = vRows[0]?.id || null;
+            if (!fbVendorId) {
+                addTest('FASE_B', 'B4.1 Crear follow-up prospect', 'skip',
+                    'No hay vendors en BD - test omitido');
+            } else {
+                const { response, payload } = await apiJson('/api/follow-up-prospects', {
+                    method: 'POST',
+                    json: {
+                        company_name: `${PFX_FB}_Prospect`,
+                        client_id: fb.c1,
+                        vendor_id: fbVendorId,
+                        fijo_ren: 0, fijo_new: 0,
+                        movil_nueva: 0, movil_renovacion: 0,
+                        claro_tv: 0, cloud: 0, mpls: 0,
+                        total_amount: 1000,
+                        notes: 'prospect sintetico'
+                    }
+                });
+                if (response.ok && payload?.id) {
+                    fb.followUpId = payload.id;
+                    addTest('FASE_B', 'B4.1 Crear follow-up prospect', 'pass',
+                        `prospect ${fb.followUpId} creado`);
+                } else {
+                    addTest('FASE_B', 'B4.1 Crear follow-up prospect', 'fail',
+                        `HTTP ${response.status} ${payload?.error || ''}`);
+                }
+            }
+        } catch (err) {
+            addTest('FASE_B', 'B4.1 Crear follow-up prospect', 'fail', err.message);
+        }
+
+        // ── B4.2: Editar prospect (notes/total_amount) ──
+        try {
+            if (!fb.followUpId) {
+                if (!fbVendorId) {
+                    addTest('FASE_B', 'B4.2 Editar prospect', 'skip',
+                        'B4.1 skipped por falta de vendor - no hay prospect');
+                    throw new Error('__SKIP__');
+                }
+                throw new Error('No hay followUpId');
+            }
+            const { response } = await apiJson(`/api/follow-up-prospects/${fb.followUpId}`, {
+                method: 'PUT',
+                json: { notes: 'editado_FaseB', total_amount: 2000 }
+            });
+            const verify = await query(
+                'SELECT notes, total_amount FROM follow_up_prospects WHERE id = $1',
+                [fb.followUpId]
+            );
+            if (response.ok && verify[0]?.notes === 'editado_FaseB' && Number(verify[0]?.total_amount) === 2000) {
+                addTest('FASE_B', 'B4.2 Editar prospect', 'pass',
+                    'notes y total_amount actualizados');
+            } else {
+                addTest('FASE_B', 'B4.2 Editar prospect', 'fail',
+                    `HTTP ${response.status}`, verify[0]);
+            }
+        } catch (err) {
+            if (err.message !== '__SKIP__') {
+                addTest('FASE_B', 'B4.2 Editar prospect', 'fail', err.message);
+            }
+        }
+
+        // ── B4.3: Log de llamada (PUT con last_call_date/next_call_date/call_count) ──
+        try {
+            if (!fb.followUpId) {
+                if (!fbVendorId) {
+                    addTest('FASE_B', 'B4.3 Log de llamada en prospect', 'skip',
+                        'B4.1 skipped - no hay prospect');
+                    throw new Error('__SKIP__');
+                }
+                throw new Error('No hay followUpId');
+            }
+            const { response } = await apiJson(`/api/follow-up-prospects/${fb.followUpId}`, {
+                method: 'PUT',
+                json: {
+                    last_call_date: '2099-06-01',
+                    next_call_date: '2099-06-15',
+                    call_count: 1
+                }
+            });
+            const verify = await query(
+                'SELECT last_call_date::text, next_call_date::text, call_count FROM follow_up_prospects WHERE id = $1',
+                [fb.followUpId]
+            );
+            const row = verify[0];
+            const ok = response.ok
+                && String(row?.last_call_date || '').startsWith('2099-06-01')
+                && String(row?.next_call_date || '').startsWith('2099-06-15')
+                && Number(row?.call_count) === 1;
+            if (ok) {
+                addTest('FASE_B', 'B4.3 Log de llamada en prospect', 'pass',
+                    `call_count=1, fechas guardadas`);
+            } else {
+                addTest('FASE_B', 'B4.3 Log de llamada en prospect', 'fail',
+                    `HTTP ${response.status}`, row);
+            }
+        } catch (err) {
+            if (err.message !== '__SKIP__') {
+                addTest('FASE_B', 'B4.3 Log de llamada en prospect', 'fail', err.message);
+            }
+        }
+
+        // ── B4.4: Completar prospect ──
+        try {
+            if (!fb.followUpId) {
+                if (!fbVendorId) {
+                    addTest('FASE_B', 'B4.4 Completar prospect', 'skip',
+                        'B4.1 skipped - no hay prospect');
+                    throw new Error('__SKIP__');
+                }
+                throw new Error('No hay followUpId');
+            }
+            const { response } = await apiJson(`/api/follow-up-prospects/${fb.followUpId}`, {
+                method: 'PUT',
+                json: { is_completed: true, completed_date: '2099-06-30' }
+            });
+            const verify = await query(
+                'SELECT is_completed, completed_date::text FROM follow_up_prospects WHERE id = $1',
+                [fb.followUpId]
+            );
+            const row = verify[0];
+            const isCompleted = row?.is_completed === true || row?.is_completed === 1 || String(row?.is_completed) === 't';
+            if (response.ok && isCompleted && String(row?.completed_date || '').startsWith('2099-06-30')) {
+                addTest('FASE_B', 'B4.4 Completar prospect', 'pass',
+                    'is_completed=true, completed_date guardado');
+            } else {
+                addTest('FASE_B', 'B4.4 Completar prospect', 'fail',
+                    `HTTP ${response.status}`, row);
+            }
+        } catch (err) {
+            if (err.message !== '__SKIP__') {
+                addTest('FASE_B', 'B4.4 Completar prospect', 'fail', err.message);
+            }
+        }
+
+        // ── B4.5: Devolver prospect (return) ──
+        try {
+            if (!fb.followUpId) {
+                if (!fbVendorId) {
+                    addTest('FASE_B', 'B4.5 Devolver prospect (return)', 'skip',
+                        'B4.1 skipped - no hay prospect');
+                    throw new Error('__SKIP__');
+                }
+                throw new Error('No hay followUpId');
+            }
+            const { response } = await apiJson(`/api/follow-up-prospects/${fb.followUpId}/return`, {
+                method: 'PUT'
+            });
+            const verify = await query(
+                'SELECT is_active FROM follow_up_prospects WHERE id = $1',
+                [fb.followUpId]
+            );
+            const row = verify[0];
+            const isInactive = row?.is_active === false || row?.is_active === 0
+                || String(row?.is_active) === 'f' || String(row?.is_active) === '0';
+            if (response.ok && isInactive) {
+                addTest('FASE_B', 'B4.5 Devolver prospect (return)', 'pass',
+                    `is_active=${row.is_active}`);
+            } else {
+                addTest('FASE_B', 'B4.5 Devolver prospect (return)', 'fail',
+                    `HTTP ${response.status} is_active=${row?.is_active}`);
+            }
+        } catch (err) {
+            if (err.message !== '__SKIP__') {
+                addTest('FASE_B', 'B4.5 Devolver prospect (return)', 'fail', err.message);
+            }
+        }
+
+        // ── B5: Tango sync E2E (skip por defecto, ejecutar solo con flag) ──
+        const RUN_TANGO = String(process.env.RUN_TANGO_SYNC_TEST || '').toLowerCase() === 'true';
+        if (!RUN_TANGO) {
+            addTest('FASE_B', 'B5.1 Tango sync HTTP 200', 'skip',
+                'RUN_TANGO_SYNC_TEST != true (off por defecto)');
+            addTest('FASE_B', 'B5.2 Tango sync stats coherente', 'skip',
+                'RUN_TANGO_SYNC_TEST != true');
+            addTest('FASE_B', 'B5.3 Sin regresion de count subscribers', 'skip',
+                'RUN_TANGO_SYNC_TEST != true');
+        } else {
+            let preCount = 0;
+            try {
+                const pre = await query('SELECT COUNT(*)::int AS n FROM subscribers');
+                preCount = Number(pre[0]?.n || 0);
+                const { response, payload } = await apiJson('/api/tango/sync', {
+                    method: 'POST',
+                    headers: { 'X-Test-Timeout-Override': '120000' }
+                });
+                // B5.1
+                if (response.ok) {
+                    addTest('FASE_B', 'B5.1 Tango sync HTTP 200', 'pass', 'sync ejecutado');
+                } else {
+                    addTest('FASE_B', 'B5.1 Tango sync HTTP 200', 'fail',
+                        `HTTP ${response.status}`);
+                }
+                // B5.2
+                const stats = payload?.stats || {};
+                const errors = Number(stats.errors || 0);
+                const ventas = Number(stats.tango_ventas || 0);
+                if (errors === 0 && ventas > 0) {
+                    addTest('FASE_B', 'B5.2 Tango sync stats coherente', 'pass',
+                        `errors=0, tango_ventas=${ventas}`);
+                } else {
+                    addTest('FASE_B', 'B5.2 Tango sync stats coherente', 'fail',
+                        `errors=${errors}, tango_ventas=${ventas}`);
+                }
+                // B5.3
+                const post = await query('SELECT COUNT(*)::int AS n FROM subscribers');
+                const postCount = Number(post[0]?.n || 0);
+                if (postCount >= preCount) {
+                    addTest('FASE_B', 'B5.3 Sin regresion de count subscribers', 'pass',
+                        `pre=${preCount}, post=${postCount}`);
+                } else {
+                    addTest('FASE_B', 'B5.3 Sin regresion de count subscribers', 'fail',
+                        `pre=${preCount}, post=${postCount} (perdida)`);
+                }
+            } catch (err) {
+                addTest('FASE_B', 'B5 Tango sync E2E', 'fail', err.message);
+            }
+        }
+
+        // ── B6.1: Cleanup local FASE B ──
+        try {
+            if (fb.followUpId) await client.query('DELETE FROM follow_up_prospects WHERE id = $1', [fb.followUpId]);
+            // Tareas (por si quedaron, aunque B1.4 ya borró)
+            await client.query(`DELETE FROM crm_tasks WHERE title LIKE '${PFX_FB}_%'`);
+            // client_steps del cliente sintético
+            if (fb.c1) await client.query('DELETE FROM client_steps WHERE client_id = $1', [fb.c1]);
+            // Cliente sintético
+            if (fb.c1) await client.query('DELETE FROM clients WHERE id = $1', [fb.c1]);
+            // User + permission overrides + salesperson
+            if (fb.userId) {
+                await client.query('DELETE FROM user_permission_overrides WHERE user_id = $1', [fb.userId]).catch(() => {});
+                await client.query('DELETE FROM users_auth WHERE id = $1', [fb.userId]);
+            }
+            if (fb.salespersonId) {
+                await client.query('DELETE FROM salespeople WHERE id = $1', [fb.salespersonId]).catch(() => {});
+            }
+            addTest('FASE_B', 'B6.1 Cleanup local FASE B', 'pass',
+                'Datos sinteticos FASE B eliminados (user, salesperson, cliente, tareas, prospect, steps)');
+        } catch (err) {
+            addTest('FASE_B', 'B6.1 Cleanup local FASE B', 'fail', err.message);
         }
 
         // ========================================
