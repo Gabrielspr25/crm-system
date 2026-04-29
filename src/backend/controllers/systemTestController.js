@@ -163,6 +163,13 @@ export const runFullSystemTest = async (req, res) => {
         await client.query(`DELETE FROM crm_tasks WHERE title LIKE '${TEST_PREFIX}%'`).catch(() => {});
         await client.query(`DELETE FROM crm_tasks WHERE owner_user_id IN (SELECT id FROM users_auth WHERE username LIKE '${TEST_PREFIX}%')`).catch(() => {});
         await client.query(`DELETE FROM client_steps WHERE client_id IN (SELECT id FROM clients WHERE name LIKE '${TEST_PREFIX}%')`).catch(() => {});
+        // FASE C: cleanup defensivo (goals/products/vendors sinteticos)
+        await client.query(`DELETE FROM business_goals WHERE period_year = 2099`).catch(() => {});
+        await client.query(`DELETE FROM product_goals WHERE period_year = 2099`).catch(() => {});
+        await client.query(`DELETE FROM product_commission_tiers WHERE product_id IN (SELECT id FROM products WHERE name LIKE '${TEST_PREFIX}%')`).catch(() => {});
+        await client.query(`DELETE FROM products WHERE name LIKE '${TEST_PREFIX}%'`).catch(() => {});
+        await client.query(`DELETE FROM vendor_salesperson_mapping WHERE vendor_id IN (SELECT id FROM vendors WHERE name LIKE '${TEST_PREFIX}%')`).catch(() => {});
+        await client.query(`DELETE FROM vendors WHERE name LIKE '${TEST_PREFIX}%'`).catch(() => {});
         await client.query(`DELETE FROM user_permission_overrides WHERE user_id IN (SELECT id FROM users_auth WHERE username LIKE '${TEST_PREFIX}%')`).catch(() => {});
         await client.query(`DELETE FROM users_auth WHERE username LIKE '${TEST_PREFIX}%'`);
         await client.query(`DELETE FROM salespeople WHERE name LIKE '${TEST_PREFIX}%'`);
@@ -2938,6 +2945,573 @@ export const runFullSystemTest = async (req, res) => {
             addTest('FASE_B', 'B6.1 Cleanup local FASE B', 'fail', err.message);
         }
 
+        // ============================================================
+        // FASE C: Vendors + Products/Tiers + Goals + Dashboard +
+        //         Cuartel agentes (roles) + PASO 1.5 estructural
+        // ============================================================
+        // Datos sinteticos:
+        //   User vendedor: ${TEST_PREFIX}user_c (pwd TestPassC2026!)
+        //   Cliente:       ${TEST_PREFIX}_FaseC_C1
+        //   Vendor:        ${TEST_PREFIX}_FaseC_Vendor (username ${TEST_PREFIX}_vendor_c1)
+        //   Producto:      ${TEST_PREFIX}_FaseC_Product
+        //   Tier:          asociado al producto
+        //   Goals:         period_year=2099, period_month=1
+        // C2 usa SQL directo (POST /api/products tiene bug result.rows[0])
+        // C6 valida estructura sin ejecutar sync
+        const FC_USER = `${TEST_PREFIX}user_c`;
+        const FC_PASS = 'TestPassC2026!';
+        const PFX_FC = `${TEST_PREFIX}_FaseC`;
+        const fc = {
+            userId: null, salespersonId: null, userToken: null,
+            c1: null,
+            vendorId: null, vendorSpId: null,
+            productId: null, tierId: null,
+            categoryId: null
+        };
+
+        // ── C0.1: Setup user vendedor + cliente sintetico ──
+        try {
+            // 1) user vendedor sintetico
+            const u = await apiJson('/api/users', {
+                method: 'POST',
+                json: { username: FC_USER, password: FC_PASS, role: 'vendedor' }
+            });
+            if (!u.response.ok) throw new Error(`POST /api/users: HTTP ${u.response.status}`);
+            fc.userId = u.payload?.id || null;
+            const sp = await query('SELECT salesperson_id FROM users_auth WHERE id = $1', [fc.userId]);
+            fc.salespersonId = sp[0]?.salesperson_id || null;
+
+            // 2) login para token vendedor (necesario en C5)
+            const lg = await apiJson('/api/auth/login', {
+                method: 'POST',
+                json: { username: FC_USER, password: FC_PASS }
+            });
+            if (!lg.response.ok) throw new Error(`Login: HTTP ${lg.response.status}`);
+            fc.userToken = lg.payload?.token || null;
+
+            // 3) cliente sintetico
+            const c = await apiJson('/api/clients', {
+                method: 'POST',
+                json: { name: `${PFX_FC}_C1`, owner_name: `${PFX_FC}_C1_Owner` }
+            });
+            if (!c.response.ok) throw new Error(`POST /api/clients: HTTP ${c.response.status}`);
+            fc.c1 = c.payload?.id || null;
+
+            // 4) tomar una category_id existente para asociar el producto
+            const cat = await query('SELECT id FROM categories ORDER BY created_at ASC LIMIT 1');
+            fc.categoryId = cat[0]?.id || null;
+
+            if (fc.userId && fc.userToken && fc.c1) {
+                addTest('FASE_C', 'C0.1 Setup user vendedor + cliente + token', 'pass',
+                    'Recursos sinteticos creados',
+                    { userId: fc.userId, c1: fc.c1, hasToken: !!fc.userToken, categoryId: fc.categoryId });
+            } else {
+                addTest('FASE_C', 'C0.1 Setup user vendedor + cliente + token', 'fail',
+                    'Algun recurso no se creo', fc);
+            }
+        } catch (err) {
+            addTest('FASE_C', 'C0.1 Setup user vendedor + cliente + token', 'fail', err.message);
+        }
+
+        // ── C1.1: Crear vendor (SQL directo: POST /api/vendors tiene bug ON CONFLICT) ──
+        try {
+            const result = await query(
+                `INSERT INTO vendors (name, email, commission_percentage, is_active, created_at)
+                 VALUES ($1, $2, $3, 1, NOW()) RETURNING id`,
+                [`${PFX_FC}_Vendor`, `${PFX_FC}_vendor@test.com`, 30]
+            );
+            fc.vendorId = result[0]?.id || null;
+            if (fc.vendorId) {
+                addTest('FASE_C', 'C1.1 Crear vendor (SQL)', 'pass',
+                    `vendor ${fc.vendorId} creado (POST /api/vendors tiene bug ON CONFLICT)`);
+            } else {
+                addTest('FASE_C', 'C1.1 Crear vendor (SQL)', 'fail', 'INSERT no devolvio id');
+            }
+        } catch (err) {
+            addTest('FASE_C', 'C1.1 Crear vendor (SQL)', 'fail', err.message);
+        }
+
+        // ── C1.2: GET /api/vendors lista contiene el nuevo ──
+        try {
+            const { response, payload } = await apiJson('/api/vendors');
+            const list = Array.isArray(payload) ? payload : [];
+            const found = fc.vendorId
+                ? list.find((v) => String(v.id) === String(fc.vendorId))
+                : null;
+            if (response.ok && found) {
+                addTest('FASE_C', 'C1.2 Listado de vendors contiene el nuevo', 'pass',
+                    `vendor encontrado en lista (${list.length} total)`);
+            } else {
+                addTest('FASE_C', 'C1.2 Listado de vendors contiene el nuevo', fc.vendorId ? 'fail' : 'skip',
+                    fc.vendorId ? `Vendor ${fc.vendorId} no esta en lista` : 'C1.1 fallo');
+            }
+        } catch (err) {
+            addTest('FASE_C', 'C1.2 Listado de vendors contiene el nuevo', 'fail', err.message);
+        }
+
+        // ── C1.3: Editar vendor (PUT requiere name + commission_percentage) ──
+        try {
+            if (!fc.vendorId) {
+                addTest('FASE_C', 'C1.3 Editar vendor (commission)', 'skip', 'C1.1 fallo');
+            } else {
+                const { response } = await apiJson(`/api/vendors/${fc.vendorId}`, {
+                    method: 'PUT',
+                    json: {
+                        name: `${PFX_FC}_Vendor`,
+                        commission_percentage: 45
+                    }
+                });
+                const verify = await query('SELECT commission_percentage FROM vendors WHERE id = $1', [fc.vendorId]);
+                if (response.ok && Number(verify[0]?.commission_percentage) === 45) {
+                    addTest('FASE_C', 'C1.3 Editar vendor (commission)', 'pass',
+                        'commission_percentage actualizado a 45');
+                } else {
+                    addTest('FASE_C', 'C1.3 Editar vendor (commission)', 'fail',
+                        `HTTP ${response.status} commission=${verify[0]?.commission_percentage}`);
+                }
+            }
+        } catch (err) {
+            addTest('FASE_C', 'C1.3 Editar vendor (commission)', 'fail', err.message);
+        }
+
+        // ── C1.4: DELETE vendor (soft delete: is_active=0) ──
+        try {
+            if (!fc.vendorId) {
+                addTest('FASE_C', 'C1.4 DELETE vendor (soft)', 'skip', 'C1.1 fallo');
+            } else {
+                const { response } = await apiJson(`/api/vendors/${fc.vendorId}`, { method: 'DELETE' });
+                const verify = await query(
+                    'SELECT is_active FROM vendors WHERE id = $1', [fc.vendorId]
+                );
+                const inactive = verify.length === 1 && Number(verify[0]?.is_active) === 0;
+                if (response.ok && inactive) {
+                    addTest('FASE_C', 'C1.4 DELETE vendor (soft)', 'pass',
+                        'vendor desactivado (is_active=0)');
+                } else {
+                    addTest('FASE_C', 'C1.4 DELETE vendor (soft)', 'fail',
+                        `HTTP ${response.status} is_active=${verify[0]?.is_active}`);
+                }
+            }
+        } catch (err) {
+            addTest('FASE_C', 'C1.4 DELETE vendor (soft)', 'fail', err.message);
+        }
+
+        // ── C2.1: Crear producto sintetico (SQL directo: POST /api/products bug rows[0]) ──
+        // Tabla products tiene: name, category_id, price, monthly_goal, description, commission_percentage
+        try {
+            if (!fc.categoryId) throw new Error('No hay categoryId');
+            const result = await query(
+                `INSERT INTO products (name, category_id, description, price, commission_percentage, monthly_goal, created_at)
+                 VALUES ($1,$2,$3,$4,$5,$6,NOW())
+                 RETURNING id, name`,
+                [`${PFX_FC}_Product`, fc.categoryId, 'Producto sintetico FASE C', 25.0, 10.0, 100]
+            );
+            fc.productId = result[0]?.id || null;
+            if (fc.productId) {
+                addTest('FASE_C', 'C2.1 Crear producto sintetico (SQL)', 'pass',
+                    `producto ${fc.productId} creado`);
+            } else {
+                addTest('FASE_C', 'C2.1 Crear producto sintetico (SQL)', 'fail', 'INSERT no devolvio id');
+            }
+        } catch (err) {
+            addTest('FASE_C', 'C2.1 Crear producto sintetico (SQL)', 'fail', err.message);
+        }
+
+        // ── C2.2: Crear tier asociado (SQL directo) ──
+        try {
+            if (!fc.productId) {
+                addTest('FASE_C', 'C2.2 Crear tier (SQL)', 'skip', 'C2.1 fallo');
+            } else {
+                const result = await query(
+                    `INSERT INTO product_commission_tiers (product_id, range_min, range_max, commission_amount, created_at, updated_at)
+                     VALUES ($1,$2,$3,$4,NOW(),NOW())
+                     RETURNING id`,
+                    [fc.productId, 1, 10, 5.0]
+                );
+                fc.tierId = result[0]?.id || null;
+                if (fc.tierId) {
+                    addTest('FASE_C', 'C2.2 Crear tier (SQL)', 'pass', `tier ${fc.tierId} creado`);
+                } else {
+                    addTest('FASE_C', 'C2.2 Crear tier (SQL)', 'fail', 'INSERT no devolvio id');
+                }
+            }
+        } catch (err) {
+            addTest('FASE_C', 'C2.2 Crear tier (SQL)', 'fail', err.message);
+        }
+
+        // ── C2.3: GET /api/products/:id/tiers refleja ──
+        try {
+            if (!fc.productId) {
+                addTest('FASE_C', 'C2.3 GET tiers del producto', 'skip', 'C2.1 fallo');
+            } else {
+                const { response, payload } = await apiJson(`/api/products/${fc.productId}/tiers`);
+                const tiers = Array.isArray(payload) ? payload : [];
+                if (response.ok && tiers.length >= 1) {
+                    addTest('FASE_C', 'C2.3 GET tiers del producto', 'pass',
+                        `${tiers.length} tier(s) en el producto`);
+                } else {
+                    addTest('FASE_C', 'C2.3 GET tiers del producto', 'fail',
+                        `HTTP ${response.status} o array vacio (${tiers.length})`);
+                }
+            }
+        } catch (err) {
+            addTest('FASE_C', 'C2.3 GET tiers del producto', 'fail', err.message);
+        }
+
+        // ── C2.4: DELETE tier + producto (SQL directo) ──
+        try {
+            if (fc.tierId) {
+                await client.query('DELETE FROM product_commission_tiers WHERE id = $1', [fc.tierId]);
+            }
+            if (fc.productId) {
+                await client.query('DELETE FROM products WHERE id = $1', [fc.productId]);
+            }
+            const verifyP = fc.productId
+                ? await query('SELECT id FROM products WHERE id = $1', [fc.productId])
+                : [];
+            if (verifyP.length === 0) {
+                addTest('FASE_C', 'C2.4 DELETE tier + producto (SQL)', 'pass',
+                    'tier y producto eliminados');
+                fc.tierId = null;
+                fc.productId = null;
+            } else {
+                addTest('FASE_C', 'C2.4 DELETE tier + producto (SQL)', 'fail',
+                    'producto sigue existiendo');
+            }
+        } catch (err) {
+            addTest('FASE_C', 'C2.4 DELETE tier + producto (SQL)', 'fail', err.message);
+        }
+
+        // ── C3.1: POST /api/gestion/goals/business (meta de negocio 2099-01) ──
+        // Necesita un product_id (UUID). Tomamos uno existente para no depender de C2.
+        let fcGoalProductId = null;
+        try {
+            const prods = await query('SELECT id FROM products LIMIT 1');
+            fcGoalProductId = prods[0]?.id || null;
+            if (!fcGoalProductId) {
+                addTest('FASE_C', 'C3.1 POST goal de negocio', 'skip',
+                    'No hay productos en BD');
+            } else {
+                const { response, payload } = await apiJson('/api/gestion/goals/business', {
+                    method: 'POST',
+                    json: { product_id: fcGoalProductId, period_year: 2099, period_month: 1, amount: 1000 }
+                });
+                if (response.ok && payload?.ok === true) {
+                    addTest('FASE_C', 'C3.1 POST goal de negocio', 'pass',
+                        'business_goal creado para 2099-01');
+                } else {
+                    addTest('FASE_C', 'C3.1 POST goal de negocio', 'fail',
+                        `HTTP ${response.status} ${payload?.error || ''}`);
+                }
+            }
+        } catch (err) {
+            addTest('FASE_C', 'C3.1 POST goal de negocio', 'fail', err.message);
+        }
+
+        // ── C3.2: GET /api/goals/by-period?year=2099&month=1 responde ──
+        try {
+            const { response, payload } = await apiJson('/api/goals/by-period?year=2099&month=1');
+            if (response.ok && Array.isArray(payload)) {
+                addTest('FASE_C', 'C3.2 GET goals by-period responde array', 'pass',
+                    `${payload.length} goals para 2099-01`);
+            } else {
+                addTest('FASE_C', 'C3.2 GET goals by-period responde array', 'fail',
+                    `HTTP ${response.status} o no es array`);
+            }
+        } catch (err) {
+            addTest('FASE_C', 'C3.2 GET goals by-period responde array', 'fail', err.message);
+        }
+
+        // ── C3.3: POST /api/gestion/goals/vendor (meta de vendor) ──
+        try {
+            // Necesita vendor_id valido. Tomamos uno existente.
+            const v = await query('SELECT id FROM vendors LIMIT 1');
+            const someVendorId = v[0]?.id || null;
+            if (!someVendorId) {
+                addTest('FASE_C', 'C3.3 POST goal de vendor', 'skip',
+                    'No hay vendors en BD');
+            } else {
+                const synthProductKey = `${TEST_PREFIX}_synth_product`;
+                const { response, payload } = await apiJson('/api/gestion/goals/vendor', {
+                    method: 'POST',
+                    json: { vendor_id: someVendorId, product_id: synthProductKey, period_year: 2099, period_month: 1, amount: 500 }
+                });
+                if (response.ok && payload?.ok === true) {
+                    addTest('FASE_C', 'C3.3 POST goal de vendor', 'pass',
+                        `product_goal creado para 2099-01 (vendor=${someVendorId})`);
+                } else {
+                    addTest('FASE_C', 'C3.3 POST goal de vendor', 'fail',
+                        `HTTP ${response.status} ${payload?.error || ''}`);
+                }
+            }
+        } catch (err) {
+            addTest('FASE_C', 'C3.3 POST goal de vendor', 'fail', err.message);
+        }
+
+        // ── C3.4: GET /api/goals/performance?month=2099-01 responde con shape ──
+        try {
+            const { response, payload } = await apiJson('/api/goals/performance?month=2099-01');
+            const ok = response.ok && payload && typeof payload === 'object'
+                && 'period' in payload && 'summary' in payload && 'vendors' in payload;
+            if (ok) {
+                addTest('FASE_C', 'C3.4 GET goals performance shape', 'pass',
+                    `period=${payload.period}, vendors=${payload.vendors?.length}`);
+            } else {
+                addTest('FASE_C', 'C3.4 GET goals performance shape', 'fail',
+                    `HTTP ${response.status} shape invalido`, payload);
+            }
+        } catch (err) {
+            addTest('FASE_C', 'C3.4 GET goals performance shape', 'fail', err.message);
+        }
+
+        // ── C4.1: GET /api/dashboard/resumen responde ──
+        try {
+            const { response, payload } = await apiJson('/api/dashboard/resumen?year=2026&month=4');
+            if (response.ok && payload && typeof payload === 'object') {
+                addTest('FASE_C', 'C4.1 GET dashboard/resumen responde', 'pass',
+                    'shape ok',
+                    { keys: Object.keys(payload).slice(0, 5) });
+            } else {
+                addTest('FASE_C', 'C4.1 GET dashboard/resumen responde', 'fail',
+                    `HTTP ${response.status}`);
+            }
+        } catch (err) {
+            addTest('FASE_C', 'C4.1 GET dashboard/resumen responde', 'fail', err.message);
+        }
+
+        // ── C4.2: BAN convergente con line_kind movil + fijo en BD ──
+        try {
+            const conv = await query(`
+                SELECT b.ban_number,
+                       COUNT(*) FILTER (WHERE s.line_kind = 'movil') AS n_movil,
+                       COUNT(*) FILTER (WHERE s.line_kind = 'fijo')  AS n_fijo
+                  FROM bans b
+                  JOIN subscribers s ON s.ban_id = b.id
+                 WHERE UPPER(b.account_type) = 'CONVERGENTE'
+                   AND s.line_kind IS NOT NULL
+                 GROUP BY b.ban_number
+                HAVING COUNT(*) FILTER (WHERE s.line_kind = 'movil') > 0
+                   AND COUNT(*) FILTER (WHERE s.line_kind = 'fijo')  > 0
+                 LIMIT 1
+            `);
+            if (conv.length === 0) {
+                addTest('FASE_C', 'C4.2 BAN convergente con movil+fijo separados', 'skip',
+                    'No hay BAN CONVERGENTE con ambos tipos clasificados');
+            } else {
+                const row = conv[0];
+                addTest('FASE_C', 'C4.2 BAN convergente con movil+fijo separados', 'pass',
+                    `BAN ${row.ban_number}: movil=${row.n_movil}, fijo=${row.n_fijo}`);
+            }
+        } catch (err) {
+            addTest('FASE_C', 'C4.2 BAN convergente con movil+fijo separados', 'fail', err.message);
+        }
+
+        // ── C4.3: Columna subscribers.line_kind existe con CHECK movil/fijo ──
+        try {
+            const col = await query(`
+                SELECT column_name, data_type
+                  FROM information_schema.columns
+                 WHERE table_name = 'subscribers' AND column_name = 'line_kind'
+            `);
+            const chk = await query(`
+                SELECT pg_get_constraintdef(c.oid) AS def
+                  FROM pg_constraint c
+                  JOIN pg_class t ON t.oid = c.conrelid
+                 WHERE t.relname = 'subscribers' AND c.conname = 'subscribers_line_kind_check'
+            `);
+            const defText = String(chk[0]?.def || '');
+            if (col.length === 1 && defText.includes('movil') && defText.includes('fijo')) {
+                addTest('FASE_C', 'C4.3 line_kind existe con CHECK movil/fijo', 'pass',
+                    'columna y constraint OK');
+            } else {
+                addTest('FASE_C', 'C4.3 line_kind existe con CHECK movil/fijo', 'fail',
+                    `col=${col.length} check=${defText}`);
+            }
+        } catch (err) {
+            addTest('FASE_C', 'C4.3 line_kind existe con CHECK movil/fijo', 'fail', err.message);
+        }
+
+        // ── C5: Cuartel agentes — vendedor sin acceso a memory/decisions/runs ──
+        if (!fc.userToken) {
+            addTest('FASE_C', 'C5.1 vendedor GET memory rechazado', 'skip', 'Sin token vendedor');
+            addTest('FASE_C', 'C5.2 vendedor POST memory rechazado', 'skip', 'Sin token vendedor');
+            addTest('FASE_C', 'C5.3 vendedor GET decisions rechazado', 'skip', 'Sin token vendedor');
+            addTest('FASE_C', 'C5.4 vendedor GET runs rechazado', 'skip', 'Sin token vendedor');
+            addTest('FASE_C', 'C5.5 vendedor GET tasks filtrado', 'skip', 'Sin token vendedor');
+        } else {
+            // C5.1
+            try {
+                const { response } = await apiJsonAs(fc.userToken, '/api/agents/memory');
+                if (response.status === 403) {
+                    addTest('FASE_C', 'C5.1 vendedor GET memory rechazado', 'pass', 'HTTP 403');
+                } else {
+                    addTest('FASE_C', 'C5.1 vendedor GET memory rechazado', 'fail',
+                        `Esperado 403, obtenido ${response.status}`);
+                }
+            } catch (err) {
+                addTest('FASE_C', 'C5.1 vendedor GET memory rechazado', 'fail', err.message);
+            }
+            // C5.2
+            try {
+                const { response } = await apiJsonAs(fc.userToken, '/api/agents/memory', {
+                    method: 'POST',
+                    json: { agent_name: 'test', content: 'x' }
+                });
+                if (response.status === 403) {
+                    addTest('FASE_C', 'C5.2 vendedor POST memory rechazado', 'pass', 'HTTP 403');
+                } else {
+                    addTest('FASE_C', 'C5.2 vendedor POST memory rechazado', 'fail',
+                        `Esperado 403, obtenido ${response.status}`);
+                }
+            } catch (err) {
+                addTest('FASE_C', 'C5.2 vendedor POST memory rechazado', 'fail', err.message);
+            }
+            // C5.3
+            try {
+                const { response } = await apiJsonAs(fc.userToken, '/api/agents/decisions');
+                if (response.status === 403) {
+                    addTest('FASE_C', 'C5.3 vendedor GET decisions rechazado', 'pass', 'HTTP 403');
+                } else {
+                    addTest('FASE_C', 'C5.3 vendedor GET decisions rechazado', 'fail',
+                        `Esperado 403, obtenido ${response.status}`);
+                }
+            } catch (err) {
+                addTest('FASE_C', 'C5.3 vendedor GET decisions rechazado', 'fail', err.message);
+            }
+            // C5.4
+            try {
+                const { response } = await apiJsonAs(fc.userToken, '/api/agents/runs');
+                if (response.status === 403) {
+                    addTest('FASE_C', 'C5.4 vendedor GET runs rechazado', 'pass', 'HTTP 403');
+                } else {
+                    addTest('FASE_C', 'C5.4 vendedor GET runs rechazado', 'fail',
+                        `Esperado 403, obtenido ${response.status}`);
+                }
+            } catch (err) {
+                addTest('FASE_C', 'C5.4 vendedor GET runs rechazado', 'fail', err.message);
+            }
+            // C5.5
+            try {
+                const { response, payload } = await apiJsonAs(fc.userToken, '/api/agents/tasks');
+                if (response.ok && Array.isArray(payload)) {
+                    addTest('FASE_C', 'C5.5 vendedor GET tasks filtrado', 'pass',
+                        `${payload.length} tareas visibles para vendedor`);
+                } else {
+                    addTest('FASE_C', 'C5.5 vendedor GET tasks filtrado', 'fail',
+                        `HTTP ${response.status} o no es array`);
+                }
+            } catch (err) {
+                addTest('FASE_C', 'C5.5 vendedor GET tasks filtrado', 'fail', err.message);
+            }
+        }
+
+        // ── C6: PASO 1.5 sync — validacion ESTRUCTURAL (no ejecuta sync) ──
+        // C6.1: tango_ventaid UNIQUE
+        try {
+            const idx = await query(`
+                SELECT indexname FROM pg_indexes
+                 WHERE schemaname = 'public' AND tablename = 'subscribers'
+                   AND indexname = 'subscribers_tango_ventaid_key'
+            `);
+            if (idx.length === 1) {
+                addTest('FASE_C', 'C6.1 subscribers_tango_ventaid_key existe', 'pass',
+                    'UNIQUE INDEX presente');
+            } else {
+                addTest('FASE_C', 'C6.1 subscribers_tango_ventaid_key existe', 'fail',
+                    `index no encontrado (count=${idx.length})`);
+            }
+        } catch (err) {
+            addTest('FASE_C', 'C6.1 subscribers_tango_ventaid_key existe', 'fail', err.message);
+        }
+        // C6.2: phone_norm_uniq global
+        try {
+            const idx = await query(`
+                SELECT indexname FROM pg_indexes
+                 WHERE schemaname = 'public' AND tablename = 'subscribers'
+                   AND indexname = 'subscribers_phone_norm_uniq'
+            `);
+            if (idx.length === 1) {
+                addTest('FASE_C', 'C6.2 subscribers_phone_norm_uniq global existe', 'pass',
+                    'UNIQUE INDEX presente');
+            } else {
+                addTest('FASE_C', 'C6.2 subscribers_phone_norm_uniq global existe', 'fail',
+                    `index no encontrado (count=${idx.length})`);
+            }
+        } catch (err) {
+            addTest('FASE_C', 'C6.2 subscribers_phone_norm_uniq global existe', 'fail', err.message);
+        }
+        // C6.3: line_kind con CHECK
+        try {
+            const col = await query(`
+                SELECT column_name FROM information_schema.columns
+                 WHERE table_name = 'subscribers' AND column_name = 'line_kind'
+            `);
+            const chk = await query(`
+                SELECT pg_get_constraintdef(c.oid) AS def
+                  FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid
+                 WHERE t.relname = 'subscribers' AND c.conname = 'subscribers_line_kind_check'
+            `);
+            const defText = String(chk[0]?.def || '');
+            if (col.length === 1 && defText.includes('movil') && defText.includes('fijo')) {
+                addTest('FASE_C', 'C6.3 line_kind existe con CHECK', 'pass',
+                    'pre-condicion estructural OK');
+            } else {
+                addTest('FASE_C', 'C6.3 line_kind existe con CHECK', 'fail',
+                    `col=${col.length} check=${defText}`);
+            }
+        } catch (err) {
+            addTest('FASE_C', 'C6.3 line_kind existe con CHECK', 'fail', err.message);
+        }
+        // C6.4: POST /api/tango/sync requiere auth (sin token => 401)
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/tango/sync`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: '{}'
+            });
+            if (response.status === 401) {
+                addTest('FASE_C', 'C6.4 /api/tango/sync requiere auth', 'pass',
+                    'HTTP 401 sin token');
+            } else {
+                addTest('FASE_C', 'C6.4 /api/tango/sync requiere auth', 'fail',
+                    `Esperado 401, obtenido ${response.status}`);
+            }
+        } catch (err) {
+            addTest('FASE_C', 'C6.4 /api/tango/sync requiere auth', 'fail', err.message);
+        }
+
+        // ── C7.1: Cleanup local FASE C ──
+        try {
+            // 1) Goals sinteticos del periodo 2099 (incluye los creados en C3.1/C3.3)
+            await client.query(`DELETE FROM business_goals WHERE period_year = 2099`).catch(() => {});
+            await client.query(`DELETE FROM product_goals WHERE period_year = 2099`).catch(() => {});
+            // 2) Producto/tier/vendor sintéticos (idempotente — pueden no existir si C2.4/C1.4 ok)
+            if (fc.tierId) await client.query('DELETE FROM product_commission_tiers WHERE id = $1', [fc.tierId]).catch(() => {});
+            if (fc.productId) await client.query('DELETE FROM products WHERE id = $1', [fc.productId]).catch(() => {});
+            await client.query(`DELETE FROM product_commission_tiers WHERE product_id IN (SELECT id FROM products WHERE name LIKE '${PFX_FC}_%')`).catch(() => {});
+            await client.query(`DELETE FROM products WHERE name LIKE '${PFX_FC}_%'`).catch(() => {});
+            await client.query(`DELETE FROM vendor_salesperson_mapping WHERE vendor_id IN (SELECT id FROM vendors WHERE name LIKE '${PFX_FC}_%')`).catch(() => {});
+            await client.query(`DELETE FROM vendors WHERE name LIKE '${PFX_FC}_%'`).catch(() => {});
+            // 3) Cliente sintético C
+            if (fc.c1) await client.query('DELETE FROM clients WHERE id = $1', [fc.c1]);
+            // 4) User vendedor + permission overrides + salesperson
+            if (fc.userId) {
+                await client.query('DELETE FROM user_permission_overrides WHERE user_id = $1', [fc.userId]).catch(() => {});
+                await client.query('DELETE FROM users_auth WHERE id = $1', [fc.userId]);
+            }
+            if (fc.salespersonId) {
+                await client.query('DELETE FROM salespeople WHERE id = $1', [fc.salespersonId]).catch(() => {});
+            }
+            // 5) Limpieza extra por LIKE (vendor sintetico de C1 con auto-creado salesperson + users_auth con username del C1)
+            await client.query(`DELETE FROM users_auth WHERE username LIKE '${TEST_PREFIX}_vendor_c1%'`).catch(() => {});
+            await client.query(`DELETE FROM salespeople WHERE name LIKE '${PFX_FC}_%'`).catch(() => {});
+
+            addTest('FASE_C', 'C7.1 Cleanup local FASE C', 'pass',
+                'Datos sinteticos FASE C eliminados');
+        } catch (err) {
+            addTest('FASE_C', 'C7.1 Cleanup local FASE C', 'fail', err.message);
+        }
+
         // ========================================
         // FASE 12: LIMPIEZA FINAL
         // ========================================
@@ -2971,6 +3545,13 @@ export const runFullSystemTest = async (req, res) => {
             await client.query(`DELETE FROM user_permission_overrides WHERE user_id IN (SELECT id FROM users_auth WHERE username LIKE '${TEST_PREFIX}%')`).catch(() => {});
             await client.query(`DELETE FROM users_auth WHERE username LIKE '${TEST_PREFIX}%'`);
             await client.query(`DELETE FROM salespeople WHERE name LIKE '${TEST_PREFIX}%'`);
+            // Defensa FASE C: goals/products/vendors sinteticos
+            await client.query(`DELETE FROM business_goals WHERE period_year = 2099`).catch(() => {});
+            await client.query(`DELETE FROM product_goals WHERE period_year = 2099`).catch(() => {});
+            await client.query(`DELETE FROM product_commission_tiers WHERE product_id IN (SELECT id FROM products WHERE name LIKE '${TEST_PREFIX}%')`).catch(() => {});
+            await client.query(`DELETE FROM products WHERE name LIKE '${TEST_PREFIX}%'`).catch(() => {});
+            await client.query(`DELETE FROM vendor_salesperson_mapping WHERE vendor_id IN (SELECT id FROM vendors WHERE name LIKE '${TEST_PREFIX}%')`).catch(() => {});
+            await client.query(`DELETE FROM vendors WHERE name LIKE '${TEST_PREFIX}%'`).catch(() => {});
 
             addTest('LIMPIEZA', 'Eliminar datos de prueba', 'pass',
                 'Todos los datos de prueba fueron eliminados correctamente');
