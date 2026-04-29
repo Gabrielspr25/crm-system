@@ -152,6 +152,9 @@ export const runFullSystemTest = async (req, res) => {
         
         await client.query(`DELETE FROM subscribers WHERE phone = '8095551234'`);
         await client.query(`DELETE FROM bans WHERE ban_number = '999888777'`);
+        // FASE PHONE_NORM: rangos reservados (BANs 999111001-003, phones 7874444444/55555/66666)
+        await client.query(`DELETE FROM subscribers WHERE phone IN ('7874444444','7874455555','7874466666')`);
+        await client.query(`DELETE FROM bans WHERE ban_number IN ('999111001','999111002','999111003')`);
         await client.query(`DELETE FROM follow_up_prospects WHERE company_name LIKE '${TEST_PREFIX}%'`);
         await client.query(`DELETE FROM clients WHERE name LIKE '${TEST_PREFIX}%'`);
 
@@ -1823,6 +1826,178 @@ export const runFullSystemTest = async (req, res) => {
             }
         } catch (err) {
             addTest('TANGO', 'Ruta /api/tango montada', 'fail', err.message);
+        }
+
+        // ============================================================
+        // FASE PHONE_NORM: validar normalización de phone en subscribers
+        // ============================================================
+        // Rango de IDs sintéticos:
+        //   BANs:    999111001 / 002 / 003
+        //   Phones:  7874444444 / 7874455555 / 7874466666
+        //   Names:   ${TEST_PREFIX}_Phone_C{1,2,3}_*
+        // Limpieza previa cubre estos rangos en FASE 1.
+        const PFX_PHONE = `${TEST_PREFIX}_Phone`;
+        const phoneIds = { c1: null, c2: null, c3: null, b1: null, b2: null, b3: null };
+        const createPhoneClient = async (suffix) => {
+            const { response, payload } = await apiJson('/api/clients', {
+                method: 'POST',
+                json: {
+                    name: `${PFX_PHONE}_${suffix}`,
+                    owner_name: `${PFX_PHONE}_${suffix}_Owner`,
+                }
+            });
+            if (!response.ok) throw new Error(`POST /api/clients ${suffix}: HTTP ${response.status} ${payload?.error || ''}`);
+            return payload?.id || null;
+        };
+        const createPhoneBan = async (clientId, banNumber) => {
+            const { response, payload } = await apiJson('/api/bans', {
+                method: 'POST',
+                json: {
+                    client_id: clientId,
+                    ban_number: banNumber,
+                    account_type: 'MOVIL',
+                }
+            });
+            if (!response.ok) throw new Error(`POST /api/bans ${banNumber}: HTTP ${response.status} ${payload?.error || ''}`);
+            return payload?.id || null;
+        };
+
+        // 5.1 — Crear C1 + BAN sin suscriptor
+        try {
+            phoneIds.c1 = await createPhoneClient('C1_BANSIN');
+            phoneIds.b1 = await createPhoneBan(phoneIds.c1, '999111001');
+            const subs = await query('SELECT COUNT(*)::int AS n FROM subscribers WHERE ban_id = $1', [phoneIds.b1]);
+            if (Number(subs[0]?.n || 0) === 0 && phoneIds.b1) {
+                addTest('PHONE_NORM', 'C1 BAN sin suscriptor permitido', 'pass',
+                    'Cliente y BAN creados sin suscriptor', { client_id: phoneIds.c1, ban_id: phoneIds.b1 });
+            } else {
+                addTest('PHONE_NORM', 'C1 BAN sin suscriptor permitido', 'fail',
+                    `Estado inesperado: subs=${subs[0]?.n}, ban_id=${phoneIds.b1}`);
+            }
+        } catch (err) {
+            addTest('PHONE_NORM', 'C1 BAN sin suscriptor permitido', 'fail', err.message);
+        }
+
+        // 5.2 — C2 + subscriber 787-444-4444 → debe quedar 7874444444
+        try {
+            phoneIds.c2 = await createPhoneClient('C2_DASHED');
+            phoneIds.b2 = await createPhoneBan(phoneIds.c2, '999111002');
+            const { response, payload } = await apiJson('/api/subscribers', {
+                method: 'POST',
+                json: {
+                    ban_id: phoneIds.b2,
+                    phone: '787-444-4444',
+                    plan: 'PHTEST',
+                    monthly_value: 25.00
+                }
+            });
+            if (!response.ok) throw new Error(`HTTP ${response.status} ${payload?.error || ''}`);
+            const verify = await query('SELECT phone FROM subscribers WHERE id = $1', [payload.id]);
+            const stored = verify[0]?.phone;
+            if (stored === '7874444444') {
+                addTest('PHONE_NORM', 'C2 phone con guiones se normaliza a 10 digitos', 'pass',
+                    `Input '787-444-4444' guardado como '${stored}'`, { subscriber_id: payload.id });
+            } else {
+                addTest('PHONE_NORM', 'C2 phone con guiones se normaliza a 10 digitos', 'fail',
+                    `Esperado '7874444444', guardado '${stored}'`);
+            }
+        } catch (err) {
+            addTest('PHONE_NORM', 'C2 phone con guiones se normaliza a 10 digitos', 'fail', err.message);
+        }
+
+        // 5.3 — C3 + subscriber 7874455555 (limpio)
+        try {
+            phoneIds.c3 = await createPhoneClient('C3_PLAIN');
+            phoneIds.b3 = await createPhoneBan(phoneIds.c3, '999111003');
+            const { response, payload } = await apiJson('/api/subscribers', {
+                method: 'POST',
+                json: {
+                    ban_id: phoneIds.b3,
+                    phone: '7874455555',
+                    plan: 'PHTEST',
+                    monthly_value: 25.00
+                }
+            });
+            if (!response.ok) throw new Error(`HTTP ${response.status} ${payload?.error || ''}`);
+            const verify = await query('SELECT phone FROM subscribers WHERE id = $1', [payload.id]);
+            const stored = verify[0]?.phone;
+            if (stored === '7874455555') {
+                addTest('PHONE_NORM', 'C3 phone limpio se preserva', 'pass',
+                    `Input '7874455555' guardado igual`, { subscriber_id: payload.id });
+            } else {
+                addTest('PHONE_NORM', 'C3 phone limpio se preserva', 'fail',
+                    `Esperado '7874455555', guardado '${stored}'`);
+            }
+        } catch (err) {
+            addTest('PHONE_NORM', 'C3 phone limpio se preserva', 'fail', err.message);
+        }
+
+        // 5.4 — Editar C1: agregar subscriber con prefijo país '+1 787 446 6666'
+        try {
+            if (!phoneIds.b1) throw new Error('C1 banId no disponible');
+            const { response, payload } = await apiJson('/api/subscribers', {
+                method: 'POST',
+                json: {
+                    ban_id: phoneIds.b1,
+                    phone: '+1 787 446 6666',
+                    plan: 'PHTEST',
+                    monthly_value: 25.00
+                }
+            });
+            if (!response.ok) throw new Error(`HTTP ${response.status} ${payload?.error || ''}`);
+            const verify = await query('SELECT phone FROM subscribers WHERE id = $1', [payload.id]);
+            const stored = verify[0]?.phone;
+            if (stored === '7874466666') {
+                addTest('PHONE_NORM', 'C1 phone con prefijo pais +1 se strippea', 'pass',
+                    `Input '+1 787 446 6666' guardado como '${stored}'`, { subscriber_id: payload.id });
+            } else {
+                addTest('PHONE_NORM', 'C1 phone con prefijo pais +1 se strippea', 'fail',
+                    `Esperado '7874466666', guardado '${stored}'`);
+            }
+        } catch (err) {
+            addTest('PHONE_NORM', 'C1 phone con prefijo pais +1 se strippea', 'fail', err.message);
+        }
+
+        // 5.5 — Duplicado: (787)444-4444 cuando ya existe 7874444444 (de C2)
+        try {
+            if (!phoneIds.b2) throw new Error('C2 banId no disponible');
+            const { response, payload } = await apiJson('/api/subscribers', {
+                method: 'POST',
+                json: {
+                    ban_id: phoneIds.b2,
+                    phone: '(787)444-4444',
+                    plan: 'PHTEST',
+                    monthly_value: 25.00
+                }
+            });
+            const errMsg = String(payload?.error || '').toLowerCase();
+            const is4xx = response.status >= 400 && response.status < 500;
+            const sayDup = errMsg.includes('ya existe') || errMsg.includes('duplica') || errMsg.includes('duplicate');
+            if (is4xx && sayDup) {
+                addTest('PHONE_NORM', 'Rechazo duplicado por formato distinto', 'pass',
+                    `HTTP ${response.status} con mensaje de duplicado`, { error: payload?.error });
+            } else {
+                addTest('PHONE_NORM', 'Rechazo duplicado por formato distinto', 'fail',
+                    `Esperado 4xx + 'ya existe', obtenido HTTP ${response.status}`,
+                    { payload });
+            }
+        } catch (err) {
+            addTest('PHONE_NORM', 'Rechazo duplicado por formato distinto', 'fail', err.message);
+        }
+
+        // 5.6 — Cleanup local de FASE PHONE_NORM
+        try {
+            const banIds = [phoneIds.b1, phoneIds.b2, phoneIds.b3].filter(Boolean);
+            if (banIds.length > 0) {
+                await client.query('DELETE FROM subscriber_reports WHERE subscriber_id IN (SELECT id FROM subscribers WHERE ban_id = ANY($1::uuid[]))', [banIds]);
+                await client.query('DELETE FROM subscribers WHERE ban_id = ANY($1::uuid[])', [banIds]);
+                await client.query('DELETE FROM bans WHERE id = ANY($1::uuid[])', [banIds]);
+            }
+            await client.query(`DELETE FROM clients WHERE name LIKE '${PFX_PHONE}_%'`);
+            addTest('PHONE_NORM', 'Cleanup datos sinteticos PHONE_NORM', 'pass',
+                'Datos sinteticos eliminados (clientes, BANs, subscribers)');
+        } catch (err) {
+            addTest('PHONE_NORM', 'Cleanup datos sinteticos PHONE_NORM', 'fail', err.message);
         }
 
         // ========================================
