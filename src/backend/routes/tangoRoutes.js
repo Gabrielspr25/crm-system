@@ -523,7 +523,7 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
 
     // ── 3. Pre-load existing tango_ventaid subscribers ──
     const existingSubs = await crmPool.query(
-      `SELECT id, tango_ventaid, ban_id, phone, plan, line_type, monthly_value, contract_term, contract_end_date, status
+      `SELECT id, tango_ventaid, ban_id, phone, plan, line_type, line_kind, monthly_value, contract_term, contract_end_date, status
        FROM subscribers
        WHERE tango_ventaid IS NOT NULL`
     );
