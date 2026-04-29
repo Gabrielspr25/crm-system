@@ -176,6 +176,10 @@ export const runFullSystemTest = async (req, res) => {
         await client.query(`DELETE FROM category_steps WHERE step_name LIKE '${TEST_PREFIX}%'`).catch(() => {});
         await client.query(`DELETE FROM categories WHERE name LIKE '${TEST_PREFIX}%'`).catch(() => {});
         await client.query(`DELETE FROM referidos WHERE subscriber_name LIKE '${TEST_PREFIX}%'`).catch(() => {});
+        // FASE E: cleanup defensivo (BANs 999444xxx, phones 78799944xx, tango_ventaid sintetico)
+        await client.query(`DELETE FROM subscribers WHERE phone IN ('7879994441','7879994442')`).catch(() => {});
+        await client.query(`DELETE FROM subscribers WHERE tango_ventaid = 2147483640`).catch(() => {});
+        await client.query(`DELETE FROM bans WHERE ban_number = '999444001'`).catch(() => {});
         await client.query(`DELETE FROM user_permission_overrides WHERE user_id IN (SELECT id FROM users_auth WHERE username LIKE '${TEST_PREFIX}%')`).catch(() => {});
         await client.query(`DELETE FROM users_auth WHERE username LIKE '${TEST_PREFIX}%'`);
         await client.query(`DELETE FROM salespeople WHERE name LIKE '${TEST_PREFIX}%'`);
@@ -3946,6 +3950,293 @@ export const runFullSystemTest = async (req, res) => {
             addTest('FASE_D', 'D9.1 Cleanup local FASE D', 'fail', err.message);
         }
 
+        // ============================================================
+        // FASE E: validaciones transversales
+        //   E1 cliente sin vendedor / E2 vendor mapping / E3 concurrencia
+        //   E4 CONVERGENTE cross-modulo / E5 historico vs activo
+        //   E6 sync invariantes (BAN 791079860)
+        // ============================================================
+        const PFX_FE = `${TEST_PREFIX}_FaseE`;
+        const fe = {
+            c1: null, cNoVendor: null,
+            banSyntheticId: null,
+            subAId: null, subBId: null,
+            subConcurrId: null
+        };
+
+        // ── E0.1: Setup cliente sintetico con vendedor (admin lo crea) ──
+        try {
+            const c = await apiJson('/api/clients', {
+                method: 'POST',
+                json: { name: `${PFX_FE}_C1`, owner_name: `${PFX_FE}_C1_Owner` }
+            });
+            fe.c1 = c.payload?.id || null;
+            if (fe.c1) {
+                addTest('FASE_E', 'E0.1 Setup cliente sintetico', 'pass',
+                    `cliente ${fe.c1} creado`);
+            } else {
+                addTest('FASE_E', 'E0.1 Setup cliente sintetico', 'fail',
+                    'No se creo cliente');
+            }
+        } catch (err) {
+            addTest('FASE_E', 'E0.1 Setup cliente sintetico', 'fail', err.message);
+        }
+
+        // ── E1.1: Cliente sin salesperson_id (SQL directo) ──
+        // El POST /api/clients del admin auto-asigna req.user.salespersonId. Para
+        // verificar el invariante "schema permite cliente sin vendedor" usamos SQL
+        // directo: INSERT con salesperson_id=NULL debe ser aceptado.
+        try {
+            const ins = await query(
+                `INSERT INTO clients (name, owner_name, salesperson_id, created_at, updated_at)
+                 VALUES ($1, $2, NULL, NOW(), NOW()) RETURNING id, salesperson_id`,
+                [`${PFX_FE}_C_NoVendor`, 'Sin vendedor']
+            );
+            fe.cNoVendor = ins[0]?.id || null;
+            const spId = ins[0]?.salesperson_id;
+            if (fe.cNoVendor && (spId === null || spId === undefined)) {
+                addTest('FASE_E', 'E1.1 Cliente sin vendedor permitido (schema)', 'pass',
+                    `cliente ${fe.cNoVendor}, salesperson_id=NULL`);
+            } else {
+                addTest('FASE_E', 'E1.1 Cliente sin vendedor permitido (schema)', 'fail',
+                    `Insert no respeto NULL: salesperson_id=${spId}`);
+            }
+        } catch (err) {
+            addTest('FASE_E', 'E1.1 Cliente sin vendedor permitido (schema)', 'fail', err.message);
+        }
+
+        // ── E1.2: Cliente sin vendor recuperable (SQL: tab=active filtra por BAN) ──
+        // El endpoint /api/clients?tab=active requiere BAN activo. El cliente
+        // sintetico no tiene BAN, por eso no aparece. Valido el invariante "el
+        // cliente persistido sin vendor es recuperable y mantiene salesperson_id NULL".
+        try {
+            if (!fe.cNoVendor) {
+                addTest('FASE_E', 'E1.2 Cliente sin vendor recuperable', 'skip',
+                    'E1.1 fallo');
+            } else {
+                const verify = await query(
+                    `SELECT c.id, c.name, c.salesperson_id, sp.name AS vendor_name
+                       FROM clients c
+                       LEFT JOIN salespeople sp ON sp.id = c.salesperson_id
+                      WHERE c.id = $1`,
+                    [fe.cNoVendor]
+                );
+                const row = verify[0];
+                if (row && row.salesperson_id === null && !row.vendor_name) {
+                    addTest('FASE_E', 'E1.2 Cliente sin vendor recuperable', 'pass',
+                        `cliente persistido, salesperson_id=NULL, vendor_name=null`);
+                } else {
+                    addTest('FASE_E', 'E1.2 Cliente sin vendor recuperable', 'fail',
+                        `Estado inesperado: salesperson_id=${row?.salesperson_id} vendor_name=${row?.vendor_name}`);
+                }
+            }
+        } catch (err) {
+            addTest('FASE_E', 'E1.2 Cliente sin vendor recuperable', 'fail', err.message);
+        }
+
+        // ── E2.1: tango_vendedorid en vendor_salesperson_mapping ──
+        try {
+            const col = await query(`
+                SELECT column_name FROM information_schema.columns
+                 WHERE table_schema='public' AND table_name='vendor_salesperson_mapping'
+                   AND column_name='tango_vendedorid'
+            `);
+            if (col.length === 1) {
+                addTest('FASE_E', 'E2.1 columna tango_vendedorid existe', 'pass',
+                    'columna agregada (FASE 2 metas aplicada)');
+            } else {
+                addTest('FASE_E', 'E2.1 columna tango_vendedorid existe', 'skip',
+                    'Pendiente FASE 2 metas director - columna no creada');
+            }
+        } catch (err) {
+            addTest('FASE_E', 'E2.1 columna tango_vendedorid existe', 'fail', err.message);
+        }
+
+        // ── E2.2: Mapping shape (vendor_id INT + salesperson_id UUID) ──
+        try {
+            const cols = await query(`
+                SELECT column_name, data_type FROM information_schema.columns
+                 WHERE table_schema='public' AND table_name='vendor_salesperson_mapping'
+                   AND column_name IN ('vendor_id','salesperson_id')
+            `);
+            const map = Object.fromEntries(cols.map((c) => [c.column_name, c.data_type]));
+            if (map.vendor_id === 'integer' && map.salesperson_id === 'uuid') {
+                const cnt = await query('SELECT COUNT(*)::int AS n FROM vendor_salesperson_mapping');
+                addTest('FASE_E', 'E2.2 vendor_salesperson_mapping shape', 'pass',
+                    `vendor_id INT + salesperson_id UUID, ${cnt[0]?.n || 0} filas`);
+            } else {
+                addTest('FASE_E', 'E2.2 vendor_salesperson_mapping shape', 'fail',
+                    `shape inesperado: ${JSON.stringify(map)}`);
+            }
+        } catch (err) {
+            addTest('FASE_E', 'E2.2 vendor_salesperson_mapping shape', 'fail', err.message);
+        }
+
+        // ── E3.1: Concurrencia tango_ventaid UNIQUE ──
+        // 2 INSERT con mismo tango_ventaid: uno gana, otro choca con 23505.
+        try {
+            // Setup: necesitamos un BAN para asociar los subs
+            const banIns = await query(
+                `INSERT INTO bans (client_id, ban_number, account_type, status, created_at, updated_at)
+                 VALUES ($1, '999444001', 'MOVIL', 'A', NOW(), NOW()) RETURNING id`,
+                [fe.c1]
+            );
+            fe.banSyntheticId = banIns[0]?.id || null;
+
+            const SYNTH_VENTAID = 2147483640;
+            const ins1 = query(
+                `INSERT INTO subscribers (ban_id, phone, plan, line_type, monthly_value, tango_ventaid, status, created_at, updated_at)
+                 VALUES ($1, $2, 'TEST', 'NEW', 0, $3, 'activo', NOW(), NOW()) RETURNING id`,
+                [fe.banSyntheticId, '7879994441', SYNTH_VENTAID]
+            );
+            const ins2 = query(
+                `INSERT INTO subscribers (ban_id, phone, plan, line_type, monthly_value, tango_ventaid, status, created_at, updated_at)
+                 VALUES ($1, $2, 'TEST', 'NEW', 0, $3, 'activo', NOW(), NOW()) RETURNING id`,
+                [fe.banSyntheticId, '7879994442', SYNTH_VENTAID]
+            );
+            const results = await Promise.allSettled([ins1, ins2]);
+            const okCount = results.filter((r) => r.status === 'fulfilled').length;
+            const failCount = results.filter((r) => r.status === 'rejected').length;
+            const uniqueViolation = results.find(
+                (r) => r.status === 'rejected' && String(r.reason?.code) === '23505'
+            );
+            if (okCount === 1 && failCount === 1 && uniqueViolation) {
+                // Recuperar el id del que paso
+                const winner = results.find((r) => r.status === 'fulfilled');
+                fe.subConcurrId = winner.value[0]?.id || null;
+                addTest('FASE_E', 'E3.1 Concurrencia tango_ventaid UNIQUE', 'pass',
+                    `1 success + 1 rejection (23505)`);
+            } else {
+                addTest('FASE_E', 'E3.1 Concurrencia tango_ventaid UNIQUE', 'fail',
+                    `Esperado 1+1, obtenido ok=${okCount} fail=${failCount}`);
+            }
+        } catch (err) {
+            addTest('FASE_E', 'E3.1 Concurrencia tango_ventaid UNIQUE', 'fail', err.message);
+        }
+
+        // ── E4.1: /api/dashboard/resumen responde con shape para periodo actual ──
+        try {
+            const now = new Date();
+            const y = now.getFullYear();
+            const m = now.getMonth() + 1;
+            const { response, payload } = await apiJson(`/api/dashboard/resumen?year=${y}&month=${m}`);
+            if (response.ok && payload && typeof payload === 'object') {
+                addTest('FASE_E', 'E4.1 dashboard/resumen shape', 'pass',
+                    'shape OK', { keys: Object.keys(payload).slice(0, 5) });
+            } else {
+                addTest('FASE_E', 'E4.1 dashboard/resumen shape', 'fail',
+                    `HTTP ${response.status}`);
+            }
+        } catch (err) {
+            addTest('FASE_E', 'E4.1 dashboard/resumen shape', 'fail', err.message);
+        }
+
+        // ── E4.2: /api/goals/performance responde con shape ──
+        try {
+            const now = new Date();
+            const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+            const { response, payload } = await apiJson(`/api/goals/performance?month=${ym}`);
+            const ok = response.ok && payload && 'period' in payload && 'summary' in payload && 'vendors' in payload;
+            if (ok) {
+                addTest('FASE_E', 'E4.2 goals/performance shape', 'pass',
+                    `period=${payload.period}, vendors=${payload.vendors?.length}`);
+            } else {
+                addTest('FASE_E', 'E4.2 goals/performance shape', 'fail',
+                    `HTTP ${response.status}`);
+            }
+        } catch (err) {
+            addTest('FASE_E', 'E4.2 goals/performance shape', 'fail', err.message);
+        }
+
+        // ── E5.1: phone_norm_uniq cross-status (constraint global, no depende de status) ──
+        // Usamos el subscriber creado en E3.1 (tiene phone 7879994441) y tratamos de
+        // crear OTRO subscriber con el mismo phone pero status='cancelado' en otro BAN.
+        // El constraint phone_norm_uniq es GLOBAL -> debe rechazar igual.
+        try {
+            if (!fe.subConcurrId || !fe.banSyntheticId) {
+                addTest('FASE_E', 'E5.1 phone_norm_uniq cross-status', 'skip',
+                    'E3.1 fallo - no hay subscriber base');
+            } else {
+                // Crear otro BAN sintetico mas (efimero) o usar el mismo BAN con phone diferente
+                // Usaremos un BAN diferente (otro registro en la misma tabla bans, pero
+                // unicamente para validar que el constraint phone_norm_uniq es GLOBAL).
+                const banExtra = await query(
+                    `INSERT INTO bans (client_id, ban_number, account_type, status, created_at, updated_at)
+                     VALUES ($1, $2, 'MOVIL', 'A', NOW(), NOW()) RETURNING id`,
+                    [fe.c1, `999444${String(Date.now()).slice(-3)}`]
+                );
+                const banExtraId = banExtra[0]?.id || null;
+                let violated = false;
+                try {
+                    await query(
+                        `INSERT INTO subscribers (ban_id, phone, plan, line_type, monthly_value, status, created_at, updated_at)
+                         VALUES ($1, '7879994441', 'TEST', 'NEW', 0, 'cancelado', NOW(), NOW())`,
+                        [banExtraId]
+                    );
+                } catch (e) {
+                    if (String(e.code) === '23505') violated = true;
+                }
+                // Cleanup BAN extra (no se inserto el sub porque violaria)
+                if (banExtraId) await client.query('DELETE FROM bans WHERE id = $1', [banExtraId]).catch(() => {});
+
+                if (violated) {
+                    addTest('FASE_E', 'E5.1 phone_norm_uniq cross-status', 'pass',
+                        'Constraint global activo: insert duplicado rechazado aun con status=cancelado');
+                } else {
+                    addTest('FASE_E', 'E5.1 phone_norm_uniq cross-status', 'fail',
+                        'Insert duplicado NO fue rechazado - constraint puede estar relajado');
+                }
+            }
+        } catch (err) {
+            addTest('FASE_E', 'E5.1 phone_norm_uniq cross-status', 'fail', err.message);
+        }
+
+        // ── E6.1: BAN 791079860 sigue con line_kind correctos (caso historico OGOYI) ──
+        try {
+            const subs = await query(`
+                SELECT s.phone, s.line_kind, s.line_type
+                  FROM subscribers s JOIN bans b ON b.id = s.ban_id
+                 WHERE b.ban_number = '791079860'
+                 ORDER BY s.phone
+            `);
+            if (subs.length === 0) {
+                addTest('FASE_E', 'E6.1 BAN 791079860 line_kind correctos', 'skip',
+                    'BAN 791079860 no existe en BD');
+            } else {
+                const movil = subs.find((s) => s.line_kind === 'movil');
+                const fijo = subs.find((s) => s.line_kind === 'fijo');
+                if (movil && fijo) {
+                    addTest('FASE_E', 'E6.1 BAN 791079860 line_kind correctos', 'pass',
+                        `${subs.length} subs: movil=${movil.phone}, fijo=${fijo.phone}`);
+                } else {
+                    addTest('FASE_E', 'E6.1 BAN 791079860 line_kind correctos', 'fail',
+                        `Esperado 1 movil + 1 fijo, obtenido: ${subs.map((s) => `${s.phone}/${s.line_kind}`).join(', ')}`);
+                }
+            }
+        } catch (err) {
+            addTest('FASE_E', 'E6.1 BAN 791079860 line_kind correctos', 'fail', err.message);
+        }
+
+        // ── E7.1: Cleanup local FASE E ──
+        try {
+            // 1) Subscribers sintéticos (los del concurrency test + E5.1 si hubiera quedado)
+            await client.query(`DELETE FROM subscribers WHERE phone IN ('7879994441','7879994442')`).catch(() => {});
+            await client.query(`DELETE FROM subscribers WHERE tango_ventaid = 2147483640`).catch(() => {});
+            if (fe.subConcurrId) await client.query('DELETE FROM subscribers WHERE id = $1', [fe.subConcurrId]).catch(() => {});
+            // 2) BAN sintetico
+            if (fe.banSyntheticId) await client.query('DELETE FROM bans WHERE id = $1', [fe.banSyntheticId]).catch(() => {});
+            await client.query(`DELETE FROM bans WHERE ban_number = '999444001'`).catch(() => {});
+            // 3) Clientes sinteticos
+            if (fe.cNoVendor) await client.query('DELETE FROM clients WHERE id = $1', [fe.cNoVendor]).catch(() => {});
+            if (fe.c1) await client.query('DELETE FROM clients WHERE id = $1', [fe.c1]).catch(() => {});
+            await client.query(`DELETE FROM clients WHERE name LIKE '${PFX_FE}_%'`).catch(() => {});
+
+            addTest('FASE_E', 'E7.1 Cleanup local FASE E', 'pass',
+                'Datos sinteticos FASE E eliminados');
+        } catch (err) {
+            addTest('FASE_E', 'E7.1 Cleanup local FASE E', 'fail', err.message);
+        }
+
         // ========================================
         // FASE 12: LIMPIEZA FINAL
         // ========================================
@@ -3992,6 +4283,10 @@ export const runFullSystemTest = async (req, res) => {
             await client.query(`DELETE FROM category_steps WHERE step_name LIKE '${TEST_PREFIX}%'`).catch(() => {});
             await client.query(`DELETE FROM categories WHERE name LIKE '${TEST_PREFIX}%'`).catch(() => {});
             await client.query(`DELETE FROM referidos WHERE subscriber_name LIKE '${TEST_PREFIX}%'`).catch(() => {});
+            // Defensa FASE E: BANs sinteticos / phones / tango_ventaid sintetico
+            await client.query(`DELETE FROM subscribers WHERE phone IN ('7879994441','7879994442')`).catch(() => {});
+            await client.query(`DELETE FROM subscribers WHERE tango_ventaid = 2147483640`).catch(() => {});
+            await client.query(`DELETE FROM bans WHERE ban_number = '999444001'`).catch(() => {});
 
             addTest('LIMPIEZA', 'Eliminar datos de prueba', 'pass',
                 'Todos los datos de prueba fueron eliminados correctamente');
