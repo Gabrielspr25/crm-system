@@ -311,19 +311,20 @@ export default function Home() {
 
   // Agrupar todas las tareas (no solo pending) por assigned_salesperson_id
   // para construir la tabla de desempeno por vendedor.
-  type PerfRow = { key: string; name: string; total: number; done: number; pending: number; pct: number };
-  const perfBuckets = new Map<string, { total: number; done: number; pending: number }>();
+  type PerfRow = { key: string; name: string; total: number; done: number; pending: number; in_progress: number; pct: number };
+  const perfBuckets = new Map<string, { total: number; done: number; pending: number; in_progress: number }>();
   for (const t of tasksRaw) {
     const key = t.assigned_salesperson_id ? String(t.assigned_salesperson_id) : "unassigned";
     const status = String(t.status || "").toLowerCase();
     let bucket = perfBuckets.get(key);
     if (!bucket) {
-      bucket = { total: 0, done: 0, pending: 0 };
+      bucket = { total: 0, done: 0, pending: 0, in_progress: 0 };
       perfBuckets.set(key, bucket);
     }
     bucket.total += 1;
     if (status === "done") bucket.done += 1;
     else if (status === "pending") bucket.pending += 1;
+    else if (status === "in_progress") bucket.in_progress += 1;
   }
   const performanceRows: PerfRow[] = Array.from(perfBuckets.entries())
     .map(([key, stats]) => ({
@@ -335,9 +336,11 @@ export default function Home() {
       total: stats.total,
       done: stats.done,
       pending: stats.pending,
+      in_progress: stats.in_progress,
       pct: stats.total > 0 ? Math.round((stats.done / stats.total) * 100) : 0,
     }))
-    .sort((a, b) => (b.total - a.total) || a.name.localeCompare(b.name));
+    // Orden: % cumplimiento asc; si empatan, pendientes desc; ultimo desempate name asc.
+    .sort((a, b) => (a.pct - b.pct) || (b.pending - a.pending) || a.name.localeCompare(b.name));
 
   // Gate del bloque "Actividad de vendedores hoy" — usa el arbol de permisos
   // existente (vendors.view), no roles hardcodeados.
@@ -1022,6 +1025,7 @@ export default function Home() {
                     <th className="text-left py-2 pr-3 font-semibold">Vendedor</th>
                     <th className="text-center py-2 px-3 font-semibold">Total</th>
                     <th className="text-center py-2 px-3 font-semibold">Completadas</th>
+                    <th className="text-center py-2 px-3 font-semibold">En progreso</th>
                     <th className="text-center py-2 px-3 font-semibold">Pendientes</th>
                     <th className="text-right py-2 pl-3 font-semibold">% Cumplimiento</th>
                   </tr>
@@ -1047,6 +1051,7 @@ export default function Home() {
                         </td>
                         <td className="py-2 px-3 text-center text-slate-300">{row.total}</td>
                         <td className="py-2 px-3 text-center text-emerald-300">{row.done}</td>
+                        <td className="py-2 px-3 text-center text-blue-300">{row.in_progress}</td>
                         <td className="py-2 px-3 text-center text-amber-300">{row.pending}</td>
                         <td className={`py-2 pl-3 text-right font-semibold ${pctCls}`}>
                           {row.total > 0 ? `${row.pct}%` : "—"}
