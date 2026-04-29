@@ -9,6 +9,18 @@ import { promisify } from 'util';
 
 const execFileAsync = promisify(execFile);
 
+// Normaliza un phone PR a 10 dígitos. Acepta '787-444-4444', '7874444444',
+// '1-787-444-4444', '(787) 444-4444', etc. Evita duplicados por formato.
+// Devuelve null si no se puede formar un número de 10 dígitos.
+const normalizePhonePR = (value) => {
+  let digits = String(value ?? '').replace(/\D/g, '');
+  if (digits.length === 11 && digits.startsWith('1')) {
+    digits = digits.slice(1);
+  }
+  if (digits.length !== 10) return null;
+  return digits;
+};
+
 const PHONE_REGEX = /(\d{3})[-\s]?(\d{3})[-\s]?(\d{4})/;
 const OCR_PHONE_GLOBAL_REGEX = /\b([0-9O]{3})[-\s]?([0-9O]{3})[-\s]?([0-9O]{4})\b/g;
 const STATUS_WORD_REGEX = /^(active|activo|canceled|cancelled|cancelado|suspended|suspendido|pending)$/i;
@@ -714,9 +726,19 @@ export const createSubscriber = async (req, res) => {
         return badRequest(res, 'BAN y número de teléfono son obligatorios');
     }
 
+    // Normalizar phone a 10 dígitos antes de validar duplicados/insertar.
+    // Evita duplicados por formato (787-444-4444 vs 7874444444 vs 1-787-444-4444).
+    const normalizedPhone = normalizePhonePR(phone);
+    if (!normalizedPhone) {
+        return badRequest(res, 'Número de teléfono inválido. Debe contener 10 dígitos.');
+    }
+
     try {
-        // Verificar si ya existe
-        const existing = await query('SELECT id FROM subscribers WHERE phone = $1', [phone]);
+        // Verificar si ya existe (chequeo por phone normalizado)
+        const existing = await query(
+            'SELECT id FROM subscribers WHERE phone = $1 OR phone_norm = $1 LIMIT 1',
+            [normalizedPhone]
+        );
         if (existing.length > 0) {
             return badRequest(res, 'El número de teléfono ya existe');
         }
@@ -726,7 +748,7 @@ export const createSubscriber = async (req, res) => {
         (ban_id, phone, plan, monthly_value, remaining_payments, contract_term, contract_end_date, created_at, updated_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),NOW())
        RETURNING *`,
-            [ban_id, phone, plan, monthly_value, remaining_payments, contract_term, contract_end_date]
+            [ban_id, normalizedPhone, plan, monthly_value, remaining_payments, contract_term, contract_end_date]
         );
 
         res.status(201).json(result[0]);
@@ -752,6 +774,28 @@ export const updateSubscriber = async (req, res) => {
         const existing = await query('SELECT id FROM subscribers WHERE id = $1', [id]);
         if (existing.length === 0) {
             return notFound(res, 'Suscriptor');
+        }
+
+        // Si viene phone en el body, normalizarlo a 10 dígitos. Si es inválido,
+        // rechazar antes del UPDATE.
+        let normalizedPhone;
+        if (Object.prototype.hasOwnProperty.call(req.body, 'phone')) {
+            if (phone === null || phone === undefined || String(phone).trim() === '') {
+                normalizedPhone = null;
+            } else {
+                normalizedPhone = normalizePhonePR(phone);
+                if (!normalizedPhone) {
+                    return badRequest(res, 'Número de teléfono inválido. Debe contener 10 dígitos.');
+                }
+                // Verificar duplicados sólo si cambia respecto al actual
+                const dup = await query(
+                    'SELECT id FROM subscribers WHERE (phone = $1 OR phone_norm = $1) AND id <> $2 LIMIT 1',
+                    [normalizedPhone, id]
+                );
+                if (dup.length > 0) {
+                    return badRequest(res, 'El número de teléfono ya existe en otro suscriptor');
+                }
+            }
         }
 
         // Convertir strings vacíos a null para permitir actualizaciones
@@ -784,7 +828,7 @@ export const updateSubscriber = async (req, res) => {
         WHERE id = $9
         RETURNING *`,
             [
-                phone,
+                normalizedPhone !== undefined ? normalizedPhone : phone,
                 cleanPlan,
                 cleanMonthlyValue,
                 cleanRemainingPayments,

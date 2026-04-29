@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { X, Calendar, User, CreditCard } from "lucide-react";
+import { X, Calendar, User, CreditCard, Check, Loader2 } from "lucide-react";
 import { CreateSubscriber } from "@/shared/types";
 
 interface SubscriberModalProps {
@@ -110,6 +110,9 @@ export default function SubscriberModal({ banId, subscriber, onSave, onClose }: 
     return Object.keys(newErrors).length === 0;
   };
 
+    const [isSaving, setIsSaving] = useState(false);
+    const [saveSuccess, setSaveSuccess] = useState(false);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -117,6 +120,7 @@ export default function SubscriberModal({ banId, subscriber, onSave, onClose }: 
       return;
     }
 
+    setIsSaving(true);
     try {
       // Calculate contract end date automatically based on remaining payments (for database)
       const remainingPaymentsValue = typeof formData.remaining_payments === 'number' ? formData.remaining_payments : 0;
@@ -130,6 +134,8 @@ export default function SubscriberModal({ banId, subscriber, onSave, onClose }: 
         contract_term: Number(formData.months || 0),
         remaining_payments: Number(formData.remaining_payments || 0),
         contract_end_date: contractEndDate,
+        status: formData.status,
+        cancel_reason: formData.cancel_reason,
       };
 
       // If editing, include the subscriber ID
@@ -138,11 +144,18 @@ export default function SubscriberModal({ banId, subscriber, onSave, onClose }: 
       }
 
       await onSave(cleanData);
-      onClose();
+      setSaveSuccess(true);
+      
+      // Delay closing to allow user to see success state
+      setTimeout(() => {
+        onClose();
+      }, 1000);
     } catch (error: any) {
       console.error('Error saving subscriber:', error);
       const errorMessage = error?.message || 'Error al guardar el suscriptor. Por favor, intenta de nuevo.';
       alert(errorMessage);
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -180,8 +193,14 @@ export default function SubscriberModal({ banId, subscriber, onSave, onClose }: 
               type="text"
               value={formData.phone}
               onChange={(e) => {
-                // Only allow digits and limit to 10 characters
-                const value = e.target.value.replace(/\D/g, '').slice(0, 10);
+                // Acepta '787-444-4444', '7874444444', '1-787-444-4444', etc.
+                // Quita no-dígitos. Si quedan 11 dígitos y empieza con '1' (prefijo
+                // país), lo descarta. Limita a 10 dígitos finales.
+                let digits = e.target.value.replace(/\D/g, '');
+                if (digits.length === 11 && digits.startsWith('1')) {
+                  digits = digits.slice(1);
+                }
+                const value = digits.slice(0, 10);
                 setFormData(prev => ({ ...prev, phone: value }));
                 if (errors.phone) {
                   setErrors(prev => ({ ...prev, phone: '' }));
@@ -382,24 +401,51 @@ export default function SubscriberModal({ banId, subscriber, onSave, onClose }: 
           )}
 
           {/* Footer */}
-          <div className="flex justify-end space-x-3 pt-6 border-t border-gray-200 dark:border-gray-700">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-6 py-3 text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-xl transition-all duration-200 font-medium"
-            >
-              Cancelar
-            </button>
-            <button
-              type="submit"
-              className={`px-8 py-3 text-white rounded-xl transition-all duration-200 shadow-lg font-semibold ${
-                isEditing 
-                  ? 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 shadow-blue-500/25'
-                  : 'bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 shadow-green-500/25'
-              }`}
-            >
-              {isEditing ? 'Actualizar Suscriptor' : 'Crear Suscriptor'}
-            </button>
+          <div className="flex justify-between items-center pt-6 border-t border-gray-200 dark:border-gray-700">
+            <div className="flex-1">
+              {saveSuccess && (
+                <div className="flex items-center text-emerald-500 dark:text-emerald-400 text-sm font-medium animate-in fade-in slide-in-from-left-2">
+                  <Check className="w-4 h-4 mr-2" />
+                  ¡Guardado con éxito!
+                </div>
+              )}
+              {errors.submit && <div className="text-red-500 text-sm">{errors.submit}</div>}
+            </div>
+            <div className="flex space-x-3">
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={isSaving}
+                className="px-6 py-3 text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-xl transition-all duration-200 font-medium disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                disabled={isSaving || saveSuccess}
+                className={`px-8 py-3 text-white rounded-xl transition-all duration-200 shadow-lg font-semibold flex items-center ${
+                  saveSuccess
+                    ? 'bg-emerald-600 shadow-emerald-500/25'
+                    : isEditing 
+                      ? 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 shadow-blue-500/25'
+                      : 'bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 shadow-green-500/25'
+                } disabled:opacity-50 disabled:cursor-not-allowed`}
+              >
+                {isSaving ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Guardando...
+                  </>
+                ) : saveSuccess ? (
+                  <>
+                    <Check className="w-4 h-4 mr-2" />
+                    ¡Listo!
+                  </>
+                ) : (
+                  <>{isEditing ? 'Actualizar Suscriptor' : 'Crear Suscriptor'}</>
+                )}
+              </button>
+            </div>
           </div>
         </form>
       </div>
