@@ -342,6 +342,13 @@ export default function Home() {
     // Orden: % cumplimiento asc; si empatan, pendientes desc; ultimo desempate name asc.
     .sort((a, b) => (a.pct - b.pct) || (b.pending - a.pending) || a.name.localeCompare(b.name));
 
+  // Top 5 vendedores con menor cumplimiento.
+  // Excluye "Sin asignar" (no es un vendedor real) y filas con total=0
+  // (pct=0 ficticio). El orden ya viene asc por % desde performanceRows.
+  const bottomPerformers = performanceRows
+    .filter((r) => r.key !== "unassigned" && r.total > 0)
+    .slice(0, 5);
+
   // Gate del bloque "Actividad de vendedores hoy" — usa el arbol de permisos
   // existente (vendors.view), no roles hardcodeados.
   const canSeeTeamActivity = isPermissionAllowed("vendors.view", currentUser);
@@ -991,6 +998,47 @@ export default function Home() {
           )}
         </div>
       </details>
+
+      {/* (3.5) Top 5 vendedores con menor cumplimiento — destacado en rojo */}
+      {bottomPerformers.length > 0 && (
+        <section className="rounded-lg border border-red-500/40 bg-red-900/20 p-4">
+          <h2 className="text-sm font-semibold uppercase text-red-200 flex items-center gap-2 mb-3">
+            <ShieldAlert className="w-4 h-4" />
+            Top {bottomPerformers.length} vendedores con menor cumplimiento
+            <span className="text-xs text-red-300/70 normal-case font-normal">
+              (acción inmediata)
+            </span>
+          </h2>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs uppercase text-red-300/80 border-b border-red-500/30">
+                  <th className="py-1.5 pr-3 font-medium">Vendedor</th>
+                  <th className="py-1.5 px-3 text-right font-medium">% Cumplimiento</th>
+                  <th className="py-1.5 px-3 text-center font-medium">Pendientes</th>
+                  <th className="py-1.5 pl-3 text-center font-medium">En progreso</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-red-500/20">
+                {bottomPerformers.map((row) => (
+                  <tr key={row.key} className="text-red-100">
+                    <td className="py-1.5 pr-3 font-medium">{row.name}</td>
+                    <td className="py-1.5 px-3 text-right font-semibold text-red-300">
+                      {row.pct}%
+                    </td>
+                    <td className="py-1.5 px-3 text-center text-amber-300">
+                      {row.pending}
+                    </td>
+                    <td className="py-1.5 pl-3 text-center text-blue-300">
+                      {row.in_progress}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
 
       {/* (4) Desempeño por vendedor — acordeón abierto */}
       <details open className="rounded-lg border border-slate-700 bg-slate-800/50 group">
