@@ -4207,9 +4207,10 @@ export const runFullSystemTest = async (req, res) => {
         }
 
         // ── E6.1: BAN 791079860 sigue con line_kind correctos (caso historico OGOYI) ──
+        let ban791Exists = false;
         try {
             const subs = await query(`
-                SELECT s.phone, s.line_kind, s.line_type
+                SELECT s.phone, s.line_kind, s.line_type, b.account_type
                   FROM subscribers s JOIN bans b ON b.id = s.ban_id
                  WHERE b.ban_number = '791079860'
                  ORDER BY s.phone
@@ -4218,6 +4219,7 @@ export const runFullSystemTest = async (req, res) => {
                 addTest('FASE_E', 'E6.1 BAN 791079860 line_kind correctos', 'skip',
                     'BAN 791079860 no existe en BD');
             } else {
+                ban791Exists = true;
                 const movil = subs.find((s) => s.line_kind === 'movil');
                 const fijo = subs.find((s) => s.line_kind === 'fijo');
                 if (movil && fijo) {
@@ -4230,6 +4232,98 @@ export const runFullSystemTest = async (req, res) => {
             }
         } catch (err) {
             addTest('FASE_E', 'E6.1 BAN 791079860 line_kind correctos', 'fail', err.message);
+        }
+
+        // ── E6.2: BAN 791079860 sigue marcado CONVERGENTE (convergencia comercial preservada) ──
+        try {
+            if (!ban791Exists) {
+                addTest('FASE_E', 'E6.2 BAN 791079860 account_type=CONVERGENTE', 'skip',
+                    'BAN no existe');
+            } else {
+                const ban = await query(
+                    `SELECT account_type FROM bans WHERE ban_number = '791079860'`
+                );
+                const at = String(ban[0]?.account_type || '').toUpperCase();
+                if (at === 'CONVERGENTE') {
+                    addTest('FASE_E', 'E6.2 BAN 791079860 account_type=CONVERGENTE', 'pass',
+                        'Convergencia comercial preservada (BAN nivel)');
+                } else {
+                    addTest('FASE_E', 'E6.2 BAN 791079860 account_type=CONVERGENTE', 'fail',
+                        `account_type=${at}, esperado CONVERGENTE`);
+                }
+            }
+        } catch (err) {
+            addTest('FASE_E', 'E6.2 BAN 791079860 account_type=CONVERGENTE', 'fail', err.message);
+        }
+
+        // ── E6.3: /api/subscriber-reports devuelve line_kind separados para BAN 791079860 ──
+        // Cada linea cuenta por su categoria real, NO se colapsa por convergencia.
+        try {
+            if (!ban791Exists) {
+                addTest('FASE_E', 'E6.3 subscriber-reports separa lineas BAN convergente', 'skip',
+                    'BAN no existe');
+            } else {
+                const reportMonth = await query(`
+                    SELECT TO_CHAR(MAX(sr.report_month), 'YYYY-MM') AS m
+                      FROM subscriber_reports sr
+                      JOIN subscribers s ON s.id = sr.subscriber_id
+                      JOIN bans b ON b.id = s.ban_id
+                     WHERE b.ban_number = '791079860'
+                `);
+                const mes = reportMonth[0]?.m;
+                if (!mes) {
+                    addTest('FASE_E', 'E6.3 subscriber-reports separa lineas BAN convergente', 'skip',
+                        'No hay reports para BAN 791079860');
+                } else {
+                    const { response, payload } = await apiJson(`/api/subscriber-reports?month=${mes}`);
+                    const rows = Array.isArray(payload)
+                        ? payload.filter((r) => r.ban_number === '791079860')
+                        : [];
+                    const movilRow = rows.find((r) => r.line_kind === 'movil');
+                    const fijoRow = rows.find((r) => r.line_kind === 'fijo');
+                    if (response.ok && movilRow && fijoRow) {
+                        addTest('FASE_E', 'E6.3 subscriber-reports separa lineas BAN convergente', 'pass',
+                            `${rows.length} filas: movil=${movilRow.phone} fijo=${fijoRow.phone} (mes ${mes})`);
+                    } else {
+                        addTest('FASE_E', 'E6.3 subscriber-reports separa lineas BAN convergente', 'fail',
+                            `HTTP ${response.status} rows=${rows.length} movil=${!!movilRow} fijo=${!!fijoRow}`);
+                    }
+                }
+            }
+        } catch (err) {
+            addTest('FASE_E', 'E6.3 subscriber-reports separa lineas BAN convergente', 'fail', err.message);
+        }
+
+        // ── E6.4: /api/dashboard/resumen tiene Fijo y Movil como buckets separados ──
+        // Convergencia NO debe colapsar contadores de comisiones/metas.
+        try {
+            const monthBan = await query(`
+                SELECT EXTRACT(YEAR FROM s.created_at)::int AS y,
+                       EXTRACT(MONTH FROM s.created_at)::int AS m
+                  FROM subscribers s JOIN bans b ON b.id = s.ban_id
+                 WHERE b.ban_number = '791079860'
+                 LIMIT 1
+            `);
+            if (monthBan.length === 0) {
+                addTest('FASE_E', 'E6.4 dashboard/resumen separa Fijo y Movil', 'skip',
+                    'BAN 791079860 no existe');
+            } else {
+                const { response, payload } = await apiJson(
+                    `/api/dashboard/resumen?year=${monthBan[0].y}&month=${monthBan[0].m}`
+                );
+                const products = payload?.by_product || [];
+                const hasFijo = products.some((p) => /fijo/i.test(String(p.product_name || '')));
+                const hasMovil = products.some((p) => /movil|móvil/i.test(String(p.product_name || '')));
+                if (response.ok && hasFijo && hasMovil) {
+                    addTest('FASE_E', 'E6.4 dashboard/resumen separa Fijo y Movil', 'pass',
+                        `Buckets separados: ${products.map((p) => p.product_name).join(', ')}`);
+                } else {
+                    addTest('FASE_E', 'E6.4 dashboard/resumen separa Fijo y Movil', 'fail',
+                        `hasFijo=${hasFijo} hasMovil=${hasMovil}`);
+                }
+            }
+        } catch (err) {
+            addTest('FASE_E', 'E6.4 dashboard/resumen separa Fijo y Movil', 'fail', err.message);
         }
 
         // ── E7.1: Cleanup local FASE E ──
