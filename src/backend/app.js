@@ -13,6 +13,7 @@ import categoryRoutes from './routes/categoryRoutes.js'; // New Import
 import banRoutes from './routes/banRoutes.js';
 import subscriberRoutes from './routes/subscriberRoutes.js';
 import followUpRoutes from './routes/followUpRoutes.js';
+import followUpConfigRoutes from './routes/followUpConfigRoutes.js';
 import productRoutes from './routes/productRoutes.js';
 import importRoutes from './routes/importRoutes.js';
 import aiRoutes from './routes/aiRoutes.js';
@@ -29,6 +30,16 @@ import taskRoutes from './routes/taskRoutes.js';
 import categoryStepsRoutes from './routes/categoryStepsRoutes.js';
 import categoryStepsSingleRoutes from './routes/categoryStepsSingleRoutes.js';
 import clientStepsRoutes from './routes/clientStepsRoutes.js';
+import gestionRoutes from './routes/gestionRoutes.js';
+import goalsRoutes from './routes/goalsRoutes.js';
+import dashboardRoutes from './routes/dashboardRoutes.js';
+import salesHistoryRoutes from './routes/salesHistoryRoutes.js';
+import trackingRoutes from './routes/trackingRoutes.js';
+import tiersFixedRoutes from './routes/tiersFixedRoutes.js';
+import tariffsRoutes from './routes/tariffsRoutes.js';
+import posIntegrationRoutes from './routes/posIntegrationRoutes.js';
+import agentRoutes from './routes/agentRoutes.js';
+import campaignRoutes from './routes/campaignRoutes.js';
 
 const app = express();
 
@@ -38,6 +49,7 @@ app.use(express.json());
 
 // Rutas API
 app.use('/api/auth', authRoutes);
+app.use('/api', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/permissions', permissionRoutes);
 app.use('/api/clients', clientRoutes);
@@ -46,6 +58,7 @@ app.use('/api/categories', categoryRoutes); // New Route
 app.use('/api/bans', banRoutes);
 app.use('/api/subscribers', subscriberRoutes);
 app.use('/api/follow-up-prospects', followUpRoutes);
+app.use('/api', followUpConfigRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/importador', importRoutes);
 app.use('/api/ai', aiRoutes);
@@ -62,6 +75,16 @@ app.use('/api/categories/:id/steps', categoryStepsRoutes);
 app.use('/api/category-steps', categoryStepsSingleRoutes);
 app.use('/api/clients/:clientId/steps', clientStepsRoutes);
 app.use('/api', dealWorkflowRoutes);
+app.use('/api/gestion', gestionRoutes);
+app.use('/api/goals', goalsRoutes);
+app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/sales-history', salesHistoryRoutes);
+app.use('/api/tracking', trackingRoutes);
+app.use('/api/tiers-fixed', tiersFixedRoutes);
+app.use('/api/tariffs', tariffsRoutes);
+app.use('/api/pos', posIntegrationRoutes);
+app.use('/api/agents', agentRoutes);
+app.use('/api/campaigns', campaignRoutes);
 
 
 // Ruta de prueba

@@ -3897,9 +3897,24 @@ export const runFullSystemTest = async (req, res) => {
             addTest('FASE_D', 'D7.1 OCR sin file rechazado', 'fail', err.message);
         }
 
+        // ── D8.0: GET /api/campaigns esta montado (no 404) ──
+        try {
+            const { response, payload } = await apiJson('/api/campaigns');
+            if (response.status === 404) {
+                addTest('FASE_D', 'D8.0 GET campaigns endpoint montado', 'fail',
+                    'Endpoint /api/campaigns devuelve 404 - ruta no montada');
+            } else if (response.ok && Array.isArray(payload)) {
+                addTest('FASE_D', 'D8.0 GET campaigns endpoint montado', 'pass',
+                    `endpoint montado, ${payload.length} campañas`);
+            } else {
+                addTest('FASE_D', 'D8.0 GET campaigns endpoint montado', 'fail',
+                    `HTTP ${response.status}`);
+            }
+        } catch (err) {
+            addTest('FASE_D', 'D8.0 GET campaigns endpoint montado', 'fail', err.message);
+        }
+
         // ── D8.1: POST /api/campaigns crear campaña draft (skip si shape falla) ──
-        // Probe previo confirmo: /api/campaigns NO esta montado (404).
-        // Test marca skip honesto.
         try {
             const { response, payload } = await apiJson('/api/campaigns', {
                 method: 'POST',
