@@ -336,6 +336,7 @@ export default function Reports() {
         vendor_name: row.vendor_name || 'Desconocido',
         phone: row.phone,
         line_type: row.line_type || null,
+        line_kind: row.line_kind || null,
         sale_type: row.sale_type || null,
         account_type: row.account_type || null,
         ban_number: row.ban_number,
