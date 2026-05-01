@@ -37,11 +37,13 @@ export const getSubscriberReports = async (req, res) => {
                 sr.report_month,
                 sr.company_earnings,
                 sr.vendor_commission,
+                COALESCE(sr.portability_bonus, 0) AS portability_bonus,
                 sr.paid_amount,
                 sr.paid_date,
                 s.phone,
                 s.line_type,
                 s.line_kind,
+                s.plan,
                 s.monthly_value,
                 NULL::text AS sale_type,
                 NULL::date AS activation_date,
@@ -58,9 +60,9 @@ export const getSubscriberReports = async (req, res) => {
                     ELSE false
                 END AS is_paid,
                 sr.paid_date        AS paid_at,
-                false               AS is_audited,
-                NULL::timestamp     AS audited_at,
-                true                AS withholding_applies,
+                COALESCE(sr.is_audited, false) AS is_audited,
+                sr.audited_at,
+                COALESCE(sr.withholding_applies, true) AS withholding_applies,
                 NULL::numeric       AS effective_vendor_commission,
                 NULL::numeric       AS suggested_vendor_commission
             FROM subscriber_reports sr
@@ -87,25 +89,46 @@ export const getSubscriberReports = async (req, res) => {
  */
 export const updateSubscriberReport = async (req, res) => {
     const { subscriberId } = req.params;
-    const { report_month, vendor_commission, company_earnings, paid_amount, paid_date } = req.body;
+    const { report_month, vendor_commission, company_earnings, paid_amount, paid_date, is_audited } = req.body;
+    const userId = req.user?.id || null;
 
     if (!report_month) {
         return res.status(400).json({ error: 'report_month es requerido' });
     }
 
+    // Si llega is_audited en el body, lo persistimos. audited_at/audited_by se setean
+    // automáticamente cuando se marca true; se limpian cuando se marca false.
+    const auditedFlag = (typeof is_audited === 'boolean') ? is_audited : null;
+
     try {
         const rows = await query(
             `INSERT INTO subscriber_reports
-                (subscriber_id, report_month, company_earnings, vendor_commission, paid_amount, paid_date, created_at, updated_at)
-             VALUES ($1, $2::date, $3, $4, $5, $6, NOW(), NOW())
+                (subscriber_id, report_month, company_earnings, vendor_commission, paid_amount, paid_date,
+                 is_audited, audited_at, audited_by, created_at, updated_at)
+             VALUES ($1, $2::date, $3, $4, $5, $6,
+                 COALESCE($7, false),
+                 CASE WHEN $7 = true THEN NOW() ELSE NULL END,
+                 CASE WHEN $7 = true THEN $8::uuid ELSE NULL END,
+                 NOW(), NOW())
              ON CONFLICT (subscriber_id, report_month) DO UPDATE SET
                 company_earnings  = EXCLUDED.company_earnings,
                 vendor_commission = EXCLUDED.vendor_commission,
                 paid_amount       = EXCLUDED.paid_amount,
                 paid_date         = EXCLUDED.paid_date,
+                is_audited        = CASE WHEN $7 IS NOT NULL THEN $7 ELSE subscriber_reports.is_audited END,
+                audited_at        = CASE
+                                       WHEN $7 = true  THEN NOW()
+                                       WHEN $7 = false THEN NULL
+                                       ELSE subscriber_reports.audited_at
+                                    END,
+                audited_by        = CASE
+                                       WHEN $7 = true  THEN $8::uuid
+                                       WHEN $7 = false THEN NULL
+                                       ELSE subscriber_reports.audited_by
+                                    END,
                 updated_at        = NOW()
              RETURNING *`,
-            [subscriberId, report_month, company_earnings ?? null, vendor_commission ?? null, paid_amount ?? null, paid_date ?? null]
+            [subscriberId, report_month, company_earnings ?? null, vendor_commission ?? null, paid_amount ?? null, paid_date ?? null, auditedFlag, userId]
         );
 
         res.json(rows[0]);

@@ -1,6 +1,6 @@
 
 import { useState, useMemo, Fragment, useEffect, useCallback } from "react";
-import { DollarSign, Search, Save, CheckCircle2, RefreshCw, ChevronDown, ChevronRight, Building2, Users, Receipt, Wallet, BarChart3, X, AlertTriangle } from "lucide-react";
+import { DollarSign, Search, Save, CheckCircle2, RefreshCw, ChevronDown, ChevronRight, Building2, Users, Receipt, Wallet, BarChart3, X, AlertTriangle, Loader2 } from "lucide-react";
 import { authFetch, getCurrentUser } from "@/react-app/utils/auth";
 
 interface SubscriberReport {
@@ -24,6 +24,7 @@ interface SubscriberReport {
   vendor_name?: string;
   company_earnings?: number | null;
   vendor_commission?: number | null;
+  portability_bonus?: number | null;
   paid_amount?: number | null;
   paid_date?: string | null;
   is_paid?: boolean;
@@ -137,6 +138,13 @@ function safeMoneyNumber(value: unknown): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+// Formatter defensivo: nunca rompe aunque venga undefined/null/NaN.
+// Usar en lugar de `valor.toLocaleString(...)` directo en cualquier render
+// que sirva a un usuario. Devuelve siempre string con 2 decimales.
+function fmtMoney(value: unknown): string {
+  return safeMoneyNumber(value).toLocaleString('es-ES', { minimumFractionDigits: 2 });
+}
+
 function calculateSuggestedVendorCommission(companyEarnings?: number | null, commissionPercentage?: number | null): number | null {
   const earnings = Number(companyEarnings);
   const percentage = Number(commissionPercentage);
@@ -154,25 +162,89 @@ function normalizeClientGroupKey(name?: string | null): string {
     .toUpperCase();
 }
 
-function getDefaultReportsMonth(): string {
-  const now = new Date();
-  const lastClosedMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const year = lastClosedMonth.getFullYear();
-  const month = String(lastClosedMonth.getMonth() + 1).padStart(2, "0");
-  return `${year}-${month}`;
+// Celda editable para comisión vendedor con state local (no depende de
+// editingVendorComm global, así no hay re-renders del padre que reseteen el input).
+function EditableCommissionCell({
+  rowId,
+  initialValue,
+  onSave,
+}: {
+  rowId: string;
+  initialValue: number;
+  onSave: (rowId: string, newValue: number) => Promise<void> | void;
+}) {
+  const [value, setValue] = useState<string>(String(initialValue ?? ''));
+  const [originalValue, setOriginalValue] = useState<number>(initialValue);
+  const [saving, setSaving] = useState<boolean>(false);
+  const [savedFlash, setSavedFlash] = useState<boolean>(false);
+
+  // Si el valor inicial cambia desde afuera (ej. tras refetch) y no hay edición
+  // pendiente, sincronizar.
+  useEffect(() => {
+    if (!saving && Number(value) === originalValue) {
+      setValue(String(initialValue ?? ''));
+      setOriginalValue(initialValue);
+    }
+    // Solo cuando cambia initialValue desde el padre.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialValue]);
+
+  const isDirty = value !== String(originalValue ?? '') && value !== '';
+
+  const doSave = async () => {
+    if (!isDirty) return;
+    const parsed = parseFloat(value.replace(',', '.'));
+    if (!Number.isFinite(parsed)) return;
+    setSaving(true);
+    try {
+      await onSave(rowId, parsed);
+      setOriginalValue(parsed);
+      setSavedFlash(true);
+      window.setTimeout(() => setSavedFlash(false), 1500);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center justify-end gap-1">
+      <span className="text-blue-400 text-xs">$</span>
+      <input
+        type="text"
+        inputMode="decimal"
+        autoComplete="off"
+        value={value}
+        onChange={(e) => {
+          const raw = e.target.value.replace(',', '.');
+          if (raw === '' || /^\d*\.?\d*$/.test(raw)) setValue(raw);
+        }}
+        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); doSave(); } }}
+        className={`w-20 bg-slate-900 border text-blue-200 font-mono text-xs px-2 py-1 rounded outline-none ${
+          isDirty ? 'border-amber-400 ring-1 ring-amber-400/40' :
+          savedFlash ? 'border-emerald-400 ring-1 ring-emerald-400/40' :
+          'border-slate-700 hover:border-blue-400/50 focus:border-blue-400'
+        }`}
+        title="Editar comisión vendedor (Enter o botón Guardar)"
+      />
+      <button
+        type="button"
+        onClick={doSave}
+        disabled={saving || !isDirty}
+        title={isDirty ? 'Guardar comisión' : 'Sin cambios'}
+        className="w-6 h-6 rounded flex items-center justify-center bg-emerald-600/30 border border-emerald-500/40 text-emerald-200 hover:bg-emerald-500/50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+      >
+        {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+      </button>
+    </div>
+  );
 }
 
-function getPreviousMonth(value: string): string | null {
-  const [yearRaw, monthRaw] = String(value || "").split("-");
-  const year = Number(yearRaw);
-  const month = Number(monthRaw);
-
-  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) {
-    return null;
-  }
-
-  const date = new Date(year, month - 2, 1);
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+function getDefaultReportsMonth(): string {
+  // Mes en curso (no mes anterior). Si hoy es 2026-04-30, devuelve "2026-04".
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  return `${year}-${month}`;
 }
 
 export default function Reports() {
@@ -183,13 +255,16 @@ export default function Reports() {
   const [selectedMonth, setSelectedMonth] = useState<string>(getDefaultReportsMonth);
   const [viewMode, setViewMode] = useState<'empresa' | 'vendedor'>('empresa');
   const effectiveView = isAdmin ? viewMode : 'vendedor';
-  const [autoAdjustedMonth, setAutoAdjustedMonth] = useState(false);
 
   // Estados para edicion manual
   const [editingVendorComm, setEditingVendorComm] = useState<Record<string, string>>({});
   const [editingCompanyEarn, setEditingCompanyEarn] = useState<Record<string, string>>({});
   const [editingPaidAmount, setEditingPaidAmount] = useState<Record<string, string>>({});
   const [savingStatus, setSavingStatus] = useState<Record<string, boolean>>({});
+
+  // Filtros del acordeón "Informe de ventas"
+  const [informeTipoFilter, setInformeTipoFilter] = useState<string>("");
+  const [informeSearch, setInformeSearch] = useState<string>("");
 
   // Cargar datos directamente con useEffect (sin useApi para evitar problemas de memoización)
   const [reportRows, setReportRows] = useState<SubscriberReport[] | null>(null);
@@ -220,19 +295,6 @@ export default function Reports() {
   useEffect(() => {
     fetchReports(selectedMonth);
   }, [selectedMonth, fetchReports]);
-
-  useEffect(() => {
-    if (autoAdjustedMonth) return;
-    if (selectedMonth !== new Date().toISOString().slice(0, 7)) return;
-    if (!Array.isArray(reportRows)) return;
-    if (reportRows.length > 1) return;
-
-    const fallbackMonth = getPreviousMonth(selectedMonth);
-    if (!fallbackMonth) return;
-
-    setAutoAdjustedMonth(true);
-    setSelectedMonth(fallbackMonth);
-  }, [autoAdjustedMonth, reportRows, selectedMonth]);
 
   const refetchProspects = useCallback(() => fetchReports(selectedMonth), [selectedMonth, fetchReports]);
 
@@ -277,19 +339,39 @@ export default function Reports() {
     if (!confirm('¿Sincronizar ventas de Tango → CRM?\nTango es la fuente de verdad.')) return;
     setSyncing(true);
     setSyncResult(null);
+    // El sync puede procesar miles de filas y tardar >1 min. Usamos fetch directo
+    // con AbortController y timeout amplio. authFetch redirigía a login ante
+    // cualquier TypeError, lo que rompía la UX cuando el endpoint tardaba.
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 240_000);
     try {
-      const resp = await authFetch('/api/tango/sync', { method: 'POST' });
+      const token = (typeof localStorage !== 'undefined' ? localStorage.getItem('crm_token') : null) || '';
+      const apiBase = (import.meta.env.VITE_API_BASE_URL && String(import.meta.env.VITE_API_BASE_URL).trim()) || window.location.origin;
+      const resp = await fetch(`${apiBase}/api/tango/sync`, {
+        method: 'POST',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        signal: controller.signal,
+      });
       const data = await resp.json();
-      if (data.success) {
+      if (resp.ok && data.success) {
         setSyncResult({ stats: data.stats, alerts: data.alerts || [] });
         refetchProspects();
       } else {
-        alert('Error en sync: ' + (data.error || 'desconocido'));
+        alert('Error en sync: ' + (data.error || `HTTP ${resp.status}`));
         if (data.stats) setSyncResult({ stats: data.stats, alerts: data.alerts || [] });
       }
     } catch (err: any) {
-      alert('Error de red: ' + err.message);
+      if (err?.name === 'AbortError') {
+        alert('La sincronización tardó demasiado (>4 min) y fue cancelada. Reintentá en unos minutos.');
+      } else {
+        alert('Error de red: ' + (err?.message || 'desconocido'));
+      }
     } finally {
+      window.clearTimeout(timeoutId);
       setSyncing(false);
     }
   };
@@ -333,6 +415,8 @@ export default function Reports() {
         subscriber_id: row.subscriber_id,
         client_id: row.client_id,
         client: row.client_business_name || row.client_name || 'Sin nombre',
+        client_name: row.client_name || null,
+        client_business_name: row.client_business_name || null,
         vendor_name: row.vendor_name || 'Desconocido',
         phone: row.phone,
         line_type: row.line_type || null,
@@ -341,9 +425,11 @@ export default function Reports() {
         account_type: row.account_type || null,
         ban_number: row.ban_number,
         activation_date: row.activation_date,
+        plan: (row as any).plan ?? null,
         monthly_value: row.monthly_value ?? null,
         company_earnings: row.company_earnings ?? null,
         vendor_commission: row.vendor_commission ?? null,
+        portability_bonus: row.portability_bonus ?? 0,
         suggested_vendor_commission: row.suggested_vendor_commission ?? null,
         effective_vendor_commission: row.effective_vendor_commission ?? null,
         salesperson_commission_percentage: row.salesperson_commission_percentage ?? null,
@@ -542,8 +628,8 @@ export default function Reports() {
       if (!original) return;
 
       const reportMonth = original.report_month
-        ? new Date(original.report_month).toISOString().slice(0, 7)
-        : selectedMonth;
+        ? new Date(original.report_month).toISOString().slice(0, 10)
+        : `${selectedMonth}-01`;
 
       const effectiveCompanyEarn = editingCompanyEarn[rowId] !== undefined
         ? (editingCompanyEarn[rowId] === "" ? null : parseFloat(editingCompanyEarn[rowId]))
@@ -613,8 +699,8 @@ export default function Reports() {
     setRowActionBusy(prev => ({ ...prev, [rowId]: true }));
     try {
       const reportMonth = original.report_month
-        ? new Date(original.report_month).toISOString().slice(0, 7)
-        : selectedMonth;
+        ? new Date(original.report_month).toISOString().slice(0, 10)
+        : `${selectedMonth}-01`;
       const currentCompanyEarn = editingCompanyEarn[rowId] !== undefined
         ? (editingCompanyEarn[rowId] === '' ? null : parseFloat(editingCompanyEarn[rowId]))
         : original.company_earnings;
@@ -658,8 +744,8 @@ export default function Reports() {
     setRowActionBusy(prev => ({ ...prev, [rowId]: true }));
     try {
       const reportMonth = original.report_month
-        ? new Date(original.report_month).toISOString().slice(0, 7)
-        : selectedMonth;
+        ? new Date(original.report_month).toISOString().slice(0, 10)
+        : `${selectedMonth}-01`;
       const currentCompanyEarn = editingCompanyEarn[rowId] !== undefined
         ? (editingCompanyEarn[rowId] === '' ? null : parseFloat(editingCompanyEarn[rowId]))
         : original.company_earnings;
@@ -699,8 +785,8 @@ export default function Reports() {
     setRowActionBusy(prev => ({ ...prev, [rowId]: true }));
     try {
       const reportMonth = original.report_month
-        ? new Date(original.report_month).toISOString().slice(0, 7)
-        : selectedMonth;
+        ? new Date(original.report_month).toISOString().slice(0, 10)
+        : `${selectedMonth}-01`;
       const currentCompanyEarn = editingCompanyEarn[rowId] !== undefined
         ? (editingCompanyEarn[rowId] === '' ? null : parseFloat(editingCompanyEarn[rowId]))
         : original.company_earnings;
@@ -812,56 +898,160 @@ export default function Reports() {
     }, { company_earnings: 0, vendor_commission: 0, paid_amount: 0 });
   }, [filteredRows, editingCompanyEarn, editingPaidAmount, getEffectiveVendorCommission]);
 
-  // Resumen para vista vendedor
+  // Conteo por tipo para la tarjeta Total Ventas (compacto)
+  const salesByType = useMemo(() => resolveLineProducts(filteredRows as unknown as SubscriberReport[]), [filteredRows]);
+
+  // Resumen para vista vendedor — sin retención (regla 10% retirada por pedido del usuario)
   const vendorTotals = useMemo(() => {
-    const totalComm = filteredRows.reduce((acc, row) => {
-      const comm = safeMoneyNumber(getEffectiveVendorCommission(row));
-      return acc + comm;
-    }, 0);
-    const retentionBase = filteredRows.reduce((acc, row) => {
-      const comm = safeMoneyNumber(getEffectiveVendorCommission(row));
-      return acc + (row.withholding_applies !== false ? comm : 0);
-    }, 0);
-    const retention = parseFloat((retentionBase * 0.10).toFixed(2));
-    const net = parseFloat((totalComm - retention).toFixed(2));
-    const paid = safeMoneyNumber(totals.paid_amount);
-    const pending = parseFloat((net - paid).toFixed(2));
-    return { totalComm, retention, net, paid, pending };
-  }, [totals, filteredRows, editingVendorComm]);
+    return {
+      totalComm: totals.vendor_commission,
+      paid: totals.paid_amount,
+      pending: parseFloat((totals.vendor_commission - totals.paid_amount).toFixed(2)),
+    };
+  }, [totals]);
 
-  const retentionPanel = useMemo(() => {
-    const byVendor = new Map<string, { vendor: string; totalComm: number; retention: number; net: number; paid: number; pending: number }>();
-    for (const row of filteredRows) {
-      const vendorName = row.vendor_name || 'Desconocido';
-      const comm = safeMoneyNumber(getEffectiveVendorCommission(row));
-      const paid = editingPaidAmount[row.id] !== undefined
-        ? safeMoneyNumber(parseFloat(editingPaidAmount[row.id]))
-        : safeMoneyNumber(row.paid_amount);
-      const retention = row.withholding_applies !== false ? parseFloat((comm * 0.10).toFixed(2)) : 0;
-      const net = parseFloat((comm - retention).toFixed(2));
-      const current = byVendor.get(vendorName) || { vendor: vendorName, totalComm: 0, retention: 0, net: 0, paid: 0, pending: 0 };
-      current.totalComm += comm;
-      current.retention += retention;
-      current.net += net;
-      current.paid += paid;
-      byVendor.set(vendorName, current);
+  // ── Informe de ventas: filas filtradas + resumen por tipo + detalle ──
+  const informeFilteredRows = useMemo(() => {
+    return filteredRows.filter((row) => {
+      const tipo = formatSaleTypeLabel(row.account_type, row.line_type, row.sale_type, row.line_kind);
+      if (informeTipoFilter && tipo !== informeTipoFilter) return false;
+      if (informeSearch.trim()) {
+        const q = informeSearch.trim().toLowerCase();
+        const haystack = [
+          row.client_name, row.client_business_name, row.ban_number, row.phone, row.vendor_name, row.plan
+        ].filter(Boolean).map((x) => String(x).toLowerCase()).join(' ');
+        if (!haystack.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [filteredRows, informeTipoFilter, informeSearch]);
+
+  const informeResumen = useMemo(() => {
+    type Row = {
+      tipo: string;
+      ventas: number;
+      clientes: Set<string>;
+      ganancia: number;
+      comision: number;
+      pagado: number;
+      mensualidad: number;
+      vendorMap: Map<string, number>; // vendedor → ganancia
+    };
+    const map = new Map<string, Row>();
+    for (const r of informeFilteredRows) {
+      const tipo = formatSaleTypeLabel(r.account_type, r.line_type, r.sale_type, r.line_kind);
+      const earn = safeMoneyNumber(editingCompanyEarn[r.subscriber_id] !== undefined ? parseFloat(editingCompanyEarn[r.subscriber_id]) : r.company_earnings);
+      const comm = safeMoneyNumber(getEffectiveVendorCommission({
+        id: r.subscriber_id,
+        vendor_commission: r.vendor_commission,
+        company_earnings: r.company_earnings,
+        salesperson_commission_percentage: r.salesperson_commission_percentage,
+        suggested_vendor_commission: r.suggested_vendor_commission,
+        effective_vendor_commission: r.effective_vendor_commission,
+      }));
+      const paid = safeMoneyNumber(editingPaidAmount[r.subscriber_id] !== undefined ? parseFloat(editingPaidAmount[r.subscriber_id]) : r.paid_amount);
+      const monthly = safeMoneyNumber(r.monthly_value);
+      const vendorName = r.vendor_name || 'Sin vendedor';
+      const cur = map.get(tipo) || {
+        tipo, ventas: 0, clientes: new Set<string>(),
+        ganancia: 0, comision: 0, pagado: 0, mensualidad: 0,
+        vendorMap: new Map<string, number>(),
+      };
+      cur.ventas += 1;
+      if (r.client_id) cur.clientes.add(String(r.client_id));
+      cur.ganancia += earn;
+      cur.comision += comm;
+      cur.pagado += paid;
+      cur.mensualidad += monthly;
+      cur.vendorMap.set(vendorName, (cur.vendorMap.get(vendorName) || 0) + earn);
+      map.set(tipo, cur);
     }
-    const rows = Array.from(byVendor.values())
-      .map((r) => ({
-        ...r,
-        retention: parseFloat(r.retention.toFixed(2)),
-        net: parseFloat(r.net.toFixed(2)),
-        pending: parseFloat((r.net - r.paid).toFixed(2))
-      }))
-      .sort((a, b) => b.retention - a.retention);
 
-    const totalComm = rows.reduce((acc, r) => acc + r.totalComm, 0);
-    const retention = rows.reduce((acc, r) => acc + r.retention, 0);
-    const net = rows.reduce((acc, r) => acc + r.net, 0);
-    const paid = rows.reduce((acc, r) => acc + r.paid, 0);
-    const pending = parseFloat((net - paid).toFixed(2));
-    return { rows, totalComm, retention, net, paid, pending };
-  }, [filteredRows, editingPaidAmount, getEffectiveVendorCommission]);
+    const totalGanancia = Array.from(map.values()).reduce((acc, r) => acc + r.ganancia, 0);
+
+    return Array.from(map.values())
+      .map((r) => {
+        // Top vendedor del tipo (por ganancia)
+        let topVendor = '-';
+        let topVendorEarn = 0;
+        for (const [name, earn] of r.vendorMap) {
+          if (earn > topVendorEarn) { topVendor = name; topVendorEarn = earn; }
+        }
+        return {
+          tipo: r.tipo,
+          ventas: r.ventas,
+          clientes: r.clientes.size,
+          mensualidad: r.mensualidad,
+          ganancia: r.ganancia,
+          ticketPromedio: r.ventas > 0 ? r.ganancia / r.ventas : 0,
+          comision: r.comision,
+          pagado: r.pagado,
+          balance: r.ganancia - r.pagado,
+          pctTotal: totalGanancia > 0 ? (r.ganancia / totalGanancia) * 100 : 0,
+          topVendor,
+          topVendorEarn,
+        };
+      })
+      .sort((a, b) => b.ganancia - a.ganancia);
+  }, [informeFilteredRows, editingCompanyEarn, editingPaidAmount, getEffectiveVendorCommission]);
+
+  // Totales del resumen para fila TOTAL al pie de tabla
+  const informeResumenTotales = useMemo(() => {
+    return informeResumen.reduce((acc, r) => ({
+      ventas: acc.ventas + r.ventas,
+      mensualidad: acc.mensualidad + r.mensualidad,
+      ganancia: acc.ganancia + r.ganancia,
+      comision: acc.comision + r.comision,
+      pagado: acc.pagado + r.pagado,
+      balance: acc.balance + r.balance,
+    }), { ventas: 0, mensualidad: 0, ganancia: 0, comision: 0, pagado: 0, balance: 0 });
+  }, [informeResumen]);
+
+  // Clientes únicos cross-tipo (no se puede sumar la columna de clientes — un mismo cliente puede aparecer en 2 tipos)
+  const informeClientesUnicos = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of informeFilteredRows) {
+      if (r.client_id) set.add(String(r.client_id));
+    }
+    return set.size;
+  }, [informeFilteredRows]);
+
+  const informeDetalle = useMemo(() => {
+    return informeFilteredRows.map((r) => {
+      const earn = safeMoneyNumber(editingCompanyEarn[r.subscriber_id] !== undefined ? parseFloat(editingCompanyEarn[r.subscriber_id]) : r.company_earnings);
+      const comm = safeMoneyNumber(getEffectiveVendorCommission({
+        id: r.subscriber_id,
+        vendor_commission: r.vendor_commission,
+        company_earnings: r.company_earnings,
+        salesperson_commission_percentage: r.salesperson_commission_percentage,
+        suggested_vendor_commission: r.suggested_vendor_commission,
+        effective_vendor_commission: r.effective_vendor_commission,
+      }));
+      const paid = safeMoneyNumber(editingPaidAmount[r.subscriber_id] !== undefined ? parseFloat(editingPaidAmount[r.subscriber_id]) : r.paid_amount);
+      return {
+        id: r.subscriber_id,
+        fecha: r.activation_date ? String(r.activation_date).slice(0, 10) : (r.report_month ? String(r.report_month).slice(0, 10) : '-'),
+        cliente: r.client_name || r.client_business_name || '-',
+        ban: r.ban_number || '-',
+        phone: r.phone || '-',
+        vendedor: r.vendor_name || '-',
+        tipo: formatSaleTypeLabel(r.account_type, r.line_type, r.sale_type, r.line_kind),
+        plan: r.plan || '-',
+        ganancia: earn,
+        comision: comm,
+        pagado: paid,
+        balance: earn - paid,
+        bono_portabilidad: safeMoneyNumber(r.portability_bonus),
+        is_audited: Boolean(r.is_audited),
+        audited_at: r.audited_at || null,
+        report_month: r.report_month,
+        company_earnings: r.company_earnings,
+        vendor_commission: r.vendor_commission,
+        paid_amount: r.paid_amount,
+        paid_date: r.paid_date,
+      };
+    }).sort((a, b) => (a.fecha < b.fecha ? 1 : -1));
+  }, [informeFilteredRows, editingCompanyEarn, editingPaidAmount, getEffectiveVendorCommission]);
 
   const tableColSpan = isAdmin ? 14 : 13;
 
@@ -1185,124 +1375,309 @@ export default function Reports() {
           <div className="bg-slate-800/50 border border-slate-700 p-4 rounded-2xl">
             <p className="text-slate-500 text-xs font-bold uppercase tracking-wider">Total Ventas</p>
             <p className="text-2xl font-black text-white mt-1">{filteredRows.length}</p>
-            <p className="text-[10px] text-slate-500 mt-0.5">{groupedClients.length} clientes</p>
+            <p className="text-xs text-slate-400 mt-0.5">{groupedClients.length} clientes</p>
+            {(salesByType.movil_renovacion + salesByType.movil_nueva + salesByType.fijo_ren + salesByType.fijo_new) > 0 && (
+              <div className="text-sm text-slate-300 mt-2 leading-snug space-y-1">
+                {(salesByType.movil_renovacion > 0 || salesByType.movil_nueva > 0) && (
+                  <div>
+                    {salesByType.movil_renovacion > 0 && <span>M-REN <span className="font-black text-white">{salesByType.movil_renovacion}</span></span>}
+                    {salesByType.movil_renovacion > 0 && salesByType.movil_nueva > 0 && <span className="text-slate-600 mx-1.5">·</span>}
+                    {salesByType.movil_nueva > 0 && <span>M-NEW <span className="font-black text-white">{salesByType.movil_nueva}</span></span>}
+                  </div>
+                )}
+                {(salesByType.fijo_ren > 0 || salesByType.fijo_new > 0) && (
+                  <div>
+                    {salesByType.fijo_ren > 0 && <span>F-REN <span className="font-black text-white">{salesByType.fijo_ren}</span></span>}
+                    {salesByType.fijo_ren > 0 && salesByType.fijo_new > 0 && <span className="text-slate-600 mx-1.5">·</span>}
+                    {salesByType.fijo_new > 0 && <span>F-NEW <span className="font-black text-white">{salesByType.fijo_new}</span></span>}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
           <div className="bg-emerald-500/10 border border-emerald-500/20 p-4 rounded-2xl">
             <p className="text-emerald-500 text-xs font-bold uppercase tracking-wider">Ganancia Empresa</p>
             <p className="text-2xl font-black text-emerald-400 mt-1">
-              ${totals.company_earnings.toLocaleString('es-ES', { minimumFractionDigits: 2 })}
+              ${fmtMoney(totals.company_earnings)}
             </p>
           </div>
           <div className="bg-blue-500/10 border border-blue-500/20 p-4 rounded-2xl">
             <p className="text-blue-500 text-xs font-bold uppercase tracking-wider">Comisión Vendedores</p>
             <p className="text-2xl font-black text-blue-400 mt-1">
-              ${totals.vendor_commission.toLocaleString('es-ES', { minimumFractionDigits: 2 })}
+              ${fmtMoney(totals.vendor_commission)}
             </p>
           </div>
           <div className="bg-amber-500/10 border border-amber-500/20 p-4 rounded-2xl">
             <p className="text-amber-500 text-xs font-bold uppercase tracking-wider">Pagado</p>
             <p className="text-2xl font-black text-amber-400 mt-1">
-              ${totals.paid_amount.toLocaleString('es-ES', { minimumFractionDigits: 2 })}
+              ${fmtMoney(totals.paid_amount)}
             </p>
           </div>
-          <div className={`p-4 rounded-2xl border ${(totals.company_earnings - totals.paid_amount) <= 0 ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-red-500/10 border-red-500/20'}`}>
-            <p className={`text-xs font-bold uppercase tracking-wider ${(totals.company_earnings - totals.paid_amount) <= 0 ? 'text-emerald-500' : 'text-red-500'}`}>Balance Pendiente</p>
-            <p className={`text-2xl font-black mt-1 ${(totals.company_earnings - totals.paid_amount) <= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-              ${(totals.company_earnings - totals.paid_amount).toLocaleString('es-ES', { minimumFractionDigits: 2 })}
+          <div className={`p-4 rounded-2xl border ${(safeMoneyNumber(totals.company_earnings) - safeMoneyNumber(totals.paid_amount)) <= 0 ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-red-500/10 border-red-500/20'}`}>
+            <p className={`text-xs font-bold uppercase tracking-wider ${(safeMoneyNumber(totals.company_earnings) - safeMoneyNumber(totals.paid_amount)) <= 0 ? 'text-emerald-500' : 'text-red-500'}`}>Balance Pendiente</p>
+            <p className={`text-2xl font-black mt-1 ${(safeMoneyNumber(totals.company_earnings) - safeMoneyNumber(totals.paid_amount)) <= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+              ${fmtMoney(safeMoneyNumber(totals.company_earnings) - safeMoneyNumber(totals.paid_amount))}
             </p>
           </div>
         </div>
       ) : (
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <div className="bg-slate-800/50 border border-slate-700 p-4 rounded-2xl">
             <p className="text-slate-500 text-xs font-bold uppercase tracking-wider">Total Ventas</p>
             <p className="text-2xl font-black text-white mt-1">{filteredRows.length}</p>
-            <p className="text-[10px] text-slate-500 mt-0.5">{groupedClients.length} clientes</p>
+            <p className="text-xs text-slate-400 mt-0.5">{groupedClients.length} clientes</p>
+            {(salesByType.movil_renovacion + salesByType.movil_nueva + salesByType.fijo_ren + salesByType.fijo_new) > 0 && (
+              <div className="text-sm text-slate-300 mt-2 leading-snug space-y-1">
+                {(salesByType.movil_renovacion > 0 || salesByType.movil_nueva > 0) && (
+                  <div>
+                    {salesByType.movil_renovacion > 0 && <span>M-REN <span className="font-black text-white">{salesByType.movil_renovacion}</span></span>}
+                    {salesByType.movil_renovacion > 0 && salesByType.movil_nueva > 0 && <span className="text-slate-600 mx-1.5">·</span>}
+                    {salesByType.movil_nueva > 0 && <span>M-NEW <span className="font-black text-white">{salesByType.movil_nueva}</span></span>}
+                  </div>
+                )}
+                {(salesByType.fijo_ren > 0 || salesByType.fijo_new > 0) && (
+                  <div>
+                    {salesByType.fijo_ren > 0 && <span>F-REN <span className="font-black text-white">{salesByType.fijo_ren}</span></span>}
+                    {salesByType.fijo_ren > 0 && salesByType.fijo_new > 0 && <span className="text-slate-600 mx-1.5">·</span>}
+                    {salesByType.fijo_new > 0 && <span>F-NEW <span className="font-black text-white">{salesByType.fijo_new}</span></span>}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
           <div className="bg-blue-500/10 border border-blue-500/20 p-4 rounded-2xl">
-            <p className="text-blue-500 text-xs font-bold uppercase tracking-wider">Total Comisiones</p>
+            <p className="text-blue-500 text-xs font-bold uppercase tracking-wider">Comisión Vendedor</p>
             <p className="text-2xl font-black text-blue-400 mt-1">
-              ${vendorTotals.totalComm.toLocaleString('es-ES', { minimumFractionDigits: 2 })}
-            </p>
-          </div>
-          <div className="bg-red-500/10 border border-red-500/20 p-4 rounded-2xl">
-            <p className="text-red-500 text-xs font-bold uppercase tracking-wider">Retención Aplicada 10%</p>
-            <p className="text-2xl font-black text-red-400 mt-1">
-              -${vendorTotals.retention.toLocaleString('es-ES', { minimumFractionDigits: 2 })}
-            </p>
-          </div>
-          <div className="bg-cyan-500/10 border border-cyan-500/20 p-4 rounded-2xl">
-            <p className="text-cyan-500 text-xs font-bold uppercase tracking-wider">Neto a Cobrar</p>
-            <p className="text-2xl font-black text-cyan-400 mt-1">
-              ${vendorTotals.net.toLocaleString('es-ES', { minimumFractionDigits: 2 })}
+              ${fmtMoney(totals.vendor_commission)}
             </p>
           </div>
           <div className="bg-amber-500/10 border border-amber-500/20 p-4 rounded-2xl">
             <p className="text-amber-500 text-xs font-bold uppercase tracking-wider">Pagado</p>
             <p className="text-2xl font-black text-amber-400 mt-1">
-              ${vendorTotals.paid.toLocaleString('es-ES', { minimumFractionDigits: 2 })}
+              ${fmtMoney(totals.paid_amount)}
+            </p>
+          </div>
+          <div className={`p-4 rounded-2xl border ${(safeMoneyNumber(totals.vendor_commission) - safeMoneyNumber(totals.paid_amount)) <= 0 ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-red-500/10 border-red-500/20'}`}>
+            <p className={`text-xs font-bold uppercase tracking-wider ${(safeMoneyNumber(totals.vendor_commission) - safeMoneyNumber(totals.paid_amount)) <= 0 ? 'text-emerald-500' : 'text-red-500'}`}>Balance Pendiente</p>
+            <p className={`text-2xl font-black mt-1 ${(safeMoneyNumber(totals.vendor_commission) - safeMoneyNumber(totals.paid_amount)) <= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+              ${fmtMoney(safeMoneyNumber(totals.vendor_commission) - safeMoneyNumber(totals.paid_amount))}
             </p>
           </div>
         </div>
       )}
 
+      {/* Informe de ventas — acordeón con resumen por tipo + detalle */}
       {isAdmin && (
-        <div className="bg-slate-800/40 border border-slate-700 rounded-2xl p-5 space-y-4">
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
-            <h3 className="text-sm font-bold text-slate-300 uppercase tracking-wider">Panel Total de Retenciones</h3>
-            <span className="text-xs text-slate-400">Regla actual: 10% por caso marcado como retiene</span>
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-            <div className="bg-blue-500/10 border border-blue-500/20 p-3 rounded-xl">
-              <p className="text-[10px] uppercase font-bold text-blue-400">Comisiones</p>
-              <p className="text-lg font-black text-blue-300">${retentionPanel.totalComm.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</p>
+        <details className="bg-slate-800/40 border border-slate-700 rounded-2xl overflow-hidden group">
+          <summary className="cursor-pointer p-5 flex items-center justify-between list-none [&::-webkit-details-marker]:hidden">
+            <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2">
+              <BarChart3 className="w-4 h-4 text-emerald-400" />
+              Informe de ventas
+            </h3>
+            <ChevronDown className="w-5 h-5 text-slate-400 transition-transform group-open:rotate-180" />
+          </summary>
+          <div className="border-t border-slate-700 p-5 space-y-5">
+            {/* Filtros internos */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-slate-500 uppercase">Tipo de venta</label>
+                <select
+                  value={informeTipoFilter}
+                  onChange={(e) => setInformeTipoFilter(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
+                >
+                  <option value="">Todos los tipos</option>
+                  <option value="Móvil REN">Móvil REN</option>
+                  <option value="Móvil NEW">Móvil NEW</option>
+                  <option value="Fijo REN">Fijo REN</option>
+                  <option value="Fijo NEW">Fijo NEW</option>
+                </select>
+              </div>
+              <div className="space-y-1 md:col-span-2">
+                <label className="text-[10px] font-bold text-slate-500 uppercase">Buscar (cliente / BAN / teléfono)</label>
+                <input
+                  type="text"
+                  value={informeSearch}
+                  onChange={(e) => setInformeSearch(e.target.value)}
+                  placeholder="Filtrar dentro del informe..."
+                  className="w-full bg-slate-900 border border-slate-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
             </div>
-            <div className="bg-red-500/10 border border-red-500/20 p-3 rounded-xl">
-              <p className="text-[10px] uppercase font-bold text-red-400">Retención</p>
-              <p className="text-lg font-black text-red-300">-${retentionPanel.retention.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</p>
-            </div>
-            <div className="bg-cyan-500/10 border border-cyan-500/20 p-3 rounded-xl">
-              <p className="text-[10px] uppercase font-bold text-cyan-400">Neto</p>
-              <p className="text-lg font-black text-cyan-300">${retentionPanel.net.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</p>
-            </div>
-            <div className="bg-amber-500/10 border border-amber-500/20 p-3 rounded-xl">
-              <p className="text-[10px] uppercase font-bold text-amber-400">Pagado</p>
-              <p className="text-lg font-black text-amber-300">${retentionPanel.paid.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</p>
-            </div>
-            <div className="bg-slate-700/60 border border-slate-600 p-3 rounded-xl">
-              <p className="text-[10px] uppercase font-bold text-slate-300">Pendiente</p>
-              <p className="text-lg font-black text-white">${retentionPanel.pending.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</p>
-            </div>
-          </div>
-          {retentionPanel.rows.length > 0 && (
-            <div className="overflow-x-auto border border-slate-700 rounded-xl">
-              <table className="w-full text-xs">
-                <thead className="bg-slate-900/60">
-                  <tr>
-                    <th className="px-3 py-2 text-left text-slate-400 uppercase">Vendedor</th>
-                    <th className="px-3 py-2 text-right text-blue-400 uppercase">Comisión</th>
-                    <th className="px-3 py-2 text-right text-red-400 uppercase">Retención</th>
-                    <th className="px-3 py-2 text-right text-cyan-400 uppercase">Neto</th>
-                    <th className="px-3 py-2 text-right text-amber-400 uppercase">Pagado</th>
-                    <th className="px-3 py-2 text-right text-slate-300 uppercase">Pendiente</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800/60">
-                  {retentionPanel.rows.map((r) => (
-                    <tr key={r.vendor} className="hover:bg-slate-800/40">
-                      <td className="px-3 py-2 text-white font-semibold">{r.vendor}</td>
-                      <td className="px-3 py-2 text-right text-blue-300 font-mono">${r.totalComm.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
-                      <td className="px-3 py-2 text-right text-red-300 font-mono">-${r.retention.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
-                      <td className="px-3 py-2 text-right text-cyan-300 font-mono">${r.net.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
-                      <td className="px-3 py-2 text-right text-amber-300 font-mono">${r.paid.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
-                      <td className="px-3 py-2 text-right text-white font-mono">${r.pending.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
+
+            {/* Resumen por tipo de venta */}
+            <div>
+              <p className="text-xs font-bold text-slate-400 uppercase mb-2">Resumen por tipo</p>
+              <div className="overflow-x-auto border border-slate-700 rounded-xl">
+                <table className="w-full text-xs">
+                  <thead className="bg-slate-900/70 text-slate-400 uppercase tracking-wider">
+                    <tr>
+                      <th className="px-3 py-2 text-left">Tipo venta</th>
+                      <th className="px-3 py-2 text-right">Ventas</th>
+                      <th className="px-3 py-2 text-right">Clientes</th>
+                      <th className="px-3 py-2 text-right">Mensualidad</th>
+                      <th className="px-3 py-2 text-right text-emerald-400">Ganancia</th>
+                      <th className="px-3 py-2 text-right">% del total</th>
+                      <th className="px-3 py-2 text-right">Ticket prom.</th>
+                      <th className="px-3 py-2 text-right text-blue-400">Comisión</th>
+                      <th className="px-3 py-2 text-right text-amber-400">Pagado</th>
+                      <th className="px-3 py-2 text-right text-red-400">Balance</th>
+                      <th className="px-3 py-2 text-left">Top vendedor</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60">
+                    {informeResumen.map((r) => (
+                      <tr key={r.tipo} className="hover:bg-slate-800/40">
+                        <td className="px-3 py-2 text-white font-semibold">{r.tipo}</td>
+                        <td className="px-3 py-2 text-right text-slate-200 font-mono">{r.ventas}</td>
+                        <td className="px-3 py-2 text-right text-slate-300 font-mono">{r.clientes}</td>
+                        <td className="px-3 py-2 text-right text-slate-300 font-mono">${r.mensualidad.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
+                        <td className="px-3 py-2 text-right text-emerald-300 font-mono">${r.ganancia.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
+                        <td className="px-3 py-2 text-right text-slate-400 font-mono">{r.pctTotal.toFixed(1)}%</td>
+                        <td className="px-3 py-2 text-right text-slate-300 font-mono">${r.ticketPromedio.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
+                        <td className="px-3 py-2 text-right text-blue-300 font-mono">${r.comision.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
+                        <td className="px-3 py-2 text-right text-amber-300 font-mono">${r.pagado.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
+                        <td className="px-3 py-2 text-right text-red-300 font-mono">${r.balance.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
+                        <td className="px-3 py-2 text-left text-slate-300 truncate max-w-[140px]" title={`${r.topVendor}: $${r.topVendorEarn.toFixed(2)}`}>{r.topVendor}</td>
+                      </tr>
+                    ))}
+                    {informeResumen.length === 0 && (
+                      <tr><td colSpan={11} className="px-3 py-4 text-center text-slate-500">Sin ventas en el período/filtro.</td></tr>
+                    )}
+                  </tbody>
+                  {informeResumen.length > 0 && (
+                    <tfoot className="bg-slate-900/80 border-t-2 border-slate-600 font-bold">
+                      <tr>
+                        <td className="px-3 py-2 text-white uppercase">TOTAL</td>
+                        <td className="px-3 py-2 text-right text-white font-mono">{informeResumenTotales.ventas}</td>
+                        <td className="px-3 py-2 text-right text-white font-mono">{informeClientesUnicos}</td>
+                        <td className="px-3 py-2 text-right text-white font-mono">${informeResumenTotales.mensualidad.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
+                        <td className="px-3 py-2 text-right text-emerald-300 font-mono">${informeResumenTotales.ganancia.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
+                        <td className="px-3 py-2 text-right text-slate-400 font-mono">100.0%</td>
+                        <td className="px-3 py-2 text-right text-slate-300 font-mono">${(informeResumenTotales.ventas > 0 ? informeResumenTotales.ganancia / informeResumenTotales.ventas : 0).toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
+                        <td className="px-3 py-2 text-right text-blue-300 font-mono">${informeResumenTotales.comision.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
+                        <td className="px-3 py-2 text-right text-amber-300 font-mono">${informeResumenTotales.pagado.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
+                        <td className="px-3 py-2 text-right text-red-300 font-mono">${informeResumenTotales.balance.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
+                        <td className="px-3 py-2"></td>
+                      </tr>
+                    </tfoot>
+                  )}
+                </table>
+              </div>
             </div>
-          )}
-        </div>
+
+            {/* Detalle de ventas */}
+            <div>
+              <p className="text-xs font-bold text-slate-400 uppercase mb-2">Detalle ({informeDetalle.length} ventas)</p>
+              <div className="overflow-x-auto border border-slate-700 rounded-xl max-h-[480px] overflow-y-auto">
+                <table className="w-full text-xs">
+                  <thead className="bg-slate-900/70 text-slate-400 uppercase tracking-wider sticky top-0">
+                    <tr>
+                      <th className="px-3 py-2 text-center" title="Marcar como auditada">✓</th>
+                      <th className="px-3 py-2 text-left">Fecha</th>
+                      <th className="px-3 py-2 text-left">Cliente</th>
+                      <th className="px-3 py-2 text-left">BAN</th>
+                      <th className="px-3 py-2 text-left">Teléfono</th>
+                      <th className="px-3 py-2 text-left">Vendedor</th>
+                      <th className="px-3 py-2 text-left">Tipo</th>
+                      <th className="px-3 py-2 text-left">Plan</th>
+                      <th className="px-3 py-2 text-right text-emerald-400">Ganancia</th>
+                      <th className="px-3 py-2 text-right text-blue-400">Comisión</th>
+                      <th className="px-3 py-2 text-right text-cyan-400" title="Bono pagado por Claro por portabilidad">Bono Port.</th>
+                      <th className="px-3 py-2 text-right text-amber-400">Pagado</th>
+                      <th className="px-3 py-2 text-right text-red-400">Balance</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60">
+                    {informeDetalle.map((r) => {
+                      const hasBono = r.bono_portabilidad > 0;
+                      // Colores de fila por prioridad:
+                      // - auditada + portabilidad → fondo dorado + borde izquierdo cyan
+                      // - solo auditada → fondo dorado/emerald
+                      // - solo portabilidad → fondo cyan suave
+                      const rowClass = r.is_audited && hasBono
+                        ? 'bg-amber-500/10 border-l-4 border-cyan-400'
+                        : r.is_audited
+                          ? 'bg-amber-500/10'
+                          : hasBono
+                            ? 'bg-cyan-500/5'
+                            : '';
+                      return (
+                      <tr key={r.id} className={`hover:bg-slate-800/40 transition-colors ${rowClass}`}>
+                        <td className="px-3 py-2 text-center">
+                          <button
+                            type="button"
+                            onClick={() => handleToggleAudited(r.id, r.is_audited)}
+                            disabled={Boolean(rowActionBusy[r.id])}
+                            title={r.is_audited ? `Auditada${r.audited_at ? ' · ' + new Date(r.audited_at).toLocaleString('es-PR') : ''} (click para desmarcar)` : 'Marcar como auditada'}
+                            className={`w-6 h-6 rounded flex items-center justify-center transition-colors ${
+                              r.is_audited
+                                ? 'bg-amber-500/30 border border-amber-400 text-amber-100 hover:bg-amber-500/50'
+                                : 'bg-slate-800 border border-slate-600 text-slate-500 hover:border-amber-400/50 hover:text-amber-300'
+                            } disabled:opacity-50 disabled:cursor-wait`}
+                          >
+                            {r.is_audited ? <CheckCircle2 className="w-4 h-4" /> : <span className="text-xs">○</span>}
+                          </button>
+                        </td>
+                        <td className="px-3 py-2 text-slate-400 font-mono">{r.fecha}</td>
+                        <td className="px-3 py-2 text-white">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span>{r.cliente}</span>
+                            {hasBono && (
+                              <span className="text-[9px] uppercase font-bold tracking-wider bg-cyan-500/20 text-cyan-200 border border-cyan-400/40 rounded-full px-1.5 py-0.5" title={`Bono portabilidad: $${r.bono_portabilidad.toFixed(2)}`}>
+                                Portabilidad
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-3 py-2 text-slate-300 font-mono">{r.ban}</td>
+                        <td className="px-3 py-2 text-slate-300 font-mono">{r.phone}</td>
+                        <td className="px-3 py-2 text-slate-300">{r.vendedor}</td>
+                        <td className="px-3 py-2 text-slate-200">{r.tipo}</td>
+                        <td className="px-3 py-2 text-slate-400 font-mono">{r.plan}</td>
+                        <td className="px-3 py-2 text-right text-emerald-300 font-mono">${r.ganancia.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
+                        <td className="px-2 py-1 text-right">
+                          <EditableCommissionCell
+                            rowId={r.id}
+                            initialValue={r.comision}
+                            onSave={async (rowId, newValue) => {
+                              const original = filteredRows.find(x => x.id === rowId);
+                              if (!original) return;
+                              const reportMonth = original.report_month
+                                ? new Date(original.report_month).toISOString().slice(0, 10)
+                                : `${selectedMonth}-01`;
+                              const resp = await authFetch(`/api/subscriber-reports/${rowId}`, {
+                                method: 'PUT',
+                                json: {
+                                  report_month: reportMonth,
+                                  vendor_commission: newValue,
+                                  company_earnings: original.company_earnings,
+                                  paid_amount: original.paid_amount,
+                                  paid_date: original.paid_date,
+                                },
+                              });
+                              if (!resp.ok) throw new Error('No se pudo guardar la comisión');
+                              await refetchProspects();
+                            }}
+                          />
+                        </td>
+                        <td className={`px-3 py-2 text-right font-mono ${hasBono ? 'text-cyan-300 font-bold' : 'text-slate-600'}`}>
+                          {hasBono ? `$${r.bono_portabilidad.toLocaleString('es-ES', { minimumFractionDigits: 2 })}` : '—'}
+                        </td>
+                        <td className="px-3 py-2 text-right text-amber-300 font-mono">${r.pagado.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
+                        <td className="px-3 py-2 text-right text-red-300 font-mono">${r.balance.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
+                      </tr>
+                      );
+                    })}
+                    {informeDetalle.length === 0 && (
+                      <tr><td colSpan={13} className="px-3 py-4 text-center text-slate-500">Sin ventas en el período/filtro.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </details>
       )}
 
       {/* Filters */}
@@ -1386,10 +1761,25 @@ export default function Reports() {
 
                 return (
                   <Fragment key={key}>
-                    {/* Client Row */}
-                    <tr className="hover:bg-gray-800 transition-colors cursor-pointer" onClick={() => toggleClient(key)}>
+                    {/* Client Row — clickable to expand/edit individual sales */}
+                    <tr
+                      className={`hover:bg-gray-800 transition-colors cursor-pointer ${isExpanded ? 'bg-slate-800/40' : ''}`}
+                      onClick={() => toggleClient(key)}
+                      title={isExpanded ? 'Click para colapsar' : 'Click para ver y editar las ventas individuales'}
+                    >
                       <td className="px-3 py-2 whitespace-nowrap">
-                        <div className="text-sm font-bold text-gray-200">{group.client}</div>
+                        <div className="flex items-center gap-2">
+                          {isExpanded
+                            ? <ChevronDown className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                            : <ChevronRight className="w-4 h-4 text-slate-500 flex-shrink-0" />
+                          }
+                          <div>
+                            <div className="text-sm font-bold text-gray-200">{group.client}</div>
+                            {!isExpanded && isAdmin && (
+                              <div className="text-[10px] text-emerald-500/70 font-semibold">▸ click para editar</div>
+                            )}
+                          </div>
+                        </div>
                       </td>
                       <td className="px-3 py-2 whitespace-nowrap">
                         <span className="text-sm font-bold text-blue-400">{group.vendor_name}</span>
@@ -1439,16 +1829,21 @@ export default function Reports() {
                           </span>
                         </td>
                       )}
-                      {/* Comisión($) */}
-                      <td className="px-2 py-2 text-center whitespace-nowrap bg-blue-500/5">
-                        <span className="text-xs font-bold text-blue-400">
-                          {group.totalCommission > 0 ? `$${group.totalCommission.toLocaleString('es-ES', { minimumFractionDigits: 2 })}` : <span className="text-gray-600">0</span>}
-                        </span>
+                      {/* Comisión($) — total agregado del cliente. Para EDITAR, expandir. */}
+                      <td className="px-2 py-2 text-center whitespace-nowrap bg-blue-500/5 group/comm">
+                        <div className="flex flex-col items-center gap-0">
+                          <span className="text-xs font-bold text-blue-400">
+                            {group.totalCommission > 0 ? `$${group.totalCommission.toLocaleString('es-ES', { minimumFractionDigits: 2 })}` : <span className="text-gray-600">0</span>}
+                          </span>
+                          {!isExpanded && isAdmin && group.subscribers.length > 0 && (
+                            <span className="text-[9px] text-blue-300/60 group-hover/comm:text-blue-300 transition-colors">↓ editar</span>
+                          )}
+                        </div>
                       </td>
                       {/* Ventas count */}
                       <td className="px-2 py-2 text-center whitespace-nowrap">
-                        <span className="px-2 py-1 bg-orange-500/20 text-orange-300 rounded text-xs font-bold">
-                          {group.subscribers.length} ventas
+                        <span className={`px-2 py-1 rounded text-xs font-bold ${isExpanded ? 'bg-emerald-500/20 text-emerald-300' : 'bg-orange-500/20 text-orange-300'}`}>
+                          {group.subscribers.length} ventas {!isExpanded && '▶'}
                         </span>
                       </td>
                     </tr>
@@ -1502,29 +1897,64 @@ export default function Reports() {
                               {row.monthly_value != null ? `$${Number(row.monthly_value).toLocaleString('es-ES', { minimumFractionDigits: 2 })}` : '-'}
                             </span>
                           </td>
-                          {/* Empresa($) editable */}
-                          {isAdmin && (
-                            <td className="px-2 py-2 text-center bg-emerald-500/5">
-                              <input type="number" step="0.01"
-                                className={`w-20 bg-gray-800 border text-center font-bold text-emerald-400 text-xs px-1 py-1 outline-none transition-all rounded ${editingCompanyEarn[row.id] !== undefined ? 'border-emerald-500 ring-1 ring-emerald-500/20' : 'border-gray-700'}`}
-                                value={editingCompanyEarn[row.id] !== undefined ? editingCompanyEarn[row.id] : (row.company_earnings ?? '')}
-                                onChange={(e) => setEditingCompanyEarn(prev => ({ ...prev, [row.id]: e.target.value }))}
-                                disabled={Boolean(row.is_paid)}
-                              />
-                            </td>
-                          )}
-                          {/* Comisión($) editable */}
-                          <td className="px-2 py-2 text-center bg-blue-500/5">
+                          {/* Empresa($) editable (admin) / solo lectura (vendedor) */}
+                          <td
+                            className="px-2 py-2 text-center bg-emerald-500/10 cursor-text"
+                            onClick={(e) => {
+                              if (!isAdmin) return;
+                              const inp = (e.currentTarget as HTMLElement).querySelector('input');
+                              inp?.focus();
+                              inp?.select();
+                            }}
+                          >
                             {isAdmin ? (
-                              <input type="number" step="0.01"
-                                className={`w-20 bg-gray-800 border text-center font-bold text-blue-400 text-xs px-1 py-1 outline-none transition-all rounded ${editingVendorComm[row.id] !== undefined ? 'border-blue-500 ring-1 ring-blue-500/20' : 'border-gray-700'}`}
-                                value={getVendorCommissionInputValue(row)}
-                                onChange={(e) => setEditingVendorComm(prev => ({ ...prev, [row.id]: e.target.value }))}
-                                title={row.salesperson_commission_percentage ? `Auto ${row.salesperson_commission_percentage}% de Empresa($)` : 'Comision editable'}
-                                disabled={Boolean(row.is_paid)}
+                              <input
+                                type="text"
+                                inputMode="decimal"
+                                autoComplete="off"
+                                className={`w-full max-w-[110px] bg-slate-950 border-2 text-center font-bold text-emerald-300 text-sm px-2 py-1.5 outline-none transition-all rounded shadow-inner ${editingCompanyEarn[row.id] !== undefined ? 'border-emerald-400 ring-2 ring-emerald-400/40' : 'border-emerald-700/60 hover:border-emerald-400 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/40'}`}
+                                value={editingCompanyEarn[row.id] !== undefined ? editingCompanyEarn[row.id] : String(row.company_earnings ?? '')}
+                                onChange={(e) => {
+                                  const raw = e.target.value.replace(',', '.');
+                                  if (raw === '' || /^\d*\.?\d*$/.test(raw)) {
+                                    setEditingCompanyEarn(prev => ({ ...prev, [row.id]: raw }));
+                                  }
+                                }}
+                                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleSave(row.id); } }}
+                                title="Click para editar · Enter para guardar"
                               />
                             ) : (
-                              <span className="text-xs font-bold text-blue-400">{`$${getEffectiveVendorCommission(row).toFixed(2)}`}</span>
+                              <span className="text-xs font-bold text-emerald-400">${safeMoneyNumber(row.company_earnings).toFixed(2)}</span>
+                            )}
+                          </td>
+                          {/* Comisión($) editable (admin) / solo lectura (vendedor) */}
+                          <td
+                            className="px-2 py-2 text-center bg-blue-500/10 cursor-text"
+                            onClick={(e) => {
+                              if (!isAdmin) return;
+                              const inp = (e.currentTarget as HTMLElement).querySelector('input');
+                              inp?.focus();
+                              inp?.select();
+                            }}
+                          >
+                            {isAdmin ? (
+                              <input
+                                type="text"
+                                inputMode="decimal"
+                                autoComplete="off"
+                                className={`w-full max-w-[110px] bg-slate-950 border-2 text-center font-bold text-blue-300 text-sm px-2 py-1.5 outline-none transition-all rounded shadow-inner ${editingVendorComm[row.id] !== undefined ? 'border-blue-400 ring-2 ring-blue-400/40' : 'border-blue-700/60 hover:border-blue-400 focus:border-blue-400 focus:ring-2 focus:ring-blue-400/40'}`}
+                                value={getVendorCommissionInputValue(row)}
+                                onChange={(e) => {
+                                  const raw = e.target.value.replace(',', '.');
+                                  if (raw === '' || /^\d*\.?\d*$/.test(raw)) {
+                                    setEditingVendorComm(prev => ({ ...prev, [row.id]: raw }));
+                                  }
+                                }}
+                                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleSave(row.id); } }}
+                                title={row.is_paid ? 'Pagado · no editable' : (row.salesperson_commission_percentage ? `Auto ${row.salesperson_commission_percentage}% de Empresa($) · Enter para guardar` : 'Editar comisión (Enter para guardar)')}
+                              />
+                            ) : (
+                              <span className="text-xs font-bold text-blue-400">${safeMoneyNumber(getEffectiveVendorCommission(row)).toFixed(2)}</span>
                             )}
                           </td>
                           {/* Save button */}
@@ -1610,24 +2040,16 @@ export default function Reports() {
           <div className="space-y-2 max-w-md">
             <div className="flex justify-between items-center py-1">
               <span className="text-slate-300 font-medium">Total Comisiones</span>
-              <span className="font-black text-blue-400 text-lg">${vendorTotals.totalComm.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</span>
-            </div>
-            <div className="flex justify-between items-center py-1 text-red-400">
-              <span className="flex items-center gap-1"><Receipt className="w-3.5 h-3.5" /> Retención aplicada 10%</span>
-              <span className="font-bold">-${vendorTotals.retention.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</span>
-            </div>
-            <div className="border-t border-slate-600 pt-2 flex justify-between items-center">
-              <span className="font-bold text-cyan-400 text-lg">Neto a Cobrar</span>
-              <span className="font-black text-cyan-400 text-lg">${vendorTotals.net.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</span>
+              <span className="font-black text-blue-400 text-lg">${fmtMoney(vendorTotals?.totalComm)}</span>
             </div>
             <div className="flex justify-between items-center py-1 mt-2">
               <span className="text-amber-400">Pagado</span>
-              <span className="font-bold text-amber-400">${vendorTotals.paid.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</span>
+              <span className="font-bold text-amber-400">${fmtMoney(vendorTotals?.paid)}</span>
             </div>
-            {vendorTotals.pending > 0 && (
+            {safeMoneyNumber(vendorTotals?.pending) > 0 && (
               <div className="flex justify-between items-center py-2 bg-amber-500/10 rounded-lg px-3 mt-1">
-                <span className="text-amber-300 font-semibold">Pendiente por Cobrar</span>
-                <span className="font-black text-amber-300">${vendorTotals.pending.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</span>
+                <span className="text-amber-300 font-semibold">Balance Pendiente</span>
+                <span className="font-black text-amber-300">${fmtMoney(vendorTotals?.pending)}</span>
               </div>
             )}
           </div>
