@@ -37,3 +37,30 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+
+# DEV / TEMP
+archive/
+_cuartel_backup/
+brain/
+.agent/
+notas-*
+*.log
+*.sql
+*.txt
+
+# TEST / SCRATCH
+scratch/
+state.json
+
+# LOCAL TOOLS
+diagnostico-mcp/
+mcp-diagnostico/
+mi-monitor/
+crm-data-extractor-extension/
+crm-data-extractor-local-ocr-extension/
+ofertas-web/
+ocr-director-package/
+
+# OS
+nul
