@@ -3831,7 +3831,7 @@ export function ClientManagementModal({
               : 'text-gray-400 hover:text-white hover:bg-gray-750'
               }`}
           >
-            📋 Pasos
+            Pendientes
           </button>
         </div>
 
@@ -5506,7 +5506,7 @@ function TasksPanelClient({ client }: { client: any }) {
       };
       const res = await authFetch("/api/tasks", { method: "POST", json: body });
       if (!res.ok) throw new Error("Error");
-      setMsg({ type: "success", text: "Tarea creada y visible en el módulo de Tareas ✓" });
+      setMsg({ type: "success", text: "Pendiente creado y visible en Mi dia" });
       setFormData({ title: "", due_date: "", priority: "normal", notes: "" });
       setShowForm(false);
       await loadTasks();
@@ -5536,8 +5536,8 @@ function TasksPanelClient({ client }: { client: any }) {
     <div className="flex-1 flex flex-col bg-gray-900 overflow-hidden h-full rounded-lg border border-gray-700">
       <div className="px-6 py-3 border-b border-gray-800 flex justify-between items-center bg-gray-800/30">
         <div>
-          <h3 className="text-sm font-semibold text-gray-200">Tareas vinculadas a <span className="text-purple-400">{clientName}</span></h3>
-          <p className="text-xs text-gray-500 mt-0.5">Estas tareas también aparecen en el módulo de Tareas</p>
+          <h3 className="text-sm font-semibold text-gray-200">Pendientes vinculados a <span className="text-purple-400">{clientName}</span></h3>
+          <p className="text-xs text-gray-500 mt-0.5">Estos pendientes tambien aparecen en Mi dia</p>
         </div>
         <button
           onClick={() => setShowForm(v => !v)}

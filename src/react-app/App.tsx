@@ -49,7 +49,6 @@ function ProtectedRoutes() {
         <Route path="/" element={<HomePage />} />
         <Route path="/panel" element={<HomePage />} />
         <Route path="/mi-dia" element={<MyDayPage />} />
-        <Route path="/tareas" element={<Navigate to="/mi-dia" replace />} />
         <Route path="/clientes" element={<ClientsPage />} />
         <Route path="/seguimiento" element={<FollowUpPage />} />
         <Route path="/reportes" element={<ReportsPage />} />

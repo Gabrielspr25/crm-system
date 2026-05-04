@@ -507,7 +507,9 @@ export default function MyDay() {
     return (
       <li
         key={t.uid}
-        className="text-sm flex items-start justify-between gap-2"
+        onClick={() => handleTaskClick(t)}
+        className={`text-sm flex items-start justify-between gap-2 rounded px-1 py-0.5 ${t.client_id ? "cursor-pointer hover:bg-slate-700/50" : "cursor-default"}`}
+        title={t.client_id ? "Abrir detalle del cliente" : "Esta tarea no tiene cliente asociado"}
       >
         <div className="flex items-start gap-2 flex-1 min-w-0">
           <span
@@ -515,14 +517,9 @@ export default function MyDay() {
           >
             {KIND_LABEL[t.kind]}
           </span>
-          <button
-            type="button"
-            onClick={() => handleTaskClick(t)}
-            className={`truncate text-left ${t.client_id ? "hover:underline" : "cursor-default"} ${titleColor}`}
-            title={t.client_id ? "Abrir detalle del cliente" : "Esta tarea no tiene cliente asociado"}
-          >
+          <span className={`truncate ${t.client_id ? "hover:underline" : ""} ${titleColor}`}>
             {t.title}
-          </button>
+          </span>
         </div>
         <span className={`text-xs whitespace-nowrap shrink-0 ${dateColor}`}>
           {tone === "red" && t.due_date
@@ -607,7 +604,7 @@ export default function MyDay() {
       <section className="bg-slate-800/50 border border-slate-700 rounded-lg p-4">
         <h2 className="text-sm font-semibold uppercase text-slate-400 flex items-center gap-2 mb-3">
           <CheckSquare className="w-4 h-4" />
-          Tareas de hoy
+          Pendientes de hoy
           <span className="text-xs text-slate-500 normal-case font-normal">
             ({overdueTasks.length} atrasadas · {todayTasks.length} hoy ·{" "}
             {noDateTasks.length} sin fecha)
