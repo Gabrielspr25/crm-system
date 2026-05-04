@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router";
 import {
   AlertTriangle,
@@ -10,7 +10,8 @@ import {
   Target,
 } from "lucide-react";
 import { useApi } from "@/react-app/hooks/useApi";
-import { getCurrentUser } from "@/react-app/utils/auth";
+import { authFetch, getCurrentUser } from "@/react-app/utils/auth";
+import { ClientManagementModal } from "@/react-app/pages/Clients";
 
 // ── Tipos por endpoint (un sub-set mínimo de los campos reales) ──
 
@@ -31,6 +32,8 @@ type PersonalTask = {
   due_date?: string | null;
   follow_up_date?: string | null;
   task_kind?: "regular" | "client" | null;
+  client_id?: string | null;
+  client_name?: string | null;
   created_at?: string | null;
 };
 
@@ -100,7 +103,6 @@ type UnifiedTask = {
   due_date: string | null; // ISO 'YYYY-MM-DD' o null
   client_id: string | null;
   client_name: string | null;
-  link: string; // ruta a abrir
   created_at: string | null;
 };
 
@@ -173,6 +175,9 @@ export default function MyDay() {
   const userName = user?.salespersonName || user?.username || "Vendedor";
   const today = todayISO();
   const monthYM = currentMonthYM();
+  const [clientDetail, setClientDetail] = useState<any | null>(null);
+  const [loadingClientDetail, setLoadingClientDetail] = useState(false);
+  const [clientDetailError, setClientDetailError] = useState<string | null>(null);
 
   // ── Endpoints (todos filtran por rol server-side donde aplica) ──
   const agentTasksApi = useApi<AgentTask[]>("/api/agents/tasks?limit=500");
@@ -230,21 +235,20 @@ export default function MyDay() {
         due_date: dueKey(t.due_date),
         client_id: cid,
         client_name: null,
-        link: "/tareas",
         created_at: t.created_at || null,
       });
     }
 
     for (const t of personalTasks) {
       if (!isPending(t.status)) continue;
+      const cid = t.client_id ? String(t.client_id) : null;
       out.push({
         uid: `personal-${t.id}`,
         kind: "personal",
         title: t.title || "Sin título",
         due_date: dueKey(t.due_date) || dueKey(t.follow_up_date),
-        client_id: null,
-        client_name: null,
-        link: "/tareas?tab=personales",
+        client_id: cid,
+        client_name: t.client_name || null,
         created_at: t.created_at || null,
       });
     }
@@ -261,7 +265,6 @@ export default function MyDay() {
         due_date: dueKey(t.due_date),
         client_id: cid,
         client_name: t.client_name || null,
-        link: cid ? `/clientes?openClient=${cid}&tab=pasos` : "/tareas",
         created_at: t.created_at || null,
       });
     }
@@ -279,7 +282,6 @@ export default function MyDay() {
         due_date: null, // workflow no tiene due_date confiable
         client_id: cid,
         client_name: t.client_name || null,
-        link: cid ? `/clientes?openClient=${cid}&tab=pasos` : "/tareas",
         created_at: t.created_at || null,
       });
     }
@@ -444,6 +446,55 @@ export default function MyDay() {
         : "bg-red-500";
 
   // ── Render helpers ──
+  const loadClientDetail = async (clientId: string | number) => {
+    setClientDetailError(null);
+    setLoadingClientDetail(true);
+    setClientDetail(null);
+
+    try {
+      const clientResponse = await authFetch(`/api/clients/${clientId}`);
+      if (!clientResponse.ok) {
+        const errorData = await clientResponse.json().catch(() => ({ error: "Error desconocido" }));
+        throw new Error(errorData.error || "Error al cargar el cliente");
+      }
+
+      const client = await clientResponse.json();
+      const [bansResponse, subscribersResponse] = await Promise.all([
+        authFetch(`/api/bans?client_id=${clientId}`),
+        authFetch(`/api/subscribers?client_id=${clientId}`),
+      ]);
+
+      const allSubscribers = subscribersResponse.ok ? await subscribersResponse.json() : [];
+      const clientBans = bansResponse.ok ? await bansResponse.json() : [];
+      const bans = (Array.isArray(clientBans) ? clientBans : []).map((ban: any) => ({
+        ...ban,
+        subscribers: (Array.isArray(allSubscribers) ? allSubscribers : []).filter((s: any) => s.ban_id === ban.id),
+      }));
+
+      setClientDetail({ ...client, bans });
+    } catch (error) {
+      setClientDetailError(error instanceof Error ? error.message : "Error al cargar los detalles del cliente.");
+    } finally {
+      setLoadingClientDetail(false);
+    }
+  };
+
+  const handleTaskClick = (task: UnifiedTask) => {
+    if (!task.client_id) {
+      setClientDetailError("Esta tarea no tiene cliente asociado.");
+      return;
+    }
+    loadClientDetail(task.client_id);
+  };
+
+  const clientHasActiveFollowUp = (clientId: number) =>
+    activeFollowUps.some((f) => String(f.client_id || "") === String(clientId));
+
+  const resolveFollowUpVendorId = (client: { vendor_id?: number | null }) => {
+    const vendorId = Number(client.vendor_id);
+    return Number.isFinite(vendorId) && vendorId > 0 ? vendorId : null;
+  };
+
   const renderTaskRow = (t: UnifiedTask, tone: "red" | "amber" | "slate") => {
     const dateColor =
       tone === "red"
@@ -464,12 +515,14 @@ export default function MyDay() {
           >
             {KIND_LABEL[t.kind]}
           </span>
-          <Link
-            to={t.link}
-            className={`truncate hover:underline ${titleColor}`}
+          <button
+            type="button"
+            onClick={() => handleTaskClick(t)}
+            className={`truncate text-left ${t.client_id ? "hover:underline" : "cursor-default"} ${titleColor}`}
+            title={t.client_id ? "Abrir detalle del cliente" : "Esta tarea no tiene cliente asociado"}
           >
             {t.title}
-          </Link>
+          </button>
         </div>
         <span className={`text-xs whitespace-nowrap shrink-0 ${dateColor}`}>
           {tone === "red" && t.due_date
@@ -771,6 +824,51 @@ export default function MyDay() {
           Algunas fuentes no respondieron correctamente. Datos parciales
           mostrados.
         </div>
+      )}
+
+      {clientDetailError && (
+        <div className="fixed bottom-4 right-4 z-50 max-w-sm rounded-lg border border-amber-500/40 bg-amber-950 px-4 py-3 text-sm text-amber-100 shadow-xl">
+          <div className="flex items-start justify-between gap-3">
+            <span>{clientDetailError}</span>
+            <button
+              type="button"
+              onClick={() => setClientDetailError(null)}
+              className="text-amber-200 hover:text-white"
+            >
+              Cerrar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {loadingClientDetail && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-gray-800 rounded-xl p-8 border border-gray-700">
+            <div className="flex items-center gap-4">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+              <span className="text-white text-lg">Cargando detalles del cliente...</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {clientDetail && !loadingClientDetail && (
+        <ClientManagementModal
+          key={clientDetail.id}
+          client={clientDetail}
+          onClose={() => setClientDetail(null)}
+          onEditSubscriber={() => setClientDetailError("Edita suscriptores desde el modulo Clientes.")}
+          onAddSubscriber={() => setClientDetailError("Agrega suscriptores desde el modulo Clientes.")}
+          onRefreshClient={async () => {
+            if (clientDetail?.id) await loadClientDetail(clientDetail.id);
+          }}
+          onFollowUpUpdated={async () => {
+            await followUpsApi.refetch();
+          }}
+          clientHasActiveFollowUp={clientHasActiveFollowUp}
+          resolveFollowUpVendorId={resolveFollowUpVendorId}
+          initialTab="bans"
+        />
       )}
     </div>
   );

@@ -2864,7 +2864,7 @@ export default function Clients() {
 }
 
 // Client Management Modal Component
-function ClientManagementModal({
+export function ClientManagementModal({
   client,
   onClose,
   onEditSubscriber,
