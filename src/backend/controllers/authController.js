@@ -4,10 +4,10 @@ import { query } from '../database/db.js';
 import { config } from '../config/env.js';
 import { serverError, badRequest } from '../middlewares/errorHandler.js';
 
-const signPersistentToken = (payload) => jwt.sign(payload, config.jwtSecret);
+const signAccessToken = (payload) => jwt.sign(payload, config.jwtSecret, { expiresIn: process.env.ACCESS_TOKEN_TTL || '12h' });
 
 export const getMe = async (req, res) => {
-    res.json({ user: req.user });
+    res.json({ user: req.user, role: req.user?.role, salespersonId: req.user?.salespersonId });
 };
 
 export const login = async (req, res) => {
@@ -21,7 +21,7 @@ export const login = async (req, res) => {
         const users = await query(
             `SELECT u.*, s.role AS salesperson_role
              FROM users_auth u
-             LEFT JOIN salespeople s ON s.id = u.salesperson_id
+             LEFT JOIN salespeople s ON s.id::text = u.salesperson_id::text
              WHERE u.username = $1`,
             [username]
         );
@@ -48,7 +48,7 @@ export const login = async (req, res) => {
             salespersonId: salespersonId
         };
 
-        const token = signPersistentToken(tokenPayload);
+        const token = signAccessToken(tokenPayload);
 
         // Registrar último login
         await query('UPDATE users_auth SET last_login = NOW() WHERE id = $1', [user.id]);
@@ -78,7 +78,7 @@ export const refreshToken = async (req, res) => {
     jwt.verify(token, config.jwtSecret, (err, user) => {
         if (err) return res.sendStatus(403);
 
-        const newToken = signPersistentToken({
+        const newToken = signAccessToken({
             userId: user.userId,
             username: user.username,
             role: user.role,
@@ -98,7 +98,7 @@ export const devAdminLogin = async (req, res) => {
             salespersonId: null
         };
 
-        const token = signPersistentToken(tokenPayload);
+        const token = signAccessToken(tokenPayload);
 
         res.json({
             token,

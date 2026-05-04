@@ -1,7 +1,7 @@
 {
     "name": "mocha-app",
     "private": true,
-    "version": "2026-404",
+    "version": "2026-405",
     "type": "module",
     "dependencies": {
         "@azure/msal-browser": "^4.27.0",
@@ -36,6 +36,7 @@
         "recharts": "^3.7.0",
         "ssh2": "^1.17.0",
         "tailwind-merge": "^3.4.0",
+        "tesseract.js": "^7.0.0",
         "tinymce": "^7.9.1",
         "uuid": "^13.0.0",
         "xlsx": "^0.18.5",

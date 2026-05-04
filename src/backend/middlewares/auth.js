@@ -24,11 +24,11 @@ const hydrateAuthenticatedUser = async (tokenUser) => {
                 s.role AS salesperson_role
          FROM users_auth u
          LEFT JOIN salespeople s ON s.id = u.salesperson_id
-         WHERE ($1::int IS NOT NULL AND u.id = $1)
+         WHERE ($1::text IS NOT NULL AND u.id::text = $1)
             OR ($2::text <> '' AND u.username = $2)
-         ORDER BY CASE WHEN ($1::int IS NOT NULL AND u.id = $1) THEN 0 ELSE 1 END
+         ORDER BY CASE WHEN ($1::text IS NOT NULL AND u.id::text = $1) THEN 0 ELSE 1 END
          LIMIT 1`,
-        [userId ? Number(userId) : null, username]
+        [userId ? String(userId) : null, username]
     );
 
     if (rows.length === 0) {
@@ -59,7 +59,10 @@ export const authenticateToken = async (req, res, next) => {
     }
 
     try {
-        const decodedUser = jwt.verify(token, config.jwtSecret, { ignoreExpiration: true });
+        const decodedUser = jwt.verify(token, config.jwtSecret);
+        if (!decodedUser?.exp) {
+            return res.status(401).json({ error: 'Token sin expiracion. Inicia sesion nuevamente.' });
+        }
 
         try {
             req.user = await hydrateAuthenticatedUser(decodedUser);

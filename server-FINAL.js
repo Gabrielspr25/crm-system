@@ -19,35 +19,37 @@ import { createWorker } from 'tesseract.js';
 import { saveImportData } from './src/backend/controllers/importController.js';
 import { fullSystemCheck } from './src/backend/controllers/healthController.js';
 import { runFullSystemTest } from './src/backend/controllers/systemTestController.js';
-import referidosRoutes from './src/backend/routes/referidosRoutes.js';
 import tarifasRoutes from './src/backend/routes/tarifasRoutes.js';
 import clientRoutes from './src/backend/routes/clientRoutes.js';
 import banRoutes from './src/backend/routes/banRoutes.js';
+import subscriberRoutes from './src/backend/routes/subscriberRoutes.js';
 import importRoutes from './src/backend/routes/importRoutes.js';
 import vendorRoutes from './src/backend/routes/vendorRoutes.js';
 import systemRoutes from './src/backend/routes/systemRoutes.js';
 import productRoutes from './src/backend/routes/productRoutes.js';
 import tiersFixedRoutes from './src/backend/routes/tiersFixedRoutes.js';
 import posIntegrationRoutes from './src/backend/routes/posIntegrationRoutes.js';
-import discrepanciasRoutes from './src/backend/routes/discrepanciasRoutes.js';
 import salesHistoryRoutes from './src/backend/routes/salesHistoryRoutes.js';
 import campaignRoutes from './src/backend/routes/campaignRoutes.js';
 import trackingRoutes from './src/backend/routes/trackingRoutes.js';
 import goalsRoutes from './src/backend/routes/goalsRoutes.js';
+import gestionRoutes from './src/backend/routes/gestionRoutes.js';
 import tangoRoutes from './src/backend/routes/tangoRoutes.js';
 import ocrRoutes from './src/backend/routes/ocrRoutes.js';
 import dealWorkflowRoutes from './src/backend/routes/dealWorkflowRoutes.js';
+import followUpConfigRoutes from './src/backend/routes/followUpConfigRoutes.js';
+import dashboardRoutes from './src/backend/routes/dashboardRoutes.js';
+import agentRoutes from './src/backend/routes/agentRoutes.js';
 import { getTangoPool } from './src/backend/database/externalPools.js';
 import { getPermissionCatalogResponse, ensurePermissionSchema, resolvePermissionsForUser, saveUserPermissionOverrides } from './src/backend/utils/permissionService.js';
-console.log('🔍 DEBUG: discrepanciasRoutes imported:', typeof discrepanciasRoutes);
 
-const JWT_SECRET = process.env.JWT_SECRET || 'tango_secret_key_2024';
-const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'tango_refresh_secret_key_2024';
-const ACCESS_TOKEN_TTL = null;
-const REFRESH_TOKEN_TTL = null;
+const JWT_SECRET = process.env.JWT_SECRET || 'development-only-jwt-secret';
+const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || JWT_SECRET;
+const ACCESS_TOKEN_TTL = process.env.ACCESS_TOKEN_TTL || '12h';
+const REFRESH_TOKEN_TTL = process.env.REFRESH_TOKEN_TTL || '30d';
 
-if (!process.env.JWT_SECRET || !process.env.JWT_REFRESH_SECRET) {
-  console.warn('[SECURITY] JWT secrets are using fallback values. Configure JWT_SECRET and JWT_REFRESH_SECRET in environment.');
+if (!process.env.JWT_REFRESH_SECRET) {
+  console.warn('[SECURITY] JWT_REFRESH_SECRET is not configured; refresh tokens use JWT_SECRET.');
 }
 
 // ======================================================
@@ -55,15 +57,22 @@ if (!process.env.JWT_SECRET || !process.env.JWT_REFRESH_SECRET) {
 // ======================================================
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const isProductionRuntime = process.env.NODE_ENV === 'production' || process.cwd() === '/opt/crmp' || __dirname === '/opt/crmp';
+
+if (isProductionRuntime && !process.env.JWT_SECRET) {
+  throw new Error('[SECURITY] JWT_SECRET is required in production.');
+}
 
 const app = express();
 app.set('trust proxy', 1);
 const PORT = Number(process.env.PORT || 3001);
+const distPath = path.join(__dirname, 'dist/client');
 
 app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" },
 }));
 app.use(cors());
+app.use(express.static(distPath));
 
 // Middleware para evitar caché en index.html
 app.use((req, res, next) => {
@@ -212,7 +221,10 @@ const authenticateRequest = async (req, res, next) => {
 
   const token = authHeader.slice(7);
   try {
-    const payload = jwt.verify(token, JWT_SECRET, { ignoreExpiration: true });
+    const payload = jwt.verify(token, JWT_SECRET);
+    if (!payload?.exp) {
+      return res.status(401).json({ error: 'Token sin expiracion. Inicia sesion nuevamente.' });
+    }
     try {
       req.user = await hydrateAuthenticatedUser(payload);
     } catch (dbError) {
@@ -257,11 +269,10 @@ const AUDIT_MODULE_LABELS = {
   importador: 'Importador',
   products: 'Productos',
   email: 'Email',
-  referidos: 'Referidos',
   goals: 'Metas',
+  agents: 'Agentes',
   pos: 'POS',
   tracking: 'Tracking',
-  discrepancias: 'Discrepancias',
   system: 'Sistema'
 };
 
@@ -393,7 +404,6 @@ app.use(authenticateRequest);
 app.use(auditRequestMiddleware);
 
 // Rutas de Módulos Específicos
-app.use('/api/referidos', referidosRoutes);
 app.use('/api/tariffs', tarifasRoutes);
 app.use('/api/tarifas', tarifasRoutes);
 app.use('/api/clients', clientRoutes);
@@ -403,15 +413,20 @@ app.use('/api/vendors', vendorRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/tiers-fixed', tiersFixedRoutes);
 app.use('/api/pos', posIntegrationRoutes);
-app.use('/api/discrepancias', discrepanciasRoutes);
 app.use('/api/sales-history', salesHistoryRoutes);
 app.use('/api/campaigns', campaignRoutes);
 app.use('/api/tracking', trackingRoutes);
 app.use('/api/goals', goalsRoutes);
+app.use('/api/gestion', gestionRoutes);
+app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/tango', tangoRoutes);
 app.use('/api/ocr', ocrRoutes);
-app.use('/api', dealWorkflowRoutes);
-console.log('🔍 DEBUG: /api/discrepancias routes mounted');
+app.use('/api/agents', agentRoutes);
+
+// Reglas y Procesos - Servir HTML estático
+app.get('/reglas-procesos', (req, res) => {
+  res.sendFile(path.join(__dirname, 'reglas-procesos.html'));
+});
 
 // System Routes - PROTECTED EXTRA
 // Solo permitir system en dev o con rol admin (validado dentro del router o aqui)
@@ -436,12 +451,8 @@ const sanitizeUserPayload = (row) => ({
 });
 
 const issueTokens = (payload) => ({
-  accessToken: ACCESS_TOKEN_TTL
-    ? jwt.sign(payload, JWT_SECRET, { expiresIn: ACCESS_TOKEN_TTL })
-    : jwt.sign(payload, JWT_SECRET),
-  refreshToken: REFRESH_TOKEN_TTL
-    ? jwt.sign(payload, JWT_REFRESH_SECRET, { expiresIn: REFRESH_TOKEN_TTL })
-    : jwt.sign(payload, JWT_REFRESH_SECRET)
+  accessToken: jwt.sign(payload, JWT_SECRET, { expiresIn: ACCESS_TOKEN_TTL }),
+  refreshToken: jwt.sign(payload, JWT_REFRESH_SECRET, { expiresIn: REFRESH_TOKEN_TTL })
 });
 
 async function findUserByUsername(username) {
@@ -1276,9 +1287,8 @@ app.get('/api/version', (_req, res) => {
   res.json({ version: packageJson.version });
 });
 
-// Rutas de Referidos y Tarifas (DUPLICATE MOUNTS REMOVED)
-// Handled at the top of the file securely
-
+app.use('/api', followUpConfigRoutes);
+app.use('/api', dealWorkflowRoutes);
 
 // ======================================================
 // Endpoint para limpiar nombres BAN
@@ -1367,6 +1377,40 @@ app.get('/api/me', (req, res) => {
 
 app.get('/api/auth/me', (req, res) => {
   res.json({ user: req.user });
+});
+
+app.get('/api/users', requireRole(['admin', 'supervisor']), async (req, res) => {
+  try {
+    await ensurePermissionSchema(query);
+    const users = await query(
+      `SELECT
+          u.id::text AS id,
+          u.username,
+          u.salesperson_id::text AS salesperson_id,
+          s.name AS salesperson_name,
+          s.role AS salesperson_role,
+          u.created_at,
+          u.last_login,
+          (
+              SELECT COUNT(*)
+              FROM user_permission_overrides upo
+              WHERE upo.user_id::text = u.id::text
+                AND upo.effect <> 'inherit'
+          )::int AS permission_overrides_count
+       FROM users_auth u
+       LEFT JOIN salespeople s ON s.id::text = u.salesperson_id::text
+       ORDER BY u.created_at DESC`
+    );
+
+    const mappedUsers = users.map(u => ({
+      ...u,
+      role: String(u.salesperson_role || '').trim().toLowerCase() || (u.salesperson_id ? 'vendedor' : 'admin'),
+      is_active: 1
+    }));
+    res.json(mappedUsers);
+  } catch (error) {
+    serverError(res, error, 'Error obteniendo usuarios');
+  }
 });
 
 app.get('/api/permissions/catalog', async (_req, res) => {
@@ -3772,7 +3816,7 @@ app.put('/api/goals/:id', async (req, res) => {
   const normalizedVendorId = Number(vendorId);
   const normalizedProductId = Number(productId);
   const normalizedPeriodYear = Number(periodYear);
-  const normalizedTargetAmount = Number(totalTargetAmount);
+  const normalizedTargetAmount = Number(targetAmount);
   const normalizedCurrentAmount = Number(currentAmount ?? 0);
   const normalizedPeriodType = ['monthly', 'quarterly', 'yearly'].includes(periodType) ? periodType : 'monthly';
 
@@ -6439,17 +6483,29 @@ RETURNING * `,
   }
 });
 
+// Rutas modulares de suscriptores. Se montan despues de las rutas inline para
+// conservar el comportamiento existente y cubrir acciones nuevas como renewal.
+app.use('/api/subscribers', subscriberRoutes);
+
 // ======================================================
 // Endpoint para limpiar BD (solo desarrollo)
 // ======================================================
 app.delete('/api/admin/clean-database', authenticateRequest, async (req, res) => {
   try {
-    // Verificar que sea admin o desarrollo
-    if (req.user.role !== 'admin' && process.env.NODE_ENV === 'production') {
+    // Bloquear siempre en produccion antes de cualquier operacion destructiva.
+    if (process.env.NODE_ENV === 'production' || process.cwd() === '/opt/crmp' || __dirname === '/opt/crmp') {
       return res.status(403).json({ error: 'Solo administradores pueden limpiar la BD en producción' });
     }
 
     console.log('\n⚠️ LIMPIEZA DE BD solicitada por:', req.user.username);
+
+    if (req.user?.role !== 'admin') {
+      return res.status(403).json({ error: 'Solo administradores pueden limpiar la BD en desarrollo' });
+    }
+
+    if (req.query?.confirm !== 'BORRAR_TODO_DESARROLLO') {
+      return res.status(400).json({ error: 'Confirmacion requerida para limpiar BD en desarrollo' });
+    }
 
     // Contar antes
     const antes = await Promise.all([
@@ -6629,6 +6685,8 @@ VALUES($1, $2, $3, $4, $5, $6, $7, $8)`,
   }
 }
 
+/*
+
 // GET /api/audit-log - Obtener historial de auditoría (SOLO ADMIN)
 app.get('/api/audit-log', async (req, res) => {
   try {
@@ -6687,6 +6745,7 @@ app.get('/api/audit-log', async (req, res) => {
   }
 });
 
+*/
 // ======================================================
 // Endpoint de Email (Office 365)
 // ======================================================
