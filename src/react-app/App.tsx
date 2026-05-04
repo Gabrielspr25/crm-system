@@ -30,8 +30,6 @@ import VoiceClientPage from "@/react-app/pages/VoiceClient";
 import FollowUpPage from "@/react-app/pages/FollowUp";
 import GestionPage from "@/react-app/pages/Gestion";
 import MetasDashboard from "@/react-app/pages/MetasDashboard";
-import AgentMemoryPage from "@/react-app/pages/AgentMemory";
-import CuartelPage from "@/react-app/pages/Cuartel";
 
 
 // Inicializar MSAL fuera del componente
@@ -74,8 +72,6 @@ function ProtectedRoutes() {
         <Route path="/voz-cliente" element={<VoiceClientPage />} />
         <Route path="/gestion" element={<GestionPage />} />
         <Route path="/panel-metas" element={<MetasDashboard />} />
-        <Route path="/cuartel-agentes" element={<AgentMemoryPage />} />
-        <Route path="/cuartel" element={<CuartelPage />} />
 
       </Routes>
     </ProtectedLayout>

@@ -26,7 +26,6 @@ import {
   ShieldCheck,
   KeyRound,
   Settings2,
-  Bot,
   Calendar
 } from "lucide-react";
 
@@ -62,7 +61,6 @@ const navigation: NavItem[] = [
   { name: "Historial", href: "/historial", icon: FileText, permissionKey: "nav.audit", roles: ["admin"] },
   { name: "Import New", href: "/importador-nuevo", icon: Upload, permissionKey: "nav.import_new", roles: ["admin", "supervisor"] },
   { name: "Tango", href: "/tango", icon: Activity, permissionKey: "nav.tango", roles: ["admin"] },
-  { name: "Cuartel de Agentes", href: "/cuartel-agentes", icon: Bot, roles: ["admin", "supervisor"] },
   { name: "Seguridad", href: "/control-seguridad", icon: ShieldCheck, roles: ["admin"] },
   { name: "Permisos", href: "/usuarios-permisos", icon: KeyRound, roles: ["admin"] },
   { name: "Reglas y Procesos", href: "/reglas-procesos", icon: FileText, permissionKey: "nav.rules_processes", roles: ["admin", "supervisor"], external: true },
