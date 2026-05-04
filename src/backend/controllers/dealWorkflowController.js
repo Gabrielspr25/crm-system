@@ -148,6 +148,7 @@ function buildDealMap(rows) {
         status: normalizeTaskStatus(row.task_status),
         assigned_to: row.assigned_to ? String(row.assigned_to) : null,
         assigned_name: row.assigned_name || null,
+        due_date: row.due_date ? new Date(row.due_date).toISOString().slice(0, 10) : null,
         completed_at: row.completed_at,
         created_at: row.task_created_at,
         updated_at: row.task_updated_at
@@ -236,6 +237,26 @@ async function ensureDealWorkflowSchema() {
     await query(`CREATE INDEX IF NOT EXISTS crm_deals_seller_idx ON crm_deals(seller_id, created_at DESC)`);
     await query(`CREATE INDEX IF NOT EXISTS crm_deal_tasks_assigned_idx ON crm_deal_tasks(assigned_to, status, created_at DESC)`);
 
+    // Pasos por defecto para cada tipo de venta
+    const DEFAULT_STEPS = {
+      NEW: [
+        'Contactar cliente',
+        'Presentar propuesta',
+        'Negociación y aprobación',
+        'Firma de contrato',
+        'Activación del servicio',
+        'Verificación post-activación',
+      ],
+      REN: [
+        'Contactar cliente',
+        'Revisar plan actual',
+        'Presentar oferta de renovación',
+        'Confirmar renovación',
+        'Activar renovación',
+        'Verificación post-renovación',
+      ],
+    };
+
     for (const productType of PRODUCT_TYPES) {
       for (const saleType of SALE_TYPES) {
         const existingTemplate = await query(
@@ -252,6 +273,24 @@ async function ensureDealWorkflowSchema() {
             [productType, saleType, `${productType} ${saleType}`]
           );
           templateId = createdTemplate[0].id;
+        }
+
+        // Agregar pasos por defecto si el template no tiene ninguno
+        const existingSteps = await query(
+          `SELECT id FROM crm_workflow_template_steps WHERE template_id = $1 LIMIT 1`,
+          [templateId]
+        );
+
+        if (existingSteps.length === 0) {
+          const defaultSteps = DEFAULT_STEPS[saleType] || DEFAULT_STEPS.NEW;
+          for (let i = 0; i < defaultSteps.length; i++) {
+            await query(
+              `INSERT INTO crm_workflow_template_steps (template_id, step_name, step_order, created_at, updated_at)
+               VALUES ($1, $2, $3, NOW(), NOW())
+               ON CONFLICT (template_id, step_order) DO NOTHING`,
+              [templateId, defaultSteps[i], i + 1]
+            );
+          }
         }
 
       }
@@ -622,6 +661,7 @@ export const createDeal = async (req, res) => {
               t.status AS task_status,
               t.assigned_to,
               assignee.name AS assigned_name,
+              t.due_date,
               t.completed_at,
               t.created_at AS task_created_at,
               t.updated_at AS task_updated_at
@@ -691,6 +731,7 @@ export const getDeals = async (req, res) => {
               t.status AS task_status,
               t.assigned_to,
               assignee.name AS assigned_name,
+              t.due_date,
               t.completed_at,
               t.created_at AS task_created_at,
               t.updated_at AS task_updated_at
@@ -767,6 +808,7 @@ export const getDealTasks = async (req, res) => {
               d.created_at AS deal_created_at,
               t.created_at,
               t.updated_at,
+              t.due_date,
               (
                 SELECT COUNT(*)
                 FROM crm_deal_tasks t_all
@@ -813,10 +855,193 @@ export const getDealTasks = async (req, res) => {
       completed_steps: Number(row.completed_steps || 0),
       created_at: row.created_at,
       updated_at: row.updated_at,
+      due_date: row.due_date || null,
       deal_created_at: row.deal_created_at
     })));
   } catch (error) {
     serverError(res, error, 'Error obteniendo tareas del workflow');
+  }
+};
+
+// Mapeo de product_type+sale_type al nombre exacto de categoría en la tabla categories
+const PRODUCT_CATEGORY_NAME = {
+  'FIJO_REN':    'FIJO REN',
+  'FIJO_NEW':    'FIJO NEW',
+  'MOVIL_NEW':   'MOVIL NEW',
+  'MOVIL_REN':   'MOVIL REN',
+  'CLARO_TV_NEW':'TV',
+  'CLOUD_NEW':   'Cloud',
+  'MPLS_NEW':    null, // sin categoría definida aún
+};
+
+async function loadCategorySteps(dbQuery, productType, saleType) {
+  const key = `${productType}_${saleType}`;
+  const categoryName = PRODUCT_CATEGORY_NAME[key];
+  if (!categoryName) return [];
+
+  const rows = await dbQuery(
+    `SELECT cs.step_name, cs.step_order
+       FROM category_steps cs
+       JOIN categories c ON c.id = cs.category_id
+      WHERE UPPER(TRIM(c.name)) = UPPER(TRIM($1))
+      ORDER BY cs.step_order ASC`,
+    [categoryName]
+  );
+  return rows;
+}
+
+// Mapeo de columnas de follow_up_prospects a tipos de deal
+const PROSPECT_COLUMN_TO_DEAL = [
+  { col: 'fijo_ren',          product_type: 'FIJO',    sale_type: 'REN' },
+  { col: 'fijo_new',          product_type: 'FIJO',    sale_type: 'NEW' },
+  { col: 'movil_nueva',       product_type: 'MOVIL',   sale_type: 'NEW' },
+  { col: 'movil_renovacion',  product_type: 'MOVIL',   sale_type: 'REN' },
+  { col: 'claro_tv',          product_type: 'CLARO_TV', sale_type: 'NEW' },
+  { col: 'cloud',             product_type: 'CLOUD',   sale_type: 'NEW' },
+  { col: 'mpls',              product_type: 'MPLS',    sale_type: 'NEW' },
+];
+
+/**
+ * POST /api/deals/clients/:clientId/sync
+ * Elimina deals pendientes del cliente y los regenera desde el prospecto activo en seguimiento.
+ */
+export const syncClientDealsFromProspect = async (req, res) => {
+  const clientId = String(req.params.clientId || '').trim();
+  const currentRole = String(req.user?.role || '').trim().toLowerCase();
+  const currentUserId = String(req.user?.userId || '').trim() || null;
+  const requesterSalespersonId = String(req.user?.salespersonId || '').trim() || null;
+
+  // Permitir pasar seller_id explícito (admin/supervisor), si no usar el del requester
+  const rawSellerId = String(req.body?.seller_id || requesterSalespersonId || '').trim();
+
+  if (!clientId) return badRequest(res, 'client_id requerido');
+  if (!rawSellerId) return badRequest(res, 'seller_id requerido');
+
+  try {
+    await ensureDealWorkflowSchema();
+
+    // 1. Validar vendedor
+    const sellerValidation = await validateSeller(query, rawSellerId, {
+      allowAdminSeller: ['admin', 'supervisor'].includes(currentRole)
+    });
+    if (!sellerValidation.ok) return badRequest(res, sellerValidation.error);
+    const sellerId = sellerValidation.seller.id;
+
+    // 2. Obtener prospecto activo del cliente
+    let prospects;
+    try {
+      prospects = await query(
+        `SELECT * FROM follow_up_prospects
+          WHERE client_id::text = $1
+            AND completed_date IS NULL
+            AND (is_active IS NULL OR is_active = TRUE)
+          ORDER BY updated_at DESC, created_at DESC
+          LIMIT 1`,
+        [clientId]
+      );
+    } catch {
+      return res.status(404).json({ error: 'No se pudo acceder al seguimiento del cliente' });
+    }
+
+    if (!prospects || prospects.length === 0) {
+      return res.status(404).json({ error: 'No hay seguimiento activo para este cliente' });
+    }
+
+    const prospect = prospects[0];
+
+    // 3. Detectar qué combinaciones tiene el prospecto
+    const activeCombinations = PROSPECT_COLUMN_TO_DEAL.filter(
+      ({ col }) => Number(prospect[col] || 0) > 0
+    );
+
+    if (activeCombinations.length === 0) {
+      return res.json({ deleted: 0, created: [], message: 'No hay tipos de venta activos en el seguimiento' });
+    }
+
+    const dbClient = await getClient();
+    let deleted = 0;
+    const created = [];
+
+    try {
+      await dbClient.query('BEGIN');
+
+      // 4. Eliminar deals donde NINGUNA tarea esté completada (no trabajados)
+      const deletedResult = await dbClient.query(
+        `DELETE FROM crm_deals
+          WHERE client_id = $1
+            AND id NOT IN (
+              SELECT DISTINCT deal_id FROM crm_deal_tasks WHERE status = 'done'
+            )
+          RETURNING id`,
+        [clientId]
+      );
+      deleted = deletedResult.rowCount;
+
+      // 5. Crear nuevos deals por cada combinación activa
+      for (const { product_type, sale_type } of activeCombinations) {
+        const steps = await loadCategorySteps(
+          (sql, params) => dbClient.query(sql, params).then((r) => r.rows),
+          product_type,
+          sale_type
+        );
+
+        if (!steps || steps.length === 0) continue;
+
+        const dealResult = await dbClient.query(
+          `INSERT INTO crm_deals (
+             client_id, seller_id, product_type, sale_type,
+             source_type, source_ref, source_label, created_by, created_at, updated_at
+           ) VALUES ($1, $2, $3, $4, 'prospect', $5, $6, $7, NOW(), NOW())
+           RETURNING id`,
+          [
+            clientId, sellerId, product_type, sale_type,
+            String(prospect.id),
+            `Prospecto #${prospect.id}`,
+            currentUserId
+          ]
+        );
+
+        const dealId = dealResult.rows[0].id;
+
+        for (const step of steps) {
+          await dbClient.query(
+            `INSERT INTO crm_deal_tasks (deal_id, step_name, step_order, status, assigned_to, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, NOW(), NOW())`,
+            [
+              dealId,
+              step.step_name,
+              step.step_order,
+              step.step_order === 1 ? 'in_progress' : 'pending',
+              sellerId
+            ]
+          );
+        }
+
+        created.push({
+          deal_id: Number(dealId),
+          product_type,
+          sale_type,
+          label: formatCombinationLabel(product_type, sale_type),
+          steps: steps.length
+        });
+      }
+
+      await dbClient.query('COMMIT');
+    } catch (err) {
+      await dbClient.query('ROLLBACK');
+      throw err;
+    } finally {
+      dbClient.release();
+    }
+
+    res.json({
+      ok: true,
+      deleted,
+      created,
+      message: `${created.length} tipo(s) de venta generados (${deleted} deal(s) anterior(es) eliminado(s))`
+    });
+  } catch (error) {
+    serverError(res, error, 'Error sincronizando tareas del cliente');
   }
 };
 
@@ -842,6 +1067,7 @@ export const updateDealTaskStatus = async (req, res) => {
   if (Number.isNaN(taskId)) return badRequest(res, 'ID invalido');
 
   const nextStatus = normalizeTaskStatus(req.body?.status);
+  const rawDueDate = req.body?.due_date ?? undefined;
   const currentRole = String(req.user?.role || '').trim().toLowerCase();
   const requesterSalespersonId = String(req.user?.salespersonId || '').trim() || null;
 
@@ -883,6 +1109,14 @@ export const updateDealTaskStatus = async (req, res) => {
 
     if (nextStatus !== 'done') {
       resolvedStatus = currentStepOrder === 1 || previousTaskIsDone ? 'in_progress' : 'pending';
+    }
+
+    const dueDateValue = rawDueDate === null ? null : (rawDueDate || undefined);
+    if (dueDateValue !== undefined) {
+      await query(
+        `UPDATE crm_deal_tasks SET due_date = $1, updated_at = NOW() WHERE id = $2`,
+        [dueDateValue, taskId]
+      );
     }
 
     await query(
@@ -938,6 +1172,7 @@ export const updateDealTaskStatus = async (req, res) => {
               d.source_label,
               d.ban_number,
               d.phone,
+              t.due_date,
               t.created_at,
               t.updated_at,
               d.created_at AS deal_created_at,
@@ -979,6 +1214,7 @@ export const updateDealTaskStatus = async (req, res) => {
       source_label: row.source_label || null,
       ban_number: row.ban_number || null,
       phone: row.phone || null,
+      due_date: row.due_date ? new Date(row.due_date).toISOString().slice(0, 10) : null,
       total_steps: Number(row.total_steps || 0),
       completed_steps: Number(row.completed_steps || 0),
       created_at: row.created_at,
@@ -989,3 +1225,50 @@ export const updateDealTaskStatus = async (req, res) => {
     serverError(res, error, 'Error actualizando tarea del workflow');
   }
 };
+
+export const getPanelTasks = async (req, res) => {
+  try {
+    const rows = await query(`
+      SELECT
+        fp.id            AS prospect_id,
+        fp.client_id,
+        COALESCE(c.business_name, c.name, fp.company_name) AS client_name,
+        v.name           AS vendor_name,
+        d.id             AS deal_id,
+        d.product_type,
+        d.sale_type,
+        t.id             AS task_id,
+        t.step_name,
+        t.step_order,
+        t.status,
+        t.due_date
+      FROM follow_up_prospects fp
+      LEFT JOIN clients c   ON c.id::text = fp.client_id::text
+      LEFT JOIN vendors v   ON v.id = fp.vendor_id
+      JOIN crm_deals d      ON d.client_id::text = fp.client_id::text
+      JOIN crm_deal_tasks t ON t.deal_id = d.id
+      WHERE fp.completed_date IS NULL
+        AND (fp.is_active IS NULL OR fp.is_active = TRUE)
+        AND t.status IN ('pending', 'in_progress')
+      ORDER BY client_name ASC, d.product_type, d.sale_type, t.step_order ASC
+    `);
+
+    res.json(rows.map((r) => ({
+      prospect_id:  Number(r.prospect_id),
+      client_id:    String(r.client_id),
+      client_name:  r.client_name || 'Sin nombre',
+      vendor_name:  r.vendor_name || null,
+      deal_id:      Number(r.deal_id),
+      product_type: r.product_type,
+      sale_type:    r.sale_type,
+      task_id:      Number(r.task_id),
+      step_name:    r.step_name,
+      step_order:   Number(r.step_order),
+      status:       r.status,
+      due_date:     r.due_date ? new Date(r.due_date).toISOString().slice(0, 10) : null,
+    })));
+  } catch (error) {
+    serverError(res, error, 'Error obteniendo tareas del panel');
+  }
+};
+

@@ -1,5 +1,5 @@
-import { Fragment, useMemo, useState } from "react";
-import { AlertCircle, BarChart3, Check, ChevronDown, ClipboardCheck, ClipboardList, LayoutDashboard, Loader2, Plus, RefreshCw, ShieldAlert, Target, TrendingUp, Users } from "lucide-react";
+import { useMemo, useState } from "react";
+import { AlertCircle, Check, ClipboardCheck, LayoutDashboard, Loader2, Plus } from "lucide-react";
 import { Link } from "react-router";
 import { useApi } from "@/react-app/hooks/useApi";
 import { authFetch, getCurrentUser } from "@/react-app/utils/auth";
@@ -85,52 +85,6 @@ const formatUSD = (n: number) =>
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(Number.isFinite(n) ? n : 0);
-
-type ExternalSale = {
-  tango_ventaid: number;
-  ban: string;
-  ventatipoid: number;
-  fechaactivacion: string | null;
-  vendedor: string | null;
-  cliente: string | null;
-  com_empresa: number;
-  com_vendedor: number;
-  motivo: string;
-};
-
-type DescuadreState = "idle" | "loading" | "success" | "error";
-
-type DescuadreData = {
-  count: number;
-  sample: ExternalSale[];
-  motivos: Record<string, number>;
-  truncated: boolean;
-  lastChecked: string;
-};
-
-// Etiqueta amigable para ventatipoid (FASE 1 + FASE 2).
-const VENTATIPO_LABELS: Record<number, string> = {
-  138: "Móvil REN (PYMES)",
-  139: "Móvil NEW (PYMES)",
-  140: "Fijo REN (PYMES)",
-  141: "Fijo NEW (PYMES)",
-  25: "Móvil NEW (Claro Update)",
-  26: "Móvil REN (Claro Update)",
-  121: "Fijo NEW (2 Play)",
-  41: "Fijo NEW (3 Play)", 42: "Fijo NEW (3 Play)", 43: "Fijo NEW (3 Play)",
-  44: "Fijo NEW (3 Play)", 45: "Fijo NEW (3 Play)", 46: "Fijo NEW (3 Play)",
-  47: "Fijo NEW (3 Play)", 48: "Fijo NEW (3 Play)", 49: "Fijo NEW (3 Play)",
-  50: "Fijo NEW (3 Play)",
-};
-
-// Cutoff para descuadres: solo trabajamos desde 2026-01-01 en adelante.
-// Las ventas Tango anteriores son ruido historico y se ignoran en UI.
-const DESCUADRE_CUTOFF = "2026-01-01";
-
-const isExternalSaleFrom2026 = (s: ExternalSale): boolean => {
-  if (!s.fechaactivacion) return false;
-  return s.fechaactivacion >= DESCUADRE_CUTOFF;
-};
 
 // Mismo umbral que usa el backend (clientController.js: SCORING_EXPIRING_DAYS).
 const EXPIRING_DAYS = 90;
@@ -252,15 +206,45 @@ const suggestedAction = (client: Client): Action => {
 
 type TaskState = "idle" | "creating" | "created" | "error";
 
+// Helpers de fecha para selector mes/año
+function getCurrentYearMonth(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
+function getPreviousMonth(yyyymm: string): string {
+  const [y, m] = yyyymm.split("-").map(Number);
+  if (!Number.isFinite(y) || !Number.isFinite(m)) return yyyymm;
+  const d = new Date(y, m - 2, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+function formatMonthLabel(yyyymm: string): string {
+  const [y, m] = yyyymm.split("-").map(Number);
+  if (!Number.isFinite(y) || !Number.isFinite(m)) return yyyymm;
+  const months = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+  return `${months[m - 1]} ${y}`;
+}
+
 export default function Home() {
+  // ── Filtros del Panel General ──
+  const [selectedMonth, setSelectedMonth] = useState<string>(getCurrentYearMonth);
+  const [selectedVendorFilter, setSelectedVendorFilter] = useState<string>(""); // "" = todos (admin) | salesperson_id
+
+  const previousMonth = getPreviousMonth(selectedMonth);
+  const [yyyy, mm] = selectedMonth.split("-").map(Number);
+
   const { data, loading, error } = useApi<ClientsResponse>("/api/clients?tab=active");
   const tasksApi = useApi<Task[]>("/api/agents/tasks?limit=500");
-  // Endpoint existente. Mes hardcodeado a 2026-04 (unico periodo con datos en prod
-  // segun el diagnostico). El endpoint ya filtra por rol server-side.
-  const goalsApi = useApi<GoalsResponse>("/api/goals/performance?month=2026-04");
-  // Reports del mismo mes — usados por bloque "Metas vs Ventas" y "Comisiones".
+  // Mes seleccionado (default: mes en curso)
+  const goalsApi = useApi<GoalsResponse>(`/api/goals/performance?month=${selectedMonth}`);
   const reportsApi = useApi<SubscriberReportRow[]>(
-    "/api/subscriber-reports?month=2026-04",
+    `/api/subscriber-reports?month=${selectedMonth}`,
+  );
+  const productGoalsApi = useApi<{ business: Record<string, number>; vendors: Array<{ vendor_id: number; vendor_name: string; salesperson_id?: string | null; goals: Record<string, number>; goalsByName?: Record<string, number> }> }>(
+    `/api/gestion/goals?year=${yyyy}&month=${mm}`,
+  );
+  // Mes anterior — para deltas/comparativa (sugerencia A)
+  const reportsPrevApi = useApi<SubscriberReportRow[]>(
+    `/api/subscriber-reports?month=${previousMonth}`,
   );
   const clients = Array.isArray(data?.clients) ? data.clients : [];
   const activeCount = data?.stats?.active_count != null ? toNumber(data.stats.active_count) : clients.length;
@@ -481,6 +465,459 @@ export default function Home() {
     .filter((m) => m.has_meta || m.tasks_total > 0 || m.commission > 0)
     .sort((a, b) => a.vendor_name.localeCompare(b.vendor_name));
 
+  // ── Vista personal: vendedor o admin que selecciona un vendedor ──
+  // Si admin tiene selectedVendorFilter -> ve panel personal de ese vendedor.
+  // Si admin sin filtro ("Todos") -> ve agregado del equipo en otro layout.
+  // Vendedor: siempre ve lo suyo.
+  const targetSalespersonId = !isAdmin
+    ? mySalespersonId
+    : (selectedVendorFilter || null);
+  const showAdminAggregate = isAdmin && !selectedVendorFilter;
+
+  // myMetric: meta, vendido, comisión, ventas, móvil, fijo, tareas (del vendedor objetivo)
+  const myMetric = targetSalespersonId ? vendorMetricsMap.get(targetSalespersonId) : null;
+  // Sus clientes (del listado ya cargado de /api/clients?tab=active)
+  const myClients = targetSalespersonId
+    ? clients.filter((c) => c.salesperson_id && String(c.salesperson_id) === targetSalespersonId)
+    : [];
+  const myClientsCount = myClients.length;
+  const myClientsFollowedRecently = myClients.filter((c) => c.recent_followup).length;
+  const myClientsWithoutFollowup = myClients.filter((c) => !c.recent_followup);
+
+  // ── Metas por producto del vendedor logueado ──
+  // Regla de negocio (definida por Gabriel 2026-04-30):
+  //   - Movil Ren / Movil New  → meta en CANTIDAD de líneas (achieved = count)
+  //   - Fijo Ren / Fijo New / MPLS / Claro TV / Cloud → meta en USD (achieved = SUM company_earnings)
+  type GoalUnit = "USD" | "LINES";
+  const goalUnitOf = (productName: string): GoalUnit => {
+    const n = productName.toLowerCase();
+    if (n.includes("movil") || n.includes("móvil")) return "LINES";
+    return "USD"; // Fijo, MPLS, Claro TV, Cloud
+  };
+  type ProductMetric = { name: string; target: number; achievedCommission: number; companyEarnings: number; lines: number; pct: number; unit: GoalUnit };
+  const myProductMetrics: ProductMetric[] = (() => {
+    if (!targetSalespersonId) return [];
+    const allVendorGoals = productGoalsApi.data?.vendors || [];
+    const myGoals = allVendorGoals.find((v) => String(v.salesperson_id || "") === targetSalespersonId);
+    if (!myGoals || !myGoals.goalsByName) return [];
+
+    const myReports = (Array.isArray(reportsApi.data) ? reportsApi.data : []).filter((r: any) => {
+      return r.salesperson_id ? String(r.salesperson_id) === targetSalespersonId : true;
+    });
+    const labelOf = (r: any): string | null => {
+      const k = String(r.line_kind || "").toLowerCase();
+      const t = String(r.line_type || "").toUpperCase();
+      if (k === "movil" && t === "REN") return "Movil Ren";
+      if (k === "movil" && t === "NEW") return "Movil New";
+      if (k === "fijo"  && t === "REN") return "Fijo Ren";
+      if (k === "fijo"  && t === "NEW") return "Fijo New";
+      return null;
+    };
+    const achievedByProduct = new Map<string, { commission: number; lines: number; earnings: number }>();
+    for (const r of myReports) {
+      const label = labelOf(r);
+      if (!label) continue;
+      const cur = achievedByProduct.get(label) || { commission: 0, lines: 0, earnings: 0 };
+      cur.commission += Number((r as any).vendor_commission || 0);
+      cur.earnings += Number((r as any).company_earnings || 0);
+      cur.lines += 1;
+      achievedByProduct.set(label, cur);
+    }
+    const orderedNames = ["Fijo Ren", "Fijo New", "Movil Ren", "Movil New", "Claro TV", "Cloud", "MPLS"];
+    const goalsByName = myGoals.goalsByName as Record<string, number>;
+    const allNames = new Set<string>([...Object.keys(goalsByName), ...achievedByProduct.keys()]);
+    return orderedNames
+      .filter((n) => allNames.has(n))
+      .concat([...allNames].filter((n) => !orderedNames.includes(n)))
+      .map((name) => {
+        const target = Number(goalsByName[name] || 0);
+        const ach = achievedByProduct.get(name) || { commission: 0, lines: 0, earnings: 0 };
+        const unit = goalUnitOf(name);
+        // Móvil: meta = líneas, cumplido = líneas vendidas.
+        // Fijo/MPLS/ClaroTV/Cloud: meta = USD de comisión, cumplido = comisión cobrada.
+        const achievedForPct = unit === "LINES" ? ach.lines : ach.commission;
+        const pct = target > 0 ? Math.round((achievedForPct / target) * 1000) / 10 : 0;
+        return { name, target, achievedCommission: ach.commission, companyEarnings: ach.earnings, lines: ach.lines, pct, unit };
+      });
+  })();
+  const hasAnyProductGoal = myProductMetrics.some((p) => p.target > 0);
+
+  // ── Comisiones por cliente (del vendedor objetivo) ──
+  type ClientCommission = { client_id: string; client_name: string; vendor_name: string; lines: number; commission: number };
+  const myCommissionsByClient: ClientCommission[] = (() => {
+    const reports = Array.isArray(reportsApi.data) ? reportsApi.data : [];
+    // Filtrar por vendedor objetivo si hay; admin "Todos" ve todos.
+    const filtered = targetSalespersonId
+      ? reports.filter((r: any) => r.salesperson_id ? String(r.salesperson_id) === targetSalespersonId : false)
+      : reports;
+    const byClient = new Map<string, ClientCommission>();
+    for (const r of filtered as any[]) {
+      const cid = r.client_id ? String(r.client_id) : "_sin_id";
+      const name = r.client_business_name || r.client_name || "Sin nombre";
+      const vname = r.vendor_name || "—";
+      const cur = byClient.get(cid) || { client_id: cid, client_name: name, vendor_name: vname, lines: 0, commission: 0 };
+      cur.lines += 1;
+      cur.commission += Number(r.vendor_commission || 0);
+      byClient.set(cid, cur);
+    }
+    return Array.from(byClient.values()).sort((a, b) => b.commission - a.commission);
+  })();
+
+  // ── Comparativa con mes anterior (sugerencia A) ──
+  // Comisión total del vendedor objetivo en el mes anterior.
+  const previousMonthCommission = (() => {
+    const reports = Array.isArray(reportsPrevApi.data) ? reportsPrevApi.data : [];
+    const filtered = targetSalespersonId
+      ? reports.filter((r: any) => r.salesperson_id ? String(r.salesperson_id) === targetSalespersonId : false)
+      : reports;
+    return filtered.reduce((s: number, r: any) => s + Number(r.vendor_commission || 0), 0);
+  })();
+  const previousMonthSales = (() => {
+    const reports = Array.isArray(reportsPrevApi.data) ? reportsPrevApi.data : [];
+    const filtered = targetSalespersonId
+      ? reports.filter((r: any) => r.salesperson_id ? String(r.salesperson_id) === targetSalespersonId : false)
+      : reports;
+    return filtered.length;
+  })();
+  const currentCommission = myMetric?.commission || 0;
+  const commissionDelta = previousMonthCommission > 0 ? ((currentCommission - previousMonthCommission) / previousMonthCommission) * 100 : null;
+  const currentSales = myMetric?.sales_count || 0;
+  const salesDelta = previousMonthSales > 0 ? ((currentSales - previousMonthSales) / previousMonthSales) * 100 : null;
+
+  // ── Alertas de productos sin avance (sugerencia C) ──
+  const productsAtRisk = myProductMetrics.filter((p) => p.target > 0 && p.pct < 30);
+
+  // ── KPI cumplimiento REAL (promedio % por producto, cap 100% c/u) ──
+  // Esto refleja la realidad: si tenés 1 producto en 226% y 5 en 0%, el cap
+  // a 100% en ese 1 + el promedio de los demás da una cifra honesta (≈17%),
+  // no engañosa (era 182% antes). Productos sin meta no cuentan.
+  const cumplimientoRealOf = (productMetrics: { target: number; pct: number }[]) => {
+    const withGoal = productMetrics.filter((p) => p.target > 0);
+    if (withGoal.length === 0) return 0;
+    const sum = withGoal.reduce((s, p) => s + Math.min(100, p.pct), 0);
+    return Math.round((sum / withGoal.length) * 10) / 10;
+  };
+  const myCumplimientoReal = cumplimientoRealOf(myProductMetrics);
+  // Suma de metas USD del vendedor (KPI "META")
+  const myMetaUSDTotal = myProductMetrics
+    .filter((p) => p.unit === "USD" && p.target > 0)
+    .reduce((s, p) => s + p.target, 0);
+
+  // ── Tareas por estado (vendedor objetivo o equipo) ──
+  const tasksByState = (() => {
+    const filtered = tasksRaw.filter((t) => {
+      const assigned = t.assigned_salesperson_id ? String(t.assigned_salesperson_id) : null;
+      if (showAdminAggregate) return true; // admin "Todos" → todas
+      if (targetSalespersonId) return assigned === targetSalespersonId;
+      return false;
+    });
+    let pending = 0, in_progress = 0, done = 0;
+    for (const t of filtered) {
+      const s = String(t.status || "").toLowerCase();
+      if (s === "pending") pending++;
+      else if (s === "in_progress" || s === "doing") in_progress++;
+      else if (s === "done" || s === "completed") done++;
+    }
+    return { pending, in_progress, done, total: filtered.length };
+  })();
+
+  // ── Top 5 clientes sin seguimiento (críticos = mayor priority_score) ──
+  // Fuente: clientes ya cargados en /api/clients?tab=active.
+  // Vendedor: solo los suyos. Admin sin filtro: todos los del equipo.
+  // Admin con vendor X: los del vendor X.
+  const baseSinSeguimiento = (() => {
+    if (showAdminAggregate) return clientsWithoutRecentFollowup;
+    if (targetSalespersonId) {
+      return clients.filter((c) =>
+        !c.recent_followup &&
+        c.salesperson_id &&
+        String(c.salesperson_id) === targetSalespersonId
+      );
+    }
+    return [];
+  })();
+  const topSinSeguimiento = [...baseSinSeguimiento]
+    .sort((a, b) => toNumber(b.priority_score) - toNumber(a.priority_score))
+    .slice(0, 5);
+
+  // ── Agregados del EQUIPO para gráfico de productos (admin "Todos") ──
+  // Suma metas y achieved de cada producto cross-vendedor.
+  type TeamProductMetric = { name: string; unit: GoalUnit; target: number; achieved: number; lines: number; pct: number };
+  const teamProductMetrics: TeamProductMetric[] = (() => {
+    if (!showAdminAggregate) return [];
+    const allVendorGoals = productGoalsApi.data?.vendors || [];
+    const reports = Array.isArray(reportsApi.data) ? reportsApi.data : [];
+    const labelOf = (r: any): string | null => {
+      const k = String(r.line_kind || "").toLowerCase();
+      const t = String(r.line_type || "").toUpperCase();
+      if (k === "movil" && t === "REN") return "Movil Ren";
+      if (k === "movil" && t === "NEW") return "Movil New";
+      if (k === "fijo"  && t === "REN") return "Fijo Ren";
+      if (k === "fijo"  && t === "NEW") return "Fijo New";
+      return null;
+    };
+    // Suma metas del equipo por producto.
+    const targetByProduct = new Map<string, number>();
+    for (const vg of allVendorGoals) {
+      const goalsByName = (vg as any).goalsByName as Record<string, number> | undefined;
+      if (!goalsByName) continue;
+      for (const [name, target] of Object.entries(goalsByName)) {
+        if (!Number.isFinite(target) || target <= 0) continue;
+        targetByProduct.set(name, (targetByProduct.get(name) || 0) + Number(target));
+      }
+    }
+    // Suma achieved del equipo por producto.
+    const achByProduct = new Map<string, { commission: number; lines: number }>();
+    for (const r of reports as any[]) {
+      const label = labelOf(r);
+      if (!label) continue;
+      const cur = achByProduct.get(label) || { commission: 0, lines: 0 };
+      cur.commission += Number(r.vendor_commission || 0);
+      cur.lines += 1;
+      achByProduct.set(label, cur);
+    }
+    const orderedNames = ["Fijo Ren", "Fijo New", "Movil Ren", "Movil New", "Claro TV", "Cloud", "MPLS"];
+    const allNames = new Set<string>([...targetByProduct.keys(), ...achByProduct.keys()]);
+    return orderedNames
+      .filter((n) => allNames.has(n))
+      .concat([...allNames].filter((n) => !orderedNames.includes(n)))
+      .map((name) => {
+        const target = targetByProduct.get(name) || 0;
+        const ach = achByProduct.get(name) || { commission: 0, lines: 0 };
+        const unit = goalUnitOf(name);
+        const achievedForPct = unit === "LINES" ? ach.lines : ach.commission;
+        const pct = target > 0 ? Math.round((achievedForPct / target) * 1000) / 10 : 0;
+        return { name, unit, target, achieved: ach.commission, lines: ach.lines, pct };
+      });
+  })();
+  // Cumplimiento real agregado del equipo (mismo criterio: cap 100% por producto)
+  const teamCumplimientoReal = cumplimientoRealOf(teamProductMetrics);
+  const teamMetaUSDTotal = teamProductMetrics
+    .filter((p) => p.unit === "USD" && p.target > 0)
+    .reduce((s, p) => s + p.target, 0);
+  // Totales de ventas y ganancia empresa del equipo
+  const allReports = Array.isArray(reportsApi.data) ? reportsApi.data : [];
+  const teamSalesCount = allReports.length;
+  const teamCommissionTotal = allReports.reduce((s: number, r: any) => s + Number(r.vendor_commission || 0), 0);
+  const teamCompanyEarningsTotal = allReports.reduce((s: number, r: any) => s + Number(r.company_earnings || 0), 0);
+  const teamPaidTotal = allReports.reduce((s: number, r: any) => s + Number(r.paid_amount || 0), 0);
+  const teamCommissionsPending = Math.max(0, teamCommissionTotal - teamPaidTotal);
+
+  // Comisiones a pagar del vendedor objetivo
+  const myReportsForPay = targetSalespersonId
+    ? allReports.filter((r: any) => String(r.salesperson_id || "") === targetSalespersonId)
+    : [];
+  const myPaidTotal = myReportsForPay.reduce((s: number, r: any) => s + Number(r.paid_amount || 0), 0);
+  const myCommissionsPending = Math.max(0, (myMetric?.commission || 0) - myPaidTotal);
+
+  // ── Detección de mes sin actividad ──
+  // Modo "sin actividad" cuando NO hay ventas en el mes seleccionado.
+  // Para vendedor: 0 ventas suyas. Para admin sin filtro: 0 ventas del equipo.
+  // Para admin con vendor X: 0 ventas de ese vendor.
+  const myActiveSalesCount = (myMetric?.sales_count || 0);
+  const noActivity = showAdminAggregate ? teamSalesCount === 0 : (targetSalespersonId ? myActiveSalesCount === 0 : false);
+  // Mes anterior con datos (sí hay reports → ofrecer "ir al mes anterior")
+  const prevMonthReports = Array.isArray(reportsPrevApi.data) ? reportsPrevApi.data : [];
+  const prevMonthHasData = showAdminAggregate
+    ? prevMonthReports.length > 0
+    : (targetSalespersonId
+        ? prevMonthReports.some((r: any) => String(r.salesperson_id || "") === targetSalespersonId)
+        : false);
+  const prevMonthSalesCountForTarget = targetSalespersonId
+    ? prevMonthReports.filter((r: any) => String(r.salesperson_id || "") === targetSalespersonId).length
+    : prevMonthReports.length;
+
+  // KPIs unificados según vista
+  const kpiSalesCount = showAdminAggregate ? teamSalesCount : (myMetric?.sales_count || 0);
+  const kpiMeta = showAdminAggregate ? teamMetaUSDTotal : myMetaUSDTotal;
+  const kpiCumplimiento = showAdminAggregate ? teamCumplimientoReal : myCumplimientoReal;
+  const kpiCompanyEarnings = showAdminAggregate ? teamCompanyEarningsTotal : (myMetric?.total_earned || 0);
+  const kpiCommission = showAdminAggregate ? teamCommissionTotal : (myMetric?.commission || 0);
+  const kpiCommissionsPending = showAdminAggregate ? teamCommissionsPending : myCommissionsPending;
+
+  // ── Tarjetas por vendedor (admin "Todos") ──
+  // Para cada vendedor activo: sus productos + cumplimiento real + stats.
+  type VendorCard = {
+    key: string;
+    vendor_name: string;
+    sales_count: number;
+    commission: number;
+    company_earnings: number;
+    cumplimiento_real: number;
+    state: "verde" | "amarillo" | "rojo" | "gris";
+    tasks_pending: number;
+    sin_seguimiento_count: number;
+    products: ProductMetric[];
+  };
+  const vendorCards: VendorCard[] = (() => {
+    if (!showAdminAggregate) return [];
+    const allVendorGoals = productGoalsApi.data?.vendors || [];
+    const reports = Array.isArray(reportsApi.data) ? reportsApi.data : [];
+    const labelOf = (r: any): string | null => {
+      const k = String(r.line_kind || "").toLowerCase();
+      const t = String(r.line_type || "").toUpperCase();
+      if (k === "movil" && t === "REN") return "Movil Ren";
+      if (k === "movil" && t === "NEW") return "Movil New";
+      if (k === "fijo"  && t === "REN") return "Fijo Ren";
+      if (k === "fijo"  && t === "NEW") return "Fijo New";
+      return null;
+    };
+    return vendorMetricsRows
+      .filter((m) => m.has_meta || m.commission > 0 || m.tasks_pending > 0 || m.sales_count > 0)
+      .map((m) => {
+        // Productos del vendedor
+        const myGoals = allVendorGoals.find((v) => String((v as any).salesperson_id || "") === m.key);
+        const goalsByName = (myGoals as any)?.goalsByName as Record<string, number> | undefined;
+        const myReports = reports.filter((r: any) => String(r.salesperson_id || "") === m.key);
+        const ach = new Map<string, { commission: number; lines: number; earnings: number }>();
+        for (const r of myReports as any[]) {
+          const label = labelOf(r);
+          if (!label) continue;
+          const cur = ach.get(label) || { commission: 0, lines: 0, earnings: 0 };
+          cur.commission += Number(r.vendor_commission || 0);
+          cur.lines += 1;
+          cur.earnings += Number(r.company_earnings || 0);
+          ach.set(label, cur);
+        }
+        const orderedNames = ["Fijo Ren", "Fijo New", "Movil Ren", "Movil New", "Claro TV", "Cloud", "MPLS"];
+        const allNames = new Set<string>([...(goalsByName ? Object.keys(goalsByName) : []), ...ach.keys()]);
+        const products: ProductMetric[] = orderedNames
+          .filter((n) => allNames.has(n))
+          .map((name) => {
+            const target = Number(goalsByName?.[name] || 0);
+            const a = ach.get(name) || { commission: 0, lines: 0, earnings: 0 };
+            const unit = goalUnitOf(name);
+            const achievedForPct = unit === "LINES" ? a.lines : a.commission;
+            const pct = target > 0 ? Math.round((achievedForPct / target) * 1000) / 10 : 0;
+            return { name, target, achievedCommission: a.commission, companyEarnings: a.earnings, lines: a.lines, pct, unit };
+          });
+        const cumplimiento = cumplimientoRealOf(products);
+        const sinSegCount = clients.filter((c) =>
+          !c.recent_followup &&
+          c.salesperson_id &&
+          String(c.salesperson_id) === m.key
+        ).length;
+        // Estado en base al cumplimiento real (no al pct_meta engañoso)
+        let state: VendorCard["state"] = "gris";
+        if (cumplimiento >= 70) state = "verde";
+        else if (cumplimiento >= 40) state = "amarillo";
+        else if (m.has_meta || m.sales_count > 0) state = "rojo";
+        return {
+          key: m.key,
+          vendor_name: m.vendor_name,
+          sales_count: m.sales_count,
+          commission: m.commission,
+          company_earnings: m.total_earned,
+          cumplimiento_real: cumplimiento,
+          state,
+          tasks_pending: m.tasks_pending,
+          sin_seguimiento_count: sinSegCount,
+          products,
+        };
+      })
+      .sort((a, b) => b.cumplimiento_real - a.cumplimiento_real);
+  })();
+
+  // ── Vendedores sin actividad este mes (admin) ──
+  // Vendedores con meta cargada o que tuvieron actividad en mes anterior
+  // pero 0 ventas este mes.
+  type InactiveVendor = { key: string; vendor_name: string; had_meta: boolean; prev_sales: number; tasks_pending: number };
+  const inactiveVendors: InactiveVendor[] = (() => {
+    if (!isAdmin) return [];
+    const prevByVendor = new Map<string, number>();
+    for (const r of prevMonthReports as any[]) {
+      const k = String(r.salesperson_id || "");
+      if (!k) continue;
+      prevByVendor.set(k, (prevByVendor.get(k) || 0) + 1);
+    }
+    return vendorMetricsRows
+      .filter((m) => m.sales_count === 0 && (m.has_meta || (prevByVendor.get(m.key) || 0) > 0))
+      .map((m) => ({
+        key: m.key,
+        vendor_name: m.vendor_name,
+        had_meta: m.has_meta,
+        prev_sales: prevByVendor.get(m.key) || 0,
+        tasks_pending: m.tasks_pending,
+      }))
+      .sort((a, b) => b.prev_sales - a.prev_sales);
+  })();
+
+  // ── Alertas de productos del EQUIPO (vista admin "Todos") ──
+  // Por cada vendedor con metas, calcula sus productos con < 30% cumplimiento
+  // y los agrega a una lista plana ordenada por menor cumplimiento.
+  type TeamProductAtRisk = { vendor_name: string; vendor_id: string; product: string; unit: GoalUnit; achieved: number; target: number; pct: number; lines: number };
+  const teamProductsAtRisk: TeamProductAtRisk[] = (() => {
+    if (!isAdmin || selectedVendorFilter) return []; // solo admin "Todos"
+    const allVendorGoals = productGoalsApi.data?.vendors || [];
+    const reports = Array.isArray(reportsApi.data) ? reportsApi.data : [];
+    const labelOf = (r: any): string | null => {
+      const k = String(r.line_kind || "").toLowerCase();
+      const t = String(r.line_type || "").toUpperCase();
+      if (k === "movil" && t === "REN") return "Movil Ren";
+      if (k === "movil" && t === "NEW") return "Movil New";
+      if (k === "fijo"  && t === "REN") return "Fijo Ren";
+      if (k === "fijo"  && t === "NEW") return "Fijo New";
+      return null;
+    };
+    const items: TeamProductAtRisk[] = [];
+    for (const vg of allVendorGoals) {
+      const goalsByName = (vg as any).goalsByName as Record<string, number> | undefined;
+      if (!goalsByName) continue;
+      const spId = String((vg as any).salesperson_id || "");
+      const vendorReports = reports.filter((r: any) => String(r.salesperson_id || "") === spId);
+      // Sumar achieved por producto del vendor.
+      const ach = new Map<string, { commission: number; lines: number }>();
+      for (const r of vendorReports as any[]) {
+        const label = labelOf(r);
+        if (!label) continue;
+        const cur = ach.get(label) || { commission: 0, lines: 0 };
+        cur.commission += Number(r.vendor_commission || 0);
+        cur.lines += 1;
+        ach.set(label, cur);
+      }
+      for (const [productName, target] of Object.entries(goalsByName)) {
+        if (!Number.isFinite(target) || target <= 0) continue;
+        const unit = goalUnitOf(productName);
+        const a = ach.get(productName) || { commission: 0, lines: 0 };
+        const achievedForPct = unit === "LINES" ? a.lines : a.commission;
+        const pct = (achievedForPct / Number(target)) * 100;
+        if (pct < 30) {
+          items.push({
+            vendor_name: vg.vendor_name || "Sin nombre",
+            vendor_id: spId,
+            product: productName,
+            unit,
+            achieved: unit === "LINES" ? a.lines : a.commission,
+            target: Number(target),
+            pct: Math.round(pct * 10) / 10,
+            lines: a.lines,
+          });
+        }
+      }
+    }
+    return items.sort((a, b) => a.pct - b.pct);
+  })();
+
+  // ── Export CSV de comisiones por cliente (sugerencia D) ──
+  const exportCommissionsCSV = () => {
+    if (myCommissionsByClient.length === 0) return;
+    const rows = [
+      ["Cliente", "Vendedor", "Líneas", "Comisión USD"],
+      ...myCommissionsByClient.map(c => [c.client_name, c.vendor_name, String(c.lines), c.commission.toFixed(2)]),
+      ["TOTAL", "", String(myCommissionsByClient.reduce((s, c) => s + c.lines, 0)), myCommissionsByClient.reduce((s, c) => s + c.commission, 0).toFixed(2)],
+    ];
+    const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" }); // BOM para Excel
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `comisiones-${selectedMonth}${targetSalespersonId ? "-" + (myMetric?.vendor_name || "vendedor") : "-todos"}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   // Ranking: pct_meta desc, commission desc, tasks_pending asc
   const rankingRows = [...vendorMetricsRows].sort((a, b) => {
     if (b.pct_meta !== a.pct_meta) return b.pct_meta - a.pct_meta;
@@ -657,38 +1094,6 @@ export default function Home() {
   const [completingTaskId, setCompletingTaskId] = useState<number | null>(null);
   const [showCompletedFlag, setShowCompletedFlag] = useState(false);
 
-  // Estado del acordeon "Descuadre CRM vs Tango". Solo admin/supervisor lo ven.
-  // No se persiste; se reinicia en cada carga del panel.
-  const [descuadreState, setDescuadreState] = useState<DescuadreState>("idle");
-  const [descuadreData, setDescuadreData] = useState<DescuadreData | null>(null);
-  const [descuadreError, setDescuadreError] = useState<string | null>(null);
-  const [showDescuadreDetail, setShowDescuadreDetail] = useState(false);
-
-  const handleDescuadreCheck = async () => {
-    setDescuadreState("loading");
-    setDescuadreError(null);
-    try {
-      const response = await authFetch("/api/tango/sync", { method: "POST" });
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-      const json = await response.json();
-      const ext = json.external_sales || {};
-      setDescuadreData({
-        count: Number(ext.count || 0),
-        sample: Array.isArray(ext.sample) ? ext.sample : [],
-        motivos: ext.motivos || {},
-        truncated: Boolean(ext.truncated),
-        lastChecked: new Date().toLocaleTimeString("es-PR", { hour: "2-digit", minute: "2-digit" }),
-      });
-      setDescuadreState("success");
-    } catch (err) {
-      console.error("Error verificando descuadre:", err);
-      setDescuadreError(err instanceof Error ? err.message : "Error desconocido");
-      setDescuadreState("error");
-    }
-  };
-
   const handleCompleteTask = async (taskId: number) => {
     setCompletingTaskId(taskId);
     try {
@@ -742,14 +1147,49 @@ export default function Home() {
     }
   };
 
+
   return (
-    <div className="space-y-5 animate-in fade-in duration-500">
-      <div>
-        <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-          <LayoutDashboard className="w-6 h-6 text-blue-400" />
-          Panel General
-        </h1>
-        <p className="text-slate-400 text-sm mt-1">Dashboard basico basado en clientes activos y memoria comercial.</p>
+    <div className="space-y-4 animate-in fade-in duration-500">
+      {/* ─── Header con filtros ─── */}
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-white flex items-center gap-2">
+            <LayoutDashboard className="w-6 h-6 text-blue-400" />
+            Panel General
+          </h1>
+          <p className="text-slate-400 text-sm mt-1">
+            {formatMonthLabel(selectedMonth)}
+            {targetSalespersonId && myMetric ? ` · ${myMetric.vendor_name}` : (showAdminAggregate ? ' · Equipo completo' : '')}
+          </p>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <div>
+            <label className="text-[10px] uppercase font-semibold text-slate-500 block">Mes</label>
+            <input
+              type="month"
+              value={selectedMonth}
+              onChange={(e) => setSelectedMonth(e.target.value || getCurrentYearMonth())}
+              className="bg-slate-800 border border-slate-600 text-white rounded px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          {isAdmin && (
+            <div>
+              <label className="text-[10px] uppercase font-semibold text-slate-500 block">Vendedor</label>
+              <select
+                value={selectedVendorFilter}
+                onChange={(e) => setSelectedVendorFilter(e.target.value)}
+                className="bg-slate-800 border border-slate-600 text-white rounded px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 min-w-[160px]"
+              >
+                <option value="">Todos (equipo)</option>
+                {vendorMetricsRows
+                  .filter((m) => m.key && m.key !== "unassigned")
+                  .map((m) => (
+                    <option key={m.key} value={m.key}>{m.vendor_name}</option>
+                  ))}
+              </select>
+            </div>
+          )}
+        </div>
       </div>
 
       {error && (
@@ -758,61 +1198,255 @@ export default function Home() {
         </div>
       )}
 
-      {alerts.length > 0 && (
-        <section className="space-y-2">
-          <h2 className="text-sm font-semibold uppercase text-slate-400 flex items-center gap-2">
-            Alertas
-            <span className="text-xs text-slate-500 normal-case font-normal">
-              ({alerts.length})
-            </span>
+      {/* ─── Banner: mes sin actividad ─── */}
+      {noActivity && (
+        <section className="rounded-xl border border-slate-600 bg-gradient-to-br from-slate-800/70 to-slate-900/50 p-5">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                <AlertCircle className="w-5 h-5 text-amber-300" />
+                Sin actividad en {formatMonthLabel(selectedMonth)}
+              </h2>
+              <p className="text-sm text-slate-400 mt-1">
+                {showAdminAggregate
+                  ? 'El equipo no registró ventas este mes.'
+                  : (targetSalespersonId === mySalespersonId
+                    ? 'Aún no tenés ventas registradas este mes.'
+                    : `${myMetric?.vendor_name || 'Este vendedor'} no tiene ventas este mes.`)}
+                {' '}Las tareas y clientes sin seguimiento siguen abajo.
+              </p>
+            </div>
+            {prevMonthHasData && (
+              <button
+                type="button"
+                onClick={() => setSelectedMonth(previousMonth)}
+                className="shrink-0 inline-flex items-center gap-2 rounded-lg border border-blue-500/40 bg-blue-500/15 hover:bg-blue-500/25 text-blue-200 px-4 py-2.5 text-sm font-semibold transition-colors"
+                title={`Cambiar al mes anterior · ${formatMonthLabel(previousMonth)}`}
+              >
+                ← Ver {formatMonthLabel(previousMonth)} ({prevMonthSalesCountForTarget} {prevMonthSalesCountForTarget === 1 ? 'venta' : 'ventas'})
+              </button>
+            )}
+          </div>
+        </section>
+      )}
+
+      {/* ─── KPIs banda (5 cards admin / 4 cards vendedor) — solo si HAY actividad ─── */}
+      {!noActivity && (myMetric || showAdminAggregate) && (
+        <div className={`grid grid-cols-2 ${isAdmin ? 'md:grid-cols-5' : 'md:grid-cols-4'} gap-3`}>
+          <div className="rounded-xl border border-slate-700 bg-slate-800/50 p-4">
+            <p className="text-[11px] uppercase font-bold tracking-wider text-slate-400">Ventas</p>
+            <p className="text-4xl font-black text-white mt-1 leading-none">{kpiSalesCount}</p>
+            <p className="text-xs text-slate-500 mt-1">líneas {showAdminAggregate ? 'del equipo' : 'mías'}</p>
+          </div>
+          <div className="rounded-xl border border-slate-700 bg-slate-800/50 p-4">
+            <p className="text-[11px] uppercase font-bold tracking-wider text-slate-400">Meta</p>
+            <p className="text-4xl font-black text-white mt-1 leading-none">{formatUSD(kpiMeta)}</p>
+            <p className="text-xs text-slate-500 mt-1">USD del mes</p>
+          </div>
+          <div className={`rounded-xl border-2 p-4 ${kpiCumplimiento >= 70 ? 'border-emerald-400 bg-emerald-500/10' : kpiCumplimiento >= 40 ? 'border-amber-400 bg-amber-500/10' : 'border-red-400 bg-red-500/10'}`}>
+            <p className="text-[11px] uppercase font-bold tracking-wider text-slate-300">Cumpl. real</p>
+            <p className={`text-4xl font-black mt-1 leading-none ${kpiCumplimiento >= 70 ? 'text-emerald-300' : kpiCumplimiento >= 40 ? 'text-amber-300' : 'text-red-300'}`}>
+              {kpiCumplimiento.toFixed(0)}%
+            </p>
+            <p className="text-xs text-slate-400 mt-1">prom. productos</p>
+          </div>
+          {isAdmin ? (
+            <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4">
+              <p className="text-[11px] uppercase font-bold tracking-wider text-emerald-300">Ganancia emp.</p>
+              <p className="text-4xl font-black text-emerald-200 mt-1 leading-none">{formatUSD(kpiCompanyEarnings)}</p>
+              <p className="text-xs text-emerald-300/70 mt-1">{showAdminAggregate ? 'del equipo' : 'del vendedor'}</p>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-blue-500/30 bg-blue-500/5 p-4">
+              <p className="text-[11px] uppercase font-bold tracking-wider text-blue-300">Mi comisión</p>
+              <p className="text-4xl font-black text-blue-200 mt-1 leading-none">{formatUSD(kpiCommission)}</p>
+              <p className="text-xs text-blue-300/70 mt-1">cobrada</p>
+            </div>
+          )}
+          <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
+            <p className="text-[11px] uppercase font-bold tracking-wider text-amber-300">A pagar</p>
+            <p className="text-4xl font-black text-amber-200 mt-1 leading-none">{formatUSD(kpiCommissionsPending)}</p>
+            <div className="flex items-center justify-between text-[10px] mt-1.5 pt-1.5 border-t border-amber-500/20">
+              <span className="text-emerald-300/80">✓ pagado <span className="font-mono font-semibold text-emerald-300">{formatUSD(showAdminAggregate ? teamPaidTotal : myPaidTotal)}</span></span>
+              <span className="text-amber-300/80">pendiente</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── Helper: tarjeta de vendedor con productos integrados ─── */}
+      {/* Botón "Volver al equipo" si admin tiene vendedor seleccionado */}
+      {isAdmin && selectedVendorFilter && (
+        <div>
+          <button
+            type="button"
+            onClick={() => setSelectedVendorFilter("")}
+            className="text-xs rounded border border-slate-600 hover:border-blue-400/60 text-slate-300 hover:text-blue-200 px-2.5 py-1.5 font-medium transition-colors"
+          >
+            ← Volver al equipo
+          </button>
+        </div>
+      )}
+
+      {/* ─── Vendedores sin actividad este mes (admin) ─── */}
+      {isAdmin && inactiveVendors.length > 0 && (
+        <section className="rounded-xl border border-amber-500/40 bg-amber-500/5 p-4">
+          <h2 className="text-sm font-semibold text-amber-200 uppercase tracking-wider mb-3 flex items-center gap-2">
+            <AlertCircle className="w-4 h-4" />
+            Vendedores sin actividad · {inactiveVendors.length}
           </h2>
-          <div className="space-y-1.5">
-            {alerts.map((a, i) => {
-              if (a.kind === "unassigned_tasks") {
-                return (
-                  <details key={i} className={`text-sm ${getAlertClass(a.type)} group`}>
-                    <summary className="cursor-pointer flex items-center justify-between list-none [&::-webkit-details-marker]:hidden">
-                      <span>{a.text}</span>
-                      <ChevronDown className="w-4 h-4 transition-transform group-open:rotate-180 opacity-70" />
-                    </summary>
-                    <div className="mt-2 pt-2 border-t border-slate-500/20 space-y-1">
-                      {unassignedTasksDetail.length === 0 ? (
-                        <p className="text-xs text-slate-400 italic">
-                          No hay tareas pending sin asignar (la cuenta refleja todos los estados).
-                        </p>
-                      ) : (
-                        unassignedTasksDetail.map((t) => {
-                          const clientId = t.related_client_id ? String(t.related_client_id) : null;
-                          const clientName = clientId ? clientNameById.get(clientId) || null : null;
-                          return (
-                            <div key={t.id} className="flex items-start justify-between gap-2 text-xs">
-                              <div className="flex-1 min-w-0">
-                                {clientName && clientId ? (
-                                  <Link
-                                    to={`/clientes?openClient=${clientId}`}
-                                    className="text-blue-300 hover:text-blue-200 font-medium"
-                                  >
-                                    {clientName}
-                                  </Link>
-                                ) : (
-                                  <span className="text-slate-500">— sin cliente</span>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+            {inactiveVendors.map((iv) => (
+              <button
+                key={iv.key}
+                type="button"
+                onClick={() => setSelectedVendorFilter(iv.key)}
+                className="text-left rounded-lg border border-slate-700 bg-slate-800/60 hover:bg-slate-800 p-3 transition-colors"
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-bold text-white truncate">{iv.vendor_name}</span>
+                  {iv.had_meta && <span className="text-[9px] uppercase font-bold text-amber-300 bg-amber-500/15 border border-amber-500/30 rounded px-1.5 py-0.5">Tiene meta</span>}
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  Mes anterior: <span className="text-slate-200 font-semibold">{iv.prev_sales} {iv.prev_sales === 1 ? 'venta' : 'ventas'}</span>
+                  {iv.tasks_pending > 0 && <span className="ml-2">· <span className="text-amber-300">{iv.tasks_pending} tareas pend.</span></span>}
+                </p>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* ─── Admin sin filtro: grid de tarjetas por vendedor ─── */}
+      {!noActivity && showAdminAggregate && vendorCards.length > 0 && (
+        <section>
+          <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wider mb-3">
+            Vendedores · {vendorCards.length} activos
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            {vendorCards.map((vc) => {
+              const visibleProducts = vc.products.filter((p) => p.target > 0 || p.lines > 0 || p.achievedCommission > 0);
+              const stateColor = vc.state === "verde" ? "border-emerald-500/40" :
+                                 vc.state === "amarillo" ? "border-amber-500/40" :
+                                 vc.state === "rojo" ? "border-red-500/40" :
+                                 "border-slate-700";
+              const pctColor = vc.cumplimiento_real >= 70 ? 'text-emerald-300' : vc.cumplimiento_real >= 40 ? 'text-amber-300' : 'text-red-300';
+              return (
+                <button
+                  key={vc.key}
+                  type="button"
+                  onClick={() => setSelectedVendorFilter(vc.key)}
+                  className={`text-left rounded-xl border-2 ${stateColor} bg-slate-800/50 hover:bg-slate-800/80 hover:scale-[1.01] transition-all p-3 space-y-2`}
+                  title={`Ver detalle de ${vc.vendor_name}`}
+                >
+                  {/* Header */}
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="font-bold text-white truncate">{vc.vendor_name}</p>
+                      <p className="text-[10px] text-slate-400 mt-0.5">{vc.sales_count} ventas · {formatUSD(vc.commission)}</p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className={`text-xl font-bold ${pctColor}`}>{vc.cumplimiento_real.toFixed(0)}%</p>
+                      <p className="text-[9px] uppercase text-slate-500">cumpl. real</p>
+                    </div>
+                  </div>
+                  {/* Productos compactos con ganancia empresa abajo */}
+                  {visibleProducts.length > 0 ? (
+                    <div className="space-y-2 pt-1 border-t border-slate-700/60">
+                      {visibleProducts.map((p) => {
+                        const achievedNum = p.unit === "LINES" ? p.lines : p.achievedCommission;
+                        const fmtAch = p.unit === "LINES" ? `${p.lines}L` : formatUSD(achievedNum).replace('US$', '$');
+                        const fmtTar = p.unit === "LINES" ? `${p.target}L` : formatUSD(p.target).replace('US$', '$');
+                        const barColor = p.pct >= 100 ? '#10b981' : p.pct >= 70 ? '#3b82f6' : p.pct >= 40 ? '#f59e0b' : '#ef4444';
+                        return (
+                          <div key={p.name} className="space-y-0.5">
+                            <div className="flex items-center gap-2 text-[11px]">
+                              <span className="text-slate-300 w-16 shrink-0 truncate" title={p.name}>{p.name}</span>
+                              <div className="flex-1 bg-slate-900 rounded-full h-1.5 overflow-hidden border border-slate-700/60">
+                                {p.target > 0 && (
+                                  <div className="h-full" style={{ width: `${Math.min(100, p.pct)}%`, backgroundColor: barColor }} />
                                 )}
-                                <span className="text-slate-400"> · {t.title || "Sin título"}</span>
                               </div>
-                              <span className="text-slate-500 whitespace-nowrap shrink-0">
-                                {formatDate(t.created_at || null)}
+                              <span className="text-slate-400 font-mono shrink-0 w-20 text-right">
+                                {p.target > 0 ? `${fmtAch}/${fmtTar}` : fmtAch}
+                              </span>
+                              <span className={`font-bold font-mono shrink-0 w-10 text-right ${p.pct >= 100 ? 'text-emerald-300' : p.pct >= 70 ? 'text-blue-300' : p.pct >= 40 ? 'text-amber-300' : 'text-red-300'}`}>
+                                {p.target > 0 ? `${p.pct.toFixed(0)}%` : '—'}
                               </span>
                             </div>
-                          );
-                        })
-                      )}
+                            {p.companyEarnings > 0 && (
+                              <p className="text-[10px] text-emerald-400/70 ml-[72px]">
+                                ↳ ganancia empresa: <span className="font-mono font-semibold text-emerald-300">{formatUSD(p.companyEarnings)}</span>
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
-                  </details>
-                );
-              }
+                  ) : (
+                    <p className="text-[10px] text-slate-500 italic pt-1 border-t border-slate-700/60">Sin productos cargados</p>
+                  )}
+                  {/* Footer mini-stats */}
+                  <div className="flex items-center justify-between text-[10px] pt-1 border-t border-slate-700/60">
+                    <span className="text-slate-400">
+                      {vc.tasks_pending > 0 ? <span className="text-amber-300 font-semibold">{vc.tasks_pending} tareas</span> : '0 tareas'}
+                      {' · '}
+                      {vc.sin_seguimiento_count > 0 ? <span className="text-amber-300/80">{vc.sin_seguimiento_count} sin seg.</span> : '0 sin seg.'}
+                    </span>
+                    <span className="text-blue-300/70">Ver detalle →</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {/* ─── Vendedor / admin con vendor X: tarjeta grande con productos ─── */}
+      {!noActivity && !showAdminAggregate && myMetric && myProductMetrics.length > 0 && (
+        <section className="rounded-xl border border-slate-700 bg-slate-800/50 p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wider">
+              {targetSalespersonId === mySalespersonId ? 'Mis productos' : `Productos · ${myMetric.vendor_name}`}
+            </h2>
+            <span className={`text-xs uppercase font-bold border rounded-full px-2 py-0.5 ${myCumplimientoReal >= 70 ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' : myCumplimientoReal >= 40 ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' : 'bg-red-500/20 text-red-300 border-red-500/40'}`}>
+              {myCumplimientoReal.toFixed(0)}% cumpl. real
+            </span>
+          </div>
+          <div className="space-y-2">
+            {myProductMetrics.filter((p) => p.target > 0 || p.lines > 0 || p.achievedCommission > 0).map((p) => {
+              const achievedNum = p.unit === "LINES" ? p.lines : p.achievedCommission;
+              const fmtAch = p.unit === "LINES" ? `${p.lines} líneas` : formatUSD(achievedNum);
+              const fmtTar = p.unit === "LINES" ? `${p.target} líneas` : formatUSD(p.target);
+              const barColor = p.pct >= 100 ? '#10b981' : p.pct >= 70 ? '#3b82f6' : p.pct >= 40 ? '#f59e0b' : '#ef4444';
               return (
-                <div key={i} className={`text-sm ${getAlertClass(a.type)}`}>
-                  {a.text}
+                <div key={p.name} className="rounded-lg border border-slate-700/60 bg-slate-900/40 p-3">
+                  <div className="flex items-center justify-between text-sm mb-1.5">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-white">{p.name}</span>
+                      <span className="text-[10px] uppercase font-bold text-slate-500 bg-slate-900 rounded px-1.5 py-0.5 border border-slate-700">
+                        {p.unit === "LINES" ? "cant" : "USD"}
+                      </span>
+                      <span className="text-xs text-slate-300">
+                        <span className="text-slate-100 font-semibold">{fmtAch}</span>
+                        {p.target > 0 && <span className="text-slate-500"> / {fmtTar}</span>}
+                      </span>
+                    </div>
+                    <span className={`text-sm font-bold font-mono ${p.pct >= 100 ? 'text-emerald-300' : p.pct >= 70 ? 'text-blue-300' : p.pct >= 40 ? 'text-amber-300' : 'text-red-300'}`}>
+                      {p.target > 0 ? `${p.pct.toFixed(0)}%` : '—'}
+                    </span>
+                  </div>
+                  <div className="w-full bg-slate-900 rounded-full h-1.5 overflow-hidden border border-slate-700">
+                    {p.target > 0 && (
+                      <div className="h-full transition-all" style={{ width: `${Math.min(100, p.pct)}%`, backgroundColor: barColor }} />
+                    )}
+                  </div>
+                  {/* Ganancia empresa por producto — solo admin (vendedor no la ve por regla) */}
+                  {isAdmin && p.companyEarnings > 0 && (
+                    <p className="text-[11px] text-emerald-400/80 mt-1.5">
+                      ↳ ganancia empresa: <span className="font-mono font-semibold text-emerald-300">{formatUSD(p.companyEarnings)}</span>
+                    </p>
+                  )}
                 </div>
               );
             })}
@@ -820,1211 +1454,93 @@ export default function Home() {
         </section>
       )}
 
-      {/* (1.5) Descuadre CRM vs Tango — solo admin/supervisor */}
-      {isAdmin && (
-        <details className="rounded-lg border border-slate-700 bg-slate-800/50 group" open={descuadreState === "success" && descuadreData !== null && descuadreData.count > 0}>
-          <summary className="cursor-pointer p-4 flex items-center justify-between list-none [&::-webkit-details-marker]:hidden gap-3">
-            <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-              <ShieldAlert className={`w-5 h-5 ${descuadreState === "success" && descuadreData && descuadreData.count > 0 ? "text-amber-300" : "text-slate-400"}`} />
-              Descuadre CRM vs Tango
+      {/* ─── Tareas (3 estados) + Sin seguimiento (top 5) ─── */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Tareas */}
+        <section className="rounded-xl border border-slate-700 bg-slate-800/50 p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wider flex items-center gap-2">
+              <ClipboardCheck className="w-4 h-4 text-blue-300" />
+              Tareas {showAdminAggregate ? 'del equipo' : 'mías'}
             </h2>
-            <div className="flex items-center gap-3">
-              {descuadreState === "success" && descuadreData && (
-                <span className={`text-sm ${descuadreData.count > 0 ? "text-amber-300" : "text-emerald-300"}`}>
-                  {descuadreData.count > 0
-                    ? `${descuadreData.count.toLocaleString("es-PR")} fuera`
-                    : "Sin descuadre"}
-                </span>
-              )}
-              <ChevronDown className="w-4 h-4 text-slate-400 transition-transform group-open:rotate-180" />
+            <Link to="/tareas" className="text-xs text-blue-300 hover:text-blue-200">Ver módulo →</Link>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-center">
+              <p className="text-2xl font-bold text-amber-300">{tasksByState.pending}</p>
+              <p className="text-[10px] uppercase font-semibold text-amber-300/80">Pendientes</p>
             </div>
-          </summary>
-          <div className="p-4 pt-0">
-            {descuadreState === "idle" && (
-              <div className="space-y-3">
-                <p className="text-sm text-slate-400">
-                  Detecta ventas que están en Tango pero no en el CRM
-                  (BAN no existe en CRM o venta sin BAN).
-                </p>
-                <p className="text-xs text-amber-200/80 bg-amber-500/10 border border-amber-500/20 rounded p-2">
-                  Ejecutar verificación dispara un sync con Tango (puede tardar unos segundos).
-                </p>
-                <button
-                  type="button"
-                  onClick={handleDescuadreCheck}
-                  className="inline-flex items-center gap-2 rounded border border-blue-500/40 bg-blue-500/15 hover:bg-blue-500/25 text-blue-200 px-3 py-1.5 text-sm font-medium transition-colors"
-                >
-                  <RefreshCw className="w-4 h-4" />
-                  Ejecutar verificación de descuadre (sync Tango)
-                </button>
-              </div>
-            )}
+            <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 p-3 text-center">
+              <p className="text-2xl font-bold text-blue-300">{tasksByState.in_progress}</p>
+              <p className="text-[10px] uppercase font-semibold text-blue-300/80">En progreso</p>
+            </div>
+            <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 text-center">
+              <p className="text-2xl font-bold text-emerald-300">{tasksByState.done}</p>
+              <p className="text-[10px] uppercase font-semibold text-emerald-300/80">Completadas</p>
+            </div>
+          </div>
+        </section>
 
-            {descuadreState === "loading" && (
-              <div className="h-24 flex items-center justify-center gap-2 text-slate-400">
-                <Loader2 className="w-5 h-5 animate-spin" />
-                <span className="text-sm">Sincronizando con Tango...</span>
-              </div>
-            )}
-
-            {descuadreState === "error" && (
-              <div className="space-y-3">
-                <p className="text-sm text-red-300 bg-red-500/10 border border-red-500/30 rounded p-2">
-                  Error: {descuadreError || "no se pudo completar el sync"}
-                </p>
-                <button
-                  type="button"
-                  onClick={handleDescuadreCheck}
-                  className="inline-flex items-center gap-2 rounded border border-red-500/40 bg-red-500/15 hover:bg-red-500/25 text-red-200 px-3 py-1.5 text-sm font-medium"
-                >
-                  <RefreshCw className="w-4 h-4" />
-                  Reintentar
-                </button>
-              </div>
-            )}
-
-            {descuadreState === "success" && descuadreData && (() => {
-              // Filtramos external_sales para mostrar solo desde 2026-01-01.
-              // Las ventas anteriores (historicas) se ignoran como ruido.
-              const sample2026 = descuadreData.sample.filter(isExternalSaleFrom2026);
-              const motivos2026 = sample2026.reduce<Record<string, number>>((acc, s) => {
-                acc[s.motivo] = (acc[s.motivo] || 0) + 1;
-                return acc;
-              }, {});
-              const hasAnyVisible = sample2026.length > 0;
-              return (
-              <div className="space-y-3">
-                {descuadreData.count === 0 ? (
-                  <p className="text-sm text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 rounded p-2">
-                    Sin descuadre. Todas las ventas Tango filtradas están en CRM.
-                  </p>
-                ) : !hasAnyVisible ? (
-                  <div className="space-y-2">
-                    <p className="text-sm text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 rounded p-2">
-                      Sin descuadre desde 2026-01-01. Todas las ventas Tango recientes están en CRM.
-                    </p>
-                    <p className="text-xs text-slate-500">
-                      Total reportado por el sync (incluye históricos): {descuadreData.count.toLocaleString("es-PR")}.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    <p className="text-sm text-amber-200">
-                      <strong className="text-amber-100">{sample2026.length.toLocaleString("es-PR")}</strong> ventas Tango desde 2026-01-01 fuera del CRM
-                      <span className="text-xs text-slate-500"> (en muestra de {descuadreData.sample.length.toLocaleString("es-PR")})</span>
-                    </p>
-                    <div className="text-xs text-slate-400 space-y-0.5">
-                      {Object.entries(motivos2026).map(([motivo, n]) => (
-                        <div key={motivo}>
-                          <span className="text-slate-500">{motivo}:</span>{" "}
-                          <span className="text-slate-300">{Number(n).toLocaleString("es-PR")}</span>
-                        </div>
-                      ))}
-                    </div>
-                    <p className="text-xs text-slate-500 italic">
-                      Total reportado por el sync (incluye históricos pre-2026): {descuadreData.count.toLocaleString("es-PR")}.
-                    </p>
-                  </div>
-                )}
-
-                <div className="flex items-center gap-3 text-xs text-slate-500">
-                  <span>Última verificación: {descuadreData.lastChecked}</span>
-                </div>
-
-                <div className="flex items-center gap-2 flex-wrap">
-                  <button
-                    type="button"
-                    onClick={handleDescuadreCheck}
-                    className="inline-flex items-center gap-2 rounded border border-slate-600 bg-slate-700/40 hover:border-blue-400/50 text-slate-200 hover:text-blue-200 px-3 py-1.5 text-sm font-medium transition-colors"
-                  >
-                    <RefreshCw className="w-4 h-4" />
-                    Verificar de nuevo
-                  </button>
-                  {hasAnyVisible && (
+        {/* Sin seguimiento (top 5) */}
+        <section className="rounded-xl border border-slate-700 bg-slate-800/50 p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wider flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-amber-300" />
+              Sin seguimiento {showAdminAggregate ? 'del equipo' : 'míos'}
+              {baseSinSeguimiento.length > 0 && (
+                <span className="text-xs text-amber-300 normal-case font-normal">· {baseSinSeguimiento.length} total</span>
+              )}
+            </h2>
+            <Link to="/clientes" className="text-xs text-blue-300 hover:text-blue-200">Ver todos →</Link>
+          </div>
+          {topSinSeguimiento.length === 0 ? (
+            <p className="text-sm text-slate-400 py-3 text-center">Sin clientes sin seguimiento 🎉</p>
+          ) : (
+            <ul className="space-y-1.5">
+              {topSinSeguimiento.map((c) => {
+                const cid = String(c.id);
+                const ts = taskState[cid] || "idle";
+                const banPrimary = (c as any).bans?.[0]?.ban_number || (c as any).primary_ban || "—";
+                const hasId = c.id != null && c.id !== "";
+                return (
+                  <li key={c.id || c.name} className="flex items-center gap-2 rounded border border-slate-700 bg-slate-900/40 px-2.5 py-1.5">
+                    {hasId ? (
+                      <Link to={`/clientes?id=${c.id}`} className="flex-1 min-w-0 truncate text-sm text-white hover:text-blue-300" title="Ver ficha del cliente">
+                        {c.name || "Sin nombre"}
+                      </Link>
+                    ) : (
+                      <span className="flex-1 min-w-0 truncate text-sm text-slate-400 italic" title="Cliente sin ID — no hay ficha asociada">
+                        {c.name || "Sin nombre"} <span className="text-[10px]">(sin enlace)</span>
+                      </span>
+                    )}
+                    {c.priority_score != null && (
+                      <span className="text-[10px] text-slate-400 font-mono shrink-0">p{toNumber(c.priority_score).toFixed(0)}</span>
+                    )}
+                    {showAdminAggregate && (c as any).vendor_name && (
+                      <span className="text-[10px] text-slate-500 truncate max-w-[80px]">{(c as any).vendor_name}</span>
+                    )}
                     <button
                       type="button"
-                      onClick={() => setShowDescuadreDetail((v) => !v)}
-                      className="inline-flex items-center gap-2 rounded border border-amber-500/40 bg-amber-500/15 hover:bg-amber-500/25 text-amber-200 px-3 py-1.5 text-sm font-medium transition-colors"
+                      onClick={() => handleCreateTask(c, banPrimary, "Llamar/contactar al cliente")}
+                      disabled={ts === "creating" || ts === "created"}
+                      className={`text-[10px] rounded border px-1.5 py-0.5 font-medium transition-colors flex items-center gap-1 shrink-0 ${
+                        ts === "created" ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-200" :
+                        ts === "error" ? "border-red-500/40 bg-red-500/15 text-red-200" :
+                        "border-blue-500/40 bg-blue-500/15 hover:bg-blue-500/25 text-blue-200 disabled:opacity-50"
+                      }`}
+                      title="Crear tarea de seguimiento"
                     >
-                      {showDescuadreDetail ? "Ocultar detalle" : `Ver detalle (${sample2026.length} casos 2026+)`}
+                      {ts === "creating" ? <Loader2 className="w-3 h-3 animate-spin" /> :
+                       ts === "created" ? <Check className="w-3 h-3" /> :
+                       <Plus className="w-3 h-3" />}
                     </button>
-                  )}
-                </div>
-
-                {showDescuadreDetail && hasAnyVisible && (
-                  <div className="space-y-2">
-                    {descuadreData.truncated && (
-                      <p className="text-xs text-slate-400">
-                        Sample del backend truncado a {descuadreData.sample.length.toLocaleString("es-PR")} de {descuadreData.count.toLocaleString("es-PR")} totales (incluye pre-2026). Acá se muestran solo los {sample2026.length.toLocaleString("es-PR")} con fechaactivacion ≥ 2026-01-01.
-                      </p>
-                    )}
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="border-b border-slate-700 text-slate-400">
-                            <th className="text-left py-2 pr-3 font-semibold">BAN</th>
-                            <th className="text-left py-2 px-3 font-semibold">Cliente</th>
-                            <th className="text-left py-2 px-3 font-semibold">Vendedor</th>
-                            <th className="text-left py-2 px-3 font-semibold">Fecha</th>
-                            <th className="text-right py-2 px-3 font-semibold">Monto</th>
-                            <th className="text-left py-2 pl-3 font-semibold">Tipo</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-700/60">
-                          {sample2026.map((s, i) => {
-                            const tipoLabel = VENTATIPO_LABELS[s.ventatipoid] || `Tipo ${s.ventatipoid}`;
-                            return (
-                              <tr key={`${s.tango_ventaid}-${i}`} className="text-slate-200">
-                                <td className="py-2 pr-3">
-                                  {s.ban ? (
-                                    <Link
-                                      to={`/clientes?searchBan=${encodeURIComponent(s.ban)}`}
-                                      className="text-blue-300 hover:text-blue-200 font-mono text-xs"
-                                    >
-                                      {s.ban}
-                                    </Link>
-                                  ) : (
-                                    <span className="text-slate-500 italic text-xs">sin BAN</span>
-                                  )}
-                                </td>
-                                <td className="py-2 px-3 text-slate-300 text-xs">{s.cliente || "-"}</td>
-                                <td className="py-2 px-3 text-slate-300 text-xs">{s.vendedor || "-"}</td>
-                                <td className="py-2 px-3 text-slate-400 text-xs">{s.fechaactivacion || "-"}</td>
-                                <td className="py-2 px-3 text-right text-slate-300 text-xs">{formatUSD(Number(s.com_empresa || 0))}</td>
-                                <td className="py-2 pl-3 text-slate-400 text-xs">{tipoLabel}</td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
-              </div>
-              );
-            })()}
-          </div>
-        </details>
-      )}
-
-      {/* (2) Resumen ejecutivo — acordeón abierto */}
-      <details open className="rounded-lg border border-slate-700 bg-slate-800/50 group">
-        <summary className="cursor-pointer p-4 flex items-center justify-between list-none [&::-webkit-details-marker]:hidden">
-          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-            <Users className="w-5 h-5 text-blue-300" />
-            Resumen ejecutivo
-          </h2>
-          <ChevronDown className="w-4 h-4 text-slate-400 transition-transform group-open:rotate-180" />
-        </summary>
-        <div className="p-4 pt-0">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs font-semibold uppercase text-slate-400">Clientes activos</p>
-              <p className="text-3xl font-bold text-white mt-2">{loading ? "-" : activeCount}</p>
-            </div>
-            <div className="w-11 h-11 rounded-lg bg-blue-500/15 text-blue-300 flex items-center justify-center">
-              {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Users className="w-5 h-5" />}
-            </div>
-          </div>
-          <Link to="/clientes" className="inline-block text-sm text-blue-300 hover:text-blue-200 mt-4">
-            Ver modulo de clientes
-          </Link>
-        </div>
-      </details>
-
-      {/* (3) Tareas pendientes — acordeón dinámico (abierto si hay) */}
-      <details open={visiblePendingTasks.length > 0} className="rounded-lg border border-slate-700 bg-slate-800/50 group">
-        <summary className="cursor-pointer p-4 flex items-center justify-between list-none [&::-webkit-details-marker]:hidden gap-3">
-          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-            <ClipboardList className="w-5 h-5 text-blue-300" />
-            Tareas pendientes
-            {showCompletedFlag && (
-              <span className="text-xs text-emerald-300 font-normal ml-2">Completada</span>
-            )}
-          </h2>
-          <div className="flex items-center gap-3">
-            <span className="text-sm text-slate-400">
-              {tasksApi.loading ? "-" : `${visiblePendingTasks.length} tareas`}
-            </span>
-            <ChevronDown className="w-4 h-4 text-slate-400 transition-transform group-open:rotate-180" />
-          </div>
-        </summary>
-        <div className="p-4 pt-0">
-          {isAdmin && (
-            <div className="flex justify-end mb-3">
-              <div className="inline-flex rounded border border-slate-600 overflow-hidden text-xs">
-                <button
-                  type="button"
-                  onClick={() => setAdminScope("all")}
-                  className={
-                    "px-2 py-1 transition-colors " +
-                    (adminScope === "all"
-                      ? "bg-blue-500/20 text-blue-200"
-                      : "text-slate-300 hover:bg-slate-700/40")
-                  }
-                >
-                  Todas
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setAdminScope("mine")}
-                  className={
-                    "px-2 py-1 border-l border-slate-600 transition-colors " +
-                    (adminScope === "mine"
-                      ? "bg-blue-500/20 text-blue-200"
-                      : "text-slate-300 hover:bg-slate-700/40")
-                  }
-                >
-                  Solo mías
-                </button>
-              </div>
-            </div>
+                  </li>
+                );
+              })}
+            </ul>
           )}
-
-          {tasksApi.loading ? (
-            <div className="h-24 flex items-center justify-center text-slate-400">
-              <Loader2 className="w-6 h-6 animate-spin" />
-            </div>
-          ) : visiblePendingTasks.length === 0 ? (
-            <p className="text-sm text-slate-400 py-6 text-center">
-              {isAdmin && adminScope === "mine"
-                ? "No tenés tareas asignadas pendientes."
-                : isAdmin
-                ? "No hay tareas pendientes."
-                : "No tenés tareas pendientes asignadas."}
-            </p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-slate-700 text-slate-400">
-                    <th className="text-left py-2 pr-3 font-semibold">Tarea</th>
-                    <th className="text-left py-2 px-3 font-semibold">Cliente</th>
-                    <th className="text-left py-2 px-3 font-semibold">Vendedor</th>
-                    <th className="text-center py-2 px-3 font-semibold">Prioridad</th>
-                    <th className="text-right py-2 pl-3 font-semibold">Acción</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-700/60">
-                  {visiblePendingTasks.slice(0, 5).map((task) => {
-                    const clientId = task.related_client_id ? String(task.related_client_id) : null;
-                    const clientName = clientId ? clientNameById.get(clientId) || null : null;
-                    const vendorName = clientId ? clientVendorById.get(clientId) || null : null;
-                    const priority = String(task.priority || "normal").toLowerCase();
-                    const priorityCls = PRIORITY_STYLE[priority] || PRIORITY_STYLE.normal;
-                    const isCompleting = completingTaskId === task.id;
-                    return (
-                      <tr key={task.id} className="text-slate-200">
-                        <td className="py-2 pr-3 font-medium">{task.title || "Sin título"}</td>
-                        <td className="py-2 px-3 text-slate-300">
-                          {clientName ? (
-                            <Link
-                              to={`/clientes?openClient=${clientId}`}
-                              className="text-blue-300 hover:text-blue-200"
-                            >
-                              {clientName}
-                            </Link>
-                          ) : (
-                            <span className="text-slate-500">-</span>
-                          )}
-                        </td>
-                        <td className="py-2 px-3 text-slate-300">
-                          {task.assigned_salesperson_id || vendorName ? (
-                            <span>{vendorName || "-"}</span>
-                          ) : (
-                            <span className="text-slate-500 italic">Sin vendedor</span>
-                          )}
-                        </td>
-                        <td className="py-2 px-3 text-center">
-                          <span className={`text-xs rounded border px-2 py-1 ${priorityCls}`}>
-                            {priority}
-                          </span>
-                        </td>
-                        <td className="py-2 pl-3 text-right">
-                          <button
-                            type="button"
-                            onClick={() => handleCompleteTask(task.id)}
-                            disabled={isCompleting}
-                            className={
-                              "inline-flex items-center gap-1 rounded border px-2 py-1 text-xs font-medium transition-colors " +
-                              (isCompleting
-                                ? "bg-slate-500/15 text-slate-300 border-slate-500/30 cursor-wait"
-                                : "bg-emerald-500/15 text-emerald-200 border-emerald-500/30 hover:bg-emerald-500/25")
-                            }
-                          >
-                            {isCompleting ? (
-                              <Loader2 className="w-3 h-3 animate-spin" />
-                            ) : (
-                              <Check className="w-3 h-3" />
-                            )}
-                            {isCompleting ? "Completando…" : "Completar"}
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      </details>
-
-      {/* (3.5) Top 5 vendedores con menor cumplimiento — destacado en rojo */}
-      {bottomPerformers.length > 0 && (
-        <section className="rounded-lg border border-red-500/40 bg-red-900/20 p-4">
-          <h2 className="text-sm font-semibold uppercase text-red-200 flex items-center gap-2 mb-3">
-            <ShieldAlert className="w-4 h-4" />
-            Top {bottomPerformers.length} vendedores con menor cumplimiento
-            <span className="text-xs text-red-300/70 normal-case font-normal">
-              (acción inmediata)
-            </span>
-          </h2>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-xs uppercase text-red-300/80 border-b border-red-500/30">
-                  <th className="py-1.5 pr-3 font-medium">Vendedor</th>
-                  <th className="py-1.5 px-3 text-right font-medium">% Cumplimiento</th>
-                  <th className="py-1.5 px-3 text-center font-medium">Pendientes</th>
-                  <th className="py-1.5 pl-3 text-center font-medium">En progreso</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-red-500/20">
-                {bottomPerformers.map((row) => (
-                  <tr key={row.key} className="text-red-100">
-                    <td className="py-1.5 pr-3 font-medium">{row.name}</td>
-                    <td className="py-1.5 px-3 text-right font-semibold text-red-300">
-                      {row.pct}%
-                    </td>
-                    <td className="py-1.5 px-3 text-center text-amber-300">
-                      {row.pending}
-                    </td>
-                    <td className="py-1.5 pl-3 text-center text-blue-300">
-                      {row.in_progress}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
         </section>
-      )}
-
-      {/* (4) Desempeño por vendedor — acordeón abierto */}
-      <details open className="rounded-lg border border-slate-700 bg-slate-800/50 group">
-        <summary className="cursor-pointer p-4 flex items-center justify-between list-none [&::-webkit-details-marker]:hidden gap-3">
-          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-            <BarChart3 className="w-5 h-5 text-indigo-300" />
-            Desempeño por vendedor
-          </h2>
-          <div className="flex items-center gap-3">
-            <span className="text-sm text-slate-400">
-              {tasksApi.loading
-                ? "-"
-                : `${performanceRows.length} ${performanceRows.length === 1 ? "vendedor" : "vendedores"}`}
-            </span>
-            <ChevronDown className="w-4 h-4 text-slate-400 transition-transform group-open:rotate-180" />
-          </div>
-        </summary>
-        <div className="p-4 pt-0">
-          {tasksApi.loading ? (
-            <div className="h-24 flex items-center justify-center text-slate-400">
-              <Loader2 className="w-6 h-6 animate-spin" />
-            </div>
-          ) : performanceRows.length === 0 ? (
-            <p className="text-sm text-slate-400 py-6 text-center">
-              Sin actividad registrada en tareas.
-            </p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-slate-700 text-slate-400">
-                    <th className="text-left py-2 pr-3 font-semibold">Vendedor</th>
-                    <th className="text-center py-2 px-3 font-semibold">Total</th>
-                    <th className="text-center py-2 px-3 font-semibold">Completadas</th>
-                    <th className="text-center py-2 px-3 font-semibold">En progreso</th>
-                    <th className="text-center py-2 px-3 font-semibold">Pendientes</th>
-                    <th className="text-right py-2 pl-3 font-semibold">% Cumplimiento</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-700/60">
-                  {performanceRows.map((row) => {
-                    const pctCls =
-                      row.total === 0
-                        ? "text-slate-500"
-                        : row.pct >= 70
-                        ? "text-emerald-300"
-                        : row.pct >= 40
-                        ? "text-amber-300"
-                        : "text-red-300";
-                    return (
-                      <tr key={row.key} className="text-slate-200">
-                        <td className="py-2 pr-3 font-medium">
-                          {row.key === "unassigned" ? (
-                            <span className="text-slate-400 italic">{row.name}</span>
-                          ) : (
-                            row.name
-                          )}
-                        </td>
-                        <td className="py-2 px-3 text-center text-slate-300">{row.total}</td>
-                        <td className="py-2 px-3 text-center text-emerald-300">{row.done}</td>
-                        <td className="py-2 px-3 text-center text-blue-300">{row.in_progress}</td>
-                        <td className="py-2 px-3 text-center text-amber-300">{row.pending}</td>
-                        <td className={`py-2 pl-3 text-right font-semibold ${pctCls}`}>
-                          {row.total > 0 ? `${row.pct}%` : "—"}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      </details>
-
-      {/* (4.5) Actividad de vendedores hoy — solo con permiso vendors.view */}
-      {canSeeTeamActivity && (
-        <details className="rounded-lg border border-slate-700 bg-slate-800/50 group">
-          <summary className="cursor-pointer p-4 flex items-center justify-between list-none [&::-webkit-details-marker]:hidden gap-3">
-            <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-              <Users className="w-5 h-5 text-blue-300" />
-              Actividad de vendedores hoy
-              <span className="text-sm font-normal text-slate-400">
-                ({activityRows.length}{" "}
-                {activityRows.length === 1 ? "vendedor" : "vendedores"})
-              </span>
-            </h2>
-            <ChevronDown className="w-4 h-4 text-slate-400 transition-transform group-open:rotate-180" />
-          </summary>
-          <div className="border-t border-slate-700 p-4">
-            {tasksApi.loading ? (
-              <p className="text-sm text-slate-400 italic">Cargando...</p>
-            ) : activityRows.length === 0 ? (
-              <p className="text-sm text-slate-400 italic">
-                Sin actividad registrada.
-              </p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="text-left text-xs uppercase text-slate-400 border-b border-slate-700">
-                      <th className="py-2 pr-3 font-medium">Vendedor</th>
-                      <th className="py-2 px-3 text-center font-medium">
-                        Pendientes
-                      </th>
-                      <th className="py-2 px-3 text-center font-medium">
-                        Atrasadas
-                      </th>
-                      <th className="py-2 px-3 text-center font-medium">
-                        Hechas hoy
-                      </th>
-                      <th className="py-2 px-3 text-right font-medium">
-                        Estado
-                      </th>
-                      <th className="py-2 pl-3 text-right font-medium w-24">
-                        {/* acciones */}
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {activityRows.map((row) => {
-                      const stateLabel =
-                        row.state === "red"
-                          ? "Atrasado"
-                          : row.state === "green"
-                            ? "Al día"
-                            : row.state === "amber"
-                              ? "Pendiente"
-                              : "Sin actividad";
-                      const stateCls =
-                        row.state === "red"
-                          ? "text-red-300 bg-red-500/10 border-red-500/30"
-                          : row.state === "green"
-                            ? "text-emerald-300 bg-emerald-500/10 border-emerald-500/30"
-                            : row.state === "amber"
-                              ? "text-amber-300 bg-amber-500/10 border-amber-500/30"
-                              : "text-slate-400 bg-slate-500/10 border-slate-500/30";
-                      const isExpanded = expandedActivityKeys.has(row.key);
-                      const overdueList =
-                        overdueDetailByVendor.get(row.key) || [];
-                      const visibleOverdue = overdueList.slice(
-                        0,
-                        OVERDUE_DETAIL_LIMIT,
-                      );
-                      const extraOverdue = Math.max(
-                        0,
-                        overdueList.length - OVERDUE_DETAIL_LIMIT,
-                      );
-                      return (
-                        <Fragment key={row.key}>
-                          <tr className="border-b border-slate-700/50 last:border-0">
-                            <td className="py-2 pr-3 text-slate-100">
-                              {row.name}
-                            </td>
-                            <td className="py-2 px-3 text-center text-slate-300">
-                              {row.pending}
-                            </td>
-                            <td
-                              className={`py-2 px-3 text-center font-semibold ${row.overdue > 0 ? "text-red-300" : "text-slate-500"}`}
-                            >
-                              {row.overdue}
-                            </td>
-                            <td
-                              className={`py-2 px-3 text-center font-semibold ${row.doneToday > 0 ? "text-emerald-300" : "text-slate-500"}`}
-                            >
-                              {row.doneToday}
-                            </td>
-                            <td className="py-2 px-3 text-right">
-                              <span
-                                className={`inline-block text-xs px-2 py-0.5 rounded border ${stateCls}`}
-                              >
-                                {stateLabel}
-                              </span>
-                            </td>
-                            <td className="py-2 pl-3 text-right">
-                              {row.overdue > 0 && (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    toggleActivityExpand(row.key)
-                                  }
-                                  className="text-xs text-blue-300 hover:text-blue-200 underline-offset-2 hover:underline"
-                                >
-                                  {isExpanded
-                                    ? "Ocultar"
-                                    : `Ver atrasadas (${row.overdue})`}
-                                </button>
-                              )}
-                            </td>
-                          </tr>
-                          {isExpanded && row.overdue > 0 && (
-                            <tr className="bg-slate-900/40 border-b border-slate-700/50">
-                              <td colSpan={6} className="py-3 px-4">
-                                {visibleOverdue.length === 0 ? (
-                                  <p className="text-xs text-slate-400 italic">
-                                    Sin detalle disponible.
-                                  </p>
-                                ) : (
-                                  <ul className="space-y-1.5">
-                                    {visibleOverdue.map((t) => {
-                                      const cid = t.related_client_id
-                                        ? String(t.related_client_id)
-                                        : null;
-                                      const cname = cid
-                                        ? clientNameById.get(cid) || null
-                                        : null;
-                                      return (
-                                        <li
-                                          key={t.id}
-                                          className="text-xs flex items-start justify-between gap-3"
-                                        >
-                                          <div className="flex-1 min-w-0">
-                                            <span className="text-slate-100">
-                                              {t.title || "Sin título"}
-                                            </span>
-                                            {cname && cid ? (
-                                              <>
-                                                <span className="text-slate-500">
-                                                  {" · "}
-                                                </span>
-                                                <Link
-                                                  to={`/clientes?openClient=${cid}`}
-                                                  className="text-blue-300 hover:text-blue-200"
-                                                >
-                                                  {cname}
-                                                </Link>
-                                              </>
-                                            ) : (
-                                              <span className="text-slate-500">
-                                                {" · sin cliente"}
-                                              </span>
-                                            )}
-                                          </div>
-                                          <span className="text-red-300 whitespace-nowrap shrink-0">
-                                            Vencía{" "}
-                                            {formatDate(t.due_date || null)}
-                                          </span>
-                                        </li>
-                                      );
-                                    })}
-                                    {extraOverdue > 0 && (
-                                      <li className="text-xs text-slate-400 italic pt-1">
-                                        +{extraOverdue} más atrasada
-                                        {extraOverdue === 1 ? "" : "s"}
-                                      </li>
-                                    )}
-                                  </ul>
-                                )}
-                              </td>
-                            </tr>
-                          )}
-                        </Fragment>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        </details>
-      )}
-
-      {/* (5) Metas comerciales — acordeón colapsado */}
-      <details className="rounded-lg border border-slate-700 bg-slate-800/50 group">
-        <summary className="cursor-pointer p-4 flex items-center justify-between list-none [&::-webkit-details-marker]:hidden gap-3">
-          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-            <Target className="w-5 h-5 text-emerald-300" />
-            Metas comerciales
-          </h2>
-          <div className="flex items-center gap-3">
-            <span className="text-sm text-slate-400">
-              {goalsApi.loading
-                ? "-"
-                : goalsRaw?.period
-                ? `Periodo ${goalsRaw.period}`
-                : "Sin datos"}
-            </span>
-            <ChevronDown className="w-4 h-4 text-slate-400 transition-transform group-open:rotate-180" />
-          </div>
-        </summary>
-        <div className="p-4 pt-0">
-          {goalsApi.loading ? (
-            <div className="h-24 flex items-center justify-center text-slate-400">
-              <Loader2 className="w-6 h-6 animate-spin" />
-            </div>
-          ) : goalsApi.error ? (
-            <p className="text-sm text-slate-400 py-6 text-center">
-              No se pudieron cargar las metas en este momento.
-            </p>
-          ) : goalsVendors.length === 0 ? (
-            <p className="text-sm text-slate-400 py-6 text-center">
-              Sin metas cargadas para este periodo.
-            </p>
-          ) : (
-            <div className="space-y-4">
-              {/* Resumen global */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div className="rounded-lg border border-slate-700 bg-slate-900/40 p-3">
-                  <p className="text-xs uppercase font-semibold text-slate-400">Meta total</p>
-                  <p className="text-xl font-bold text-white mt-1">{formatUSD(goalsTotalGoal)}</p>
-                </div>
-                <div className="rounded-lg border border-slate-700 bg-slate-900/40 p-3">
-                  <p className="text-xs uppercase font-semibold text-slate-400">Vendido</p>
-                  <p className="text-xl font-bold text-emerald-300 mt-1">{formatUSD(goalsTotalEarned)}</p>
-                </div>
-                <div className="rounded-lg border border-slate-700 bg-slate-900/40 p-3">
-                  <p className="text-xs uppercase font-semibold text-slate-400">% Avance</p>
-                  <p className={`text-xl font-bold mt-1 ${
-                    goalsTotalPct >= 70
-                      ? "text-emerald-300"
-                      : goalsTotalPct >= 40
-                      ? "text-amber-300"
-                      : goalsTotalPct > 0
-                      ? "text-red-300"
-                      : "text-slate-500"
-                  }`}>
-                    {goalsTotalGoal > 0 ? `${goalsTotalPct.toFixed(1)}%` : "—"}
-                  </p>
-                </div>
-                <div className="rounded-lg border border-slate-700 bg-slate-900/40 p-3">
-                  <p className="text-xs uppercase font-semibold text-slate-400">Restante</p>
-                  <p className="text-xl font-bold text-amber-300 mt-1">{formatUSD(goalsRemaining)}</p>
-                </div>
-              </div>
-
-              {goalsAllZeroEarned && (
-                <div className="rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-                  Metas cargadas, pero el avance vendido todavía no se está alimentando.
-                </div>
-              )}
-
-              {/* Gráfica por vendedor */}
-              <div>
-                <h3 className="text-sm font-semibold text-slate-300 mb-2">Por vendedor</h3>
-                <div className="space-y-3">
-                  {goalsVendors.map((v) => {
-                    const goalPct = (v.total_goal / goalsMaxBar) * 100;
-                    const earnedPct = (v.total_earned / goalsMaxBar) * 100;
-                    return (
-                      <div key={`${v.vendor_id}-${v.vendor_name}`}>
-                        <div className="flex justify-between text-xs text-slate-300 mb-1">
-                          <span className="font-medium">{v.vendor_name}</span>
-                          <span className="text-slate-400">
-                            {formatUSD(v.total_earned)} / {formatUSD(v.total_goal)}
-                          </span>
-                        </div>
-                        <div className="relative w-full bg-slate-900/60 rounded-full h-2 overflow-hidden border border-slate-700">
-                          <div
-                            className="absolute top-0 left-0 h-full bg-slate-500/40"
-                            style={{ width: `${goalPct}%` }}
-                          />
-                          {v.total_earned > 0 && (
-                            <div
-                              className="absolute top-0 left-0 h-full bg-emerald-400"
-                              style={{ width: `${earnedPct}%` }}
-                            />
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Tabla simple */}
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-slate-700 text-slate-400">
-                      <th className="text-left py-2 pr-3 font-semibold">Vendedor</th>
-                      <th className="text-right py-2 px-3 font-semibold">Meta</th>
-                      <th className="text-right py-2 px-3 font-semibold">Vendido</th>
-                      <th className="text-right py-2 px-3 font-semibold">Restante</th>
-                      <th className="text-right py-2 pl-3 font-semibold">%</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-700/60">
-                    {goalsVendors.map((v) => {
-                      const pct = Number(v.percentage || 0);
-                      const pctCls =
-                        pct >= 70
-                          ? "text-emerald-300"
-                          : pct >= 40
-                          ? "text-amber-300"
-                          : pct > 0
-                          ? "text-red-300"
-                          : "text-slate-500";
-                      return (
-                        <tr key={`tbl-${v.vendor_id}-${v.vendor_name}`} className="text-slate-200">
-                          <td className="py-2 pr-3 font-medium">{v.vendor_name}</td>
-                          <td className="py-2 px-3 text-right text-slate-300">{formatUSD(v.total_goal)}</td>
-                          <td className="py-2 px-3 text-right text-emerald-300">{formatUSD(v.total_earned)}</td>
-                          <td className="py-2 px-3 text-right text-amber-300">{formatUSD(v.remaining)}</td>
-                          <td className={`py-2 pl-3 text-right font-semibold ${pctCls}`}>
-                            {v.total_goal > 0 ? `${pct.toFixed(1)}%` : "—"}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-        </div>
-      </details>
-
-      {/* (6) Top 10 clientes — acordeón colapsado */}
-      <details className="rounded-lg border border-slate-700 bg-slate-800/50 group">
-        <summary className="cursor-pointer p-4 flex items-center justify-between list-none [&::-webkit-details-marker]:hidden gap-3">
-          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-            <TrendingUp className="w-5 h-5 text-cyan-300" />
-            Top 10 por priority_score
-          </h2>
-          <ChevronDown className="w-4 h-4 text-slate-400 transition-transform group-open:rotate-180" />
-        </summary>
-        <div className="p-4 pt-0">
-          <p className="text-xs text-slate-400 mb-3">Ranking calculado en backend desde clientes activos.</p>
-
-          {loading ? (
-            <div className="h-40 flex items-center justify-center text-slate-400">
-              <Loader2 className="w-6 h-6 animate-spin" />
-            </div>
-          ) : topPriorityClients.length === 0 ? (
-            <p className="text-sm text-slate-400 py-8 text-center">No hay clientes activos para mostrar.</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-slate-700 text-slate-400">
-                    <th className="text-left py-2 pr-3 font-semibold">Cliente</th>
-                    <th className="text-left py-2 px-3 font-semibold">BAN</th>
-                    <th className="text-center py-2 px-3 font-semibold">Score</th>
-                    <th className="text-center py-2 px-3 font-semibold">Seguimiento</th>
-                    <th className="text-center py-2 px-3 font-semibold">Convergencia</th>
-                    <th className="text-left py-2 px-3 font-semibold">Acción sugerida</th>
-                    <th className="text-right py-2 pl-3 font-semibold">Tarea</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-700/60">
-                  {topPriorityClients.map((client) => {
-                    const ban = getPrimaryBan(client.ban_numbers);
-                    const action = suggestedAction(client);
-                    const tState = taskState[String(client.id)] || "idle";
-                    return (
-                      <tr key={client.id} className="text-slate-200">
-                        <td className="py-2 pr-3">
-                          <Link to={`/clientes?openClient=${client.id}`} className="font-semibold text-blue-300 hover:text-blue-200">
-                            {client.name || "Sin nombre"}
-                          </Link>
-                          {client.vendor_name && <div className="text-xs text-slate-500">{client.vendor_name}</div>}
-                        </td>
-                        <td className="py-2 px-3 text-slate-300">
-                          {ban.primary}
-                          {ban.extra > 0 && <span className="text-xs text-slate-500 ml-1">(+{ban.extra})</span>}
-                        </td>
-                        <td className="py-2 px-3 text-center">
-                          <span className="rounded bg-cyan-500/15 text-cyan-200 px-2 py-1 font-semibold">
-                            {toNumber(client.priority_score)}
-                          </span>
-                        </td>
-                        <td className="py-2 px-3 text-center">
-                          {client.recent_followup ? (
-                            <span className="text-xs text-emerald-300">OK</span>
-                          ) : (
-                            <span className="text-xs text-amber-300" title={`Vence: ${formatDate(client.primary_contract_end_date)}`}>Pendiente</span>
-                          )}
-                        </td>
-                        <td className="py-2 px-3 text-center">
-                          {client.has_convergence ? (
-                            <span className="text-xs text-emerald-300">Sí</span>
-                          ) : (
-                            <span className="text-xs text-slate-400">No</span>
-                          )}
-                        </td>
-                        <td className="py-2 px-3">
-                          <span className={`text-xs rounded border px-2 py-1 font-medium ${action.cls}`}>
-                            {action.label}
-                          </span>
-                        </td>
-                        <td className="py-2 pl-3 text-right">
-                          <button
-                            type="button"
-                            onClick={() => handleCreateTask(client, ban.primary, action.label)}
-                            disabled={tState === "creating" || tState === "created"}
-                            className={
-                              "inline-flex items-center gap-1 rounded border px-2 py-1 text-xs font-medium transition-colors " +
-                              (tState === "created"
-                                ? "bg-emerald-500/15 text-emerald-200 border-emerald-500/30"
-                                : tState === "error"
-                                ? "bg-red-500/15 text-red-200 border-red-500/30 hover:bg-red-500/20"
-                                : tState === "creating"
-                                ? "bg-slate-500/15 text-slate-300 border-slate-500/30 cursor-wait"
-                                : "bg-slate-700/40 text-slate-200 border-slate-600 hover:border-blue-400/50 hover:text-blue-200")
-                            }
-                          >
-                            {tState === "creating" ? (
-                              <>
-                                <Loader2 className="w-3 h-3 animate-spin" />
-                                Creando…
-                              </>
-                            ) : tState === "created" ? (
-                              <>
-                                <ClipboardCheck className="w-3 h-3" />
-                                Tarea creada
-                              </>
-                            ) : tState === "error" ? (
-                              <>
-                                <AlertCircle className="w-3 h-3" />
-                                Reintentar
-                              </>
-                            ) : (
-                              <>
-                                <Plus className="w-3 h-3" />
-                                Crear tarea
-                              </>
-                            )}
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      </details>
-
-      {/* (6) Clientes sin seguimiento — acordeón colapsado */}
-      <details className="rounded-lg border border-slate-700 bg-slate-800/50 group">
-        <summary className="cursor-pointer p-4 flex items-center justify-between list-none [&::-webkit-details-marker]:hidden gap-3">
-          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-            <AlertCircle className="w-5 h-5 text-amber-300" />
-            Clientes sin seguimiento reciente
-          </h2>
-          <div className="flex items-center gap-3">
-            <span className="text-sm text-slate-400">{loading ? "-" : `${clientsWithoutRecentFollowup.length} clientes`}</span>
-            <ChevronDown className="w-4 h-4 text-slate-400 transition-transform group-open:rotate-180" />
-          </div>
-        </summary>
-        <div className="p-4 pt-0">
-          {loading ? (
-            <div className="h-32 flex items-center justify-center text-slate-400">
-              <Loader2 className="w-6 h-6 animate-spin" />
-            </div>
-          ) : clientsWithoutRecentFollowup.length === 0 ? (
-            <p className="text-sm text-slate-400 py-6 text-center">Todos los clientes activos tienen seguimiento reciente.</p>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-              {clientsWithoutRecentFollowup.slice(0, 12).map((client) => (
-                <Link
-                  key={client.id}
-                  to={`/clientes?openClient=${client.id}`}
-                  className="rounded-lg border border-slate-700 bg-slate-900/60 p-3 hover:border-amber-400/50 transition-colors"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="font-semibold text-white">{client.name || "Sin nombre"}</p>
-                      <p className="text-xs text-slate-400 mt-1">BAN: {client.ban_numbers || "-"}</p>
-                    </div>
-                    <span className="text-xs rounded bg-amber-500/15 text-amber-200 px-2 py-1">
-                      {toNumber(client.priority_score)}
-                    </span>
-                  </div>
-                </Link>
-              ))}
-            </div>
-          )}
-        </div>
-      </details>
-
-      {/* ============================================================
-            BLOQUE FINAL LANZAMIENTO — Panel General Comercial
-            5 sub-bloques que cruzan tareas + ventas + metas + dinero
-         ============================================================ */}
-
-      {/* L1. Metas vs Ventas */}
-      <details open className="rounded-lg border border-slate-700 bg-slate-800/50 group">
-        <summary className="cursor-pointer p-4 flex items-center justify-between list-none [&::-webkit-details-marker]:hidden gap-3">
-          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-            <Target className="w-5 h-5 text-emerald-300" />
-            Metas vs Ventas
-            <span className="text-sm font-normal text-slate-400">
-              ({vendorMetricsRows.filter((m) => m.has_meta).length} con meta)
-            </span>
-          </h2>
-          <ChevronDown className="w-4 h-4 text-slate-400 transition-transform group-open:rotate-180" />
-        </summary>
-        <div className="border-t border-slate-700 p-4">
-          {vendorMetricsRows.length === 0 ? (
-            <p className="text-sm text-slate-400 italic">Sin datos de vendedores en el período.</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-left text-xs uppercase text-slate-400 border-b border-slate-700">
-                    <th className="py-2 pr-3 font-medium">Vendedor</th>
-                    <th className="py-2 px-3 text-right font-medium">Meta</th>
-                    <th className="py-2 px-3 text-right font-medium">Vendido</th>
-                    <th className="py-2 px-3 text-right font-medium">Faltante</th>
-                    <th className="py-2 pl-3 text-right font-medium">% Cumplimiento</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-700/50">
-                  {vendorMetricsRows.map((m) => (
-                    <tr key={m.key}>
-                      <td className="py-2 pr-3 text-slate-100">{m.vendor_name}</td>
-                      {m.has_meta ? (
-                        <>
-                          <td className="py-2 px-3 text-right text-slate-300">{formatUSD(m.total_goal)}</td>
-                          <td className="py-2 px-3 text-right text-emerald-300">{formatUSD(m.total_earned)}</td>
-                          <td className="py-2 px-3 text-right text-amber-300">{formatUSD(m.remaining)}</td>
-                          <td className={`py-2 pl-3 text-right font-semibold ${m.pct_meta >= 70 ? "text-emerald-300" : m.pct_meta >= 40 ? "text-amber-300" : "text-red-300"}`}>
-                            {m.pct_meta.toFixed(1)}%
-                          </td>
-                        </>
-                      ) : (
-                        <td colSpan={4} className="py-2 px-3 text-right text-slate-500 italic">Sin meta</td>
-                      )}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      </details>
-
-      {/* L2. Comisiones estimadas */}
-      <details className="rounded-lg border border-slate-700 bg-slate-800/50 group">
-        <summary className="cursor-pointer p-4 flex items-center justify-between list-none [&::-webkit-details-marker]:hidden gap-3">
-          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-            <TrendingUp className="w-5 h-5 text-emerald-300" />
-            Comisiones estimadas
-            <span className="text-sm font-normal text-slate-400">
-              ({formatUSD(vendorMetricsRows.reduce((s, m) => s + m.commission, 0))} total)
-            </span>
-          </h2>
-          <ChevronDown className="w-4 h-4 text-slate-400 transition-transform group-open:rotate-180" />
-        </summary>
-        <div className="border-t border-slate-700 p-4">
-          {vendorMetricsRows.filter((m) => m.commission > 0).length === 0 ? (
-            <p className="text-sm text-slate-400 italic">Sin comisiones registradas en el período.</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-left text-xs uppercase text-slate-400 border-b border-slate-700">
-                    <th className="py-2 pr-3 font-medium">Vendedor</th>
-                    <th className="py-2 px-3 text-right font-medium">Comisión acumulada</th>
-                    <th className="py-2 px-3 text-center font-medium">Ventas</th>
-                    <th className="py-2 px-3 text-center font-medium">Móvil</th>
-                    <th className="py-2 pl-3 text-center font-medium">Fijo</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-700/50">
-                  {vendorMetricsRows
-                    .filter((m) => m.commission > 0 || m.sales_count > 0)
-                    .sort((a, b) => b.commission - a.commission)
-                    .map((m) => (
-                      <tr key={m.key}>
-                        <td className="py-2 pr-3 text-slate-100">{m.vendor_name}</td>
-                        <td className="py-2 px-3 text-right font-semibold text-emerald-300">
-                          {formatUSD(m.commission)}
-                        </td>
-                        <td className="py-2 px-3 text-center text-slate-300">{m.sales_count}</td>
-                        <td className="py-2 px-3 text-center text-blue-300">{m.products_movil}</td>
-                        <td className="py-2 pl-3 text-center text-purple-300">{m.products_fijo}</td>
-                      </tr>
-                    ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-          <p className="text-xs text-slate-500 mt-2 italic">
-            Móvil/fijo según `line_kind` real de cada subscriber. Convergente NO colapsa.
-          </p>
-        </div>
-      </details>
-
-      {/* L3. Seguimiento vs Resultado */}
-      <details className="rounded-lg border border-slate-700 bg-slate-800/50 group">
-        <summary className="cursor-pointer p-4 flex items-center justify-between list-none [&::-webkit-details-marker]:hidden gap-3">
-          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-            <ClipboardCheck className="w-5 h-5 text-blue-300" />
-            Seguimiento vs Resultado
-          </h2>
-          <ChevronDown className="w-4 h-4 text-slate-400 transition-transform group-open:rotate-180" />
-        </summary>
-        <div className="border-t border-slate-700 p-4">
-          {vendorMetricsRows.length === 0 ? (
-            <p className="text-sm text-slate-400 italic">Sin datos.</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-left text-xs uppercase text-slate-400 border-b border-slate-700">
-                    <th className="py-2 pr-3 font-medium">Vendedor</th>
-                    <th className="py-2 px-3 text-center font-medium">Tareas creadas</th>
-                    <th className="py-2 px-3 text-center font-medium">Completadas</th>
-                    <th className="py-2 px-3 text-center font-medium">Pendientes</th>
-                    <th className="py-2 px-3 text-center font-medium">Ventas</th>
-                    <th className="py-2 pl-3 text-right font-medium">Comisión</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-700/50">
-                  {vendorMetricsRows.map((m) => {
-                    const lowConv = m.tasks_done >= 5 && m.commission === 0;
-                    return (
-                      <tr key={m.key} className={lowConv ? "bg-red-900/10" : ""}>
-                        <td className="py-2 pr-3 text-slate-100">{m.vendor_name}</td>
-                        <td className="py-2 px-3 text-center text-slate-300">{m.tasks_total}</td>
-                        <td className="py-2 px-3 text-center text-emerald-300">{m.tasks_done}</td>
-                        <td className="py-2 px-3 text-center text-amber-300">{m.tasks_pending}</td>
-                        <td className="py-2 px-3 text-center text-slate-300">{m.sales_count}</td>
-                        <td className="py-2 pl-3 text-right font-semibold text-emerald-300">
-                          {m.commission > 0 ? formatUSD(m.commission) : "—"}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      </details>
-
-      {/* L4. Ranking de vendedores */}
-      <details className="rounded-lg border border-slate-700 bg-slate-800/50 group">
-        <summary className="cursor-pointer p-4 flex items-center justify-between list-none [&::-webkit-details-marker]:hidden gap-3">
-          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-            <BarChart3 className="w-5 h-5 text-amber-300" />
-            Ranking de vendedores
-          </h2>
-          <ChevronDown className="w-4 h-4 text-slate-400 transition-transform group-open:rotate-180" />
-        </summary>
-        <div className="border-t border-slate-700 p-4">
-          {rankingRows.length === 0 ? (
-            <p className="text-sm text-slate-400 italic">Sin vendedores con actividad.</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-left text-xs uppercase text-slate-400 border-b border-slate-700">
-                    <th className="py-2 pr-3 font-medium">#</th>
-                    <th className="py-2 px-3 font-medium">Vendedor</th>
-                    <th className="py-2 px-3 text-right font-medium">% Meta</th>
-                    <th className="py-2 px-3 text-right font-medium">Comisión</th>
-                    <th className="py-2 px-3 text-center font-medium">Pendientes</th>
-                    <th className="py-2 pl-3 text-right font-medium">Estado</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-700/50">
-                  {rankingRows.map((m, i) => {
-                    const stateLabel = m.state === "verde" ? "Cumple"
-                      : m.state === "amarillo" ? "En riesgo"
-                      : m.state === "rojo" ? "Atrasado"
-                      : "Sin actividad";
-                    const stateCls = m.state === "verde"
-                      ? "bg-emerald-500/15 text-emerald-200 border-emerald-500/30"
-                      : m.state === "amarillo"
-                      ? "bg-amber-500/15 text-amber-200 border-amber-500/30"
-                      : m.state === "rojo"
-                      ? "bg-red-500/15 text-red-200 border-red-500/30"
-                      : "bg-slate-500/15 text-slate-300 border-slate-500/30";
-                    return (
-                      <tr key={m.key}>
-                        <td className="py-2 pr-3 text-slate-400">{i + 1}</td>
-                        <td className="py-2 px-3 text-slate-100">{m.vendor_name}</td>
-                        <td className="py-2 px-3 text-right text-slate-300">
-                          {m.has_meta ? `${m.pct_meta.toFixed(1)}%` : "—"}
-                        </td>
-                        <td className="py-2 px-3 text-right text-emerald-300">
-                          {m.commission > 0 ? formatUSD(m.commission) : "—"}
-                        </td>
-                        <td className="py-2 px-3 text-center text-amber-300">{m.tasks_pending}</td>
-                        <td className="py-2 pl-3 text-right">
-                          <span className={`inline-block text-xs px-2 py-0.5 rounded border ${stateCls}`}>
-                            {stateLabel}
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      </details>
-
-      {/* L5. Alertas comerciales */}
-      {commercialAlerts.length > 0 && (
-        <section className="rounded-lg border border-red-500/40 bg-red-900/15 p-4">
-          <h2 className="text-sm font-semibold uppercase text-red-200 flex items-center gap-2 mb-3">
-            <ShieldAlert className="w-4 h-4" />
-            Alertas comerciales
-            <span className="text-xs text-red-300/70 normal-case font-normal">
-              ({commercialAlerts.length})
-            </span>
-          </h2>
-          <ul className="space-y-1.5">
-            {commercialAlerts.map((a, i) => (
-              <li
-                key={i}
-                className={`text-sm ${a.tone === "danger" ? "text-red-100" : a.tone === "warning" ? "text-amber-200" : "text-slate-300"}`}
-              >
-                • {a.text}
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
+      </div>
     </div>
   );
 }

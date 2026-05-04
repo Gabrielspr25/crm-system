@@ -461,6 +461,7 @@ export default function Reports() {
           subscribers: [],
           totalEarnings: 0,
           totalCommission: 0,
+          totalPortabilityBonus: 0,
           totalPaid: 0,
           totalMensualidad: 0,
           latestCaseDate: null as string | null,
@@ -488,6 +489,7 @@ export default function Reports() {
       g.subscribers.push(row);
       g.totalEarnings += Number(row.company_earnings || 0);
       g.totalCommission += Number(row.vendor_commission || 0);
+      g.totalPortabilityBonus += Number(row.portability_bonus || 0);
       g.totalPaid += Number(row.paid_amount || 0);
       g.totalMensualidad += Number(row.monthly_value || 0);
       const rowDate = row.report_month || row.activation_date || null;
@@ -1053,7 +1055,7 @@ export default function Reports() {
     }).sort((a, b) => (a.fecha < b.fecha ? 1 : -1));
   }, [informeFilteredRows, editingCompanyEarn, editingPaidAmount, getEffectiveVendorCommission]);
 
-  const tableColSpan = isAdmin ? 14 : 13;
+  const tableColSpan = isAdmin ? 15 : 14;
 
   if (loadingProspects) return <div className="p-10 text-white">Cargando reportes...</div>;
 
@@ -1750,6 +1752,7 @@ export default function Reports() {
                   <th className="px-2 py-2 text-center text-[10px] font-medium text-emerald-400 uppercase bg-emerald-500/5">Empresa($)</th>
                 )}
                 <th className="px-2 py-2 text-center text-[10px] font-medium text-blue-400 uppercase bg-blue-500/5">Comisión($)</th>
+                <th className="px-2 py-2 text-center text-[10px] font-medium text-cyan-400 uppercase bg-cyan-500/5" title="Bono pagado por Claro por portabilidad">Bono Port.</th>
                 <th className="px-2 py-2 text-center text-[10px] font-medium text-amber-400 uppercase">Ventas</th>
               </tr>
             </thead>
@@ -1758,12 +1761,16 @@ export default function Reports() {
                 const key = group.group_key || group.client_id || group.client;
                 const isExpanded = expandedClients.has(key);
                 const prods = group.products;
+                const groupHasBono = Number(group.totalPortabilityBonus || 0) > 0;
+                const groupRowClass = groupHasBono
+                  ? 'bg-cyan-500/[0.06] border-l-4 border-cyan-400/60'
+                  : '';
 
                 return (
                   <Fragment key={key}>
                     {/* Client Row — clickable to expand/edit individual sales */}
                     <tr
-                      className={`hover:bg-gray-800 transition-colors cursor-pointer ${isExpanded ? 'bg-slate-800/40' : ''}`}
+                      className={`hover:bg-gray-800 transition-colors cursor-pointer ${isExpanded ? 'bg-slate-800/40' : groupRowClass}`}
                       onClick={() => toggleClient(key)}
                       title={isExpanded ? 'Click para colapsar' : 'Click para ver y editar las ventas individuales'}
                     >
@@ -1774,7 +1781,17 @@ export default function Reports() {
                             : <ChevronRight className="w-4 h-4 text-slate-500 flex-shrink-0" />
                           }
                           <div>
-                            <div className="text-sm font-bold text-gray-200">{group.client}</div>
+                            <div className="text-sm font-bold text-gray-200 flex items-center gap-1.5 flex-wrap">
+                              <span>{group.client}</span>
+                              {groupHasBono && (
+                                <span
+                                  className="text-[9px] uppercase font-bold tracking-wider bg-cyan-500/20 text-cyan-200 border border-cyan-400/40 rounded-full px-1.5 py-0.5"
+                                  title={`Bono portabilidad total: $${Number(group.totalPortabilityBonus).toFixed(2)}`}
+                                >
+                                  Portabilidad
+                                </span>
+                              )}
+                            </div>
                             {!isExpanded && isAdmin && (
                               <div className="text-[10px] text-emerald-500/70 font-semibold">▸ click para editar</div>
                             )}
@@ -1840,6 +1857,12 @@ export default function Reports() {
                           )}
                         </div>
                       </td>
+                      {/* Bono Portabilidad — total agregado del cliente. No suma a Empresa($). */}
+                      <td className="px-2 py-2 text-center whitespace-nowrap bg-cyan-500/5">
+                        <span className={`text-xs font-mono ${groupHasBono ? 'text-cyan-300 font-bold' : 'text-gray-600'}`}>
+                          {groupHasBono ? `$${Number(group.totalPortabilityBonus).toLocaleString('es-ES', { minimumFractionDigits: 2 })}` : '—'}
+                        </span>
+                      </td>
                       {/* Ventas count */}
                       <td className="px-2 py-2 text-center whitespace-nowrap">
                         <span className={`px-2 py-1 rounded text-xs font-bold ${isExpanded ? 'bg-emerald-500/20 text-emerald-300' : 'bg-orange-500/20 text-orange-300'}`}>
@@ -1872,11 +1895,21 @@ export default function Reports() {
                       const isEditing = editingVendorComm[row.id] !== undefined
                         || editingCompanyEarn[row.id] !== undefined
                         || editingPaidAmount[row.id] !== undefined;
+                      const subBono = Number(row.portability_bonus || 0);
+                      const subHasBono = subBono > 0;
+                      // Color por prioridad: auditada+bono → amber + borde cyan; solo auditada → amber; solo bono → cyan suave.
+                      const subRowClass = row.is_audited && subHasBono
+                        ? 'bg-amber-500/10 border-l-4 border-cyan-400 hover:bg-amber-500/20'
+                        : row.is_audited
+                          ? 'bg-amber-500/10 hover:bg-amber-500/20'
+                          : subHasBono
+                            ? 'bg-cyan-500/[0.07] hover:bg-cyan-500/[0.12]'
+                            : 'bg-slate-800/30 hover:bg-slate-800/50';
 
                       return (
-                        <tr key={row.id} className="bg-slate-800/30 hover:bg-slate-800/50 transition-colors">
+                        <tr key={row.id} className={`${subRowClass} transition-colors`}>
                           <td colSpan={2} className="px-6 py-2">
-                            <div className="flex items-center gap-3">
+                            <div className="flex items-center gap-3 flex-wrap">
                               <span className="text-xs text-slate-400 font-mono">BAN: {row.ban_number || '-'}</span>
                               {(row.phone || '').includes('SIN-TEL') || (row.phone || '').includes('LINEA-') || !row.phone
                                 ? <span className="text-xs text-red-400 font-bold font-mono">⚠ SIN TELÉFONO</span>
@@ -1885,6 +1918,14 @@ export default function Reports() {
                               <span className="text-[10px] font-semibold uppercase rounded px-2 py-0.5 bg-cyan-950/70 text-cyan-300 border border-cyan-700/60">
                                 {formatSaleTypeLabel(row.account_type, row.line_type, row.sale_type, row.line_kind)}
                               </span>
+                              {subHasBono && (
+                                <span
+                                  className="text-[9px] uppercase font-bold tracking-wider bg-cyan-500/20 text-cyan-200 border border-cyan-400/40 rounded-full px-1.5 py-0.5"
+                                  title={`Bono portabilidad: $${subBono.toFixed(2)}`}
+                                >
+                                  Portabilidad
+                                </span>
+                              )}
                             </div>
                           </td>
                           <td colSpan={7}></td>
@@ -1956,6 +1997,12 @@ export default function Reports() {
                             ) : (
                               <span className="text-xs font-bold text-blue-400">${safeMoneyNumber(getEffectiveVendorCommission(row)).toFixed(2)}</span>
                             )}
+                          </td>
+                          {/* Bono Portabilidad — solo lectura, no edita ni suma a Empresa($) */}
+                          <td className="px-2 py-2 text-center bg-cyan-500/10">
+                            <span className={`text-xs font-mono ${subHasBono ? 'text-cyan-300 font-bold' : 'text-slate-600'}`}>
+                              {subHasBono ? `$${subBono.toLocaleString('es-ES', { minimumFractionDigits: 2 })}` : '—'}
+                            </span>
                           </td>
                           {/* Save button */}
                           <td className="px-2 py-2 text-center">

@@ -1,7 +1,13 @@
 import { useState, useEffect } from "react";
-import { Plus, Search, Edit, Trash2, Building, Mail, Key, User, Shield } from "lucide-react";
+import { Plus, Search, Edit, Trash2, Building, Mail, Key, User, Shield, CheckCircle } from "lucide-react";
 import { useApi } from "../hooks/useApi";
 import { authFetch } from "@/react-app/utils/auth";
+
+interface Preset {
+  id: number;
+  name: string;
+  effects: Record<string, string>;
+}
 
 interface Vendor {
   id: number;
@@ -10,6 +16,8 @@ interface Vendor {
   commission_percentage: number;
   salesperson_id?: string | null;
   salesperson_role?: "admin" | "supervisor" | "vendedor" | null;
+  permission_preset_id?: number | null;
+  permission_preset_name?: string | null;
   is_active: number;
   created_at: string;
 }
@@ -27,7 +35,19 @@ export default function Vendors() {
     password: "",
   });
 
+  const [presets, setPresets] = useState<Preset[]>([]);
+  const [selectedPresetId, setSelectedPresetId] = useState<string>("");
+  const [applyingPreset, setApplyingPreset] = useState(false);
+  const [presetApplied, setPresetApplied] = useState(false);
+
   const { data: vendors, loading: vendorsLoading, refetch: refetchVendors } = useApi<Vendor[]>("/api/vendors");
+
+  useEffect(() => {
+    authFetch("/api/permissions/presets")
+      .then((r) => r.json())
+      .then((data) => setPresets(Array.isArray(data) ? data : []))
+      .catch(() => setPresets([]));
+  }, []);
 
   const filteredVendors = (vendors || []).filter(vendor =>
     vendor.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -73,6 +93,8 @@ export default function Vendors() {
       username: "",
       password: "",
     });
+    setSelectedPresetId(vendor.permission_preset_id ? String(vendor.permission_preset_id) : "");
+    setPresetApplied(false);
     setShowModal(true);
   };
 
@@ -97,6 +119,35 @@ export default function Vendors() {
     }
   };
 
+  const handleApplyPreset = async () => {
+    if (!selectedPresetId || !editingVendor?.salesperson_id) {
+      alert("Selecciona un perfil y asegúrate de que el vendedor tenga una cuenta vinculada");
+      return;
+    }
+
+    setApplyingPreset(true);
+    try {
+      const response = await authFetch(
+        `/api/permissions/presets/${selectedPresetId}/apply-salesperson/${editingVendor.salesperson_id}`,
+        { method: "POST" }
+      );
+
+      if (!response.ok) {
+        const err = await response.json();
+        alert(err.error || "Error aplicando perfil");
+        return;
+      }
+
+      setPresetApplied(true);
+      refetchVendors();
+    } catch (error) {
+      console.error("Error applying preset:", error);
+      alert("Error al aplicar el perfil de acceso");
+    } finally {
+      setApplyingPreset(false);
+    }
+  };
+
   const resetForm = () => {
     setFormData({
       name: "",
@@ -106,6 +157,8 @@ export default function Vendors() {
       username: "",
       password: "",
     });
+    setSelectedPresetId("");
+    setPresetApplied(false);
   };
 
   useEffect(() => {
@@ -183,12 +236,20 @@ export default function Vendors() {
                         % Comisión: {vendor.commission_percentage || 50}%
                       </span>
                     </div>
-                    <div className="mt-2 inline-flex items-center px-2 py-1 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
+                    <div className="mt-1 inline-flex items-center px-2 py-1 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
                       <Shield className="w-3 h-3 mr-1 text-blue-700 dark:text-blue-300" />
                       <span className="text-xs text-blue-700 dark:text-blue-300 font-medium">
                         Perfil: {vendor.salesperson_role || "vendedor"}
                       </span>
                     </div>
+                    {vendor.permission_preset_name && (
+                      <div className="mt-1 inline-flex items-center px-2 py-1 bg-purple-50 dark:bg-purple-900/20 rounded-lg">
+                        <Key className="w-3 h-3 mr-1 text-purple-700 dark:text-purple-300" />
+                        <span className="text-xs text-purple-700 dark:text-purple-300 font-medium">
+                          Acceso: {vendor.permission_preset_name}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div className="flex space-x-1">
@@ -227,7 +288,7 @@ export default function Vendors() {
 
       {showModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl p-6 w-full max-w-md mx-4">
+          <div className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl p-6 w-full max-w-md mx-4 max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">
               {editingVendor ? "Editar Vendedor" : "Nuevo Vendedor"}
             </h2>
@@ -331,6 +392,63 @@ export default function Vendors() {
                     </p>
                   </div>
                 </>
+              )}
+
+              {/* Perfil de acceso — solo al editar un vendedor con cuenta */}
+              {editingVendor && (
+                <div className="border-t border-gray-200 dark:border-slate-600 pt-4 mt-2">
+                  <div className="flex items-center mb-2">
+                    <Shield className="w-4 h-4 mr-2 text-purple-600 dark:text-purple-400" />
+                    <span className="text-sm font-semibold text-gray-700 dark:text-gray-300">Perfil de acceso</span>
+                  </div>
+
+                  {!editingVendor.salesperson_id ? (
+                    <p className="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 px-3 py-2 rounded-lg">
+                      Este vendedor no tiene una cuenta de login vinculada. Crea la cuenta primero para asignar un perfil de acceso.
+                    </p>
+                  ) : presets.length === 0 ? (
+                    <p className="text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-slate-700 px-3 py-2 rounded-lg">
+                      No hay perfiles de acceso configurados. Créalos desde la sección Usuarios y Permisos.
+                    </p>
+                  ) : (
+                    <>
+                      {editingVendor.permission_preset_name && !presetApplied && (
+                        <p className="text-xs text-purple-700 dark:text-purple-300 mb-2">
+                          Perfil actual: <strong>{editingVendor.permission_preset_name}</strong>
+                        </p>
+                      )}
+                      {presetApplied && (
+                        <div className="flex items-center text-xs text-green-700 dark:text-green-400 mb-2">
+                          <CheckCircle className="w-3 h-3 mr-1" />
+                          Perfil aplicado correctamente
+                        </div>
+                      )}
+                      <div className="flex gap-2">
+                        <select
+                          value={selectedPresetId}
+                          onChange={(e) => { setSelectedPresetId(e.target.value); setPresetApplied(false); }}
+                          className="flex-1 px-3 py-2 text-sm border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white"
+                        >
+                          <option value="">— Seleccionar perfil —</option>
+                          {presets.map((p) => (
+                            <option key={p.id} value={String(p.id)}>{p.name}</option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={handleApplyPreset}
+                          disabled={!selectedPresetId || applyingPreset}
+                          className="px-4 py-2 text-sm bg-purple-600 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors whitespace-nowrap"
+                        >
+                          {applyingPreset ? "Aplicando..." : "Aplicar"}
+                        </button>
+                      </div>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                        Aplica el perfil seleccionado sin cerrar el formulario
+                      </p>
+                    </>
+                  )}
+                </div>
               )}
 
               <div className="flex justify-end space-x-3 mt-6">

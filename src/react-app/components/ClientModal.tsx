@@ -195,9 +195,11 @@ export default function ClientModal({
     // VALIDACIÓN: Verificar duplicados por nombre (solo al crear nuevo)
     if (!client && formData.name.trim()) {
       try {
-        const checkDuplicate = await authFetch(
-          `/api/clients/check-duplicate?name=${encodeURIComponent(formData.name.trim())}`
-        );
+        const duplicateParams = new URLSearchParams({
+          name: formData.name.trim(),
+          phone: formData.phone?.trim() || '',
+        });
+        const checkDuplicate = await authFetch(`/api/clients/check-duplicate?${duplicateParams.toString()}`);
         const dupData = await checkDuplicate.json();
 
         if (dupData.exists) {

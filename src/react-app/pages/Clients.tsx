@@ -406,22 +406,11 @@ export default function Clients() {
       setSearchLoading(true);
       try {
         if (cancelled) return;
-        const tabNames: Array<'active' | 'cancelled' | 'following' | 'completed' | 'incomplete'> = [
-          'active',
-          'cancelled',
-          'following',
-          'completed',
-          'incomplete'
-        ];
-        const responses = await Promise.all(
-          tabNames.map(async (tab) => {
-            const res = await authFetch(`/api/clients?tab=${tab}`);
-            const data = await res.json().catch(() => ({ clients: [] }));
-            return Array.isArray(data?.clients) ? data.clients : [];
-          })
-        );
+        const res = await authFetch(`/api/clients/search?q=${encodeURIComponent(searchTerm.trim())}`);
+        const data = await res.json().catch(() => []);
+        const results = Array.isArray(data) ? data : [];
         const merged = new Map<string | number, Client>();
-        responses.flat().forEach((client) => {
+        results.forEach((client) => {
           const previous = merged.get(client.id);
           merged.set(client.id, previous ? { ...previous, ...client } : client);
         });
@@ -520,7 +509,6 @@ export default function Clients() {
   }, [refetchClients]);
 
   useEffect(() => {
-    if (clientsLoading) return;
     const params = new URLSearchParams(location.search);
     const openClient = String(params.get('openClient') || '').trim();
     const tab = String(params.get('tab') || '').trim();
@@ -545,20 +533,29 @@ export default function Clients() {
     if (!pendingClientId) return;
 
     const parsedClientId = Number(pendingClientId);
-    const resolvedClientId = Number.isFinite(parsedClientId)
-      ? parsedClientId
-      : clients.find((client) => String(client.id) === pendingClientId)?.id;
 
+    // Para IDs numéricos, abrir directamente sin esperar que cargue la lista
+    if (Number.isFinite(parsedClientId) && parsedClientId > 0) {
+      const initialTab = pendingTab === 'tareas' || pendingTab === 'pasos' ? 'tareas' : 'bans';
+      void (async () => {
+        await handleViewClientDetail(parsedClientId, initialTab);
+        try { window.sessionStorage.removeItem(OPEN_CLIENT_INTENT_KEY); } catch { /* */ }
+        if (window.location.search) {
+          window.history.replaceState(window.history.state, document.title, window.location.pathname);
+        }
+      })();
+      return;
+    }
+
+    // Para IDs no numéricos (UUID), esperar que cargue la lista
+    if (clientsLoading) return;
+    const resolvedClientId = clients.find((client) => String(client.id) === pendingClientId)?.id;
     if (!resolvedClientId) return;
 
     const initialTab = pendingTab === 'tareas' || pendingTab === 'pasos' ? 'tareas' : 'bans';
     void (async () => {
       await handleViewClientDetail(resolvedClientId, initialTab);
-      try {
-        window.sessionStorage.removeItem(OPEN_CLIENT_INTENT_KEY);
-      } catch {
-        // Ignore storage cleanup failures.
-      }
+      try { window.sessionStorage.removeItem(OPEN_CLIENT_INTENT_KEY); } catch { /* */ }
       if (window.location.search) {
         window.history.replaceState(window.history.state, document.title, window.location.pathname);
       }
@@ -1035,11 +1032,19 @@ export default function Clients() {
   const cancelledClients = filteredClients.filter(item => item.hasCancelledBans);
 
   // Contadores para tabs (usar stats del backend si están disponibles, sino calcular localmente)
-  const activeClientsCount = clientStats?.active_count != null ? Number(clientStats.active_count) : clientSummaries.filter(item => !item.hasCancelledBans && !item.isIncomplete).length;
-  const cancelledClientsCount = clientStats?.cancelled_count != null ? Number(clientStats.cancelled_count) : clientSummaries.filter(item => item.hasCancelledBans).length;
-  const followingClientsCount = clientStats?.following_count != null ? Number(clientStats.following_count) : clientSummaries.filter(item => item.isBeingFollowed && !item.wasCompleted && !item.hasCancelledBans && !item.isIncomplete).length;
-  const completedClientsCount = clientStats?.completed_count != null ? Number(clientStats.completed_count) : clientSummaries.filter(item => item.wasCompleted && !item.hasCancelledBans && !item.isIncomplete).length;
-  const incompleteClientsCount = clientStats?.incomplete_count != null ? Number(clientStats.incomplete_count) : clientSummaries.filter(item => item.isIncomplete).length;
+  const searchModeTabCounts = {
+    active: filteredClients.filter(item => !item.isBeingFollowed && !item.wasCompleted && !item.hasCancelledBans && !item.isIncomplete).length,
+    cancelled: filteredClients.filter(item => item.hasCancelledBans).length,
+    following: filteredClients.filter(item => item.isBeingFollowed && !item.wasCompleted && !item.hasCancelledBans && !item.isIncomplete).length,
+    completed: filteredClients.filter(item => item.wasCompleted && !item.hasCancelledBans && !item.isIncomplete).length,
+    incomplete: filteredClients.filter(item => item.isIncomplete).length,
+  };
+
+  const activeClientsCount = isGlobalSearchMode ? searchModeTabCounts.active : (clientStats?.active_count != null ? Number(clientStats.active_count) : clientSummaries.filter(item => !item.isBeingFollowed && !item.wasCompleted && !item.hasCancelledBans && !item.isIncomplete).length);
+  const cancelledClientsCount = isGlobalSearchMode ? searchModeTabCounts.cancelled : (clientStats?.cancelled_count != null ? Number(clientStats.cancelled_count) : clientSummaries.filter(item => item.hasCancelledBans).length);
+  const followingClientsCount = isGlobalSearchMode ? searchModeTabCounts.following : (clientStats?.following_count != null ? Number(clientStats.following_count) : clientSummaries.filter(item => item.isBeingFollowed && !item.wasCompleted && !item.hasCancelledBans && !item.isIncomplete).length);
+  const completedClientsCount = isGlobalSearchMode ? searchModeTabCounts.completed : (clientStats?.completed_count != null ? Number(clientStats.completed_count) : clientSummaries.filter(item => item.wasCompleted && !item.hasCancelledBans && !item.isIncomplete).length);
+  const incompleteClientsCount = isGlobalSearchMode ? searchModeTabCounts.incomplete : (clientStats?.incomplete_count != null ? Number(clientStats.incomplete_count) : clientSummaries.filter(item => item.isIncomplete).length);
 
   // Total de todos los clientes (para verificación)
   const totalAllClients = clientSummaries.length;
@@ -1746,7 +1751,7 @@ export default function Clients() {
       }
 
       notify('success', `Suscriptor ${isEditing ? 'actualizado' : 'creado'} correctamente.`);
-      setShowSubscriberModal(false);
+      // setShowSubscriberModal(false);
       setSelectedBanId(null);
       setEditingSubscriber(null);
 

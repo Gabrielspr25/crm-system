@@ -69,11 +69,13 @@ export const PERMISSION_CATALOG = [
   { key: "nav.reports",           module: "navigation", submodule: null, parent: null, label: "Comisiones",             kind: "nav",    testKey: "COMISIONES",   defaultRoles: ["admin", "supervisor", "vendedor"] },
   { key: "nav.cognos",            module: "navigation", submodule: null, parent: null, label: "Cognos",                 kind: "nav",    testKey: "COGNOS",       defaultRoles: ["admin", "supervisor"] },
   { key: "nav.audit",             module: "navigation", submodule: null, parent: null, label: "Historial",              kind: "nav",    testKey: "HISTORIAL",    defaultRoles: ["admin"] },
-  { key: "nav.importer",          module: "navigation", submodule: null, parent: null, label: "Importador",             kind: "nav",    testKey: "IMPORTADOR",   defaultRoles: ["admin", "supervisor"] },
-  { key: "nav.tango",             module: "navigation", submodule: null, parent: null, label: "Tango",                  kind: "nav",    testKey: "TANGO",        defaultRoles: ["admin"] },
-  { key: "nav.profile",           module: "navigation", submodule: null, parent: null, label: "Perfil",                 kind: "nav",    testKey: "PERFIL",       defaultRoles: ["admin", "supervisor", "vendedor"] },
-  { key: "nav.control_security",  module: "navigation", submodule: null, parent: null, label: "Control y Seguridad",    kind: "nav",    testKey: "SEGURIDAD",    defaultRoles: ["admin", "supervisor"] },
-  { key: "nav.users_permissions", module: "navigation", submodule: null, parent: null, label: "Usuarios y Permisos",    kind: "nav",    testKey: "USUARIOS",     defaultRoles: ["admin", "supervisor"] },
+  { key: "nav.importer",          module: "navigation", submodule: null, parent: null, label: "Importador",             kind: "nav",    testKey: "IMPORTADOR",      defaultRoles: ["admin", "supervisor"] },
+  { key: "nav.import_new",        module: "navigation", submodule: null, parent: null, label: "Import New (Mapeo)",     kind: "nav",    testKey: "IMPORTADOR",      defaultRoles: ["admin", "supervisor"] },
+  { key: "nav.tango",             module: "navigation", submodule: null, parent: null, label: "Tango",                  kind: "nav",    testKey: "TANGO",           defaultRoles: ["admin"] },
+  { key: "nav.profile",           module: "navigation", submodule: null, parent: null, label: "Perfil",                 kind: "nav",    testKey: "PERFIL",          defaultRoles: ["admin", "supervisor", "vendedor"] },
+  { key: "nav.control_security",  module: "navigation", submodule: null, parent: null, label: "Control y Seguridad",    kind: "nav",    testKey: "SEGURIDAD",       defaultRoles: ["admin", "supervisor"] },
+  { key: "nav.users_permissions", module: "navigation", submodule: null, parent: null, label: "Usuarios y Permisos",    kind: "nav",    testKey: "USUARIOS",        defaultRoles: ["admin", "supervisor"] },
+  { key: "nav.rules_processes",   module: "navigation", submodule: null, parent: null, label: "Reglas y Procesos",      kind: "nav",    testKey: "REGLAS_PROCESOS", defaultRoles: ["admin", "supervisor"] },
 
   // ── TAREAS ─────────────────────────────────────────────────────────────────
   { key: "tasks.personal.view",        module: "tasks", submodule: "personal", parent: "tasks.personal", label: "Ver tareas personales",          kind: "view",   testKey: "TAREAS", defaultRoles: ["admin", "supervisor", "vendedor"] },
@@ -189,10 +191,16 @@ export const PERMISSION_CATALOG = [
   { key: "cognos.sync",   module: "cognos", submodule: null, parent: null, label: "Sincronizar cognos",  kind: "action", testKey: "COGNOS", defaultRoles: ["admin", "supervisor"] },
   { key: "cognos.update", module: "cognos", submodule: null, parent: null, label: "Actualizar cognos",   kind: "action", testKey: "COGNOS", defaultRoles: ["admin", "supervisor"] },
 
-  // ── IMPORTADOR ─────────────────────────────────────────────────────────────
-  { key: "importer.view", module: "importer", submodule: null, parent: null, label: "Ver importador",      kind: "view",   testKey: "IMPORTADOR", defaultRoles: ["admin", "supervisor"] },
-  { key: "importer.run",  module: "importer", submodule: null, parent: null, label: "Usar importador",     kind: "action", testKey: "IMPORTADOR", defaultRoles: ["admin", "supervisor"] },
-  { key: "importer.save", module: "importer", submodule: null, parent: null, label: "Guardar importacion", kind: "action", testKey: "IMPORTADOR", defaultRoles: ["admin", "supervisor"] },
+  // ── IMPORTADOR (clásico) ───────────────────────────────────────────────────
+  { key: "importer.view", module: "importer", submodule: null, parent: null, label: "Ver importador",               kind: "view",   testKey: "IMPORTADOR", defaultRoles: ["admin", "supervisor"] },
+  { key: "importer.run",  module: "importer", submodule: null, parent: null, label: "Usar importador",              kind: "action", testKey: "IMPORTADOR", defaultRoles: ["admin", "supervisor"] },
+  { key: "importer.save", module: "importer", submodule: null, parent: null, label: "Guardar importacion",          kind: "action", testKey: "IMPORTADOR", defaultRoles: ["admin", "supervisor"] },
+
+  // ── IMPORT NEW (mapeo dinámico de columnas) ────────────────────────────────
+  { key: "import_new.view",     module: "import_new", submodule: null, parent: null, label: "Ver Import New",                kind: "view",   testKey: "IMPORTADOR", defaultRoles: ["admin", "supervisor"] },
+  { key: "import_new.map",      module: "import_new", submodule: null, parent: null, label: "Mapear columnas",               kind: "action", testKey: "IMPORTADOR", defaultRoles: ["admin", "supervisor"] },
+  { key: "import_new.simulate", module: "import_new", submodule: null, parent: null, label: "Simular importacion",           kind: "action", testKey: "IMPORTADOR", defaultRoles: ["admin", "supervisor"] },
+  { key: "import_new.save",     module: "import_new", submodule: null, parent: null, label: "Guardar importacion (mapeo)",   kind: "action", testKey: "IMPORTADOR", defaultRoles: ["admin", "supervisor"] },
 
   // ── TANGO ──────────────────────────────────────────────────────────────────
   { key: "tango.view", module: "tango", submodule: null, parent: null, label: "Ver tango",         kind: "view",   testKey: "TANGO", defaultRoles: ["admin"] },

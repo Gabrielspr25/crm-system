@@ -88,18 +88,18 @@ export const updateUser = async (req, res) => {
 
     try {
         // Verificar si existe
-        const existing = await query('SELECT id FROM users WHERE id = $1', [id]);
+        const existing = await query('SELECT id FROM users_auth WHERE id = $1', [id]);
         if (existing.length === 0) {
             return notFound(res, 'Usuario');
         }
 
-        let queryStr = 'UPDATE users SET updated_at = NOW()';
+        let queryStr = 'UPDATE users_auth SET updated_at = NOW()';
         const params = [];
         let paramCount = 1;
 
         if (password) {
             const hash = await bcrypt.hash(password, 10);
-            queryStr += `, password_hash = $${paramCount}`;
+            queryStr += `, password = $${paramCount}`;
             params.push(hash);
             paramCount++;
         }
@@ -130,7 +130,7 @@ export const deleteUser = async (req, res) => {
     const { id } = req.params;
 
     try {
-        const result = await query('DELETE FROM users WHERE id = $1 RETURNING id', [id]);
+        const result = await query('DELETE FROM users_auth WHERE id = $1 RETURNING id', [id]);
         if (result.length === 0) {
             return notFound(res, 'Usuario');
         }

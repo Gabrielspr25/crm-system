@@ -91,10 +91,11 @@ export default function SystemTestAgent() {
       'Probando seguimientos...',
       'Verificando integridad de datos...',
       'Probando módulo de tareas...',
-      'Verificando vendedores...',
+      'Verificando vendedores y presets de acceso...',
       'Verificando productos y categorías...',
-      'Comprobando metas y correos...',
+      'Comprobando metas, permisos y correos...',
       'Verificando usuarios y seguridad...',
+      'Probando sync de deals desde Pasos...',
       'Comprobando Tango y Cognos...',
       'Limpiando datos de prueba...',
     ];
@@ -338,7 +339,7 @@ export default function SystemTestAgent() {
             {/* Footer */}
             <div className="p-4 border-t border-gray-800 bg-gray-800/30 flex justify-between items-center">
               <p className="text-xs text-gray-500">
-                Este agente prueba: Clientes, BANs, Suscriptores, Seguimientos, Comisiones, Reportes, Campaas, Referidos, Tango
+                Este agente prueba: Clientes, BANs, Suscriptores, Seguimientos, Tareas, Vendedores, Productos, Categorías, Metas, Correos, Cognos, Comisiones, Usuarios, Seguridad, Importador, Referidos, Tango
               </p>
               <button 
                 onClick={runSystemTest}

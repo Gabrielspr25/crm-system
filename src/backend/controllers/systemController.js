@@ -308,7 +308,7 @@ export async function runSystemDiagnostics(req, res) {
       )
       AND v.name NOT IN (
         SELECT s.name FROM salespeople s
-        JOIN users_auth u ON s.id = u.salesperson_id
+        JOIN users_auth u ON s.id::text = u.salesperson_id::text
       )
       ORDER BY v.created_at DESC
     `);
@@ -800,7 +800,7 @@ export async function runSystemDiagnostics(req, res) {
     const passwordCheck = await pool.query(`
       SELECT 
         COUNT(*) as total,
-        COUNT(CASE WHEN password_hash LIKE '$2a$%' OR password_hash LIKE '$2b$%' THEN 1 END) as bcrypt_hashed
+        COUNT(CASE WHEN password LIKE '$2%' THEN 1 END) as bcrypt_hashed
       FROM users_auth
     `);
     
@@ -828,7 +828,7 @@ export async function runSystemDiagnostics(req, res) {
     const weakPasswords = await pool.query(`
       SELECT COUNT(*) as count
       FROM users_auth
-      WHERE LENGTH(password_hash) < 60
+      WHERE LENGTH(password) < 60
     `);
     
     const count = parseInt(weakPasswords.rows[0].count);

@@ -19,7 +19,13 @@ export const getFollowUpProspects = async (req, res) => {
         let prospects;
         try {
             prospects = await query(
-                `SELECT fp.*, c.name as client_name, v.name as vendor_name, ps.name as step_name, NULL::text as step_color, pp.name as priority_name, pp.color_hex as priority_color
+                `SELECT fp.*, c.name as client_name, v.name as vendor_name, ps.name as step_name, NULL::text as step_color, pp.name as priority_name, pp.color_hex as priority_color,
+                  (SELECT t.step_name FROM crm_deals d JOIN crm_deal_tasks t ON t.deal_id = d.id
+                   WHERE d.client_id::text = fp.client_id::text AND t.status = 'in_progress'
+                   ORDER BY d.created_at DESC, t.step_order ASC LIMIT 1) AS current_step_name,
+                  (SELECT t.due_date FROM crm_deals d JOIN crm_deal_tasks t ON t.deal_id = d.id
+                   WHERE d.client_id::text = fp.client_id::text AND t.status = 'in_progress'
+                   ORDER BY d.created_at DESC, t.step_order ASC LIMIT 1) AS current_due_date
            FROM follow_up_prospects fp
            LEFT JOIN clients c ON fp.client_id = c.id
            LEFT JOIN vendors v ON fp.vendor_id = v.id
@@ -35,7 +41,13 @@ export const getFollowUpProspects = async (req, res) => {
             prospects = await query(
                 `SELECT fp.*, c.name as client_name, v.name as vendor_name,
                         NULL::text as step_name, NULL::text as step_color,
-                        NULL::text as priority_name, NULL::text as priority_color
+                        NULL::text as priority_name, NULL::text as priority_color,
+                        (SELECT t.step_name FROM crm_deals d JOIN crm_deal_tasks t ON t.deal_id = d.id
+                         WHERE d.client_id::text = fp.client_id::text AND t.status = 'in_progress'
+                         ORDER BY d.created_at DESC, t.step_order ASC LIMIT 1) AS current_step_name,
+                        (SELECT t.due_date FROM crm_deals d JOIN crm_deal_tasks t ON t.deal_id = d.id
+                         WHERE d.client_id::text = fp.client_id::text AND t.status = 'in_progress'
+                         ORDER BY d.created_at DESC, t.step_order ASC LIMIT 1) AS current_due_date
                    FROM follow_up_prospects fp
                    LEFT JOIN clients c ON fp.client_id = c.id
                    LEFT JOIN vendors v ON fp.vendor_id = v.id

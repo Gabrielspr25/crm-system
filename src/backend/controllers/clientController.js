@@ -4,6 +4,136 @@ import { serverError, badRequest, notFound } from '../middlewares/errorHandler.j
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const isValidUuid = (value) => typeof value === 'string' && UUID_REGEX.test(value);
+const normalizeDigits = (value) => String(value || '').replace(/\D/g, '');
+const normalizeClientName = (value) => String(value || '').trim().replace(/\s+/g, ' ');
+const normalizeClientNameKey = (value) => normalizeClientName(value).toUpperCase().replace(/[^A-Z0-9]/g, '');
+const VALID_CLIENT_NAME_SQL = `(c.name IS NOT NULL AND c.name <> '' AND c.name <> 'NULL')`;
+const ACTIVE_FOLLOW_UP_EXISTS_SQL = `
+    EXISTS (
+        SELECT 1
+        FROM follow_up_prospects f
+        WHERE f.client_id = c.id
+          AND f.completed_date IS NULL
+          AND COALESCE(f.is_active::text, 'true') IN ('true', '1', 't')
+    )
+`;
+const ACTIVE_CLIENT_RELATION_SQL = `
+    EXISTS (
+        SELECT 1
+        FROM bans b
+        WHERE b.client_id = c.id
+          AND COALESCE(LOWER(b.status::text), '') IN ('a', 'activo', 'active')
+          AND (
+            NOT EXISTS (
+                SELECT 1
+                FROM subscribers s_any
+                WHERE s_any.ban_id = b.id
+            )
+            OR EXISTS (
+                SELECT 1
+                FROM subscribers s
+                WHERE s.ban_id = b.id
+                  AND COALESCE(LOWER(s.status::text), 'activo') NOT IN ('cancelado', 'cancelled', 'c', 'inactivo', 'inactive', 'no_renueva_ahora')
+            )
+          )
+    )
+`;
+const ACTIVE_CLIENT_SQL = `
+    ${VALID_CLIENT_NAME_SQL}
+    AND ${ACTIVE_CLIENT_RELATION_SQL}
+    AND NOT (${ACTIVE_FOLLOW_UP_EXISTS_SQL})
+`;
+const CANCELLED_CLIENT_SQL = `
+    ${VALID_CLIENT_NAME_SQL}
+    AND EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id)
+    AND NOT (${ACTIVE_CLIENT_RELATION_SQL})
+`;
+const SCORING_EXPIRING_DAYS = 90;
+
+function isExpiringSoon(contractEndDate) {
+    if (!contractEndDate) return false;
+    const date = new Date(contractEndDate);
+    if (Number.isNaN(date.getTime())) return false;
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const horizon = new Date(today);
+    horizon.setDate(horizon.getDate() + SCORING_EXPIRING_DAYS);
+
+    return date <= horizon;
+}
+
+function scoreClient(client) {
+    let score = 0;
+
+    if (Number(client.active_ban_count || 0) > 0) score += 20;
+    if (!client.has_convergence) score += 30;
+    if (client.primary_contract_end_date && isExpiringSoon(client.primary_contract_end_date)) score += 40;
+    if (!client.recent_followup) score += 20;
+
+    return score;
+}
+
+function enrichClientScoring(client) {
+    const enriched = {
+        ...client,
+        active_ban_count: Number(client.active_ban_count || 0),
+        has_convergence: Boolean(client.has_convergence),
+        recent_followup: Boolean(client.recent_followup),
+        primary_contract_end_date: client.primary_contract_end_date || null
+    };
+
+    return {
+        ...enriched,
+        priority_score: scoreClient(enriched)
+    };
+}
+
+const findClientDuplicate = async ({ name, phone, excludeId = null }) => {
+    const nameKey = normalizeClientNameKey(name);
+    const phoneDigits = normalizeDigits(phone);
+    const params = [];
+    const filters = [];
+
+    if (nameKey) {
+        params.push(nameKey);
+        filters.push(`(
+            regexp_replace(upper(trim(coalesce(name, ''))), '[^A-Z0-9]+', '', 'g') = $${params.length}
+            OR regexp_replace(upper(trim(coalesce(business_name, ''))), '[^A-Z0-9]+', '', 'g') = $${params.length}
+        )`);
+    }
+
+    if (phoneDigits) {
+        params.push(phoneDigits);
+        filters.push(`(
+            regexp_replace(coalesce(phone, ''), '\\D', '', 'g') = $${params.length}
+            OR regexp_replace(coalesce(additional_phone, ''), '\\D', '', 'g') = $${params.length}
+            OR regexp_replace(coalesce(cellular, ''), '\\D', '', 'g') = $${params.length}
+        )`);
+    }
+
+    if (filters.length === 0) return null;
+
+    if (excludeId !== null && excludeId !== undefined) {
+        params.push(excludeId);
+    }
+
+    const excludeClause = excludeId !== null && excludeId !== undefined
+        ? `AND id <> $${params.length}`
+        : '';
+
+    const rows = await query(
+        `SELECT id, name, phone, additional_phone, cellular
+         FROM clients
+         WHERE (${filters.join(' OR ')})
+         ${excludeClause}
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        params
+    );
+
+    return rows[0] || null;
+};
 
 const resolveSalespersonIdFromVendor = async (vendorId) => {
     if (vendorId === null || vendorId === undefined || vendorId === '') return null;
@@ -96,7 +226,8 @@ export const searchClients = async (req, res) => {
                     (SELECT b.account_type FROM bans b WHERE b.client_id = c.id AND (b.status = 'A' OR LOWER(b.status) = 'activo') LIMIT 1) as primary_service_type,
                     (SELECT string_agg(DISTINCT b.account_type, ', ') FROM bans b WHERE b.client_id = c.id AND b.account_type IS NOT NULL) as all_service_types,
                     sp.name as vendor_name,
-                    (SELECT MAX(GREATEST(COALESCE(s2.updated_at, s2.created_at), COALESCE(b2.updated_at, b2.created_at))) FROM subscribers s2 JOIN bans b2 ON s2.ban_id = b2.id WHERE b2.client_id = c.id) as last_activity
+                    (SELECT MAX(GREATEST(COALESCE(s2.updated_at, s2.created_at), COALESCE(b2.updated_at, b2.created_at))) FROM subscribers s2 JOIN bans b2 ON s2.ban_id = b2.id WHERE b2.client_id = c.id) as last_activity,
+                    (SELECT MIN(s.remaining_payments) FROM subscribers s JOIN bans b ON s.ban_id = b.id WHERE b.client_id = c.id AND COALESCE(LOWER(s.status), 'activo') NOT IN ('cancelado', 'cancelled', 'no_renueva_ahora')) as min_remaining_payments
              FROM clients c
              LEFT JOIN salespeople sp ON sp.id = c.salesperson_id
              WHERE (
@@ -118,7 +249,7 @@ export const searchClients = async (req, res) => {
                       AND CAST(s.phone AS text) ILIKE $1
                )
              )
-             ORDER BY c.created_at DESC
+             ORDER BY min_remaining_payments ASC NULLS LAST, c.created_at DESC
              LIMIT 100`,
             params
         );
@@ -136,33 +267,13 @@ export const getClients = async (req, res) => {
 
         // FILTROS POR TAB - CON FILTRO DE STATUS CORREGIDO
         if (tab === 'cancelled') {
-            // CANCELADOS: Clientes CON TODOS LOS BANs cancelados (ninguno activo)
-            conditions.push(`EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id)`);
-            conditions.push(`NOT EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id AND (b.status = 'A' OR LOWER(b.status) = 'activo'))`);
-            conditions.push(`(c.name IS NOT NULL AND c.name != '' AND c.name != 'NULL')`);
+            conditions.push(`(${CANCELLED_CLIENT_SQL})`);
         } else if (tab === 'active' || !tab) {
             // ACTIVOS: Clientes CON AL MENOS UN BAN ACTIVO O sin BANs (reciÃ©n creados)
             // EXCLUIR clientes que estÃ¡n en seguimiento activo
-            conditions.push(`(
-                EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id AND (b.status = 'A' OR LOWER(b.status) = 'activo'))
-                OR NOT EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id)
-            )`);
-            conditions.push(`(c.name IS NOT NULL AND c.name != '' AND c.name != 'NULL')`);
-            conditions.push(`NOT EXISTS (
-                SELECT 1
-                FROM follow_up_prospects f
-                WHERE f.client_id = c.id
-                  AND f.completed_date IS NULL
-                  AND COALESCE(f.is_active::text, 'true') IN ('true', '1', 't')
-            )`);
+            conditions.push(`(${ACTIVE_CLIENT_SQL})`);
         } else if (tab === 'following') {
-            conditions.push(`EXISTS (
-                SELECT 1
-                FROM follow_up_prospects f
-                WHERE f.client_id = c.id
-                  AND f.completed_date IS NULL
-                  AND COALESCE(f.is_active::text, 'true') IN ('true', '1', 't')
-            )`);
+            conditions.push(`${ACTIVE_FOLLOW_UP_EXISTS_SQL}`);
             conditions.push(`EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id)`);
         } else if (tab === 'completed') {
             conditions.push(`EXISTS (SELECT 1 FROM follow_up_prospects f WHERE f.client_id = c.id AND f.completed_date IS NOT NULL)`);
@@ -174,10 +285,10 @@ export const getClients = async (req, res) => {
 
         const clients = await query(
             `SELECT c.*,
-            (SELECT COUNT(*) FROM bans b WHERE b.client_id = c.id AND (b.status = 'A' OR LOWER(b.status) = 'activo')) as active_ban_count,
-            (SELECT COUNT(*) FROM bans b WHERE b.client_id = c.id AND (b.status = 'C' OR LOWER(b.status) = 'inactivo')) as cancelled_ban_count,
+            (SELECT COUNT(*) FROM bans b WHERE b.client_id = c.id AND COALESCE(LOWER(b.status::text), '') IN ('a', 'activo', 'active')) as active_ban_count,
+            (SELECT COUNT(*) FROM bans b WHERE b.client_id = c.id AND COALESCE(LOWER(b.status::text), '') IN ('c', 'cancelado', 'cancelled', 'inactivo', 'inactive')) as cancelled_ban_count,
             (SELECT COUNT(*) FROM bans b WHERE b.client_id = c.id) as ban_count,
-            (SELECT COUNT(*) FROM subscribers s JOIN bans b ON s.ban_id = b.id WHERE b.client_id = c.id AND COALESCE(LOWER(s.status), 'activo') NOT IN ('cancelado', 'cancelled', 'no_renueva_ahora')) as active_subscriber_count,
+            (SELECT COUNT(*) FROM subscribers s JOIN bans b ON s.ban_id = b.id WHERE b.client_id = c.id AND COALESCE(LOWER(s.status::text), 'activo') NOT IN ('cancelado', 'cancelled', 'c', 'inactivo', 'inactive', 'no_renueva_ahora')) as active_subscriber_count,
             (SELECT COUNT(*) FROM subscribers s JOIN bans b ON s.ban_id = b.id WHERE b.client_id = c.id) as subscriber_count,
             (SELECT string_agg(CAST(s.phone AS text), ', ') FROM subscribers s JOIN bans b ON s.ban_id = b.id WHERE b.client_id = c.id) as subscriber_phones,
             (
@@ -191,41 +302,73 @@ export const getClients = async (req, res) => {
             ) as subscribers_detail,
             (SELECT string_agg(CAST(b.ban_number AS text), ', ') FROM bans b WHERE b.client_id = c.id) as ban_numbers,
             (SELECT COUNT(*) > 0 FROM bans b WHERE b.client_id = c.id) as has_bans,
-            (SELECT COUNT(*) > 0 FROM bans b WHERE b.client_id = c.id AND b.status = 'C') as has_cancelled_bans,
-            (SELECT s.phone FROM subscribers s JOIN bans b ON s.ban_id = b.id WHERE b.client_id = c.id AND COALESCE(LOWER(s.status), 'activo') NOT IN ('cancelado', 'cancelled', 'no_renueva_ahora') ORDER BY s.contract_end_date ASC NULLS LAST LIMIT 1) as primary_subscriber_phone,
-            (SELECT MIN(s.contract_end_date) FROM subscribers s JOIN bans b ON s.ban_id = b.id WHERE b.client_id = c.id AND s.contract_end_date IS NOT NULL AND COALESCE(LOWER(s.status), 'activo') NOT IN ('cancelado', 'cancelled', 'no_renueva_ahora')) as primary_contract_end_date,
+            (SELECT COUNT(*) > 0 FROM bans b WHERE b.client_id = c.id AND COALESCE(LOWER(b.status::text), '') IN ('c', 'cancelado', 'cancelled', 'inactivo', 'inactive')) as has_cancelled_bans,
+            (SELECT s.phone FROM subscribers s JOIN bans b ON s.ban_id = b.id WHERE b.client_id = c.id AND COALESCE(LOWER(s.status::text), 'activo') NOT IN ('cancelado', 'cancelled', 'c', 'inactivo', 'inactive', 'no_renueva_ahora') ORDER BY s.contract_end_date ASC NULLS LAST LIMIT 1) as primary_subscriber_phone,
+            (SELECT MIN(s.contract_end_date) FROM subscribers s JOIN bans b ON s.ban_id = b.id WHERE b.client_id = c.id AND s.contract_end_date IS NOT NULL AND COALESCE(LOWER(s.status::text), 'activo') NOT IN ('cancelado', 'cancelled', 'c', 'inactivo', 'inactive', 'no_renueva_ahora')) as primary_contract_end_date,
             (SELECT MIN(s.created_at) FROM subscribers s JOIN bans b ON s.ban_id = b.id WHERE b.client_id = c.id) as primary_subscriber_created_at,
-            (SELECT b.account_type FROM bans b WHERE b.client_id = c.id AND (b.status = 'A' OR LOWER(b.status) = 'activo') LIMIT 1) as primary_service_type,
+            (SELECT b.account_type FROM bans b WHERE b.client_id = c.id AND COALESCE(LOWER(b.status::text), '') IN ('a', 'activo', 'active') LIMIT 1) as primary_service_type,
             (SELECT string_agg(DISTINCT b.account_type, ', ') FROM bans b WHERE b.client_id = c.id AND b.account_type IS NOT NULL) as all_service_types,
+            (
+                EXISTS (
+                    SELECT 1
+                    FROM bans b
+                    WHERE b.client_id = c.id
+                      AND COALESCE(LOWER(b.status::text), '') IN ('a', 'activo', 'active')
+                      AND LOWER(COALESCE(b.account_type, '')) LIKE '%converg%'
+                )
+                OR (
+                    EXISTS (
+                        SELECT 1
+                        FROM bans b
+                        WHERE b.client_id = c.id
+                          AND COALESCE(LOWER(b.status::text), '') IN ('a', 'activo', 'active')
+                          AND (
+                            LOWER(COALESCE(b.account_type, '')) LIKE '%movil%'
+                            OR LOWER(COALESCE(b.account_type, '')) LIKE '%móvil%'
+                            OR LOWER(COALESCE(b.account_type, '')) LIKE '%mobile%'
+                          )
+                    )
+                    AND EXISTS (
+                        SELECT 1
+                        FROM bans b
+                        WHERE b.client_id = c.id
+                          AND COALESCE(LOWER(b.status::text), '') IN ('a', 'activo', 'active')
+                          AND (
+                            LOWER(COALESCE(b.account_type, '')) LIKE '%fijo%'
+                            OR LOWER(COALESCE(b.account_type, '')) LIKE '%fixed%'
+                            OR LOWER(COALESCE(b.account_type, '')) LIKE '%pyme%'
+                            OR LOWER(COALESCE(b.account_type, '')) LIKE '%residencial%'
+                          )
+                    )
+                )
+            ) as has_convergence,
+            EXISTS (
+                SELECT 1
+                FROM follow_up_prospects f
+                WHERE f.client_id = c.id
+                  AND GREATEST(
+                    COALESCE(f.last_call_date::timestamp, '1970-01-01'::timestamp),
+                    COALESCE(f.updated_at::timestamp, '1970-01-01'::timestamp),
+                    COALESCE(f.created_at::timestamp, '1970-01-01'::timestamp)
+                  ) >= NOW() - INTERVAL '30 days'
+            ) as recent_followup,
             sp.name as vendor_name,
-            (SELECT MAX(GREATEST(COALESCE(s2.updated_at, s2.created_at), COALESCE(b2.updated_at, b2.created_at))) FROM subscribers s2 JOIN bans b2 ON s2.ban_id = b2.id WHERE b2.client_id = c.id) as last_activity
+            (SELECT MAX(GREATEST(COALESCE(s2.updated_at, s2.created_at), COALESCE(b2.updated_at, b2.created_at))) FROM subscribers s2 JOIN bans b2 ON s2.ban_id = b2.id WHERE b2.client_id = c.id) as last_activity,
+            (SELECT MIN(s.remaining_payments) FROM subscribers s JOIN bans b ON s.ban_id = b.id WHERE b.client_id = c.id AND COALESCE(LOWER(s.status), 'activo') NOT IN ('cancelado', 'cancelled', 'no_renueva_ahora')) as min_remaining_payments
        FROM clients c
        LEFT JOIN salespeople sp ON sp.id = c.salesperson_id
        ${whereClause}
-       ORDER BY c.created_at DESC`,
+       ORDER BY min_remaining_payments ASC NULLS LAST, c.created_at DESC`,
             params
         );
 
         // Calcular contadores para todos los tabs
         const stats = await query(`
             SELECT 
+                (SELECT COUNT(DISTINCT c.id) FROM clients c
+                 WHERE ${ACTIVE_CLIENT_SQL}) as active_count,
                 (SELECT COUNT(DISTINCT c.id) FROM clients c 
-                 WHERE (
-                   EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id AND b.status = 'A')
-                   OR NOT EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id)
-                 )
-                 AND (c.name IS NOT NULL AND c.name <> '' AND c.name <> 'NULL')
-                 AND NOT EXISTS (
-                   SELECT 1
-                   FROM follow_up_prospects f
-                   WHERE f.client_id = c.id
-                     AND f.completed_date IS NULL
-                     AND COALESCE(f.is_active::text, 'true') IN ('true', '1', 't')
-                 )) as active_count,
-                (SELECT COUNT(DISTINCT c.id) FROM clients c 
-                 WHERE EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id AND b.status = 'C')
-                 AND NOT EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id AND (b.status = 'A' OR LOWER(b.status) = 'activo'))
-                 AND (c.name IS NOT NULL AND c.name <> '' AND c.name <> 'NULL')) as cancelled_count,
+                 WHERE ${CANCELLED_CLIENT_SQL}) as cancelled_count,
                 (SELECT COUNT(DISTINCT c.id) FROM clients c
                  WHERE EXISTS (
                    SELECT 1
@@ -243,8 +386,10 @@ export const getClients = async (req, res) => {
                  ) as incomplete_count
         `, []);
 
+        const enrichedClients = clients.map(enrichClientScoring);
+
         res.json({
-            clients: clients,
+            clients: enrichedClients,
             stats: stats[0]
         });
     } catch (error) {
@@ -283,7 +428,9 @@ export const createClient = async (req, res) => {
         vendor_id = null
     } = req.body;
 
-    if (!name) {
+    const normalizedName = normalizeClientName(name);
+
+    if (!normalizedName) {
         return badRequest(res, 'El nombre de la empresa es obligatorio');
     }
 
@@ -310,15 +457,12 @@ export const createClient = async (req, res) => {
         }
 
         // VALIDACIÃ“N: Verificar que no exista un cliente con el mismo nombre
-        const existingClient = await query(
-            'SELECT id, name FROM clients WHERE UPPER(TRIM(name)) = UPPER(TRIM($1))',
-            [name]
-        );
+        const existingClient = await findClientDuplicate({ name: normalizedName, phone });
 
-        if (existingClient.length > 0) {
+        if (existingClient) {
             return badRequest(res, 
-                `Ya existe un cliente con el nombre "${existingClient[0].name}". ` +
-                `No se permiten nombres duplicados. ID existente: ${existingClient[0].id}`
+                `Ya existe un cliente con ese nombre o teléfono: "${existingClient.name}". ` +
+                `No se permiten duplicados. ID existente: ${existingClient.id}`
             );
         }
 
@@ -329,7 +473,7 @@ export const createClient = async (req, res) => {
        RETURNING *`,
             [
                 owner_name?.trim() || null,
-                name.trim(),
+                normalizedName,
                 contact_person,
                 email,
                 phone,
@@ -388,6 +532,16 @@ export const updateClient = async (req, res) => {
         }
 
         // Si se envÃ­a salesperson_id explÃ­citamente (puede ser null para desasignar)
+        if (name !== undefined || phone !== undefined) {
+            const duplicate = await findClientDuplicate({ name, phone, excludeId: id });
+            if (duplicate) {
+                return badRequest(
+                    res,
+                    `Ya existe un cliente con ese nombre o teléfono: "${duplicate.name}". ID existente: ${duplicate.id}`
+                );
+            }
+        }
+
         const hasSalespersonUpdate = ('salesperson_id' in req.body) || ('vendor_id' in req.body);
 
         let safeSalespersonId = null;
@@ -504,22 +658,20 @@ export const markClientChecked = async (req, res) => {
  * Verifica si existe un cliente con el mismo nombre (case-insensitive, trimmed)
  */
 export const checkDuplicateClient = async (req, res) => {
-    const { name } = req.query;
+    const { name, phone } = req.query;
 
-    if (!name || name.trim() === '') {
-        return badRequest(res, 'name es requerido');
+    if ((!name || String(name).trim() === '') && (!phone || normalizeDigits(phone) === '')) {
+        return badRequest(res, 'name o phone es requerido');
     }
 
     try {
-        const existing = await query(
-            'SELECT id, name FROM clients WHERE UPPER(TRIM(name)) = UPPER(TRIM($1))',
-            [name]
-        );
+        const existing = await findClientDuplicate({ name, phone });
 
         res.json({
-            exists: existing.length > 0,
-            existingName: existing[0]?.name || null,
-            existingId: existing[0]?.id || null
+            exists: Boolean(existing),
+            existingName: existing?.name || null,
+            existingId: existing?.id || null,
+            existingPhone: existing?.phone || existing?.additional_phone || existing?.cellular || null
         });
     } catch (error) {
         serverError(res, error, 'Error verificando duplicado');

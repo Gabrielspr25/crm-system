@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Mail, Search, CheckSquare, Square, Monitor, Users, Send, X, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Ban } from 'lucide-react';
 import { authFetch } from '@/react-app/utils/auth';
 
@@ -118,318 +118,329 @@ export default function CorreosPage() {
   const selectedClients = allClients.filter(c => selected.has(c.id));
   const selectedEmails = selectedClients.map(c => c.email!).filter(Boolean);
 
-  // Abrir en app de escritorio (mailto:) — clientes van en BCC (copia oculta)
+  // Abrir en app de escritorio (mailto:) — clientes van en BCC (copia oculta).
+  // Usamos coma como separador (más compatible que ; cross-cliente).
+  // mailto: tiene un límite de URL (~2000 chars en algunos browsers); para
+  // listas grandes se recomienda mandar en lotes de ~50 destinatarios.
   const openDesktop = () => {
-    const bcc = selectedEmails.join(';');
-    const subj = encodeURIComponent(subject);
+    if (selectedEmails.length === 0) return;
+    const params = new URLSearchParams();
+    if (subject) params.set('subject', subject);
     const fullBody = body + DEFAULT_SIGNATURE;
-    const bod = encodeURIComponent(fullBody);
-    const link = document.createElement('a');
-    link.href = `mailto:?bcc=${bcc}&subject=${subj}&body=${bod}`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    if (fullBody) params.set('body', fullBody);
+    const bcc = encodeURIComponent(selectedEmails.join(','));
+    const url = `mailto:?bcc=${bcc}&${params.toString()}`;
+    window.location.href = url;
   };
 
   // Cuántos seleccionados en cada tab
   const selectedActiveCount = activeClients.filter(c => selected.has(c.id)).length;
   const selectedCancelledCount = cancelledClients.filter(c => selected.has(c.id)).length;
 
+  // Aviso de URL muy larga (mailto: tiene ~2000 chars de límite)
+  const estimatedUrlLen = `mailto:?bcc=${selectedEmails.join(',')}&subject=${subject}&body=${body}${DEFAULT_SIGNATURE}`.length;
+  const urlTooLong = estimatedUrlLen > 1800;
+
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 p-4 md:p-6">
-      <div className="max-w-6xl mx-auto space-y-4">
-
-        {/* Header */}
-        <div className="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 p-4 md:p-6">
-          <div className="flex items-center justify-between flex-wrap gap-4">
-            <div className="flex items-center gap-4">
-              <div className="bg-blue-600 p-3 rounded-lg">
-                <Mail className="w-6 h-6 text-white" />
-              </div>
-              <div>
-                <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Correos</h1>
-                <p className="text-sm text-slate-500 dark:text-slate-400">
-                  Selecciona clientes y redacta tu correo
-                </p>
-              </div>
+    <div className="space-y-4 animate-in fade-in duration-500">
+      {/* Header */}
+      <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-4 md:p-6">
+        <div className="flex items-center justify-between flex-wrap gap-4">
+          <div className="flex items-center gap-3">
+            <div className="bg-blue-500/20 border border-blue-500/30 p-2.5 rounded-lg">
+              <Mail className="w-6 h-6 text-blue-300" />
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 px-3 py-1 rounded-full font-medium">
-                {activeClients.length + cancelledClients.length} con email
-              </span>
-              {selected.size > 0 && (
-                <span className="text-xs bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 px-3 py-1 rounded-full font-medium">
-                  {selected.size} seleccionados
-                </span>
-              )}
+            <div>
+              <h1 className="text-2xl font-bold text-white">Correos</h1>
+              <p className="text-sm text-slate-400 mt-0.5">
+                Seleccioná clientes y abrí Outlook con la lista lista para enviar.
+              </p>
             </div>
           </div>
-        </div>
-
-        {/* Composer Section - Colapsable */}
-        <div className="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 overflow-hidden">
-          <button
-            onClick={() => setShowComposer(!showComposer)}
-            className="w-full flex items-center justify-between p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
-          >
-            <div className="flex items-center gap-3">
-              <Send className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-              <span className="font-semibold text-slate-900 dark:text-white">
-                Redactar Correo {selected.size > 0 && `(${selected.size} destinatarios)`}
-              </span>
-            </div>
-            {showComposer ? <ChevronUp className="w-5 h-5 text-slate-400" /> : <ChevronDown className="w-5 h-5 text-slate-400" />}
-          </button>
-
-          {showComposer && (
-            <div className="p-4 pt-0 border-t border-slate-100 dark:border-slate-800 space-y-3">
-
-              {/* De: fijo */}
-              <div className="space-y-1">
-                <label className="text-xs font-medium text-slate-500 dark:text-slate-400">De:</label>
-                <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700">
-                  <Mail className="w-4 h-4 text-blue-500 shrink-0" />
-                  <span className="text-sm text-slate-900 dark:text-white font-medium">{DEFAULT_FROM}</span>
-                  <span className="text-[10px] text-slate-400 ml-auto">Predeterminado · cambiar en Outlook con "De:"</span>
-                </div>
-              </div>
-
-              {/* Destinatarios chips */}
-              {selectedClients.length > 0 && (
-                <div className="space-y-1">
-                  <label className="text-xs font-medium text-slate-500 dark:text-slate-400">CCO (Copia Oculta): ({selectedClients.length})</label>
-                  <div className="flex flex-wrap gap-1.5 p-2 bg-slate-50 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 max-h-24 overflow-y-auto">
-                    {selectedClients.map(c => (
-                      <span key={c.id} className="inline-flex items-center gap-1 text-xs bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 px-2 py-1 rounded-full">
-                        {c.name || c.business_name} &lt;{c.email}&gt;
-                        <button onClick={() => toggleSelect(c.id)} className="hover:text-red-500">
-                          <X className="w-3 h-3" />
-                        </button>
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {selectedClients.length === 0 && (
-                <div className="text-sm text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 p-3 rounded-lg border border-amber-200 dark:border-amber-800">
-                  Selecciona al menos un cliente de la lista de abajo
-                </div>
-              )}
-
-              {/* Asunto */}
-              <div>
-                <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Asunto:</label>
-                <input
-                  type="text"
-                  value={subject}
-                  onChange={e => setSubject(e.target.value)}
-                  className="w-full mt-1 px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                  placeholder="Asunto del correo..."
-                />
-              </div>
-
-              {/* Cuerpo */}
-              <div>
-                <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Mensaje:</label>
-                <textarea
-                  value={body}
-                  onChange={e => setBody(e.target.value)}
-                  rows={5}
-                  className="w-full mt-1 px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none resize-none"
-                  placeholder="Escribe tu mensaje aquí..."
-                />
-              </div>
-
-              {/* Botones enviar */}
-              <div className="pt-1">
-                <button
-                  onClick={openDesktop}
-                  disabled={selectedEmails.length === 0}
-                  className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 dark:disabled:bg-slate-700 text-white py-2.5 px-4 rounded-lg text-sm font-medium transition-colors disabled:cursor-not-allowed"
-                >
-                  <Monitor className="w-4 h-4" />
-                  Abrir en Outlook
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Tabs + Search + Select Page */}
-        <div className="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 p-4 space-y-3">
-          {/* Tabs */}
-          <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 rounded-lg p-1">
-            <button
-              onClick={() => setTab('active')}
-              className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${
-                tab === 'active'
-                  ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm'
-                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'
-              }`}
-            >
-              <Users className="w-4 h-4" />
-              Activos
-              <span className={`text-xs px-1.5 py-0.5 rounded-full ${
-                tab === 'active'
-                  ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400'
-                  : 'bg-slate-200 dark:bg-slate-700 text-slate-500'
-              }`}>
-                {activeClients.length}
-              </span>
-              {selectedActiveCount > 0 && (
-                <span className="text-xs bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400 px-1.5 py-0.5 rounded-full">
-                  {selectedActiveCount} sel
-                </span>
-              )}
-            </button>
-            <button
-              onClick={() => setTab('cancelled')}
-              className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${
-                tab === 'cancelled'
-                  ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm'
-                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'
-              }`}
-            >
-              <Ban className="w-4 h-4" />
-              Cancelados
-              <span className={`text-xs px-1.5 py-0.5 rounded-full ${
-                tab === 'cancelled'
-                  ? 'bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400'
-                  : 'bg-slate-200 dark:bg-slate-700 text-slate-500'
-              }`}>
-                {cancelledClients.length}
-              </span>
-              {selectedCancelledCount > 0 && (
-                <span className="text-xs bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400 px-1.5 py-0.5 rounded-full">
-                  {selectedCancelledCount} sel
-                </span>
-              )}
-            </button>
-          </div>
-
-          {/* Search + Select Page */}
-          <div className="flex items-center gap-3 flex-wrap">
-            <div className="relative flex-1 min-w-[200px]">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-              <input
-                type="text"
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                placeholder="Buscar por nombre, empresa, email..."
-              />
-            </div>
-            <button
-              onClick={togglePageAll}
-              className="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 transition-colors"
-            >
-              {pageAllSelected ? <CheckSquare className="w-4 h-4 text-blue-600" /> : <Square className="w-4 h-4" />}
-              {pageAllSelected ? 'Deseleccionar página' : 'Seleccionar página'}
-            </button>
+          <div className="flex items-center gap-2">
+            <span className="text-xs bg-blue-500/20 text-blue-300 px-3 py-1 rounded-full font-medium border border-blue-500/30">
+              {activeClients.length + cancelledClients.length} con email
+            </span>
             {selected.size > 0 && (
-              <button
-                onClick={() => { setSelected(new Set()); }}
-                className="flex items-center gap-1 px-3 py-2 text-xs font-medium rounded-lg bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors"
-              >
-                <X className="w-3 h-3" />
-                Limpiar todo ({selected.size})
-              </button>
+              <span className="text-xs bg-emerald-500/20 text-emerald-300 px-3 py-1 rounded-full font-medium border border-emerald-500/30">
+                {selected.size} seleccionados
+              </span>
             )}
           </div>
         </div>
+      </div>
 
-        {/* Client list */}
-        <div className="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 overflow-hidden">
-          {loading ? (
-            <div className="p-12 text-center text-slate-400">
-              <div className="animate-spin w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full mx-auto mb-3" />
-              Cargando clientes...
-            </div>
-          ) : paged.length === 0 ? (
-            <div className="p-12 text-center text-slate-400">
-              <Users className="w-12 h-12 mx-auto mb-3 opacity-40" />
-              <p className="font-medium">No se encontraron clientes con email</p>
-              {search && <p className="text-sm mt-1">Intenta con otra búsqueda</p>}
-            </div>
-          ) : (
-            <div className="divide-y divide-slate-100 dark:divide-slate-800">
-              {paged.map((c, i) => {
-                const isSelected = selected.has(c.id);
-                const globalIdx = (safePage - 1) * PAGE_SIZE + i + 1;
-                return (
-                  <div
-                    key={c.id}
-                    onClick={() => toggleSelect(c.id)}
-                    className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors ${
-                      isSelected
-                        ? 'bg-blue-50 dark:bg-blue-900/20 border-l-4 border-blue-500'
-                        : 'hover:bg-slate-50 dark:hover:bg-slate-800/50 border-l-4 border-transparent'
-                    }`}
-                  >
-                    <span className="text-[10px] text-slate-400 w-5 text-right shrink-0">{globalIdx}</span>
-                    {isSelected ? (
-                      <CheckSquare className="w-5 h-5 text-blue-600 shrink-0" />
-                    ) : (
-                      <Square className="w-5 h-5 text-slate-300 dark:text-slate-600 shrink-0" />
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium text-sm text-slate-900 dark:text-white truncate">
-                          {c.name || c.business_name || 'Sin nombre'}
-                        </span>
-                        {c.contact_person && (
-                          <span className="text-xs text-slate-400 truncate hidden md:inline">
-                            · {c.contact_person}
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-xs text-slate-500 dark:text-slate-400 truncate">{c.email}</p>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+      {/* Composer Section - Colapsable */}
+      <div className="bg-slate-800/50 border border-slate-700 rounded-xl overflow-hidden">
+        <button
+          onClick={() => setShowComposer(!showComposer)}
+          className="w-full flex items-center justify-between p-4 hover:bg-slate-700/30 transition-colors"
+        >
+          <div className="flex items-center gap-3">
+            <Send className="w-5 h-5 text-blue-300" />
+            <span className="font-semibold text-white">
+              Redactar correo {selected.size > 0 && <span className="text-blue-300">· {selected.size} destinatarios</span>}
+            </span>
+          </div>
+          {showComposer ? <ChevronUp className="w-5 h-5 text-slate-400" /> : <ChevronDown className="w-5 h-5 text-slate-400" />}
+        </button>
 
-          {/* Pagination footer */}
-          {!loading && filtered.length > 0 && (
-            <div className="px-4 py-3 bg-slate-50 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
-              <span className="text-xs text-slate-500">
-                {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, filtered.length)} de {filtered.length} clientes
+        {showComposer && (
+          <div className="p-4 pt-0 border-t border-slate-700 space-y-3">
+            {/* De: fijo */}
+            <div className="space-y-1">
+              <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">De</label>
+              <div className="flex items-center gap-2 px-3 py-2 bg-slate-900 rounded-lg border border-slate-700">
+                <Mail className="w-4 h-4 text-blue-400 shrink-0" />
+                <span className="text-sm text-white font-medium">{DEFAULT_FROM}</span>
+                <span className="text-[10px] text-slate-500 ml-auto">predeterminado · cambiar en Outlook con "De:"</span>
+              </div>
+            </div>
+
+            {/* Destinatarios chips */}
+            {selectedClients.length > 0 ? (
+              <div className="space-y-1">
+                <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                  CCO (copia oculta) · {selectedClients.length} destinatarios
+                </label>
+                <div className="flex flex-wrap gap-1.5 p-2 bg-slate-900 rounded-lg border border-slate-700 max-h-32 overflow-y-auto">
+                  {selectedClients.map(c => (
+                    <span key={c.id} className="inline-flex items-center gap-1 text-xs bg-blue-500/20 text-blue-200 px-2 py-1 rounded-full border border-blue-500/30">
+                      {c.name || c.business_name} &lt;{c.email}&gt;
+                      <button onClick={() => toggleSelect(c.id)} className="hover:text-red-300 transition-colors" title="Quitar">
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="text-sm text-amber-200 bg-amber-500/10 p-3 rounded-lg border border-amber-500/30">
+                ⚠️ Seleccioná al menos un cliente de la lista de abajo.
+              </div>
+            )}
+
+            {/* Asunto */}
+            <div>
+              <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">Asunto</label>
+              <input
+                type="text"
+                value={subject}
+                onChange={e => setSubject(e.target.value)}
+                className="w-full mt-1 px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none placeholder:text-slate-500"
+                placeholder="Asunto del correo..."
+              />
+            </div>
+
+            {/* Cuerpo */}
+            <div>
+              <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">Mensaje</label>
+              <textarea
+                value={body}
+                onChange={e => setBody(e.target.value)}
+                rows={6}
+                className="w-full mt-1 px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none resize-none placeholder:text-slate-500"
+                placeholder="Escribí tu mensaje acá... (la firma se agrega automáticamente al final)"
+              />
+            </div>
+
+            {/* Aviso de URL muy larga */}
+            {urlTooLong && (
+              <div className="text-xs text-amber-300 bg-amber-500/10 p-2.5 rounded-lg border border-amber-500/30">
+                ⚠️ La cantidad de destinatarios + el mensaje generan una URL muy larga ({estimatedUrlLen} caracteres). Algunos clientes de correo cortan en ~2000. Probá enviar en lotes de menos destinatarios o acortar el mensaje.
+              </div>
+            )}
+
+            {/* Botón enviar */}
+            <div className="pt-1">
+              <button
+                onClick={openDesktop}
+                disabled={selectedEmails.length === 0}
+                className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-500 text-white py-2.5 px-4 rounded-lg text-sm font-semibold transition-colors disabled:cursor-not-allowed"
+              >
+                <Monitor className="w-4 h-4" />
+                Abrir en Outlook ({selectedEmails.length} destinatarios en BCC)
+              </button>
+              <p className="text-[11px] text-slate-500 mt-2 text-center italic">
+                💡 Outlook se abre con la lista cargada. Confirmá el envío manual desde ahí.
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Tabs + Search + Select Page */}
+      <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-4 space-y-3">
+        {/* Tabs */}
+        <div className="flex items-center gap-1 bg-slate-900 rounded-lg p-1 border border-slate-700">
+          <button
+            onClick={() => setTab('active')}
+            className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${
+              tab === 'active'
+                ? 'bg-blue-600 text-white shadow-lg'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Users className="w-4 h-4" />
+            Activos
+            <span className={`text-xs px-1.5 py-0.5 rounded-full ${
+              tab === 'active' ? 'bg-blue-700/60 text-blue-100' : 'bg-slate-700 text-slate-400'
+            }`}>
+              {activeClients.length}
+            </span>
+            {selectedActiveCount > 0 && (
+              <span className="text-xs bg-emerald-500/30 text-emerald-200 px-1.5 py-0.5 rounded-full border border-emerald-500/40">
+                {selectedActiveCount} sel
               </span>
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => setPage(p => Math.max(1, p - 1))}
-                  disabled={safePage <= 1}
-                  className="p-1.5 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            )}
+          </button>
+          <button
+            onClick={() => setTab('cancelled')}
+            className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${
+              tab === 'cancelled'
+                ? 'bg-red-600 text-white shadow-lg'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Ban className="w-4 h-4" />
+            Cancelados
+            <span className={`text-xs px-1.5 py-0.5 rounded-full ${
+              tab === 'cancelled' ? 'bg-red-700/60 text-red-100' : 'bg-slate-700 text-slate-400'
+            }`}>
+              {cancelledClients.length}
+            </span>
+            {selectedCancelledCount > 0 && (
+              <span className="text-xs bg-emerald-500/30 text-emerald-200 px-1.5 py-0.5 rounded-full border border-emerald-500/40">
+                {selectedCancelledCount} sel
+              </span>
+            )}
+          </button>
+        </div>
+
+        {/* Search + Select Page */}
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="relative flex-1 min-w-[200px]">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="w-full pl-10 pr-4 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none placeholder:text-slate-500"
+              placeholder="Buscar por nombre, empresa, email..."
+            />
+          </div>
+          <button
+            onClick={togglePageAll}
+            className="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg border border-slate-700 hover:bg-slate-700/40 hover:border-blue-400/50 text-slate-200 transition-colors"
+          >
+            {pageAllSelected ? <CheckSquare className="w-4 h-4 text-blue-400" /> : <Square className="w-4 h-4" />}
+            {pageAllSelected ? 'Deseleccionar página' : 'Seleccionar página'}
+          </button>
+          {selected.size > 0 && (
+            <button
+              onClick={() => { setSelected(new Set()); }}
+              className="flex items-center gap-1 px-3 py-2 text-xs font-medium rounded-lg bg-red-500/15 text-red-300 hover:bg-red-500/25 border border-red-500/30 transition-colors"
+            >
+              <X className="w-3 h-3" />
+              Limpiar todo ({selected.size})
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Client list */}
+      <div className="bg-slate-800/50 border border-slate-700 rounded-xl overflow-hidden">
+        {loading ? (
+          <div className="p-12 text-center text-slate-400">
+            <div className="animate-spin w-8 h-8 border-2 border-blue-400 border-t-transparent rounded-full mx-auto mb-3" />
+            Cargando clientes...
+          </div>
+        ) : paged.length === 0 ? (
+          <div className="p-12 text-center text-slate-400">
+            <Users className="w-12 h-12 mx-auto mb-3 opacity-40" />
+            <p className="font-medium">No se encontraron clientes con email</p>
+            {search && <p className="text-sm mt-1 text-slate-500">Probá con otra búsqueda</p>}
+          </div>
+        ) : (
+          <div className="divide-y divide-slate-700/60">
+            {paged.map((c, i) => {
+              const isSelected = selected.has(c.id);
+              const globalIdx = (safePage - 1) * PAGE_SIZE + i + 1;
+              return (
+                <div
+                  key={c.id}
+                  onClick={() => toggleSelect(c.id)}
+                  className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors ${
+                    isSelected
+                      ? 'bg-blue-500/10 border-l-4 border-blue-500'
+                      : 'hover:bg-slate-700/30 border-l-4 border-transparent'
+                  }`}
                 >
-                  <ChevronLeft className="w-4 h-4 text-slate-600 dark:text-slate-400" />
-                </button>
-                {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => (
+                  <span className="text-[10px] text-slate-500 w-5 text-right shrink-0 font-mono">{globalIdx}</span>
+                  {isSelected ? (
+                    <CheckSquare className="w-5 h-5 text-blue-400 shrink-0" />
+                  ) : (
+                    <Square className="w-5 h-5 text-slate-600 shrink-0" />
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-sm text-white truncate">
+                        {c.name || c.business_name || 'Sin nombre'}
+                      </span>
+                      {c.contact_person && (
+                        <span className="text-xs text-slate-400 truncate hidden md:inline">
+                          · {c.contact_person}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-400 truncate font-mono">{c.email}</p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Pagination footer */}
+        {!loading && filtered.length > 0 && (
+          <div className="px-4 py-3 bg-slate-900/50 border-t border-slate-700 flex items-center justify-between">
+            <span className="text-xs text-slate-400">
+              {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, filtered.length)} de {filtered.length} clientes
+            </span>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setPage(p => Math.max(1, p - 1))}
+                disabled={safePage <= 1}
+                className="p-1.5 rounded-lg hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              >
+                <ChevronLeft className="w-4 h-4 text-slate-300" />
+              </button>
+              {Array.from({ length: totalPages }, (_, i) => i + 1)
+                // Limitar a 7 páginas visibles cuando hay muchas
+                .filter((p) => totalPages <= 7 || Math.abs(p - safePage) <= 3 || p === 1 || p === totalPages)
+                .map(p => (
                   <button
                     key={p}
                     onClick={() => setPage(p)}
                     className={`w-8 h-8 rounded-lg text-xs font-medium transition-colors ${
                       p === safePage
                         ? 'bg-blue-600 text-white'
-                        : 'text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                        : 'text-slate-300 hover:bg-slate-700'
                     }`}
                   >
                     {p}
                   </button>
                 ))}
-                <button
-                  onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                  disabled={safePage >= totalPages}
-                  className="p-1.5 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                >
-                  <ChevronRight className="w-4 h-4 text-slate-600 dark:text-slate-400" />
-                </button>
-              </div>
+              <button
+                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                disabled={safePage >= totalPages}
+                className="p-1.5 rounded-lg hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              >
+                <ChevronRight className="w-4 h-4 text-slate-300" />
+              </button>
             </div>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     </div>
   );

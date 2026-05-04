@@ -1,6 +1,8 @@
 import { getClient, query } from '../database/db.js';
 import { serverError, badRequest, notFound } from '../middlewares/errorHandler.js';
 
+const normalizeDigits = (value) => String(value || '').replace(/\D/g, '');
+
 export const getBans = async (req, res) => {
     const { client_id } = req.query;
     try {
@@ -29,7 +31,9 @@ export const createBan = async (req, res) => {
         vendor_id = null
     } = req.body;
 
-    if (!client_id || !ban_number) {
+    const normalizedBanNumber = normalizeDigits(ban_number);
+
+    if (!client_id || !normalizedBanNumber) {
         return badRequest(res, 'Cliente y número de cuenta son obligatorios');
     }
 
@@ -40,7 +44,7 @@ export const createBan = async (req, res) => {
 
     try {
         // Verificar si ya existe
-        const existing = await query('SELECT id FROM bans WHERE ban_number = $1', [ban_number]);
+        const existing = await query('SELECT id, client_id FROM bans WHERE ban_number = $1', [normalizedBanNumber]);
         if (existing.length > 0) {
             return badRequest(res, 'El número de cuenta BAN ya existe');
         }
@@ -50,7 +54,7 @@ export const createBan = async (req, res) => {
         (client_id, ban_number, account_type, status, created_at, updated_at)
        VALUES ($1,$2,$3,'A',NOW(),NOW())
        RETURNING *`,
-            [client_id, ban_number, req.body.account_type || null]
+            [client_id, normalizedBanNumber, req.body.account_type || null]
         );
 
         res.status(201).json(result[0]);
@@ -78,6 +82,21 @@ export const updateBan = async (req, res) => {
             return badRequest(res, 'Tipo de cuenta no puede estar vacío. Debe ser Móvil, Fijo, o Convergente.');
         }
 
+        const normalizedBanNumber = ban_number !== undefined ? normalizeDigits(ban_number) : undefined;
+        if (ban_number !== undefined && !normalizedBanNumber) {
+            return badRequest(res, 'Número de cuenta BAN inválido');
+        }
+
+        if (normalizedBanNumber) {
+            const duplicate = await query(
+                'SELECT id FROM bans WHERE ban_number = $1 AND id <> $2 LIMIT 1',
+                [normalizedBanNumber, id]
+            );
+            if (duplicate.length > 0) {
+                return badRequest(res, 'El número de cuenta BAN ya existe');
+            }
+        }
+
         // Convertir strings vacíos a undefined para que COALESCE funcione correctamente
         const cleanAccountType = account_type?.trim() || undefined;
         const cleanStatus = status?.trim() || undefined;
@@ -91,7 +110,7 @@ export const updateBan = async (req, res) => {
         WHERE id = $4
         RETURNING *`,
             [
-                ban_number, 
+                normalizedBanNumber, 
                 cleanAccountType, 
                 cleanStatus, 
                 id

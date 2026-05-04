@@ -52,10 +52,23 @@ interface DealTaskBoardItem {
   completed_steps: number;
   created_at?: string | null;
   updated_at?: string | null;
+  due_date?: string | null;
   deal_created_at?: string | null;
 }
 
 interface DealBoardRow extends DealTaskBoardItem {
+  pending_steps: number;
+}
+
+interface ClientBoardRow {
+  client_id: string;
+  client_name: string;
+  seller_name: string | null;
+  deals: { product_type: string; sale_type: string; deal_id: number }[];
+  step_name: string;
+  step_order: number;
+  status: "pending" | "in_progress" | "done";
+  due_date: string | null;
   pending_steps: number;
 }
 
@@ -297,54 +310,70 @@ export default function TasksPage() {
     });
   }, [personalTasks]);
 
-  const clientRows = useMemo<DealBoardRow[]>(() => {
+  const clientRows = useMemo<ClientBoardRow[]>(() => {
+    // Primero agrupar tareas por deal_id para obtener el paso más urgente por deal
     const byDealId = new Map<number, DealBoardRow>();
-
     dealTasks.forEach((task) => {
       const existing = byDealId.get(task.deal_id);
       const pendingSteps = Math.max(task.total_steps - task.completed_steps, 0);
-
-      if (!existing) {
-        byDealId.set(task.deal_id, { ...task, pending_steps: pendingSteps });
-        return;
-      }
-
+      if (!existing) { byDealId.set(task.deal_id, { ...task, pending_steps: pendingSteps }); return; }
       const existingPriority = dealTaskPriority(existing);
       const nextPriority = dealTaskPriority(task);
       const shouldReplace = nextPriority < existingPriority
-        || (nextPriority === existingPriority && task.step_order < existing.step_order)
-        || (!existing.updated_at && Boolean(task.updated_at));
+        || (nextPriority === existingPriority && task.step_order < existing.step_order);
+      if (shouldReplace) byDealId.set(task.deal_id, { ...task, pending_steps: pendingSteps });
+      else if (pendingSteps > existing.pending_steps) byDealId.set(task.deal_id, { ...existing, pending_steps });
+    });
 
-      if (shouldReplace) {
-        byDealId.set(task.deal_id, { ...task, pending_steps: pendingSteps });
-      } else if (pendingSteps > existing.pending_steps) {
-        byDealId.set(task.deal_id, { ...existing, pending_steps });
+    // Agrupar deals por cliente
+    const byClientId = new Map<string, ClientBoardRow>();
+    Array.from(byDealId.values()).forEach((deal) => {
+      const cid = deal.client_id || `__${deal.deal_id}`;
+      const existing = byClientId.get(cid);
+      const dealEntry = { product_type: deal.product_type, sale_type: deal.sale_type, deal_id: deal.deal_id };
+      if (!existing) {
+        byClientId.set(cid, {
+          client_id: cid,
+          client_name: deal.client_name || "Cliente",
+          seller_name: deal.seller_name || null,
+          deals: [dealEntry],
+          step_name: deal.step_name,
+          step_order: deal.step_order,
+          status: deal.status,
+          due_date: deal.due_date || null,
+          pending_steps: deal.pending_steps,
+        });
+      } else {
+        existing.deals.push(dealEntry);
+        existing.pending_steps += deal.pending_steps;
+        // Mantener el paso más urgente
+        const existingPriority = dealTaskPriority(existing as unknown as DealTaskBoardItem);
+        const nextPriority = dealTaskPriority(deal);
+        if (nextPriority < existingPriority || (nextPriority === existingPriority && deal.step_order < existing.step_order)) {
+          existing.step_name = deal.step_name;
+          existing.step_order = deal.step_order;
+          existing.status = deal.status;
+          existing.due_date = deal.due_date || existing.due_date;
+        }
       }
     });
 
-    return Array.from(byDealId.values()).sort((left, right) => {
-      const priorityDiff = dealTaskPriority(left) - dealTaskPriority(right);
-      if (priorityDiff !== 0) return priorityDiff;
-      const leftUpdated = left.updated_at ? new Date(left.updated_at).getTime() : 0;
-      const rightUpdated = right.updated_at ? new Date(right.updated_at).getTime() : 0;
-      return rightUpdated - leftUpdated;
+    return Array.from(byClientId.values()).sort((a, b) => {
+      const pa = dealTaskPriority(a as unknown as DealTaskBoardItem);
+      const pb = dealTaskPriority(b as unknown as DealTaskBoardItem);
+      return pa - pb;
     });
   }, [dealTasks]);
 
   const filteredClientWorkflows = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
-    return clientRows.filter((workflow) => {
+    return clientRows.filter((row) => {
       if (!term) return true;
       return [
-        workflow.client_name,
-        workflow.product_type,
-        workflow.sale_type,
-        workflow.step_name,
-        workflow.source_label,
-        workflow.ban_number,
-        workflow.phone,
-        workflow.assigned_name,
-        workflow.seller_name
+        row.client_name,
+        row.step_name,
+        row.seller_name,
+        ...row.deals.map((d) => `${d.product_type} ${d.sale_type}`)
       ].some((value) => String(value || "").toLowerCase().includes(term));
     });
   }, [clientRows, searchTerm]);
@@ -834,77 +863,61 @@ export default function TasksPage() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[980px] text-sm">
+              <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-800 text-left text-xs uppercase tracking-wide text-slate-400">
                     <th className="px-3 py-3">Cliente</th>
                     <th className="px-3 py-3">Vendedor</th>
-                    <th className="px-3 py-3">Producto</th>
-                    <th className="px-3 py-3">Fuente</th>
-                    <th className="px-3 py-3">Progreso</th>
+                    <th className="px-3 py-3">Productos</th>
                     <th className="px-3 py-3">Paso actual</th>
-                    <th className="px-3 py-3">Asignado</th>
                     <th className="px-3 py-3">Estado</th>
-                    <th className="px-3 py-3">Actualizado</th>
-                    <th className="px-3 py-3 text-right">Accion</th>
+                    <th className="px-3 py-3">Vencimiento</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredClientWorkflows.map((workflow) => {
-                    const progressTotal = Math.max(workflow.total_steps, 0);
-                    const progressCompleted = Math.max(workflow.completed_steps, 0);
-                    const progressPercent = progressTotal > 0 ? Math.round((progressCompleted / progressTotal) * 100) : 0;
-                    return (
-                      <tr key={workflow.deal_id} className="border-b border-slate-900/80 text-slate-200">
-                        <td className="px-3 py-3">
-                          <div className="font-medium text-white">{workflow.client_name || "Cliente"}</div>
-                          {workflow.ban_number || workflow.phone ? (
-                            <div className="text-xs text-slate-500">
-                              {[workflow.ban_number ? `BAN ${workflow.ban_number}` : null, workflow.phone].filter(Boolean).join(" • ")}
-                            </div>
-                          ) : null}
-                        </td>
-                        <td className="px-3 py-3">{workflow.seller_name || "-"}</td>
-                        <td className="px-3 py-3">
-                          <div className="font-medium">{workflow.product_type}</div>
-                          <div className="text-xs text-slate-500">{formatSaleType(String(workflow.sale_type || "").trim().toUpperCase())}</div>
-                        </td>
-                        <td className="px-3 py-3 text-slate-300">{workflow.source_label || "Sin vinculo"}</td>
-                        <td className="px-3 py-3">
-                          <div className="text-xs text-slate-300">{progressCompleted}/{progressTotal} pasos</div>
-                          <div className="mt-1 h-2 w-36 overflow-hidden rounded-full bg-slate-800">
-                            <div className="h-full rounded-full bg-violet-500" style={{ width: `${progressPercent}%` }} />
-                          </div>
-                        </td>
-                        <td className="px-3 py-3">
-                          <div className="font-medium text-slate-100">{workflow.step_order}. {workflow.step_name}</div>
-                          <div className="text-xs text-slate-500">{workflow.pending_steps} pasos pendientes</div>
-                        </td>
-                        <td className="px-3 py-3">{workflow.assigned_name || workflow.assigned_to || "Sin asignar"}</td>
-                        <td className="px-3 py-3">
-                          <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${
-                            workflow.status === "in_progress"
-                              ? "border border-amber-500/30 bg-amber-500/10 text-amber-200"
-                              : "border border-slate-600 bg-slate-800 text-slate-200"
-                          }`}>
-                            {workflow.status === "in_progress" ? "En proceso" : "Pendiente"}
-                          </span>
-                        </td>
-                        <td className="px-3 py-3 text-slate-400">
-                          {workflow.updated_at ? new Date(workflow.updated_at).toLocaleString() : "-"}
-                        </td>
-                        <td className="px-3 py-3 text-right">
-                          <button
-                            type="button"
-                            onClick={() => openClientProfile(workflow)}
-                            className="rounded-lg bg-violet-600 px-3 py-2 text-xs font-semibold text-white hover:bg-violet-500"
-                          >
-                            Abrir cliente
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  {filteredClientWorkflows.map((row) => (
+                    <tr
+                      key={row.client_id}
+                      className="border-b border-slate-900/80 text-slate-200 hover:bg-slate-800/40 cursor-pointer transition-colors"
+                      onClick={() => {
+                        try { window.sessionStorage.setItem(OPEN_CLIENT_INTENT_KEY, JSON.stringify({ clientId: row.client_id, tab: "pasos" })); } catch { /* */ }
+                        navigate(`/clientes?openClient=${encodeURIComponent(row.client_id)}&tab=pasos`);
+                      }}
+                    >
+                      <td className="px-3 py-3">
+                        <div className="font-semibold text-white">{row.client_name}</div>
+                      </td>
+                      <td className="px-3 py-3 text-slate-300 text-xs">{row.seller_name || "—"}</td>
+                      <td className="px-3 py-3">
+                        <div className="flex flex-wrap gap-1">
+                          {row.deals.map((d) => (
+                            <span key={d.deal_id} className="rounded-full border border-violet-500/30 bg-violet-500/10 px-2 py-0.5 text-[11px] text-violet-200">
+                              {d.product_type} {formatSaleType(d.sale_type)}
+                            </span>
+                          ))}
+                        </div>
+                      </td>
+                      <td className="px-3 py-3">
+                        <div className="text-sm text-slate-100">{row.step_order}. {row.step_name}</div>
+                        <div className="text-xs text-slate-500">{row.pending_steps} pasos pendientes</div>
+                      </td>
+                      <td className="px-3 py-3">
+                        <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+                          row.status === "in_progress"
+                            ? "border border-amber-500/30 bg-amber-500/10 text-amber-200"
+                            : "border border-slate-600 bg-slate-800 text-slate-200"
+                        }`}>
+                          {row.status === "in_progress" ? "En proceso" : "Pendiente"}
+                        </span>
+                      </td>
+                      <td className="px-3 py-3 text-xs">
+                        {row.due_date
+                          ? <span className="font-medium text-amber-300">{new Date(row.due_date + "T12:00:00").toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric" })}</span>
+                          : <span className="text-slate-600">—</span>
+                        }
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>

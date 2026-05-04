@@ -22,8 +22,21 @@ const hasVendorSalespersonMappingTable = async () => {
     }
 };
 
+const ensureSalespersonPresetColumns = async () => {
+    try {
+        await query(`
+            ALTER TABLE salespeople
+            ADD COLUMN IF NOT EXISTS permission_preset_id BIGINT NULL,
+            ADD COLUMN IF NOT EXISTS permission_preset_name TEXT NULL
+        `);
+    } catch {
+        // Si falla, no es crítico
+    }
+};
+
 export const getVendors = async (_req, res) => {
     try {
+        await ensureSalespersonPresetColumns();
         const hasMappingTable = await hasVendorSalespersonMappingTable();
         let vendors = [];
         if (hasMappingTable) {
@@ -32,7 +45,9 @@ export const getVendors = async (_req, res) => {
                     v.*,
                     COALESCE(vsm.salesperson_id, sp_fallback.id) AS salesperson_id,
                     COALESCE(sp_map.name, sp_fallback.name) AS salesperson_name,
-                    COALESCE(sp_map.role, sp_fallback.role) AS salesperson_role
+                    COALESCE(sp_map.role, sp_fallback.role) AS salesperson_role,
+                    COALESCE(sp_map.permission_preset_id, sp_fallback.permission_preset_id) AS permission_preset_id,
+                    COALESCE(sp_map.permission_preset_name, sp_fallback.permission_preset_name) AS permission_preset_name
                 FROM vendors v
                 LEFT JOIN vendor_salesperson_mapping vsm ON vsm.vendor_id = v.id
                 LEFT JOIN salespeople sp_map ON sp_map.id = vsm.salesperson_id
@@ -48,7 +63,9 @@ export const getVendors = async (_req, res) => {
                     v.*,
                     sp.id AS salesperson_id,
                     sp.name AS salesperson_name,
-                    sp.role AS salesperson_role
+                    sp.role AS salesperson_role,
+                    sp.permission_preset_id,
+                    sp.permission_preset_name
                 FROM vendors v
                 LEFT JOIN salespeople sp
                   ON UPPER(TRIM(sp.name)) = UPPER(TRIM(v.name))

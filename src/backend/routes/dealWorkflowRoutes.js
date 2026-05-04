@@ -6,10 +6,12 @@ import {
   getClientDeals,
   getDeals,
   getDealTasks,
+  getPanelTasks,
   getSalespeople,
   getWorkflowTemplates,
   updateDealTaskStatus,
-  updateWorkflowTemplate
+  updateWorkflowTemplate,
+  syncClientDealsFromProspect
 } from '../controllers/dealWorkflowController.js';
 import { authenticateToken, requireRole } from '../middlewares/auth.js';
 
@@ -30,5 +32,11 @@ router.get('/clients/:id/deals', getClientDeals);
 
 router.get('/deal-tasks', getDealTasks);
 router.patch('/deal-tasks/:id', updateDealTaskStatus);
+
+// Sync deals from prospect
+router.post('/clients/:clientId/sync', syncClientDealsFromProspect);
+
+// Panel general tasks
+router.get('/panel/tasks', getPanelTasks);
 
 export default router;
