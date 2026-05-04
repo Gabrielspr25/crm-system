@@ -6,7 +6,6 @@ import { msalConfig } from "@/react-app/auth/msalConfig";
 import ProtectedLayout from "@/react-app/components/ProtectedLayout";
 import HomePage from "@/react-app/pages/Home";
 import MyDayPage from "@/react-app/pages/MyDay";
-import TasksPage from "@/react-app/pages/Tasks";
 import ClientsPage from "@/react-app/pages/Clients";
 import ReportsPage from "@/react-app/pages/Reports";
 import VendorsPage from "@/react-app/pages/Vendors";
@@ -32,6 +31,7 @@ import FollowUpPage from "@/react-app/pages/FollowUp";
 import GestionPage from "@/react-app/pages/Gestion";
 import MetasDashboard from "@/react-app/pages/MetasDashboard";
 import AgentMemoryPage from "@/react-app/pages/AgentMemory";
+import CuartelPage from "@/react-app/pages/Cuartel";
 
 
 // Inicializar MSAL fuera del componente
@@ -51,7 +51,7 @@ function ProtectedRoutes() {
         <Route path="/" element={<HomePage />} />
         <Route path="/panel" element={<HomePage />} />
         <Route path="/mi-dia" element={<MyDayPage />} />
-        <Route path="/tareas" element={<TasksPage />} />
+        <Route path="/tareas" element={<Navigate to="/mi-dia" replace />} />
         <Route path="/clientes" element={<ClientsPage />} />
         <Route path="/seguimiento" element={<FollowUpPage />} />
         <Route path="/reportes" element={<ReportsPage />} />
@@ -75,6 +75,7 @@ function ProtectedRoutes() {
         <Route path="/gestion" element={<GestionPage />} />
         <Route path="/panel-metas" element={<MetasDashboard />} />
         <Route path="/cuartel-agentes" element={<AgentMemoryPage />} />
+        <Route path="/cuartel" element={<CuartelPage />} />
 
       </Routes>
     </ProtectedLayout>

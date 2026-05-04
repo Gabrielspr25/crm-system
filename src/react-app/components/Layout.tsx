@@ -8,7 +8,6 @@ import {
   Folder,
   Package,
   FileText,
-  CheckSquare,
   UserCircle2,
   Sun,
   Moon,
@@ -51,7 +50,6 @@ type NavItem = {
 const navigation: NavItem[] = [
   { name: "Panel General", href: "/", icon: LayoutDashboard, permissionKey: "nav.dashboard", roles: ["admin", "supervisor", "vendedor"] },
   { name: "Mi día", href: "/mi-dia", icon: Calendar, roles: ["admin", "supervisor", "vendedor"] },
-  { name: "Tareas", href: "/tareas", icon: CheckSquare, permissionKey: "nav.tasks", roles: ["admin", "supervisor", "vendedor"] },
   { name: "Clientes", href: "/clientes", icon: Users, permissionKey: "nav.clients", roles: ["admin", "supervisor", "vendedor"] },
   { name: "Correos", href: "/correos", icon: Mail, permissionKey: "nav.emails", roles: ["admin", "supervisor", "vendedor"] },
   { name: "Campañas", href: "/campanas", icon: SendHorizontal, roles: ["admin"] },

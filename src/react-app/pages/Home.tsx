@@ -1463,7 +1463,7 @@ export default function Home() {
               <ClipboardCheck className="w-4 h-4 text-blue-300" />
               Tareas {showAdminAggregate ? 'del equipo' : 'mías'}
             </h2>
-            <Link to="/tareas" className="text-xs text-blue-300 hover:text-blue-200">Ver módulo →</Link>
+            <Link to="/mi-dia" className="text-xs text-blue-300 hover:text-blue-200">Ver módulo →</Link>
           </div>
           <div className="grid grid-cols-3 gap-2">
             <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-center">
