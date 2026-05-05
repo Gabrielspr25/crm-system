@@ -4,10 +4,12 @@ import {
   AlertTriangle,
   Calendar,
   CheckSquare,
+  Edit,
   Loader2,
   Phone,
   ShieldAlert,
   Target,
+  Trash2,
 } from "lucide-react";
 import { useApi } from "@/react-app/hooks/useApi";
 import { authFetch, getCurrentUser } from "@/react-app/utils/auth";
@@ -29,12 +31,20 @@ type AgentTask = {
 type PersonalTask = {
   id: number;
   title?: string | null;
+  description?: string | null;
   status?: string | null;
   due_date?: string | null;
   follow_up_date?: string | null;
+  follow_up_time?: string | null;
   task_kind?: "regular" | "client" | null;
   client_id?: string | null;
   client_name?: string | null;
+  notes?: string | null;
+  priority?: string | null;
+  assigned_user_id?: string | null;
+  assigned_name?: string | null;
+  assigned_username?: string | null;
+  custom_fields?: Record<string, unknown> | null;
   created_at?: string | null;
 };
 
@@ -95,7 +105,7 @@ type GoalsResponse = {
 
 // ── Tarea unificada ──
 
-type TaskKind = "agent" | "personal" | "deal" | "workflow";
+type TaskKind = "agent" | "client" | "personal" | "deal" | "workflow";
 
 type UnifiedTask = {
   uid: string; // único: kind+id
@@ -107,8 +117,11 @@ type UnifiedTask = {
   created_at: string | null;
 };
 
+type MyDayTab = "commercial" | "personal";
+
 const KIND_LABEL: Record<TaskKind, string> = {
   agent: "Agente",
+  client: "Cliente",
   personal: "Personal",
   deal: "Venta",
   workflow: "Paso",
@@ -116,6 +129,7 @@ const KIND_LABEL: Record<TaskKind, string> = {
 
 const KIND_BADGE: Record<TaskKind, string> = {
   agent: "bg-blue-500/15 text-blue-200 border-blue-500/30",
+  client: "bg-sky-500/15 text-sky-200 border-sky-500/30",
   personal: "bg-amber-500/15 text-amber-200 border-amber-500/30",
   deal: "bg-emerald-500/15 text-emerald-200 border-emerald-500/30",
   workflow: "bg-purple-500/15 text-purple-200 border-purple-500/30",
@@ -156,6 +170,13 @@ const dueKey = (v?: string | null): string | null => {
   return String(v).slice(0, 10);
 };
 
+const addDaysISO = (v: string | null, days: number) => {
+  const base = v ? new Date(v) : new Date();
+  if (Number.isNaN(base.getTime())) return todayISO();
+  base.setDate(base.getDate() + days);
+  return `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, "0")}-${String(base.getDate()).padStart(2, "0")}`;
+};
+
 const isPending = (status?: string | null) => {
   const s = String(status || "").toLowerCase();
   return s === "pending" || s === "in_progress";
@@ -184,6 +205,8 @@ export default function MyDay() {
   const [clientDetail, setClientDetail] = useState<any | null>(null);
   const [loadingClientDetail, setLoadingClientDetail] = useState(false);
   const [clientDetailError, setClientDetailError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<MyDayTab>("commercial");
+  const [updatingPersonalTask, setUpdatingPersonalTask] = useState<number | null>(null);
 
   // ── Endpoints (todos filtran por rol server-side donde aplica) ──
   const agentTasksApi = useApi<AgentTask[]>("/api/agents/tasks?limit=500");
@@ -228,12 +251,13 @@ export default function MyDay() {
   );
 
   // ── Unificar tareas pendientes de las 4 fuentes ──
-  const unifiedTasks: UnifiedTask[] = useMemo(() => {
+  const commercialTasks: UnifiedTask[] = useMemo(() => {
     const out: UnifiedTask[] = [];
 
     for (const t of agentTasks) {
       if (!isPending(t.status)) continue;
       const cid = normalizeTaskClientId(t);
+      if (!cid) continue;
       out.push({
         uid: `agent-${t.id}`,
         kind: "agent",
@@ -248,9 +272,10 @@ export default function MyDay() {
     for (const t of personalTasks) {
       if (!isPending(t.status)) continue;
       const cid = normalizeTaskClientId(t);
+      if (!cid) continue;
       out.push({
         uid: `personal-${t.id}`,
-        kind: "personal",
+        kind: "client",
         title: t.title || "Sin título",
         due_date: dueKey(t.due_date) || dueKey(t.follow_up_date),
         client_id: cid,
@@ -262,6 +287,7 @@ export default function MyDay() {
     for (const t of dealTasks) {
       if (!isPending(t.status)) continue;
       const cid = normalizeTaskClientId(t);
+      if (!cid) continue;
       const titleParts = [t.step_name || "Paso de venta"];
       if (t.client_name) titleParts.push(`(${t.client_name})`);
       out.push({
@@ -278,6 +304,7 @@ export default function MyDay() {
     for (const t of workflows) {
       if (!isPending(t.status)) continue;
       const cid = normalizeTaskClientId(t);
+      if (!cid) continue;
       const productLabel = t.product_name || t.product_key || "producto";
       const titleParts = [`Paso pendiente: ${productLabel}`];
       if (t.client_name) titleParts.push(`(${t.client_name})`);
@@ -295,35 +322,81 @@ export default function MyDay() {
     return out;
   }, [agentTasks, personalTasks, dealTasks, workflows]);
 
+  const personalOnlyTasks = useMemo(
+    () =>
+      personalTasks
+        .filter((task) => !normalizeTaskClientId(task))
+        .sort((a, b) => {
+          const aDone = String(a.status || "").toLowerCase() === "done" ? 1 : 0;
+          const bDone = String(b.status || "").toLowerCase() === "done" ? 1 : 0;
+          if (aDone !== bDone) return aDone - bDone;
+          return String(dueKey(a.due_date) || dueKey(a.follow_up_date) || "9999").localeCompare(
+            String(dueKey(b.due_date) || dueKey(b.follow_up_date) || "9999"),
+          );
+        }),
+    [personalTasks],
+  );
+
   // ── Sub-grupos de tareas: atrasadas / hoy / sin fecha ──
   const overdueTasks = useMemo(
     () =>
-      unifiedTasks
+      commercialTasks
         .filter((t) => t.due_date && t.due_date < today)
         .sort((a, b) =>
           String(a.due_date || "").localeCompare(String(b.due_date || "")),
         ),
-    [unifiedTasks, today],
+    [commercialTasks, today],
   );
 
   const todayTasks = useMemo(
     () =>
-      unifiedTasks
+      commercialTasks
         .filter((t) => t.due_date && t.due_date === today)
         .sort((a, b) =>
           String(a.created_at || "").localeCompare(String(b.created_at || "")),
         ),
-    [unifiedTasks, today],
+    [commercialTasks, today],
   );
 
   const noDateTasks = useMemo(
     () =>
-      unifiedTasks
+      commercialTasks
         .filter((t) => !t.due_date)
         .sort((a, b) =>
           String(a.created_at || "").localeCompare(String(b.created_at || "")),
         ),
-    [unifiedTasks],
+    [commercialTasks],
+  );
+
+  const pendingPersonalTasks = useMemo(
+    () => personalOnlyTasks.filter((task) => isPending(task.status)),
+    [personalOnlyTasks],
+  );
+
+  const personalOverdueTasks = useMemo(
+    () => pendingPersonalTasks.filter((task) => {
+      const due = dueKey(task.due_date) || dueKey(task.follow_up_date);
+      return due !== null && due < today;
+    }),
+    [pendingPersonalTasks, today],
+  );
+
+  const personalTodayTasks = useMemo(
+    () => pendingPersonalTasks.filter((task) => {
+      const due = dueKey(task.due_date) || dueKey(task.follow_up_date);
+      return due !== null && due === today;
+    }),
+    [pendingPersonalTasks, today],
+  );
+
+  const personalNoDateTasks = useMemo(
+    () => pendingPersonalTasks.filter((task) => !(dueKey(task.due_date) || dueKey(task.follow_up_date))),
+    [pendingPersonalTasks],
+  );
+
+  const completedPersonalTasks = useMemo(
+    () => personalOnlyTasks.filter((task) => String(task.status || "").toLowerCase() === "done"),
+    [personalOnlyTasks],
   );
 
   // ── Seguimientos: activos (no completados, no cancelados) agrupados ──
@@ -487,7 +560,6 @@ export default function MyDay() {
 
   const handleTaskClick = (task: UnifiedTask) => {
     if (!task.client_id) {
-      setClientDetailError("Esta tarea no tiene cliente asociado.");
       return;
     }
     loadClientDetail(task.client_id);
@@ -499,6 +571,47 @@ export default function MyDay() {
   const resolveFollowUpVendorId = (client: { vendor_id?: number | null }) => {
     const vendorId = Number(client.vendor_id);
     return Number.isFinite(vendorId) && vendorId > 0 ? vendorId : null;
+  };
+
+  const updatePersonalTask = async (taskId: number, payload: Record<string, unknown>) => {
+    setUpdatingPersonalTask(taskId);
+    try {
+      const response = await authFetch(`/api/tasks/${taskId}`, { method: "PUT", json: payload });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: "Error actualizando tarea" }));
+        throw new Error(errorData.error || "Error actualizando tarea");
+      }
+      await personalTasksApi.refetch();
+    } catch (error) {
+      setClientDetailError(error instanceof Error ? error.message : "Error actualizando tarea personal.");
+    } finally {
+      setUpdatingPersonalTask(null);
+    }
+  };
+
+  const deletePersonalTask = async (taskId: number) => {
+    if (!confirm("Eliminar esta tarea personal?")) return;
+    setUpdatingPersonalTask(taskId);
+    try {
+      const response = await authFetch(`/api/tasks/${taskId}`, { method: "DELETE" });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: "Error eliminando tarea" }));
+        throw new Error(errorData.error || "Error eliminando tarea");
+      }
+      await personalTasksApi.refetch();
+    } catch (error) {
+      setClientDetailError(error instanceof Error ? error.message : "Error eliminando tarea personal.");
+    } finally {
+      setUpdatingPersonalTask(null);
+    }
+  };
+
+  const editPersonalTask = async (task: PersonalTask) => {
+    const nextTitle = prompt("Titulo", task.title || "");
+    if (nextTitle === null) return;
+    const nextNotes = prompt("Notas", task.notes || "");
+    if (nextNotes === null) return;
+    await updatePersonalTask(task.id, { title: nextTitle, notes: nextNotes });
   };
 
   const renderTaskRow = (t: UnifiedTask, tone: "red" | "amber" | "slate") => {
@@ -515,7 +628,7 @@ export default function MyDay() {
         key={t.uid}
         onClick={() => handleTaskClick(t)}
         className={`text-sm flex items-start justify-between gap-2 rounded px-1 py-0.5 ${t.client_id ? "cursor-pointer hover:bg-slate-700/50" : "cursor-default"}`}
-        title={t.client_id ? "Abrir detalle del cliente" : "Esta tarea no tiene cliente asociado"}
+        title={t.client_id ? "Abrir detalle del cliente" : undefined}
       >
         <div className="flex items-start gap-2 flex-1 min-w-0">
           <span
@@ -534,6 +647,103 @@ export default function MyDay() {
               ? formatDate(t.due_date)
               : "sin fecha"}
         </span>
+      </li>
+    );
+  };
+
+  const priorityLabel = (value?: string | null) => {
+    const normalized = String(value || "normal").toLowerCase();
+    if (normalized === "high") return "Alta";
+    if (normalized === "low") return "Baja";
+    return "Normal";
+  };
+
+  const customValue = (task: PersonalTask, keys: string[]) => {
+    const fields = task.custom_fields && typeof task.custom_fields === "object" ? task.custom_fields : {};
+    for (const key of keys) {
+      const value = fields[key];
+      if (value !== null && value !== undefined && String(value).trim()) return String(value);
+    }
+    return null;
+  };
+
+  const renderPersonalTask = (task: PersonalTask) => {
+    const due = dueKey(task.due_date) || dueKey(task.follow_up_date);
+    const category = customValue(task, ["category", "categoria", "tipo"]);
+    const reminder = task.follow_up_date
+      ? `${formatDate(task.follow_up_date)}${task.follow_up_time ? ` ${task.follow_up_time}` : ""}`
+      : customValue(task, ["reminder", "recordatorio"]);
+    const responsible = task.assigned_name || task.assigned_username || task.assigned_user_id || "Sin responsable";
+    const isDone = String(task.status || "").toLowerCase() === "done";
+    const busy = updatingPersonalTask === task.id;
+
+    return (
+      <li key={task.id} className="rounded-lg border border-slate-700 bg-slate-900/50 p-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className={`text-sm font-semibold ${isDone ? "text-slate-500 line-through" : "text-slate-100"}`}>
+                {task.title || "Sin titulo"}
+              </h3>
+              <span className="rounded border border-slate-700 px-1.5 py-0.5 text-[10px] uppercase text-slate-400">
+                {task.status || "pending"}
+              </span>
+              <span className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-200">
+                {priorityLabel(task.priority)}
+              </span>
+            </div>
+            {(task.description || task.notes) && (
+              <p className="mt-1 text-xs text-slate-400">{task.description || task.notes}</p>
+            )}
+            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500">
+              <span>Vence: {due ? formatDate(due) : "sin fecha"}</span>
+              <span>Categoria: {category || "sin categoria"}</span>
+              <span>Recordatorio: {reminder || "sin recordatorio"}</span>
+              <span>Responsable: {responsible}</span>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-1">
+            {!isDone && (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void updatePersonalTask(task.id, { status: "done" })}
+                className="rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-xs text-emerald-200 disabled:opacity-50"
+              >
+                Completar
+              </button>
+            )}
+            {!isDone && (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void updatePersonalTask(task.id, { due_date: addDaysISO(due, 1) })}
+                className="rounded border border-slate-700 px-2 py-1 text-xs text-slate-300 disabled:opacity-50"
+              >
+                Posponer
+              </button>
+            )}
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void editPersonalTask(task)}
+              className="rounded border border-slate-700 p-1.5 text-slate-300 disabled:opacity-50"
+              title="Editar"
+            >
+              <Edit className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void deletePersonalTask(task.id)}
+              className="rounded border border-red-500/30 p-1.5 text-red-300 disabled:opacity-50"
+              title="Eliminar"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+        <div className="mt-2 text-[11px] text-slate-600">Futuro: convertir en cliente/oportunidad</div>
       </li>
     );
   };
@@ -590,7 +800,34 @@ export default function MyDay() {
         )}
       </header>
 
-      {overdueTasks.length > 0 && (
+      <div className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900/50 p-1">
+        <button
+          type="button"
+          onClick={() => setActiveTab("commercial")}
+          className={`flex-1 rounded-md px-3 py-2 text-sm font-semibold transition-colors ${
+            activeTab === "commercial" ? "bg-blue-600 text-white" : "text-slate-400 hover:bg-slate-800 hover:text-white"
+          }`}
+        >
+          Comercial
+          <span className="ml-2 text-xs opacity-80">
+            {overdueTasks.length} atrasadas / {todayTasks.length} hoy / {noDateTasks.length} sin fecha
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab("personal")}
+          className={`flex-1 rounded-md px-3 py-2 text-sm font-semibold transition-colors ${
+            activeTab === "personal" ? "bg-amber-600 text-white" : "text-slate-400 hover:bg-slate-800 hover:text-white"
+          }`}
+        >
+          Personal
+          <span className="ml-2 text-xs opacity-80">
+            {personalOverdueTasks.length} atrasadas / {personalTodayTasks.length} hoy / {personalNoDateTasks.length} sin fecha
+          </span>
+        </button>
+      </div>
+
+      {activeTab === "commercial" && overdueTasks.length > 0 && (
         <div className="bg-red-900/40 border-2 border-red-500 rounded-lg p-4 flex items-start gap-3">
           <ShieldAlert className="w-6 h-6 text-red-300 shrink-0 mt-0.5" />
           <div>
@@ -607,6 +844,8 @@ export default function MyDay() {
         </div>
       )}
 
+      {activeTab === "commercial" && (
+        <>
       <section className="bg-slate-800/50 border border-slate-700 rounded-lg p-4">
         <h2 className="text-sm font-semibold uppercase text-slate-400 flex items-center gap-2 mb-3">
           <CheckSquare className="w-4 h-4" />
@@ -617,9 +856,9 @@ export default function MyDay() {
           </span>
         </h2>
 
-        {unifiedTasks.length === 0 ? (
+        {commercialTasks.length === 0 ? (
           <p className="text-sm text-slate-400 italic">
-            No hay tareas pendientes en ninguna fuente.
+            No hay tareas comerciales pendientes.
           </p>
         ) : (
           <div className="space-y-3">
@@ -818,6 +1057,59 @@ export default function MyDay() {
                 </li>
               ))}
             </ul>
+          )}
+        </section>
+      )}
+        </>
+      )}
+
+      {activeTab === "personal" && (
+        <section className="bg-slate-800/50 border border-slate-700 rounded-lg p-4">
+          <h2 className="text-sm font-semibold uppercase text-slate-400 flex items-center gap-2 mb-3">
+            <CheckSquare className="w-4 h-4" />
+            Tareas personales
+            <span className="text-xs text-slate-500 normal-case font-normal">
+              ({personalOverdueTasks.length} atrasadas Â· {personalTodayTasks.length} hoy Â· {personalNoDateTasks.length} sin fecha)
+            </span>
+          </h2>
+
+          {personalOnlyTasks.length === 0 ? (
+            <p className="text-sm text-slate-400 italic">No hay tareas personales sin cliente.</p>
+          ) : (
+            <div className="space-y-4">
+              {personalOverdueTasks.length > 0 && (
+                <div>
+                  <h3 className="text-xs font-semibold text-red-300 uppercase mb-1.5">
+                    Atrasadas ({personalOverdueTasks.length})
+                  </h3>
+                  <ul className="space-y-2">{personalOverdueTasks.map(renderPersonalTask)}</ul>
+                </div>
+              )}
+              {personalTodayTasks.length > 0 && (
+                <div>
+                  <h3 className="text-xs font-semibold text-amber-300 uppercase mb-1.5">
+                    Para hoy ({personalTodayTasks.length})
+                  </h3>
+                  <ul className="space-y-2">{personalTodayTasks.map(renderPersonalTask)}</ul>
+                </div>
+              )}
+              {personalNoDateTasks.length > 0 && (
+                <div>
+                  <h3 className="text-xs font-semibold text-slate-400 uppercase mb-1.5">
+                    Sin fecha ({personalNoDateTasks.length})
+                  </h3>
+                  <ul className="space-y-2">{personalNoDateTasks.map(renderPersonalTask)}</ul>
+                </div>
+              )}
+              {completedPersonalTasks.length > 0 && (
+                <div>
+                  <h3 className="text-xs font-semibold text-emerald-300 uppercase mb-1.5">
+                    Completadas ({completedPersonalTasks.length})
+                  </h3>
+                  <ul className="space-y-2">{completedPersonalTasks.slice(0, 10).map(renderPersonalTask)}</ul>
+                </div>
+              )}
+            </div>
           )}
         </section>
       )}
