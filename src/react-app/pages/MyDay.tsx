@@ -20,6 +20,7 @@ type AgentTask = {
   title?: string | null;
   status?: string | null;
   due_date?: string | null;
+  client_id?: string | null;
   related_client_id?: string | null;
   assigned_salesperson_id?: string | null;
   created_at?: string | null;
@@ -160,6 +161,11 @@ const isPending = (status?: string | null) => {
   return s === "pending" || s === "in_progress";
 };
 
+const normalizeTaskClientId = (task: { client_id?: string | number | null; related_client_id?: string | number | null }) => {
+  const value = task.client_id || task.related_client_id;
+  return value ? String(value) : null;
+};
+
 // is_active acepta boolean o number 0/1 (BD inconsistente)
 const isFollowUpActive = (f: FollowUp): boolean => {
   if (f.completed_date) return false;
@@ -227,7 +233,7 @@ export default function MyDay() {
 
     for (const t of agentTasks) {
       if (!isPending(t.status)) continue;
-      const cid = t.related_client_id ? String(t.related_client_id) : null;
+      const cid = normalizeTaskClientId(t);
       out.push({
         uid: `agent-${t.id}`,
         kind: "agent",
@@ -241,7 +247,7 @@ export default function MyDay() {
 
     for (const t of personalTasks) {
       if (!isPending(t.status)) continue;
-      const cid = t.client_id ? String(t.client_id) : null;
+      const cid = normalizeTaskClientId(t);
       out.push({
         uid: `personal-${t.id}`,
         kind: "personal",
@@ -255,7 +261,7 @@ export default function MyDay() {
 
     for (const t of dealTasks) {
       if (!isPending(t.status)) continue;
-      const cid = t.client_id ? String(t.client_id) : null;
+      const cid = normalizeTaskClientId(t);
       const titleParts = [t.step_name || "Paso de venta"];
       if (t.client_name) titleParts.push(`(${t.client_name})`);
       out.push({
@@ -271,7 +277,7 @@ export default function MyDay() {
 
     for (const t of workflows) {
       if (!isPending(t.status)) continue;
-      const cid = t.client_id ? String(t.client_id) : null;
+      const cid = normalizeTaskClientId(t);
       const productLabel = t.product_name || t.product_key || "producto";
       const titleParts = [`Paso pendiente: ${productLabel}`];
       if (t.client_name) titleParts.push(`(${t.client_name})`);

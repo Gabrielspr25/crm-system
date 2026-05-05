@@ -31,7 +31,6 @@ export default function ModalRefreshButton() {
     if (path === "/" || path === "/panel" || path === "/clientes") {
       return ["modal-refresh", "refreshClients", "clients-updated"];
     }
-    if (path === "/tareas") return ["modal-refresh", "refreshTasks"];
     if (path === "/reportes") return ["modal-refresh", "refreshReports"];
     if (path === "/tarifas") return ["modal-refresh", "refreshTarifas"];
     return ["modal-refresh"];

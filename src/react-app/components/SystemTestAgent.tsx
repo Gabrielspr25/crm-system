@@ -52,7 +52,6 @@ const MODULE_ICONS: Record<string, any> = {
   'TANGO': Database,
   'LIMPIEZA': Trash2,
   // Nuevos módulos del árbol de permisos
-  'TAREAS': Activity,
   'VENDEDORES': Users,
   'PRODUCTOS': CreditCard,
   'CATEGORIAS': FileText,
@@ -90,7 +89,7 @@ export default function SystemTestAgent() {
       'Verificando suscriptores...',
       'Probando seguimientos...',
       'Verificando integridad de datos...',
-      'Probando módulo de tareas...',
+      'Verificando pendientes operativos...',
       'Verificando vendedores y presets de acceso...',
       'Verificando productos y categorías...',
       'Comprobando metas, permisos y correos...',
@@ -339,7 +338,7 @@ export default function SystemTestAgent() {
             {/* Footer */}
             <div className="p-4 border-t border-gray-800 bg-gray-800/30 flex justify-between items-center">
               <p className="text-xs text-gray-500">
-                Este agente prueba: Clientes, BANs, Suscriptores, Seguimientos, Tareas, Vendedores, Productos, Categorías, Metas, Correos, Cognos, Comisiones, Usuarios, Seguridad, Importador, Referidos, Tango
+                Este agente prueba: Clientes, BANs, Suscriptores, Seguimientos, Vendedores, Productos, Categorías, Metas, Correos, Cognos, Comisiones, Usuarios, Seguridad, Importador, Referidos, Tango
               </p>
               <button 
                 onClick={runSystemTest}

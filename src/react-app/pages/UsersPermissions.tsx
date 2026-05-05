@@ -62,7 +62,6 @@ type Preset = {
 
 const MODULE_TITLES: Record<string, string> = {
   navigation: "🧭 Navegación",
-  tasks: "✅ Tareas",
   clients: "👥 Clientes",
   followup: "📞 Seguimiento",
   emails: "✉️ Correos",

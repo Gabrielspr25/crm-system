@@ -1132,7 +1132,7 @@ function CallModal({
     step_id: prospect.step_id
   });
   const [activeTab, setActiveTab] = useState<'all' | 'manage'>('all');
-  const [activeMainTab, setActiveMainTab] = useState<'steps' | 'call' | 'tasks'>('call');
+  const [activeMainTab, setActiveMainTab] = useState<'steps' | 'call' | 'pending'>('call');
 
   // Ordenar pasos y encontrar el actual
   const sortedSteps = useMemo(() => [...steps].sort((a, b) => a.order_index - b.order_index), [steps]);
@@ -1229,10 +1229,10 @@ function CallModal({
             Pasos del Caso
           </button>
           <button
-            onClick={() => setActiveMainTab("tasks")}
-            className={`flex-1 px-6 py-3 text-sm font-medium transition-colors text-center ${activeMainTab === "tasks" ? "text-purple-400 border-b-2 border-purple-400 bg-gray-800/30" : "text-gray-400 hover:text-white hover:bg-gray-800/20"}`}
+            onClick={() => setActiveMainTab("pending")}
+            className={`flex-1 px-6 py-3 text-sm font-medium transition-colors text-center ${activeMainTab === "pending" ? "text-purple-400 border-b-2 border-purple-400 bg-gray-800/30" : "text-gray-400 hover:text-white hover:bg-gray-800/20"}`}
           >
-            ðŸ“‹ Tareas
+            Pendientes
           </button>
         </div>
 
@@ -1487,9 +1487,9 @@ function CallModal({
             </div>
           )}
 
-          {/* TAB: TAREAS */}
-          {activeMainTab === "tasks" && (
-            <TasksPanel prospect={prospect} />
+          {/* TAB: PENDIENTES */}
+          {activeMainTab === "pending" && (
+            <PendingPanel prospect={prospect} />
           )}
 
         </div>
@@ -1498,9 +1498,8 @@ function CallModal({
   );
 }
 
-// ===== TASKS PANEL para Seguimiento =====
-// Permite crear y ver tareas vinculadas al cliente, que aparecen en el modulo de Tareas
-function TasksPanel({ prospect }: { prospect: FollowUpProspect }) {
+// ===== PANEL DE PENDIENTES para Seguimiento =====
+function PendingPanel({ prospect }: { prospect: FollowUpProspect }) {
   const [tasks, setTasks] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -1552,7 +1551,7 @@ function TasksPanel({ prospect }: { prospect: FollowUpProspect }) {
       };
       const res = await authFetch("/api/tasks", { method: "POST", json: body });
       if (!res.ok) throw new Error("Error");
-      setMsg({ type: "success", text: "Tarea creada y visible en el mÃ³dulo de Tareas âœ“" });
+      setMsg({ type: "success", text: "Pendiente creado y visible en Mi dia" });
       setFormData({ title: "", due_date: "", priority: "normal", notes: "" });
       setShowForm(false);
       await loadTasks();
@@ -1583,14 +1582,14 @@ function TasksPanel({ prospect }: { prospect: FollowUpProspect }) {
       {/* Header */}
       <div className="px-6 py-3 border-b border-gray-800 flex justify-between items-center bg-gray-800/30">
         <div>
-          <h3 className="text-sm font-semibold text-gray-200">Tareas vinculadas a <span className="text-purple-400">{clientName}</span></h3>
-          <p className="text-xs text-gray-500 mt-0.5">Estas tareas tambiÃ©n aparecen en el mÃ³dulo de Tareas</p>
+          <h3 className="text-sm font-semibold text-gray-200">Pendientes vinculados a <span className="text-purple-400">{clientName}</span></h3>
+          <p className="text-xs text-gray-500 mt-0.5">Estos pendientes tambien aparecen en Mi dia</p>
         </div>
         <button
           onClick={() => setShowForm(v => !v)}
           className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-medium transition-colors"
         >
-          <Plus className="w-3.5 h-3.5" /> Nueva Tarea
+          <Plus className="w-3.5 h-3.5" /> Nuevo pendiente
         </button>
       </div>
 
@@ -1601,7 +1600,7 @@ function TasksPanel({ prospect }: { prospect: FollowUpProspect }) {
         </div>
       )}
 
-      {/* Formulario crear tarea */}
+      {/* Formulario crear pendiente */}
       {showForm && (
         <form onSubmit={handleCreate} className="mx-4 mt-3 p-4 bg-gray-800/50 rounded-xl border border-purple-900/30 space-y-3">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -1655,21 +1654,21 @@ function TasksPanel({ prospect }: { prospect: FollowUpProspect }) {
               Cancelar
             </button>
             <button type="submit" disabled={saving || !formData.title.trim()} className="px-4 py-1.5 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white text-sm rounded-lg font-medium transition-colors">
-              {saving ? "Guardando..." : "Crear Tarea"}
+              {saving ? "Guardando..." : "Crear pendiente"}
             </button>
           </div>
         </form>
       )}
 
-      {/* Lista de tareas */}
+      {/* Lista de pendientes */}
       <div className="flex-1 overflow-y-auto p-4 space-y-2">
         {loading ? (
-          <div className="text-center py-8 text-gray-500 text-sm">Cargando tareas...</div>
+          <div className="text-center py-8 text-gray-500 text-sm">Cargando pendientes...</div>
         ) : tasks.length === 0 ? (
           <div className="text-center py-10 opacity-50">
             <div className="text-4xl mb-3">ðŸ“‹</div>
-            <p className="text-gray-400 text-sm">No hay tareas para este cliente.</p>
-            <p className="text-gray-500 text-xs mt-1">Crea una tarea con el botÃ³n "Nueva Tarea"</p>
+            <p className="text-gray-400 text-sm">No hay pendientes para este cliente.</p>
+            <p className="text-gray-500 text-xs mt-1">Crea un pendiente con el botÃ³n "Nuevo pendiente"</p>
           </div>
         ) : (
           tasks.map((task: any) => (

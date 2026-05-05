@@ -23,9 +23,6 @@
 // GRUPOS VIRTUALES  (solo para UI — no tocar en permissionService.js)
 // ─────────────────────────────────────────────────────────────────────────────
 export const PERMISSION_GROUPS = [
-  // tasks
-  { key: "tasks.personal",             module: "tasks",      label: "Tareas personales",        kind: "group", testKey: "TAREAS",       defaultRoles: ["admin", "supervisor", "vendedor"] },
-  { key: "tasks.pending",              module: "tasks",      label: "Pendientes de clientes",   kind: "group", testKey: "TAREAS",       defaultRoles: ["admin", "supervisor", "vendedor"] },
   // clients
   { key: "clients.bans",               module: "clients",    label: "BANs",                     kind: "group", testKey: "BANS",         defaultRoles: ["admin", "supervisor", "vendedor"] },
   { key: "clients.subscribers",        module: "clients",    label: "Suscriptores",             kind: "group", testKey: "SUSCRIPTORES", defaultRoles: ["admin", "supervisor", "vendedor"] },
@@ -57,7 +54,6 @@ export const PERMISSION_GROUPS = [
 export const PERMISSION_CATALOG = [
   // ── NAVEGACION ─────────────────────────────────────────────────────────────
   { key: "nav.dashboard",         module: "navigation", submodule: null, parent: null, label: "Panel General",          kind: "nav",    testKey: "AUTH",         defaultRoles: ["admin", "supervisor", "vendedor"] },
-  { key: "nav.tasks",             module: "navigation", submodule: null, parent: null, label: "Tareas",                 kind: "nav",    testKey: "TAREAS",       defaultRoles: ["admin", "supervisor", "vendedor"] },
   { key: "nav.clients",           module: "navigation", submodule: null, parent: null, label: "Clientes",               kind: "nav",    testKey: "CLIENTES",     defaultRoles: ["admin", "supervisor", "vendedor"] },
   { key: "nav.followup",          module: "navigation", submodule: null, parent: null, label: "Seguimiento",            kind: "nav",    testKey: "SEGUIMIENTOS", defaultRoles: ["admin", "supervisor", "vendedor"] },
   { key: "nav.emails",            module: "navigation", submodule: null, parent: null, label: "Correos",                kind: "nav",    testKey: "CORREOS",      defaultRoles: ["admin", "supervisor", "vendedor"] },
@@ -76,17 +72,6 @@ export const PERMISSION_CATALOG = [
   { key: "nav.control_security",  module: "navigation", submodule: null, parent: null, label: "Control y Seguridad",    kind: "nav",    testKey: "SEGURIDAD",       defaultRoles: ["admin", "supervisor"] },
   { key: "nav.users_permissions", module: "navigation", submodule: null, parent: null, label: "Usuarios y Permisos",    kind: "nav",    testKey: "USUARIOS",        defaultRoles: ["admin", "supervisor"] },
   { key: "nav.rules_processes",   module: "navigation", submodule: null, parent: null, label: "Reglas y Procesos",      kind: "nav",    testKey: "REGLAS_PROCESOS", defaultRoles: ["admin", "supervisor"] },
-
-  // ── TAREAS ─────────────────────────────────────────────────────────────────
-  { key: "tasks.personal.view",        module: "tasks", submodule: "personal", parent: "tasks.personal", label: "Ver tareas personales",          kind: "view",   testKey: "TAREAS", defaultRoles: ["admin", "supervisor", "vendedor"] },
-  { key: "tasks.personal.create",      module: "tasks", submodule: "personal", parent: "tasks.personal", label: "Crear tarea personal",           kind: "action", testKey: "TAREAS", defaultRoles: ["admin", "supervisor", "vendedor"] },
-  { key: "tasks.personal.edit",        module: "tasks", submodule: "personal", parent: "tasks.personal", label: "Editar tarea personal",          kind: "action", testKey: "TAREAS", defaultRoles: ["admin", "supervisor", "vendedor"] },
-  { key: "tasks.personal.delete",      module: "tasks", submodule: "personal", parent: "tasks.personal", label: "Eliminar tarea personal",        kind: "action", testKey: "TAREAS", defaultRoles: ["admin", "supervisor", "vendedor"] },
-  { key: "tasks.personal.assign",      module: "tasks", submodule: "personal", parent: "tasks.personal", label: "Asignar tareas personales",      kind: "action", testKey: "TAREAS", defaultRoles: ["admin", "supervisor"] },
-  { key: "tasks.personal.import",      module: "tasks", submodule: "personal", parent: "tasks.personal", label: "Importar tareas personales",     kind: "action", testKey: "TAREAS", defaultRoles: ["admin", "supervisor"] },
-  { key: "tasks.personal.export",      module: "tasks", submodule: "personal", parent: "tasks.personal", label: "Exportar tareas personales",     kind: "action", testKey: "TAREAS", defaultRoles: ["admin", "supervisor", "vendedor"] },
-  { key: "tasks.pending.view",         module: "tasks", submodule: "pending",  parent: "tasks.pending",  label: "Ver pendientes de clientes",     kind: "view",   testKey: "TAREAS", defaultRoles: ["admin", "supervisor", "vendedor"] },
-  { key: "tasks.pending.open_client",  module: "tasks", submodule: "pending",  parent: "tasks.pending",  label: "Abrir cliente desde pendientes", kind: "action", testKey: "TAREAS", defaultRoles: ["admin", "supervisor", "vendedor"] },
 
   // ── CLIENTES — base ────────────────────────────────────────────────────────
   { key: "clients.view",          module: "clients", submodule: null, parent: null, label: "Ver clientes",                kind: "view",   testKey: "CLIENTES", defaultRoles: ["admin", "supervisor", "vendedor"] },
