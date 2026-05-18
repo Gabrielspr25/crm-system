@@ -43,6 +43,14 @@ const ACTIVE_CLIENT_SQL = `
     AND ${ACTIVE_CLIENT_RELATION_SQL}
     AND NOT (${ACTIVE_FOLLOW_UP_EXISTS_SQL})
 `;
+const FOLLOWING_VISIBLE_NAME_SQL = `
+    COALESCE(NULLIF(TRIM(c.name), ''), NULLIF(TRIM(c.business_name), '')) IS NOT NULL
+`;
+const FOLLOWING_CLIENT_SQL = `
+    ${FOLLOWING_VISIBLE_NAME_SQL}
+    AND ${ACTIVE_FOLLOW_UP_EXISTS_SQL}
+    AND EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id)
+`;
 const CANCELLED_CLIENT_SQL = `
     ${VALID_CLIENT_NAME_SQL}
     AND EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id)
@@ -145,7 +153,7 @@ const resolveSalespersonIdFromVendor = async (vendorId) => {
         );
         return rows?.[0]?.salesperson_id || null;
     } catch (error) {
-        // Tabla de mapping ausente en algÃºn entorno
+        // Tabla de mapping ausente en algún entorno
         if (error?.code === '42P01') return null;
         throw error;
     }
@@ -269,12 +277,11 @@ export const getClients = async (req, res) => {
         if (tab === 'cancelled') {
             conditions.push(`(${CANCELLED_CLIENT_SQL})`);
         } else if (tab === 'active' || !tab) {
-            // ACTIVOS: Clientes CON AL MENOS UN BAN ACTIVO O sin BANs (reciÃ©n creados)
-            // EXCLUIR clientes que estÃ¡n en seguimiento activo
+            // ACTIVOS: Clientes CON AL MENOS UN BAN ACTIVO O sin BANs (recién creados)
+            // EXCLUIR clientes que están en seguimiento activo
             conditions.push(`(${ACTIVE_CLIENT_SQL})`);
         } else if (tab === 'following') {
-            conditions.push(`${ACTIVE_FOLLOW_UP_EXISTS_SQL}`);
-            conditions.push(`EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id)`);
+            conditions.push(`(${FOLLOWING_CLIENT_SQL})`);
         } else if (tab === 'completed') {
             conditions.push(`EXISTS (SELECT 1 FROM follow_up_prospects f WHERE f.client_id = c.id AND f.completed_date IS NOT NULL)`);
         } else if (tab === 'incomplete') {
@@ -370,13 +377,7 @@ export const getClients = async (req, res) => {
                 (SELECT COUNT(DISTINCT c.id) FROM clients c 
                  WHERE ${CANCELLED_CLIENT_SQL}) as cancelled_count,
                 (SELECT COUNT(DISTINCT c.id) FROM clients c
-                 WHERE EXISTS (
-                   SELECT 1
-                   FROM follow_up_prospects f
-                   WHERE f.client_id = c.id
-                     AND f.completed_date IS NULL
-                     AND COALESCE(f.is_active::text, 'true') IN ('true', '1', 't')
-                 )
+                 WHERE ${FOLLOWING_CLIENT_SQL}
                  ) as following_count,
                 (SELECT COUNT(DISTINCT c.id) FROM clients c
                  WHERE EXISTS (SELECT 1 FROM follow_up_prospects f WHERE f.client_id = c.id AND f.completed_date IS NOT NULL)
@@ -400,7 +401,13 @@ export const getClients = async (req, res) => {
 export const getClientById = async (req, res) => {
     const { id } = req.params;
     try {
-        const clients = await query('SELECT * FROM clients WHERE id = $1', [id]);
+        const clients = await query(
+            `SELECT c.*, sp.name AS vendor_name
+               FROM clients c
+               LEFT JOIN salespeople sp ON sp.id = c.salesperson_id
+              WHERE c.id = $1`,
+            [id]
+        );
         if (clients.length === 0) {
             return notFound(res, 'Cliente');
         }
@@ -500,6 +507,7 @@ export const updateClient = async (req, res) => {
     const {
         owner_name,
         name,
+        business_name,
         contact_person,
         email,
         phone,
@@ -531,7 +539,7 @@ export const updateClient = async (req, res) => {
             }
         }
 
-        // Si se envÃ­a salesperson_id explÃ­citamente (puede ser null para desasignar)
+        // Si se envía salesperson_id explícitamente (puede ser null para desasignar)
         if (name !== undefined || phone !== undefined) {
             const duplicate = await findClientDuplicate({ name, phone, excludeId: id });
             if (duplicate) {
@@ -577,23 +585,24 @@ export const updateClient = async (req, res) => {
                 `UPDATE clients
               SET owner_name = COALESCE($1, owner_name),
                   name = COALESCE($2, name),
-                  contact_person = COALESCE($3, contact_person),
-                  email = COALESCE($4, email),
-                  phone = COALESCE($5, phone),
-                  additional_phone = COALESCE($6, additional_phone),
-                  cellular = COALESCE($7, cellular),
-                  address = COALESCE($8, address),
-                  city = COALESCE($9, city),
-                  zip_code = COALESCE($10, zip_code),
-                  tax_id = COALESCE($11, tax_id),
-                  notes = COALESCE($12, notes),
-                  includes_ban = COALESCE($13, includes_ban),
-                  salesperson_id = $14,
+                  business_name = COALESCE($3, business_name),
+                  contact_person = COALESCE($4, contact_person),
+                  email = COALESCE($5, email),
+                  phone = COALESCE($6, phone),
+                  additional_phone = COALESCE($7, additional_phone),
+                  cellular = COALESCE($8, cellular),
+                  address = COALESCE($9, address),
+                  city = COALESCE($10, city),
+                  zip_code = COALESCE($11, zip_code),
+                  tax_id = COALESCE($12, tax_id),
+                  notes = COALESCE($13, notes),
+                  includes_ban = COALESCE($14, includes_ban),
+                  salesperson_id = $15,
                   updated_at = NOW()
-            WHERE id = $15
+            WHERE id = $16
             RETURNING *`,
                 [
-                    owner_name, name, contact_person, email, phone, additional_phone, cellular,
+                    owner_name, name, business_name, contact_person, email, phone, additional_phone, cellular,
                     address, city, zip_code, tax_id, notes,
                     includes_ban === undefined ? null : Boolean(includes_ban),
                     safeSalespersonId, id
@@ -604,22 +613,23 @@ export const updateClient = async (req, res) => {
                 `UPDATE clients
               SET owner_name = COALESCE($1, owner_name),
                   name = COALESCE($2, name),
-                  contact_person = COALESCE($3, contact_person),
-                  email = COALESCE($4, email),
-                  phone = COALESCE($5, phone),
-                  additional_phone = COALESCE($6, additional_phone),
-                  cellular = COALESCE($7, cellular),
-                  address = COALESCE($8, address),
-                  city = COALESCE($9, city),
-                  zip_code = COALESCE($10, zip_code),
-                  tax_id = COALESCE($11, tax_id),
-                  notes = COALESCE($12, notes),
-                  includes_ban = COALESCE($13, includes_ban),
+                  business_name = COALESCE($3, business_name),
+                  contact_person = COALESCE($4, contact_person),
+                  email = COALESCE($5, email),
+                  phone = COALESCE($6, phone),
+                  additional_phone = COALESCE($7, additional_phone),
+                  cellular = COALESCE($8, cellular),
+                  address = COALESCE($9, address),
+                  city = COALESCE($10, city),
+                  zip_code = COALESCE($11, zip_code),
+                  tax_id = COALESCE($12, tax_id),
+                  notes = COALESCE($13, notes),
+                  includes_ban = COALESCE($14, includes_ban),
                   updated_at = NOW()
-            WHERE id = $14
+            WHERE id = $15
             RETURNING *`,
                 [
-                    owner_name, name, contact_person, email, phone, additional_phone, cellular,
+                    owner_name, name, business_name, contact_person, email, phone, additional_phone, cellular,
                     address, city, zip_code, tax_id, notes,
                     includes_ban === undefined ? null : Boolean(includes_ban),
                     id

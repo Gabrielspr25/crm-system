@@ -3,7 +3,7 @@ import {
   TrendingUp, Users, Target, DollarSign, RefreshCw,
   CheckCircle2, AlertTriangle, Award, BarChart3
 } from "lucide-react";
-import { authFetch } from "@/react-app/utils/auth";
+import { authFetch, getCurrentUser } from "@/react-app/utils/auth";
 
 // ---------------------------------------------------------------------------
 // Tipos
@@ -85,6 +85,8 @@ export default function MetasDashboard() {
   const now          = new Date();
   const currentYear  = now.getFullYear();
   const currentMonth = now.getMonth() + 1;
+  const currentUser = getCurrentUser();
+  const canViewCompanyFinancials = String(currentUser?.role || "").toLowerCase() === "admin";
 
   const [year,    setYear]    = useState(currentYear);
   const [month,   setMonth]   = useState(currentMonth);
@@ -201,12 +203,14 @@ export default function MetasDashboard() {
               value={String(data.kpis.total_actual)}
               sub="activaciones en el período"
             />
-            <KpiCard
-              icon={<DollarSign className="w-5 h-5 text-yellow-400" />}
-              label="Ingresos mensuales"
-              value={`$${data.kpis.total_revenue.toLocaleString("en-US", { minimumFractionDigits: 0 })}`}
-              sub="valor de planes activos"
-            />
+            {canViewCompanyFinancials && (
+              <KpiCard
+                icon={<DollarSign className="w-5 h-5 text-yellow-400" />}
+                label="Ingresos mensuales"
+                value={`$${data.kpis.total_revenue.toLocaleString("en-US", { minimumFractionDigits: 0 })}`}
+                sub="valor de planes activos"
+              />
+            )}
             <KpiCard
               icon={<Target className="w-5 h-5 text-slate-400" />}
               label="Meta del período"
@@ -237,7 +241,7 @@ export default function MetasDashboard() {
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                 {data.by_product.map(p => (
-                  <ProductCard key={p.product_name} p={p} />
+                  <ProductCard key={p.product_name} p={p} showRevenue={canViewCompanyFinancials} />
                 ))}
               </div>
             )}
@@ -262,7 +266,9 @@ export default function MetasDashboard() {
                       <th className="px-4 py-3 text-slate-400 font-semibold text-xs uppercase text-center">Cumpl.</th>
                       <th className="px-4 py-3 text-slate-400 font-semibold text-xs uppercase text-center">NEW</th>
                       <th className="px-4 py-3 text-slate-400 font-semibold text-xs uppercase text-center">REN</th>
-                      <th className="px-4 py-3 text-slate-400 font-semibold text-xs uppercase text-right">Ingresos</th>
+                      {canViewCompanyFinancials && (
+                        <th className="px-4 py-3 text-slate-400 font-semibold text-xs uppercase text-right">Ingresos</th>
+                      )}
                     </tr>
                   </thead>
                   <tbody>
@@ -309,9 +315,11 @@ export default function MetasDashboard() {
                         </td>
                         <td className="px-4 py-3 text-center text-emerald-400 font-medium">{v.new_count}</td>
                         <td className="px-4 py-3 text-center text-blue-400 font-medium">{v.ren_count}</td>
-                        <td className="px-4 py-3 text-right text-slate-300">
-                          ${v.total_revenue.toLocaleString("en-US", { minimumFractionDigits: 0 })}
-                        </td>
+                        {canViewCompanyFinancials && (
+                          <td className="px-4 py-3 text-right text-slate-300">
+                            ${v.total_revenue.toLocaleString("en-US", { minimumFractionDigits: 0 })}
+                          </td>
+                        )}
                       </tr>
                     ))}
                   </tbody>
@@ -355,7 +363,7 @@ function KpiCard({
   );
 }
 
-function ProductCard({ p }: { p: ProductStat }) {
+function ProductCard({ p, showRevenue }: { p: ProductStat; showRevenue: boolean }) {
   const clampedPct = Math.min(p.pct, 100);
   return (
     <div className="bg-slate-800/60 border border-slate-700 rounded-xl p-4 space-y-3">
@@ -378,7 +386,9 @@ function ProductCard({ p }: { p: ProductStat }) {
       <div className="flex justify-between text-xs text-slate-400">
         <span>Real: <span className="text-white font-medium">{p.actual}</span></span>
         <span>Meta: <span className="text-white font-medium">{p.target > 0 ? p.target : "—"}</span></span>
-        <span className="text-slate-500">${p.revenue.toLocaleString("en-US", { minimumFractionDigits: 0 })}</span>
+        {showRevenue && (
+          <span className="text-slate-500">${p.revenue.toLocaleString("en-US", { minimumFractionDigits: 0 })}</span>
+        )}
       </div>
     </div>
   );

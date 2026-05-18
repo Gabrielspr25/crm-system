@@ -230,7 +230,7 @@ export const saveImportData = async (req, res) => {
                                 );
                             }
 
-                            // Campo is_active no existe en bans, se eliminÃ³ esta actualizaciÃ³n
+                            // Campo is_active no existe en bans, se eliminó esta actualización
 
                             updated++;
                         } else {
@@ -434,11 +434,11 @@ export const saveImportData = async (req, res) => {
                 }
 
                 await client.query('COMMIT');
-                console.log(`[SAVE] âœ“ Lote ${batchIndex + 1}/${totalBatches} completado`);
+                console.log(`[SAVE] ✓ Lote ${batchIndex + 1}/${totalBatches} completado`);
 
             } catch (error) {
                 await client.query('ROLLBACK');
-                console.error(`[SAVE] âœ— Error en lote ${batchIndex + 1}:`, error);
+                console.error(`[SAVE] ✗ Error en lote ${batchIndex + 1}:`, error);
                 errors.push(`Error en lote ${batchIndex + 1}: ${error.message}`);
                 // Continuar con el siguiente lote en lugar de abortar todo
             } finally {
@@ -451,7 +451,7 @@ export const saveImportData = async (req, res) => {
 
         res.json({
             success: true,
-            message: 'ImportaciÃ³n completada',
+            message: 'Importación completada',
             details: {
                 processed,
                 created,
@@ -471,7 +471,7 @@ export const saveImportData = async (req, res) => {
         });
 
     } catch (error) {
-        serverError(res, error, 'Error en importaciÃ³n masiva');
+        serverError(res, error, 'Error en importación masiva');
     }
 };
 
@@ -655,7 +655,7 @@ export const getExcelColumns = async (req, res) => {
             const files = fs.readdirSync(excelsDir).filter(f => f.toLowerCase().endsWith('.xlsx'));
             if (files.length === 0) {
                 return res.status(404).json({
-                    error: 'No se encontrÃ³ ningÃºn Excel en la carpeta',
+                    error: 'No se encontró ningún Excel en la carpeta',
                     path: excelsDir
                 });
             }

@@ -1,6 +1,6 @@
 ﻿import { useState, useMemo, useEffect } from "react";
 import { useSearchParams } from "react-router";
-import { Search, Plus, Phone, Edit3, Settings, Trash2, ArrowLeft, Calendar as CalendarIcon, List, ChevronLeft, ChevronRight, LayoutList, Clock, AlertTriangle } from "lucide-react";
+import { Search, Plus, Phone, Edit3, Settings, Trash2, ArrowLeft, Calendar as CalendarIcon, List, ChevronLeft, ChevronRight, LayoutList, Clock, AlertTriangle, X } from "lucide-react";
 import { useApi } from "../hooks/useApi";
 import { authFetch, getCurrentUser } from "@/react-app/utils/auth";
 import { APP_VERSION } from "@/version";
@@ -94,7 +94,7 @@ export default function FollowUp() {
   const { data: steps, refetch: refetchSteps } = useApi<FollowUpStep[]>("/api/follow-up-prospects/steps");
   const { data: clients } = useApi<Client[]>("/api/clients");
 
-  // Detectar client_id en URL y abrir modal automÃ¡ticamente
+  // Detectar client_id en URL y abrir modal automáticamente
   useEffect(() => {
     const clientId = searchParams.get('client_id');
     if (clientId && prospects && prospects.length > 0) {
@@ -111,7 +111,7 @@ export default function FollowUp() {
 
     (prospects || []).forEach((prospect) => {
       // Si tiene client_id, usar como key para deduplicar
-      // Si NO tiene client_id, usar id Ãºnico (no deduplicar)
+      // Si NO tiene client_id, usar id único (no deduplicar)
       const key = prospect.client_id ? `client-${prospect.client_id}` : `prospect-${prospect.id}`;
       if (!seen.has(key)) {
         seen.set(key, prospect);
@@ -122,11 +122,11 @@ export default function FollowUp() {
     return Array.from(seen.values());
   }, [prospects, clients]);
 
-  // Abrir automÃ¡ticamente el cliente si viene client_id en la URL
+  // Abrir automáticamente el cliente si viene client_id en la URL
   useEffect(() => {
     const clientIdParam = searchParams.get('client_id');
     if (clientIdParam && uniqueProspects.length > 0) {
-      // No convertir a nÃºmero - client_id es UUID (string)
+      // No convertir a número - client_id es UUID (string)
       const prospect = uniqueProspects.find(p => p.client_id === clientIdParam);
       if (prospect && !selectedProspect) {
         setSelectedProspect(prospect);
@@ -144,7 +144,7 @@ export default function FollowUp() {
 
   const filteredProspects = useMemo(() => {
     return clientFilteredProspects.filter(prospect => {
-      // Filtro por bÃºsqueda
+      // Filtro por búsqueda
       const matchesSearch = prospect.company_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
         (prospect.vendor_name && prospect.vendor_name.toLowerCase().includes(searchTerm.toLowerCase()));
 
@@ -176,7 +176,7 @@ export default function FollowUp() {
     setShowModal(true);
   };
 
-  // Detectar si se debe abrir el modal automÃ¡ticamente desde la URL
+  // Detectar si se debe abrir el modal automáticamente desde la URL
   useEffect(() => {
     const editId = searchParams.get('edit');
     const isCompleted = searchParams.get('completed') === 'true';
@@ -184,10 +184,10 @@ export default function FollowUp() {
     if (editId && prospects) {
       const prospectToEdit = prospects.find(p => p.id === Number(editId));
       if (prospectToEdit) {
-        // Abrir el modal automÃ¡ticamente
+        // Abrir el modal automáticamente
         handleEdit(prospectToEdit);
 
-        // Limpiar los parÃ¡metros de la URL para evitar que se abra de nuevo
+        // Limpiar los parámetros de la URL para evitar que se abra de nuevo
         window.history.replaceState({}, '', '/seguimiento');
       }
     }
@@ -301,7 +301,7 @@ export default function FollowUp() {
   const handleReturnToBD = async (prospect: FollowUpProspect) => {
     console.log('ðŸŸ  handleReturnToBD called:', prospect);
 
-    if (!confirm(`Â¿Devolver "${prospect.company_name}" a la base de datos disponibles?`)) {
+    if (!confirm(`¿Devolver "${prospect.company_name}" a la base de datos disponibles?`)) {
       console.log('ðŸŸ  User cancelled return');
       return;
     }
@@ -457,8 +457,8 @@ export default function FollowUp() {
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Pasos</th>
                   <th className="px-4 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">Fijo Ren</th>
                   <th className="px-4 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">Fijo New</th>
-                  <th className="px-4 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">MÃ³vil Nueva</th>
-                  <th className="px-4 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">MÃ³vil Reno</th>
+                  <th className="px-4 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">Móvil Nueva</th>
+                  <th className="px-4 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">Móvil Reno</th>
                   <th className="px-4 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">ClaroTV</th>
                   <th className="px-4 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">Cloud</th>
                   <th className="px-4 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">MPLS</th>
@@ -527,7 +527,7 @@ export default function FollowUp() {
                       <td className="px-4 py-4 whitespace-nowrap text-center">
                         <div className="text-sm text-gray-300">{formatDate(prospect.last_call_date)}</div>
                         {prospect.next_call_date && (
-                          <div className="text-xs text-blue-400">PrÃ³x: {formatDate(prospect.next_call_date)}</div>
+                          <div className="text-xs text-blue-400">Próx: {formatDate(prospect.next_call_date)}</div>
                         )}
                       </td>
                       <td className="px-4 py-4 whitespace-nowrap text-center">
@@ -726,7 +726,7 @@ function ProspectModal({
       console.log('[FollowUp] Guardando prospecto:', data);
       await onSave(data);
       console.log('[FollowUp] Prospecto guardado exitosamente');
-      // Cerrar modal despuÃ©s de guardar exitosamente
+      // Cerrar modal después de guardar exitosamente
       onClose();
     } catch (error) {
       console.error('Error al guardar prospecto:', error);
@@ -796,7 +796,7 @@ function ProspectModal({
                   ))}
                 </select>
                 {(disableVendorSelect || vendors.length === 1) && (
-                  <p className="mt-2 text-xs text-gray-400">Asignado automÃ¡ticamente a tu usuario.</p>
+                  <p className="mt-2 text-xs text-gray-400">Asignado automáticamente a tu usuario.</p>
                 )}
               </div>
             </div>
@@ -808,8 +808,8 @@ function ProspectModal({
                 {[
                   { key: 'fijo_ren', label: 'Fijo Ren' },
                   { key: 'fijo_new', label: 'Fijo New' },
-                  { key: 'movil_nueva', label: 'MÃ³vil Nueva' },
-                  { key: 'movil_renovacion', label: 'MÃ³vil Reno' },
+                  { key: 'movil_nueva', label: 'Móvil Nueva' },
+                  { key: 'movil_renovacion', label: 'Móvil Reno' },
                   { key: 'claro_tv', label: 'ClaroTV' },
                   { key: 'cloud', label: 'Cloud' },
                   { key: 'mpls', label: 'MPLS' }
@@ -972,7 +972,7 @@ function StepManagerPanel({ steps, onSaved }: { steps: FollowUpStep[]; onSaved: 
   };
 
   const handleDelete = async (id: number) => {
-    if (!confirm('Â¿Eliminar este paso?')) return;
+    if (!confirm('¿Eliminar este paso?')) return;
     setLoadingId(id);
     try {
       const response = await authFetch(`/api/follow-up-steps/${id}`, {
@@ -1010,7 +1010,7 @@ function StepManagerPanel({ steps, onSaved }: { steps: FollowUpStep[]; onSaved: 
         <div className="grid grid-cols-[3rem_1fr_1fr_5rem] gap-3 pb-4 border-b border-gray-800 items-center">
           <div className="text-center text-xs text-gray-500 font-medium">Orden</div>
           <div className="text-xs text-gray-500 font-medium">Nombre del Nuevo Paso</div>
-          <div className="text-xs text-gray-500 font-medium">DescripciÃ³n / DÃ­as estimados</div>
+          <div className="text-xs text-gray-500 font-medium">Descripción / Días estimados</div>
           <div></div>
         </div>
 
@@ -1033,7 +1033,7 @@ function StepManagerPanel({ steps, onSaved }: { steps: FollowUpStep[]; onSaved: 
             type="text"
             value={newItem.description}
             onChange={(e) => setNewItem(prev => ({ ...prev, description: e.target.value }))}
-            placeholder="Ej: DÃ­a 3, Enviar correo..."
+            placeholder="Ej: Día 3, Enviar correo..."
             className="px-3 py-1.5 bg-gray-800 border border-gray-700 rounded text-white text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
             onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
           />
@@ -1050,7 +1050,7 @@ function StepManagerPanel({ steps, onSaved }: { steps: FollowUpStep[]; onSaved: 
         <div className="mt-6 mb-2 grid grid-cols-[3rem_1fr_1fr_5rem] gap-3 px-1 items-center">
           <div className="text-center text-xs text-gray-500 font-medium">Orden</div>
           <div className="text-xs text-gray-500 font-medium">Pasos Existentes</div>
-          <div className="text-xs text-gray-500 font-medium">DescripciÃ³n</div>
+          <div className="text-xs text-gray-500 font-medium">Descripción</div>
           <div className="text-center text-xs text-gray-500 font-medium">Acciones</div>
         </div>
 
@@ -1076,7 +1076,7 @@ function StepManagerPanel({ steps, onSaved }: { steps: FollowUpStep[]; onSaved: 
                   type="text"
                   value={item.description || ''}
                   onChange={(e) => handleFieldChange(item.id, 'description', e.target.value)}
-                  placeholder="Sin descripciÃ³n"
+                  placeholder="Sin descripción"
                   className="px-3 py-1 bg-transparent border border-transparent group-hover:border-gray-700 rounded text-gray-400 text-sm focus:bg-gray-800 focus:text-white focus:border-blue-500 transition-all"
                 />
                 <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -1144,7 +1144,7 @@ function CallModal({
     if (Array.isArray(callLogs)) {
       callLogs.forEach(log => {
         if (log.step_completed && log.step_id) {
-          // Si hay mÃºltiples logs para el mismo paso, tomamos el mÃ¡s reciente (asumiendo que callLogs viene ordenado o lo ordenamos)
+          // Si hay múltiples logs para el mismo paso, tomamos el más reciente (asumiendo que callLogs viene ordenado o lo ordenamos)
           // Pero callLogs suele venir ordenado por fecha desc.
           if (!dates[log.step_id]) {
             dates[log.step_id] = log.call_date;
@@ -1166,7 +1166,7 @@ function CallModal({
     const isCompleted = !!stepCompletionDates[step.id];
     if (isCompleted) return;
 
-    if (!confirm(`Â¿Marcar "${step.name}" como completado?`)) return;
+    if (!confirm(`¿Marcar "${step.name}" como completado?`)) return;
 
     try {
       await authFetch('/api/call-logs', {
@@ -1202,15 +1202,16 @@ function CallModal({
             </h2>
             <p className="text-sm text-gray-400 flex items-center gap-2">
               {prospect.company_name}
-              <span className="text-gray-600">â€¢</span>
-              <span className="text-blue-400">{prospect.contact_phone || 'Sin telÃ©fono'}</span>
+              <span className="text-gray-600">•</span>
+              <span className="text-blue-400">{prospect.contact_phone || 'Sin teléfono'}</span>
             </p>
           </div>
           <button
             onClick={onClose}
             className="text-gray-400 hover:text-white p-2 hover:bg-gray-800 rounded-lg transition-colors"
+            aria-label="Cerrar"
           >
-            Ã—
+            <X className="w-5 h-5" />
           </button>
         </div>
 
@@ -1357,16 +1358,16 @@ function CallModal({
                         onChange={(e) => setFormData(prev => ({ ...prev, outcome: e.target.value }))}
                         className="w-full px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                       >
-                        <option value="completed">Llamada Realizada (HablÃ© con el cliente)</option>
-                        <option value="pending">Pendiente (Llamar mÃ¡s tarde)</option>
+                        <option value="completed">Llamada Realizada (Hablé con el cliente)</option>
+                        <option value="pending">Pendiente (Llamar más tarde)</option>
                         <option value="no_answer">No contesta</option>
-                        <option value="voicemail">Correo de voz / BuzÃ³n</option>
-                        <option value="wrong_number">NÃºmero equivocado</option>
+                        <option value="voicemail">Correo de voz / Buzón</option>
+                        <option value="wrong_number">Número equivocado</option>
                       </select>
                     </div>
 
                     <div>
-                      <label className="block text-xs font-medium text-gray-400 mb-1 uppercase">PrÃ³ximo Seguimiento</label>
+                      <label className="block text-xs font-medium text-gray-400 mb-1 uppercase">Próximo Seguimiento</label>
                       <div className="relative">
                         <input
                           type="date"
@@ -1382,13 +1383,13 @@ function CallModal({
                   </div>
 
                   <div className="mb-3">
-                    <label className="block text-xs font-medium text-gray-400 mb-1 uppercase">Notas de la conversaciÃ³n</label>
+                    <label className="block text-xs font-medium text-gray-400 mb-1 uppercase">Notas de la conversación</label>
                     <textarea
                       value={formData.notes}
                       onChange={(e) => setFormData(prev => ({ ...prev, notes: e.target.value }))}
                       rows={2}
                       className="w-full px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all resize-none"
-                      placeholder="Escribe aquÃ­ los detalles importantes..."
+                      placeholder="Escribe aquí los detalles importantes..."
                       required
                     />
                   </div>
@@ -1399,14 +1400,14 @@ function CallModal({
                         <div className="flex flex-col gap-1">
                           <span className="text-blue-400 flex items-center gap-1 font-medium">
                             <CheckIcon className="w-3 h-3" />
-                            Se avanzarÃ¡ al siguiente paso
+                            Se avanzará al siguiente paso
                           </span>
                           <span className="text-gray-500 text-[10px]">
                             Fecha de completado: {new Date(formData.next_call_date || new Date()).toLocaleDateString()} (Fecha de la llamada)
                           </span>
                         </div>
                       ) : (
-                        <span>El paso actual se mantendrÃ¡ pendiente</span>
+                        <span>El paso actual se mantendrá pendiente</span>
                       )}
                     </div>
                     <div className="flex gap-3">
@@ -1437,7 +1438,7 @@ function CallModal({
                   {callLogs.length === 0 ? (
                     <div className="text-center py-10 opacity-50">
                       <List className="w-12 h-12 text-gray-600 mx-auto mb-3" />
-                      <p className="text-gray-400 text-sm">No hay llamadas registradas aÃºn.</p>
+                      <p className="text-gray-400 text-sm">No hay llamadas registradas aún.</p>
                     </div>
                   ) : (
                     callLogs.map((log) => (
@@ -1448,7 +1449,7 @@ function CallModal({
                             <div className="flex items-center gap-2">
                               <span className="text-xs font-medium text-gray-300">
                                 {new Date(log.call_date).toLocaleDateString()}
-                                <span className="text-gray-500 mx-1">Â·</span>
+                                <span className="text-gray-500 mx-1">·</span>
                                 {new Date(log.call_date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                               </span>
                               {log.step_completed && (
@@ -1463,7 +1464,7 @@ function CallModal({
                               }`}>
                               {log.outcome === 'completed' ? 'Completada' :
                                 log.outcome === 'no_answer' ? 'No contesta' :
-                                  log.outcome === 'voicemail' ? 'BuzÃ³n' : log.outcome}
+                                  log.outcome === 'voicemail' ? 'Buzón' : log.outcome}
                             </span>
                           </div>
 
@@ -1474,7 +1475,7 @@ function CallModal({
                           {log.next_call_date && (
                             <div className="mt-2 flex items-center gap-1.5 text-xs text-blue-400/80">
                               <CalendarIcon className="w-3 h-3" />
-                              <span>PrÃ³xima llamada: {new Date(log.next_call_date).toLocaleDateString()}</span>
+                              <span>Próxima llamada: {new Date(log.next_call_date).toLocaleDateString()}</span>
                             </div>
                           )}
                         </div>
@@ -1605,7 +1606,7 @@ function PendingPanel({ prospect }: { prospect: FollowUpProspect }) {
         <form onSubmit={handleCreate} className="mx-4 mt-3 p-4 bg-gray-800/50 rounded-xl border border-purple-900/30 space-y-3">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
-              <label className="text-xs text-gray-400 uppercase font-medium block mb-1">TÃ­tulo *</label>
+              <label className="text-xs text-gray-400 uppercase font-medium block mb-1">Título *</label>
               <input
                 type="text"
                 value={formData.title}
@@ -1617,7 +1618,7 @@ function PendingPanel({ prospect }: { prospect: FollowUpProspect }) {
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="text-xs text-gray-400 uppercase font-medium block mb-1">Fecha lÃ­mite</label>
+                <label className="text-xs text-gray-400 uppercase font-medium block mb-1">Fecha límite</label>
                 <input
                   type="date"
                   value={formData.due_date}
@@ -1668,7 +1669,7 @@ function PendingPanel({ prospect }: { prospect: FollowUpProspect }) {
           <div className="text-center py-10 opacity-50">
             <div className="text-4xl mb-3">ðŸ“‹</div>
             <p className="text-gray-400 text-sm">No hay pendientes para este cliente.</p>
-            <p className="text-gray-500 text-xs mt-1">Crea un pendiente con el botÃ³n "Nuevo pendiente"</p>
+            <p className="text-gray-500 text-xs mt-1">Crea un pendiente con el botón "Nuevo pendiente"</p>
           </div>
         ) : (
           tasks.map((task: any) => (
@@ -1824,7 +1825,7 @@ function PriorityManagerModal({ priorities, onClose, onSaved }: PriorityManagerM
   };
 
   const handleDelete = async (id: number) => {
-    if (!confirm('Â¿Eliminar esta prioridad?')) return;
+    if (!confirm('¿Eliminar esta prioridad?')) return;
     setLoadingId(id);
     try {
       const response = await authFetch(`/api/priorities/${id}`, {
@@ -1851,9 +1852,10 @@ function PriorityManagerModal({ priorities, onClose, onSaved }: PriorityManagerM
           <h2 className="text-xl font-semibold text-white">Gestionar Prioridades</h2>
           <button
             onClick={onClose}
-            className="text-gray-400 hover:text-white text-2xl p-2 hover:bg-gray-800 rounded-lg transition-colors"
+            className="text-gray-400 hover:text-white p-2 hover:bg-gray-800 rounded-lg transition-colors"
+            aria-label="Cerrar"
           >
-            Ã—
+            <X className="w-5 h-5" />
           </button>
         </div>
 
@@ -2033,11 +2035,11 @@ function AgendaView({
 
       <div className="text-xs text-gray-400 mb-2 flex items-center gap-1">
         <Phone className="w-3 h-3" />
-        {p.contact_phone || 'Sin telÃ©fono'}
+        {p.contact_phone || 'Sin teléfono'}
       </div>
 
       <div className="bg-gray-900/50 rounded p-2 mb-2">
-        <div className="text-xs text-gray-400 uppercase font-semibold mb-1">PrÃ³xima Tarea (Paso)</div>
+        <div className="text-xs text-gray-400 uppercase font-semibold mb-1">Próxima Tarea (Paso)</div>
         <div className="text-sm text-blue-300 font-medium">
           {p.step_name || 'Sin paso asignado'}
         </div>
@@ -2088,14 +2090,14 @@ function AgendaView({
         </div>
         <div className="p-3 space-y-3 overflow-y-auto custom-scrollbar flex-1">
           {groups.today.map(renderCard)}
-          {groups.today.length === 0 && <p className="text-gray-500 text-sm italic text-center py-4">Todo al dÃ­a</p>}
+          {groups.today.length === 0 && <p className="text-gray-500 text-sm italic text-center py-4">Todo al día</p>}
         </div>
       </div>
 
-      {/* MaÃ±ana */}
+      {/* Mañana */}
       <div className="min-w-[280px] bg-gray-900/50 rounded-xl border border-gray-800 flex flex-col max-h-[calc(100vh-250px)]">
         <div className="p-3 border-b border-gray-800 bg-gray-800/50 rounded-t-xl flex justify-between items-center sticky top-0 backdrop-blur-sm">
-          <h3 className="font-semibold text-gray-200">MaÃ±ana</h3>
+          <h3 className="font-semibold text-gray-200">Mañana</h3>
           <span className="bg-gray-800 text-gray-300 text-xs px-2 py-0.5 rounded-full border border-gray-700">
             {groups.tomorrow.length}
           </span>
@@ -2106,10 +2108,10 @@ function AgendaView({
         </div>
       </div>
 
-      {/* PrÃ³xima Semana */}
+      {/* Próxima Semana */}
       <div className="min-w-[280px] bg-gray-900/50 rounded-xl border border-gray-800 flex flex-col max-h-[calc(100vh-250px)]">
         <div className="p-3 border-b border-gray-800 bg-gray-800/50 rounded-t-xl flex justify-between items-center sticky top-0 backdrop-blur-sm">
-          <h3 className="font-semibold text-gray-300">PrÃ³ximos 7 DÃ­as</h3>
+          <h3 className="font-semibold text-gray-300">Próximos 7 Días</h3>
           <span className="bg-gray-800 text-gray-300 text-xs px-2 py-0.5 rounded-full border border-gray-700">
             {groups.week.length}
           </span>
@@ -2137,7 +2139,7 @@ function AgendaView({
               {groups.noDate.map(renderCard)}
             </>
           )}
-          {groups.future.length === 0 && groups.noDate.length === 0 && <p className="text-gray-600 text-sm italic text-center py-4">VacÃ­o</p>}
+          {groups.future.length === 0 && groups.noDate.length === 0 && <p className="text-gray-600 text-sm italic text-center py-4">Vacío</p>}
         </div>
       </div>
 
@@ -2183,15 +2185,15 @@ function CalendarView({
     return prospects.filter(p => {
       if (!p.next_call_date) return false;
       const d = new Date(p.next_call_date);
-      // Ajustar zona horaria local para comparaciÃ³n correcta de fecha
+      // Ajustar zona horaria local para comparación correcta de fecha
       // Usamos UTC para evitar problemas de zona horaria si la fecha viene como ISO string
-      // Pero next_call_date suele ser YYYY-MM-DD o ISO. Asumimos que queremos comparar el dÃ­a calendario.
+      // Pero next_call_date suele ser YYYY-MM-DD o ISO. Asumimos que queremos comparar el día calendario.
       // Mejor enfoque: comparar strings YYYY-MM-DD
 
       // Convertir ambas a string YYYY-MM-DD local para comparar
       const dStr = d.toISOString().split('T')[0];
 
-      // Construir string local YYYY-MM-DD para el dÃ­a del calendario
+      // Construir string local YYYY-MM-DD para el día del calendario
       // Ojo: month es 0-indexed
       const currentMonthStr = (month + 1).toString().padStart(2, '0');
       const currentDayStr = day.toString().padStart(2, '0');
@@ -2233,7 +2235,7 @@ function CalendarView({
 
       {/* Calendar Grid */}
       <div className="grid grid-cols-7 border-b border-gray-800 bg-gray-800">
-        {['Lun', 'Mar', 'MiÃ©', 'Jue', 'Vie', 'SÃ¡b', 'Dom'].map(day => (
+        {['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'].map(day => (
           <div key={day} className="py-2 text-center text-sm font-medium text-gray-400 uppercase tracking-wider">
             {day}
           </div>

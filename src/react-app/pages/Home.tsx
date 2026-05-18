@@ -272,7 +272,8 @@ export default function Home() {
   // Identidad del usuario logueado para filtrar tareas por vendedor.
   const currentUser = useMemo(() => getCurrentUser(), []);
   const role = String(currentUser?.role || "").toLowerCase();
-  const isAdmin = role === "admin" || role === "supervisor";
+  const canViewCompanyFinancials = role === "admin";
+  const isAdmin = canViewCompanyFinancials || role === "supervisor";
   const mySalespersonId = currentUser?.salespersonId ? String(currentUser.salespersonId) : null;
   const [adminScope, setAdminScope] = useState<"all" | "mine">("all");
   const [expandedActivityKeys, setExpandedActivityKeys] = useState<Set<string>>(
@@ -1232,7 +1233,7 @@ export default function Home() {
 
       {/* ─── KPIs banda (5 cards admin / 4 cards vendedor) — solo si HAY actividad ─── */}
       {!noActivity && (myMetric || showAdminAggregate) && (
-        <div className={`grid grid-cols-2 ${isAdmin ? 'md:grid-cols-5' : 'md:grid-cols-4'} gap-3`}>
+        <div className={`grid grid-cols-2 ${canViewCompanyFinancials ? 'md:grid-cols-5' : 'md:grid-cols-4'} gap-3`}>
           <div className="rounded-xl border border-slate-700 bg-slate-800/50 p-4">
             <p className="text-[11px] uppercase font-bold tracking-wider text-slate-400">Ventas</p>
             <p className="text-4xl font-black text-white mt-1 leading-none">{kpiSalesCount}</p>
@@ -1250,7 +1251,7 @@ export default function Home() {
             </p>
             <p className="text-xs text-slate-400 mt-1">prom. productos</p>
           </div>
-          {isAdmin ? (
+          {canViewCompanyFinancials ? (
             <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4">
               <p className="text-[11px] uppercase font-bold tracking-wider text-emerald-300">Ganancia emp.</p>
               <p className="text-4xl font-black text-emerald-200 mt-1 leading-none">{formatUSD(kpiCompanyEarnings)}</p>
@@ -1258,9 +1259,9 @@ export default function Home() {
             </div>
           ) : (
             <div className="rounded-xl border border-blue-500/30 bg-blue-500/5 p-4">
-              <p className="text-[11px] uppercase font-bold tracking-wider text-blue-300">Mi comisión</p>
+              <p className="text-[11px] uppercase font-bold tracking-wider text-blue-300">{showAdminAggregate ? 'Comisiones equipo' : 'Mi comisión'}</p>
               <p className="text-4xl font-black text-blue-200 mt-1 leading-none">{formatUSD(kpiCommission)}</p>
-              <p className="text-xs text-blue-300/70 mt-1">cobrada</p>
+              <p className="text-xs text-blue-300/70 mt-1">{showAdminAggregate ? 'vendedores' : 'cobrada'}</p>
             </div>
           )}
           <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
@@ -1374,7 +1375,7 @@ export default function Home() {
                                 {p.target > 0 ? `${p.pct.toFixed(0)}%` : '—'}
                               </span>
                             </div>
-                            {p.companyEarnings > 0 && (
+                            {canViewCompanyFinancials && p.companyEarnings > 0 && (
                               <p className="text-[10px] text-emerald-400/70 ml-[72px]">
                                 ↳ ganancia empresa: <span className="font-mono font-semibold text-emerald-300">{formatUSD(p.companyEarnings)}</span>
                               </p>
@@ -1442,7 +1443,7 @@ export default function Home() {
                     )}
                   </div>
                   {/* Ganancia empresa por producto — solo admin (vendedor no la ve por regla) */}
-                  {isAdmin && p.companyEarnings > 0 && (
+                  {canViewCompanyFinancials && p.companyEarnings > 0 && (
                     <p className="text-[11px] text-emerald-400/80 mt-1.5">
                       ↳ ganancia empresa: <span className="font-mono font-semibold text-emerald-300">{formatUSD(p.companyEarnings)}</span>
                     </p>

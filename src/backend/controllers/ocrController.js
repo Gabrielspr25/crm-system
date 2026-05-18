@@ -2,6 +2,9 @@ import { exec } from 'child_process';
 import path from 'path';
 import fs from 'fs/promises';
 import { v4 as uuidv4 } from 'uuid';
+import { extractText } from '../services/ocrEngineService.js';
+import { parseRowsFromText } from '../services/ocrParserService.js';
+import { validateRows } from '../services/ocrValidationService.js';
 
 export const processOCR = async (req, res) => {
   if (!req.file) {
@@ -46,5 +49,24 @@ export const processOCR = async (req, res) => {
   } catch (error) {
     console.error('OCR Controller Error:', error);
     res.status(500).json({ error: 'Error interno en el servidor OCR' });
+  }
+};
+
+// Fase 1 — OCR Inteligente: preview puro (no toca DB ni /process).
+// Lee la imagen con tesseract.js en Node, parsea y valida.
+export const previewOCR = async (req, res) => {
+  if (!req.file || !req.file.buffer) {
+    return res.status(400).json({ error: 'No se subió ninguna imagen' });
+  }
+
+  try {
+    const { rawText, engine, warnings } = await extractText(req.file.buffer);
+    const parsed = parseRowsFromText(rawText);
+    const rows = validateRows(parsed);
+
+    return res.json({ rawText, rows, engine, warnings });
+  } catch (error) {
+    console.error('OCR Preview Error:', error);
+    return res.status(500).json({ error: 'Error al procesar OCR preview' });
   }
 };

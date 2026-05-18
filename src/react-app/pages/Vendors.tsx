@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Plus, Search, Edit, Trash2, Building, Mail, Key, User, Shield, CheckCircle } from "lucide-react";
 import { useApi } from "../hooks/useApi";
-import { authFetch } from "@/react-app/utils/auth";
+import { authFetch, getCurrentUser } from "@/react-app/utils/auth";
 
 interface Preset {
   id: number;
@@ -23,6 +23,9 @@ interface Vendor {
 }
 
 export default function Vendors() {
+  const currentUser = getCurrentUser();
+  const role = String(currentUser?.role || "").toLowerCase();
+  const canViewVendorsFinancials = role === "admin" || role === "supervisor";
   const [searchTerm, setSearchTerm] = useState("");
   const [showModal, setShowModal] = useState(false);
   const [editingVendor, setEditingVendor] = useState<Vendor | null>(null);
@@ -174,6 +177,14 @@ export default function Vendors() {
       }));
     }
   }, [formData.name, editingVendor]);
+
+  if (!canViewVendorsFinancials) {
+    return (
+      <div className="rounded-xl border border-slate-700 bg-slate-800/50 p-6 text-slate-300">
+        No tienes acceso a la configuracion de vendedores.
+      </div>
+    );
+  }
 
   if (vendorsLoading) {
     return (

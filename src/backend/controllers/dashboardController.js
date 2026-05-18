@@ -101,6 +101,7 @@ export async function getDashboardResumen(req, res) {
             FROM product_goals pg
             JOIN vendors v ON v.id = pg.vendor_id
             WHERE pg.period_year=$1 AND pg.period_month=$2
+              AND pg.product_id IS NOT NULL
         `, [y, m]);
         // { vendor_id → { vendor_name, goals: { canonical → amount } } }
         const vendorGoals = {};

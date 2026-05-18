@@ -11,6 +11,8 @@ interface SubscriberLike {
   service_type?: string | null;
   status?: string | null;
   line_type?: string | null;
+  sale_type?: string | null;
+  contract_end_date?: string | null;
 }
 
 interface BanLike {
@@ -30,6 +32,10 @@ interface ClientTasksPanelProps {
     salesperson_id?: string | number | null;
     bans?: BanLike[] | null;
   };
+  // Opcional: notifica al padre (ej. Mi Día) que una task se actualizó,
+  // para que invalide su lista. Si no se pasa, comportamiento es el de antes
+  // (solo reload local).
+  onTaskUpdated?: () => Promise<void> | void;
 }
 
 interface FollowUpProspect {
@@ -50,18 +56,21 @@ interface FollowUpProspect {
 }
 
 interface DealTask {
-  id: number;
+  id: number | string;
+  deal_id?: number | string | null;
   step_name: string;
   step_order: number;
   status: "pending" | "in_progress" | "done";
   due_date?: string | null;
+  virtual?: boolean;
 }
 
 interface Deal {
-  id: number;
+  id: number | string;
   product_type: string;
   sale_type: string;
   tasks: DealTask[];
+  virtual?: boolean;
 }
 
 interface MatrixValues {
@@ -108,17 +117,18 @@ function isSubscriberActive(s: SubscriberLike) {
 }
 
 function resolveKey(sub: SubscriberLike, ban: BanLike): ColumnKey {
-  const h = [ban.account_type, ban.description, sub.service_type, sub.plan]
+  const h = [ban.account_type, ban.description, sub.service_type, sub.plan, sub.line_type, sub.sale_type]
     .map((e) => String(e || "").trim().toUpperCase()).filter(Boolean).join(" ");
   if (h.includes("MPLS")) return "mpls";
   if (h.includes("CLOUD")) return "cloud";
   if (h.includes("CLARO TV") || h.includes("CLAROTV") || (h.includes("CLARO") && h.includes("TV"))) return "clarotv";
   const at = String(ban.account_type || "").trim().toUpperCase();
-  const lt = String((sub as { line_type?: string | null }).line_type || "").trim().toUpperCase();
-  const isRen = lt === "REN" || lt === "RENOVACION" || lt === "RENEWAL";
-  const isFijo = at.includes("FIJO") || at.includes("FIXED") || String(sub.phone || "").toUpperCase().startsWith("FIJO-");
+  const lt = String(sub.line_type || sub.sale_type || "").trim().toUpperCase();
+  const isRen = lt === "REN" || lt === "RENOVACION" || lt === "RENOVATION" || lt === "RENEWAL" || h.includes(" REN ") || h.includes("RENOV");
+  const isNew = lt === "NEW" || lt === "NUEVA" || lt === "NUEVO" || h.includes(" NEW ") || h.includes("NUEVA");
+  const isFijo = at.includes("FIJO") || at.includes("FIXED") || h.includes("FIJO") || h.includes("INTERNET") || String(sub.phone || "").toUpperCase().startsWith("FIJO-");
   if (isFijo) return isRen ? "fijo_ren" : "fijo_new";
-  return isRen ? "movil_ren" : "movil_new";
+  return isRen && !isNew ? "movil_ren" : "movil_new";
 }
 
 function buildDetected(bans: BanLike[]) {
@@ -132,9 +142,32 @@ function buildDetected(bans: BanLike[]) {
   return { counts, lines, activeBans };
 }
 
-function prospectToMatrix(p: FollowUpProspect | null): MatrixValues {
-  if (!p) return { ...EMPTY_MATRIX };
-  return { fijo_ren: norm(p.fijo_ren), fijo_new: norm(p.fijo_new), movil_new: norm(p.movil_nueva), movil_ren: norm(p.movil_renovacion), clarotv: norm(p.claro_tv), cloud: norm(p.cloud), mpls: norm(p.mpls) };
+function isRealDealStep(task: DealTask | null | undefined) {
+  if (!task || task.virtual) return false;
+  const id = Number(task.id);
+  const dealId = Number(task.deal_id);
+  const stepOrder = Number(task.step_order);
+  return (
+    Number.isFinite(id) &&
+    id > 0 &&
+    Number.isFinite(dealId) &&
+    dealId > 0 &&
+    Number.isFinite(stepOrder) &&
+    stepOrder > 0 &&
+    String(task.step_name || "").trim().length > 0
+  );
+}
+
+function sanitizeDeals(deals: Deal[]) {
+  return (Array.isArray(deals) ? deals : [])
+    .map((deal) => ({
+      ...deal,
+      tasks: (Array.isArray(deal.tasks) ? deal.tasks : [])
+        .map((task) => ({ ...task, deal_id: task.deal_id ?? deal.id }))
+        .filter(isRealDealStep)
+        .sort((a, b) => Number(a.step_order) - Number(b.step_order)),
+    }))
+    .filter((deal) => deal.tasks.length > 0);
 }
 
 async function rq<T>(url: string, init: RequestInit & { json?: unknown } = {}) {
@@ -156,13 +189,19 @@ const TASK_ICON = {
   pending: <Circle className="w-3.5 h-3.5 text-slate-600 shrink-0" />,
 };
 
-export default function ClientTasksPanel({ client }: ClientTasksPanelProps) {
+export default function ClientTasksPanel({ client, onTaskUpdated }: ClientTasksPanelProps) {
   const bans = useMemo(() => (Array.isArray(client.bans) ? client.bans : []), [client.bans]);
   const detected = useMemo(() => buildDetected(bans), [bans]);
+  const sellerId = useMemo(
+    () => String(client.salesperson_id || "").trim(),
+    [client.salesperson_id],
+  );
+  const hasDetectedLines = detected.lines > 0 && Object.values(detected.counts).some((count) => count > 0);
+  const missingSellerMessage = "Este cliente no tiene vendedor asignado. Asigna un vendedor para generar los pasos.";
 
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
-  const [togglingTask, setTogglingTask] = useState<number | null>(null);
+  const [togglingTask, setTogglingTask] = useState<number | string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [prospect, setProspect] = useState<FollowUpProspect | null>(null);
   const [deals, setDeals] = useState<Deal[]>([]);
@@ -172,13 +211,14 @@ export default function ClientTasksPanel({ client }: ClientTasksPanelProps) {
   const draftRef = useRef(draft);
   const prospectRef = useRef(prospect);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoSyncRef = useRef<string | null>(null);
 
   useEffect(() => { draftRef.current = draft; }, [draft]);
   useEffect(() => { prospectRef.current = prospect; }, [prospect]);
 
   const reloadDeals = useCallback(async () => {
     const updated = await rq<Deal[]>(`/api/clients/${client.id}/deals`).catch(() => []);
-    setDeals(Array.isArray(updated) ? updated : []);
+    setDeals(sanitizeDeals(updated));
   }, [client.id]);
 
   const loadData = useCallback(async () => {
@@ -194,8 +234,8 @@ export default function ClientTasksPanel({ client }: ClientTasksPanelProps) {
         .sort((a, b) => new Date(b.updated_at || 0).getTime() - new Date(a.updated_at || 0).getTime());
       const cur = mine.find(isActivePx) || null;
       setProspect(cur);
-      setDraft(cur ? prospectToMatrix(cur) : { ...detected.counts });
-      setDeals(Array.isArray(clientDeals) ? clientDeals : []);
+      setDraft({ ...detected.counts });
+      setDeals(sanitizeDeals(clientDeals));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error cargando datos");
     } finally {
@@ -205,42 +245,47 @@ export default function ClientTasksPanel({ client }: ClientTasksPanelProps) {
 
   useEffect(() => { void loadData(); }, [loadData]);
 
+  const syncMatrix = useCallback(async (matrix: MatrixValues) => {
+    const px = prospectRef.current;
+    if (!sellerId) {
+      setError(null);
+      return;
+    }
+    setSyncing(true);
+    setError(null);
+    try {
+      const payload = {
+        company_name: String(client.business_name || client.name || "Cliente").trim(),
+        client_id: String(client.id),
+        vendor_id: client.vendor_id ?? undefined,
+        fijo_ren: norm(matrix.fijo_ren), fijo_new: norm(matrix.fijo_new),
+        movil_nueva: norm(matrix.movil_new), movil_renovacion: norm(matrix.movil_ren),
+        claro_tv: norm(matrix.clarotv), cloud: norm(matrix.cloud), mpls: norm(matrix.mpls),
+        is_active: true, is_completed: false,
+      };
+      let saved: FollowUpProspect;
+      if (px?.id) {
+        saved = await rq<FollowUpProspect>(`/api/follow-up-prospects/${px.id}`, { method: "PUT", json: payload });
+      } else {
+        saved = await rq<FollowUpProspect>("/api/follow-up-prospects", { method: "POST", json: payload });
+      }
+      setProspect(saved);
+      prospectRef.current = saved;
+      await rq(`/api/clients/${client.id}/sync`, { method: "POST", json: { seller_id: sellerId } });
+      await reloadDeals();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error al sincronizar");
+    } finally {
+      setSyncing(false);
+    }
+  }, [client, reloadDeals, sellerId]);
+
   const triggerSync = useCallback(() => {
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(async () => {
-      const cur = draftRef.current;
-      const px = prospectRef.current;
-      const sellerId = String(client.salesperson_id || client.vendor_id || "").trim();
-      if (!sellerId) return;
-      setSyncing(true);
-      setError(null);
-      try {
-        const payload = {
-          company_name: String(client.business_name || client.name || "Cliente").trim(),
-          client_id: Number(client.id),
-          vendor_id: client.vendor_id ?? undefined,
-          fijo_ren: norm(cur.fijo_ren), fijo_new: norm(cur.fijo_new),
-          movil_nueva: norm(cur.movil_new), movil_renovacion: norm(cur.movil_ren),
-          claro_tv: norm(cur.clarotv), cloud: norm(cur.cloud), mpls: norm(cur.mpls),
-          is_active: true, is_completed: false,
-        };
-        let saved: FollowUpProspect;
-        if (px?.id) {
-          saved = await rq<FollowUpProspect>(`/api/follow-up-prospects/${px.id}`, { method: "PUT", json: payload });
-        } else {
-          saved = await rq<FollowUpProspect>("/api/follow-up-prospects", { method: "POST", json: payload });
-        }
-        setProspect(saved);
-        prospectRef.current = saved;
-        await rq(`/api/clients/${client.id}/sync`, { method: "POST", json: { seller_id: sellerId } });
-        await reloadDeals();
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Error al sincronizar");
-      } finally {
-        setSyncing(false);
-      }
+      await syncMatrix(draftRef.current);
     }, 800);
-  }, [client, reloadDeals]);
+  }, [syncMatrix]);
 
   const handleChange = useCallback((key: ColumnKey, raw: string) => {
     const v = Math.max(0, Number(raw) || 0);
@@ -255,30 +300,51 @@ export default function ClientTasksPanel({ client }: ClientTasksPanelProps) {
     triggerSync();
   }, [detected.counts, triggerSync]);
 
+  useEffect(() => {
+    const signature = `${client.id}:${JSON.stringify(detected.counts)}`;
+    if (loading || syncing || !sellerId || !hasDetectedLines || autoSyncRef.current === signature) return;
+
+    autoSyncRef.current = signature;
+    const next = { ...detected.counts };
+    setDraft(next);
+    draftRef.current = next;
+    void syncMatrix(next);
+  }, [client.id, detected.counts, detected.lines, loading, sellerId, syncing, syncMatrix]);
+
   const hide = useCallback((k: ColumnKey) => setHiddenCols((p) => new Set([...p, k])), []);
   const show = useCallback((k: ColumnKey) => setHiddenCols((p) => { const n = new Set(p); n.delete(k); return n; }), []);
 
   const handleToggle = useCallback(async (task: DealTask) => {
+    if (!isRealDealStep(task)) return;
+    if (!task.due_date) {
+      setError("Asigna fecha al paso antes de marcarlo como completado.");
+      return;
+    }
     const next = task.status === "done" ? "pending" : "done";
     setTogglingTask(task.id);
     try {
       await rq(`/api/deal-tasks/${task.id}`, { method: "PATCH", json: { status: next } });
       await reloadDeals();
+      // Notificar al padre (Mi Día) para que invalide su lista.
+      if (onTaskUpdated) await onTaskUpdated();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error actualizando tarea");
     } finally {
       setTogglingTask(null);
     }
-  }, [reloadDeals]);
+  }, [reloadDeals, onTaskUpdated]);
 
   const handleDueDate = useCallback(async (task: DealTask, date: string) => {
+    if (!isRealDealStep(task)) return;
     try {
       await rq(`/api/deal-tasks/${task.id}`, { method: "PATCH", json: { status: task.status, due_date: date || null } });
       await reloadDeals();
+      // Notificar al padre (Mi Día) para que la card refleje la nueva fecha.
+      if (onTaskUpdated) await onTaskUpdated();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error actualizando fecha");
     }
-  }, [reloadDeals]);
+  }, [reloadDeals, onTaskUpdated]);
 
   const visibleCols = useMemo(() => MATRIX_COLUMNS.filter((c) => !hiddenCols.has(c.key)), [hiddenCols]);
   const hiddenColsList = useMemo(() => MATRIX_COLUMNS.filter((c) => hiddenCols.has(c.key)), [hiddenCols]);
@@ -290,9 +356,11 @@ export default function ClientTasksPanel({ client }: ClientTasksPanelProps) {
     return map;
   }, [deals]);
 
+  const displayDealByKey = useMemo(() => dealByKey, [dealByKey]);
+
   const maxSteps = useMemo(() =>
-    Math.max(0, ...Object.values(dealByKey).map((d) => d?.tasks.length ?? 0)),
-  [dealByKey]);
+    Math.max(0, ...Object.values(displayDealByKey).map((d) => d?.tasks.length ?? 0)),
+  [displayDealByKey]);
 
   const stepRows = useMemo(() => Array.from({ length: maxSteps }, (_, i) => i + 1), [maxSteps]);
 
@@ -341,7 +409,14 @@ export default function ClientTasksPanel({ client }: ClientTasksPanelProps) {
       </div>
 
       {error && (
-        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">{error}</div>
+      <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">{error}</div>
+      )}
+
+      {!sellerId && hasDetectedLines && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-50">
+          <div className="font-semibold text-amber-100">Asigna un vendedor para generar los pasos.</div>
+          <div className="mt-1 text-xs text-amber-100/80">{missingSellerMessage}</div>
+        </div>
       )}
 
       {/* Grid unificada */}
@@ -356,7 +431,7 @@ export default function ClientTasksPanel({ client }: ClientTasksPanelProps) {
               {/* Columna # */}
               <th className="px-2 py-3 text-center text-[10px] font-semibold uppercase text-slate-500">#</th>
               {visibleCols.map((col) => {
-                const deal = dealByKey[col.key];
+                const deal = displayDealByKey[col.key];
                 const done = deal?.tasks.filter((t) => t.status === "done").length ?? 0;
                 const total = deal?.tasks.length ?? 0;
                 const allDone = total > 0 && done === total;
@@ -391,8 +466,14 @@ export default function ClientTasksPanel({ client }: ClientTasksPanelProps) {
             {maxSteps === 0 ? (
               <tr>
                 <td colSpan={visibleCols.length + 1} className="py-12 text-center">
-                  <ZapOff className="mx-auto h-8 w-8 text-slate-700 mb-2" />
-                  <p className="text-sm text-slate-500">Ingresá un valor en Seguimiento para generar los pasos.</p>
+                  {syncing ? <Loader2 className="mx-auto h-8 w-8 animate-spin text-amber-400 mb-2" /> : <ZapOff className="mx-auto h-8 w-8 text-slate-700 mb-2" />}
+                  <p className="text-sm text-slate-500">
+                    {detected.lines > 0
+                      ? syncing
+                        ? "Generando pasos desde suscriptores activos..."
+                        : "Hay suscriptores activos detectados, pero aun no se generaron pasos."
+                      : "No hay suscriptores activos para generar pasos."}
+                  </p>
                 </td>
               </tr>
             ) : (
@@ -400,18 +481,30 @@ export default function ClientTasksPanel({ client }: ClientTasksPanelProps) {
                 <tr key={step} className="hover:bg-slate-800/20 transition-colors">
                   <td className="px-2 py-2 text-center text-[10px] text-slate-600 font-mono">{step}</td>
                   {visibleCols.map((col) => {
-                    const deal = dealByKey[col.key];
+                    const deal = displayDealByKey[col.key];
                     const task = deal?.tasks.find((t) => t.step_order === step);
                     if (!task) {
                       return <td key={col.key} className="border-l border-slate-700/30 px-2 py-2" />;
                     }
+                    const prevTask = deal?.tasks.find((t) => t.step_order === task.step_order - 1);
+                    const blockedByPrevious =
+                      task.status !== "done" &&
+                      task.step_order > 1 &&
+                      !!prevTask &&
+                      prevTask.status !== "done";
+                    const isLocked = task.virtual || blockedByPrevious;
                     return (
                       <td key={col.key} className="border-l border-slate-700/30 px-1 py-1">
                         <button
                           type="button"
-                          disabled={togglingTask === task.id}
+                          disabled={isLocked || togglingTask === task.id}
                           onClick={() => void handleToggle(task)}
-                          className="w-full flex items-start gap-1.5 px-2 py-1.5 rounded hover:bg-slate-800/60 transition-colors text-left"
+                          title={blockedByPrevious ? "Completá el paso anterior primero" : undefined}
+                          className={`w-full flex items-start gap-1.5 px-2 py-1.5 rounded transition-colors text-left ${
+                            isLocked
+                              ? "cursor-not-allowed opacity-50"
+                              : "hover:bg-slate-800/60"
+                          }`}
                         >
                           <span className="mt-0.5">
                             {togglingTask === task.id
@@ -420,21 +513,33 @@ export default function ClientTasksPanel({ client }: ClientTasksPanelProps) {
                           </span>
                           <span className={`text-xs leading-snug ${
                             task.status === "done" ? "text-slate-600 line-through" :
-                            task.status === "in_progress" ? "text-white font-medium" : "text-slate-400"
+                            task.status === "in_progress" ? "text-white font-medium" :
+                            blockedByPrevious ? "text-slate-600" : "text-slate-400"
                           }`}>
                             {task.step_name}
                           </span>
                         </button>
-                        <input
-                          type="date"
-                          value={task.due_date ?? ""}
-                          onChange={(e) => void handleDueDate(task, e.target.value)}
-                          className={`w-full mt-0.5 px-2 py-0.5 rounded text-[10px] bg-transparent border outline-none ${
-                            task.due_date && task.status !== "done" && task.due_date < new Date().toISOString().slice(0, 10)
-                              ? "border-red-500/50 text-red-400"
-                              : "border-slate-700 text-slate-500"
-                          } focus:border-violet-500`}
-                        />
+                        {!task.virtual && (
+                          <div className="mt-0.5">
+                            <input
+                              type="date"
+                              value={task.due_date ?? ""}
+                              onChange={(e) => void handleDueDate(task, e.target.value)}
+                              className={`w-full px-2 py-0.5 rounded text-[10px] bg-transparent border outline-none ${
+                                !task.due_date
+                                  ? "border-amber-500/60 text-amber-300"
+                                  : task.status !== "done" && task.due_date < new Date().toISOString().slice(0, 10)
+                                    ? "border-red-500/50 text-red-400"
+                                    : "border-slate-700 text-slate-500"
+                              } focus:border-violet-500`}
+                            />
+                            {!task.due_date && (
+                              <div className="mt-0.5 text-[9px] font-semibold uppercase text-amber-300">
+                                Fecha requerida
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </td>
                     );
                   })}

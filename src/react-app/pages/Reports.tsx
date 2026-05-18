@@ -1,6 +1,6 @@
-
+﻿
 import { useState, useMemo, Fragment, useEffect, useCallback } from "react";
-import { DollarSign, Search, Save, CheckCircle2, RefreshCw, ChevronDown, ChevronRight, Building2, Users, Receipt, Wallet, BarChart3, X, AlertTriangle, Loader2 } from "lucide-react";
+import { DollarSign, Search, Save, CheckCircle2, RefreshCw, ChevronDown, ChevronRight, Building2, Users, Receipt, Wallet, BarChart3, X, AlertTriangle, Loader2, Trash2 } from "lucide-react";
 import { authFetch, getCurrentUser } from "@/react-app/utils/auth";
 
 interface SubscriberReport {
@@ -9,6 +9,15 @@ interface SubscriberReport {
   line_type?: string | null;
   line_kind?: 'movil' | 'fijo' | null;
   sale_type?: string | null;
+  source?: string | null;
+  external_sale_id?: string | null;
+  sync_log_id?: string | null;
+  source_activation_date?: string | null;
+  source_report_month?: string | null;
+  raw_payload?: unknown;
+  validation_status?: string | null;
+  validation_notes?: string | null;
+  review_reason?: string | null;
   salesperson_commission_percentage?: number | null;
   suggested_vendor_commission?: number | null;
   effective_vendor_commission?: number | null;
@@ -61,7 +70,7 @@ function formatSaleTypeLabel(accountType?: string | null, lineType?: string | nu
   if (account === 'FIJO' || account === 'FIXED') {
     return isRen ? 'Fijo REN' : 'Fijo NEW';
   }
-  if (account === 'PYMES' || account === 'UPDATE' || account === 'MOVIL' || account === 'MÓVIL' || account === 'MOBILE') {
+  if (account === 'PYMES' || account === 'UPDATE' || account === 'MOVIL' || account === 'MÃ“VIL' || account === 'MOBILE') {
     return isRen ? 'Móvil REN' : 'Móvil NEW';
   }
   if (line === 'REN') return 'REN';
@@ -114,7 +123,7 @@ function resolveLineProducts(rows: SubscriberReport[]) {
     const account = String(row.account_type || '').trim().toUpperCase().replace(/^CONVERGENTE$/, 'MOVIL');
     const phone = String(row.phone || '').trim().toUpperCase();
     const isFijo = account === 'FIJO' || account === 'FIXED' || phone.startsWith('FIJO-');
-    const isMovil = account === 'PYMES' || account === 'UPDATE' || account === 'MOVIL' || account === 'MÃ“VIL' || account === 'MOBILE';
+    const isMovil = account === 'PYMES' || account === 'UPDATE' || account === 'MOVIL' || account === 'MÓVIL' || account === 'MOBILE';
 
     if (isFijo) {
       if (isRen) counts.fijo_ren += 1;
@@ -247,14 +256,40 @@ function getDefaultReportsMonth(): string {
   return `${year}-${month}`;
 }
 
+function isConfirmedEconomicRow(row: { validation_status?: string | null; source?: string | null; external_sale_id?: string | null; sync_log_id?: string | null; source_activation_date?: string | null; source_report_month?: string | null; raw_payload?: unknown; }): boolean {
+  const status = String(row.validation_status || '').trim().toLowerCase();
+  if (status) return status === 'confirmed';
+  const source = String(row.source || '').trim().toLowerCase();
+  if (source === 'manual') return true;
+  if (source === 'tango') {
+    return Boolean(row.external_sale_id && row.sync_log_id && row.source_activation_date && row.source_report_month && row.raw_payload);
+  }
+  return false;
+}
+
+function isReviewEconomicRow(row: { validation_status?: string | null; source?: string | null; external_sale_id?: string | null; sync_log_id?: string | null; source_activation_date?: string | null; source_report_month?: string | null; raw_payload?: unknown; }): boolean {
+  return !isConfirmedEconomicRow(row);
+}
+
+function isResolvedPendingSyncRow(row: { validation_status?: string | null; }): boolean {
+  return String(row.validation_status || '').trim().toLowerCase() === 'resolved_pending_sync';
+}
+
+function isNeedsReviewStrictRow(row: { validation_status?: string | null; source?: string | null; external_sale_id?: string | null; sync_log_id?: string | null; source_activation_date?: string | null; source_report_month?: string | null; raw_payload?: unknown; }): boolean {
+  if (isResolvedPendingSyncRow(row)) return false;
+  return isReviewEconomicRow(row);
+}
+
 export default function Reports() {
   const currentUser = getCurrentUser();
-  const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'supervisor';
+  const role = String(currentUser?.role || '').toLowerCase();
+  const canViewCompanyFinancials = role === 'admin';
+  const isAdmin = canViewCompanyFinancials || role === 'supervisor';
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedVendor, setSelectedVendor] = useState<string | null>(null);
   const [selectedMonth, setSelectedMonth] = useState<string>(getDefaultReportsMonth);
   const [viewMode, setViewMode] = useState<'empresa' | 'vendedor'>('empresa');
-  const effectiveView = isAdmin ? viewMode : 'vendedor';
+  const effectiveView = canViewCompanyFinancials ? viewMode : 'vendedor';
 
   // Estados para edicion manual
   const [editingVendorComm, setEditingVendorComm] = useState<Record<string, string>>({});
@@ -265,6 +300,47 @@ export default function Reports() {
   // Filtros del acordeón "Informe de ventas"
   const [informeTipoFilter, setInformeTipoFilter] = useState<string>("");
   const [informeSearch, setInformeSearch] = useState<string>("");
+
+  // Filtro operativo: Todos / Confirmadas / En revisión / Esperando Sync
+  type ViewFilter = 'all' | 'confirmed' | 'review' | 'pending_sync';
+  const [viewFilter, setViewFilter] = useState<ViewFilter>('all');
+
+  // Summary needs_review + pending_sync del mes seleccionado
+  interface ReviewSummary {
+    count: number;
+    monthly_value_total: number;
+    vendors_affected: number;
+    clients_affected: number;
+    pending_sync: {
+      count: number;
+      monthly_value_total: number;
+    };
+    oldest_pending_days?: number;
+    avg_days_unresolved?: number;
+    period: string;
+  }
+  const [reviewSummary, setReviewSummary] = useState<ReviewSummary | null>(null);
+
+  // Tanda D: lista priorizada de anomalías
+  interface AnomalyItem {
+    subscriber_id: string;
+    report_month: string;
+    client_id: string;
+    client_name: string;
+    vendor_id: string | null;
+    vendor_name: string;
+    phone: string;
+    motivo_principal: string;
+    motivo_detalle: string | null;
+    impact_monthly_value: number;
+    validation_status: string;
+    days_unresolved: number;
+    retry_count: number;
+    last_review_attempt_at: string | null;
+  }
+  const [anomalies, setAnomalies] = useState<AnomalyItem[]>([]);
+  const [anomaliesExpanded, setAnomaliesExpanded] = useState(false);
+  const [expandedAnomalyDetail, setExpandedAnomalyDetail] = useState<Set<string>>(new Set());
 
   // Cargar datos directamente con useEffect (sin useApi para evitar problemas de memoización)
   const [reportRows, setReportRows] = useState<SubscriberReport[] | null>(null);
@@ -296,7 +372,40 @@ export default function Reports() {
     fetchReports(selectedMonth);
   }, [selectedMonth, fetchReports]);
 
-  const refetchProspects = useCallback(() => fetchReports(selectedMonth), [selectedMonth, fetchReports]);
+  // Summary needs_review por mes (banner ejecutivo arriba)
+  const fetchReviewSummary = useCallback(async (month: string) => {
+    try {
+      const r = await authFetch(`/api/subscriber-reports/needs-review-summary?month=${month}`);
+      if (!r.ok) { setReviewSummary(null); return; }
+      const data = (await r.json()) as ReviewSummary;
+      setReviewSummary(data);
+    } catch {
+      setReviewSummary(null);
+    }
+  }, []);
+
+  // Tanda D: lista priorizada de anomalías
+  const fetchAnomalies = useCallback(async (month: string) => {
+    try {
+      const r = await authFetch(`/api/subscriber-reports/needs-review-list?month=${month}&limit=200`);
+      if (!r.ok) { setAnomalies([]); return; }
+      const data = await r.json();
+      setAnomalies(Array.isArray(data.items) ? data.items : []);
+    } catch {
+      setAnomalies([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchReviewSummary(selectedMonth);
+    void fetchAnomalies(selectedMonth);
+  }, [selectedMonth, fetchReviewSummary, fetchAnomalies]);
+
+  const refetchProspects = useCallback(() => {
+    void fetchReviewSummary(selectedMonth);
+    void fetchAnomalies(selectedMonth);
+    return fetchReports(selectedMonth);
+  }, [selectedMonth, fetchReports, fetchReviewSummary, fetchAnomalies]);
 
   useEffect(() => {
     const handleRefresh = () => {
@@ -330,13 +439,13 @@ export default function Reports() {
   const [detailMonthFilter, setDetailMonthFilter] = useState<string>('');
   const [loadingComparison, setLoadingComparison] = useState(false);
 
-  // ── Sync Tango → CRM ──
+  // â”€â”€ Sync Tango â†’ CRM â”€â”€
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<{ stats: any; alerts: { level: string; ban: string; msg: string }[] } | null>(null);
 
   const handleSyncTango = async () => {
     if (syncing) return;
-    if (!confirm('¿Sincronizar ventas de Tango → CRM?\nTango es la fuente de verdad.')) return;
+    if (!confirm('¿Sincronizar ventas de Tango â†’ CRM?\nTango es la fuente de verdad.')) return;
     setSyncing(true);
     setSyncResult(null);
     // El sync puede procesar miles de filas y tardar >1 min. Usamos fetch directo
@@ -408,7 +517,11 @@ export default function Reports() {
           || clientName.includes(term)
           || (row.phone || '').includes(searchTerm)
           || (row.ban_number || '').includes(searchTerm);
-        return matchesVendor && matchesSearch;
+        let matchesView = true;
+        if (viewFilter === 'confirmed') matchesView = isConfirmedEconomicRow(row);
+        else if (viewFilter === 'review') matchesView = isNeedsReviewStrictRow(row);
+        else if (viewFilter === 'pending_sync') matchesView = isResolvedPendingSyncRow(row);
+        return matchesVendor && matchesSearch && matchesView;
       })
       .map((row) => ({
         id: row.subscriber_id,
@@ -427,6 +540,15 @@ export default function Reports() {
         activation_date: row.activation_date,
         plan: (row as any).plan ?? null,
         monthly_value: row.monthly_value ?? null,
+        source: row.source ?? null,
+        external_sale_id: row.external_sale_id ?? null,
+        sync_log_id: row.sync_log_id ?? null,
+        source_activation_date: row.source_activation_date ?? null,
+        source_report_month: row.source_report_month ?? null,
+        raw_payload: row.raw_payload ?? null,
+        validation_status: row.validation_status ?? null,
+        validation_notes: row.validation_notes ?? null,
+        review_reason: row.review_reason ?? null,
         company_earnings: row.company_earnings ?? null,
         vendor_commission: row.vendor_commission ?? null,
         portability_bonus: row.portability_bonus ?? 0,
@@ -443,7 +565,10 @@ export default function Reports() {
         report_month: row.report_month,
         products: row.products || null
       }));
-  }, [reportRows, selectedVendor, searchTerm]);
+  }, [reportRows, selectedVendor, searchTerm, viewFilter]);
+
+  const confirmedRows = useMemo(() => filteredRows.filter((row) => isConfirmedEconomicRow(row)), [filteredRows]);
+  const reviewRows = useMemo(() => filteredRows.filter((row) => !isConfirmedEconomicRow(row)), [filteredRows]);
 
   const groupedClients = useMemo(() => {
     const map = new Map();
@@ -487,11 +612,14 @@ export default function Reports() {
       g.vendor_names.add(row.vendor_name || 'Desconocido');
       g.vendor_name = Array.from(g.vendor_names).filter(Boolean).sort().join(' / ');
       g.subscribers.push(row);
-      g.totalEarnings += Number(row.company_earnings || 0);
-      g.totalCommission += Number(row.vendor_commission || 0);
-      g.totalPortabilityBonus += Number(row.portability_bonus || 0);
-      g.totalPaid += Number(row.paid_amount || 0);
-      g.totalMensualidad += Number(row.monthly_value || 0);
+      const rowConfirmed = isConfirmedEconomicRow(row);
+      if (rowConfirmed) {
+        g.totalEarnings += Number(row.company_earnings || 0);
+        g.totalCommission += Number(row.vendor_commission || 0);
+        g.totalPortabilityBonus += Number(row.portability_bonus || 0);
+        g.totalPaid += Number(row.paid_amount || 0);
+        g.totalMensualidad += Number(row.monthly_value || 0);
+      }
       const rowDate = row.report_month || row.activation_date || null;
       if (rowDate && (!g.latestCaseDate || new Date(rowDate) > new Date(g.latestCaseDate))) {
         g.latestCaseDate = rowDate;
@@ -514,7 +642,7 @@ export default function Reports() {
         const account = String(row.account_type || '').trim().toUpperCase().replace(/^CONVERGENTE$/, 'MOVIL');
         const phone = String(row.phone || '').trim().toUpperCase();
         const isFijo = account === 'FIJO' || account === 'FIXED' || phone.startsWith('FIJO-');
-        const isMovil = account === 'PYMES' || account === 'UPDATE' || account === 'MOVIL' || account === 'MÓVIL' || account === 'MOBILE';
+        const isMovil = account === 'PYMES' || account === 'UPDATE' || account === 'MOVIL' || account === 'MÃ“VIL' || account === 'MOBILE';
         if (isFijo) {
           if (isRen) g.lineProducts.fijo_ren += 1;
           else g.lineProducts.fijo_new += 1;
@@ -526,7 +654,7 @@ export default function Reports() {
     }
     return Array.from(map.values())
       .map((g: any) => {
-        const resolvedLineProducts = resolveLineProducts(g.subscribers || []);
+        const resolvedLineProducts = resolveLineProducts((g.subscribers || []).filter((row: any) => isConfirmedEconomicRow(row)));
         return {
           ...g,
           vendor_name: Array.from(g.vendor_names || []).filter(Boolean).sort().join(' / ') || 'Desconocido',
@@ -740,6 +868,59 @@ export default function Reports() {
     }
   };
 
+  const handleMarkResolvedPendingSync = async (rowId: string, reportMonth?: string | null) => {
+    const original = reportRows?.find(r => r.subscriber_id === rowId);
+    if (!original) return;
+    const finalMonth = reportMonth || original.report_month;
+    const finalMonthDate = finalMonth
+      ? new Date(finalMonth).toISOString().slice(0, 10)
+      : `${selectedMonth}-01`;
+    const ok = window.confirm('Marcar esta venta como "Ya corregido en Tango". El próximo sync va a validar la corrección. ¿Confirmar?');
+    if (!ok) return;
+    setRowActionBusy(prev => ({ ...prev, [rowId]: true }));
+    try {
+      const resp = await authFetch(`/api/subscriber-reports/${rowId}/mark-resolved`, {
+        method: 'POST',
+        json: { report_month: finalMonthDate },
+      });
+      if (!resp.ok) throw new Error(await readApiError(resp, 'No se pudo marcar como corregido'));
+      await refetchProspects();
+    } catch (err) {
+      console.error('Error mark-resolved:', err);
+      alert(err instanceof Error ? err.message : 'Error al marcar como corregido');
+    } finally {
+      setRowActionBusy(prev => ({ ...prev, [rowId]: false }));
+    }
+  };
+
+  const handleDeleteSubscriberReport = async (rowId: string) => {
+    const original = reportRows?.find(r => r.subscriber_id === rowId);
+    if (!original) return;
+    if (isConfirmedEconomicRow(original as any)) {
+      alert('No se puede eliminar una fila confirmada por Tango.');
+      return;
+    }
+    const reportMonth = original.report_month
+      ? new Date(original.report_month).toISOString().slice(0, 10)
+      : `${selectedMonth}-01`;
+    const ok = window.confirm('Esta fila no está confirmada por Tango y no suma comisiones. ¿Deseas eliminarla definitivamente?');
+    if (!ok) return;
+    setRowActionBusy(prev => ({ ...prev, [rowId]: true }));
+    try {
+      const resp = await authFetch(`/api/subscriber-reports/${rowId}`, {
+        method: 'DELETE',
+        json: { report_month: reportMonth }
+      });
+      if (!resp.ok) throw new Error(await readApiError(resp, 'No se pudo eliminar la fila'));
+      await refetchProspects();
+    } catch (err) {
+      console.error('Error deleting subscriber report:', err);
+      alert(err instanceof Error ? err.message : 'Error al eliminar la fila');
+    } finally {
+      setRowActionBusy(prev => ({ ...prev, [rowId]: false }));
+    }
+  };
+
   const handleToggleAudited = async (rowId: string, currentAudited: boolean) => {
     const original = reportRows?.find(r => r.subscriber_id === rowId);
     if (!original) return;
@@ -884,7 +1065,7 @@ export default function Reports() {
   }, [editingVendorComm, getCurrentCompanyEarnings]);
 
   const totals = useMemo(() => {
-    return filteredRows.reduce((acc, row) => {
+    return confirmedRows.reduce((acc, row) => {
       const earn = editingCompanyEarn[row.id] !== undefined
         ? safeMoneyNumber(parseFloat(editingCompanyEarn[row.id]))
         : safeMoneyNumber(row.company_earnings);
@@ -898,10 +1079,10 @@ export default function Reports() {
         paid_amount: acc.paid_amount + paid
       };
     }, { company_earnings: 0, vendor_commission: 0, paid_amount: 0 });
-  }, [filteredRows, editingCompanyEarn, editingPaidAmount, getEffectiveVendorCommission]);
+  }, [confirmedRows, editingCompanyEarn, editingPaidAmount, getEffectiveVendorCommission]);
 
   // Conteo por tipo para la tarjeta Total Ventas (compacto)
-  const salesByType = useMemo(() => resolveLineProducts(filteredRows as unknown as SubscriberReport[]), [filteredRows]);
+  const salesByType = useMemo(() => resolveLineProducts(confirmedRows as unknown as SubscriberReport[]), [confirmedRows]);
 
   // Resumen para vista vendedor — sin retención (regla 10% retirada por pedido del usuario)
   const vendorTotals = useMemo(() => {
@@ -912,7 +1093,7 @@ export default function Reports() {
     };
   }, [totals]);
 
-  // ── Informe de ventas: filas filtradas + resumen por tipo + detalle ──
+  // â”€â”€ Informe de ventas: filas filtradas + resumen por tipo + detalle â”€â”€
   const informeFilteredRows = useMemo(() => {
     return filteredRows.filter((row) => {
       const tipo = formatSaleTypeLabel(row.account_type, row.line_type, row.sale_type, row.line_kind);
@@ -928,6 +1109,8 @@ export default function Reports() {
     });
   }, [filteredRows, informeTipoFilter, informeSearch]);
 
+  const informeConfirmedRows = useMemo(() => informeFilteredRows.filter((row) => isConfirmedEconomicRow(row)), [informeFilteredRows]);
+
   const informeResumen = useMemo(() => {
     type Row = {
       tipo: string;
@@ -937,10 +1120,10 @@ export default function Reports() {
       comision: number;
       pagado: number;
       mensualidad: number;
-      vendorMap: Map<string, number>; // vendedor → ganancia
+      vendorMap: Map<string, number>; // vendedor â†’ ganancia
     };
     const map = new Map<string, Row>();
-    for (const r of informeFilteredRows) {
+    for (const r of informeConfirmedRows) {
       const tipo = formatSaleTypeLabel(r.account_type, r.line_type, r.sale_type, r.line_kind);
       const earn = safeMoneyNumber(editingCompanyEarn[r.subscriber_id] !== undefined ? parseFloat(editingCompanyEarn[r.subscriber_id]) : r.company_earnings);
       const comm = safeMoneyNumber(getEffectiveVendorCommission({
@@ -995,7 +1178,7 @@ export default function Reports() {
         };
       })
       .sort((a, b) => b.ganancia - a.ganancia);
-  }, [informeFilteredRows, editingCompanyEarn, editingPaidAmount, getEffectiveVendorCommission]);
+  }, [informeConfirmedRows, editingCompanyEarn, editingPaidAmount, getEffectiveVendorCommission]);
 
   // Totales del resumen para fila TOTAL al pie de tabla
   const informeResumenTotales = useMemo(() => {
@@ -1012,11 +1195,11 @@ export default function Reports() {
   // Clientes únicos cross-tipo (no se puede sumar la columna de clientes — un mismo cliente puede aparecer en 2 tipos)
   const informeClientesUnicos = useMemo(() => {
     const set = new Set<string>();
-    for (const r of informeFilteredRows) {
+    for (const r of informeConfirmedRows) {
       if (r.client_id) set.add(String(r.client_id));
     }
     return set.size;
-  }, [informeFilteredRows]);
+  }, [informeConfirmedRows]);
 
   const informeDetalle = useMemo(() => {
     return informeFilteredRows.map((r) => {
@@ -1046,6 +1229,7 @@ export default function Reports() {
         bono_portabilidad: safeMoneyNumber(r.portability_bonus),
         is_audited: Boolean(r.is_audited),
         audited_at: r.audited_at || null,
+        validation_status: r.validation_status || null,
         report_month: r.report_month,
         company_earnings: r.company_earnings,
         vendor_commission: r.vendor_commission,
@@ -1055,7 +1239,7 @@ export default function Reports() {
     }).sort((a, b) => (a.fecha < b.fecha ? 1 : -1));
   }, [informeFilteredRows, editingCompanyEarn, editingPaidAmount, getEffectiveVendorCommission]);
 
-  const tableColSpan = isAdmin ? 15 : 14;
+  const tableColSpan = canViewCompanyFinancials ? 15 : 14;
 
   if (loadingProspects) return <div className="p-10 text-white">Cargando reportes...</div>;
 
@@ -1072,7 +1256,7 @@ export default function Reports() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          {isAdmin && (
+          {canViewCompanyFinancials && (
             <div className="flex bg-slate-800 rounded-xl p-1 border border-slate-700">
               <button
                 onClick={() => setViewMode('empresa')}
@@ -1098,7 +1282,7 @@ export default function Reports() {
               </button>
             </div>
           )}
-          {isAdmin && (
+          {canViewCompanyFinancials && (
           <button
             onClick={handleShowComparison}
             disabled={loadingComparison}
@@ -1113,12 +1297,12 @@ export default function Reports() {
             {loadingComparison ? 'Cargando...' : showComparison ? 'Cerrar Informe' : 'Informe Tango vs CRM'}
           </button>
           )}
-          {isAdmin && (
+          {canViewCompanyFinancials && (
           <button
             onClick={handleSyncTango}
             disabled={syncing}
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm transition-all bg-purple-700 hover:bg-purple-600 text-white disabled:opacity-50 disabled:cursor-not-allowed"
-            title="Sincronizar ventas Tango → CRM"
+            title="Sincronizar ventas Tango â†’ CRM"
           >
             <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
             {syncing ? 'Sincronizando...' : 'Sync Tango'}
@@ -1127,13 +1311,13 @@ export default function Reports() {
         </div>
       </div>
 
-      {/* Resultado del Sync Tango → CRM */}
+      {/* Resultado del Sync Tango â†’ CRM */}
       {effectiveView === 'empresa' && syncResult && (
         <div className="bg-slate-800/70 border border-purple-500/40 p-5 rounded-2xl animate-in fade-in duration-300 space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <RefreshCw className="w-5 h-5 text-purple-400" />
-              <span className="font-bold text-purple-200 text-lg">Sync Tango → CRM completado</span>
+              <span className="font-bold text-purple-200 text-lg">Sync Tango â†’ CRM completado</span>
             </div>
             <button onClick={() => setSyncResult(null)} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
           </div>
@@ -1145,9 +1329,9 @@ export default function Reports() {
             {syncResult.stats.clients_created > 0 && <span className="bg-green-900/40 text-green-200 px-3 py-1.5 rounded-lg border border-green-500/20">+{syncResult.stats.clients_created} clientes</span>}
             {syncResult.stats.bans_created > 0 && <span className="bg-green-900/40 text-green-200 px-3 py-1.5 rounded-lg border border-green-500/20">+{syncResult.stats.bans_created} BANs</span>}
             {syncResult.stats.subscribers_created > 0 && <span className="bg-green-900/40 text-green-200 px-3 py-1.5 rounded-lg border border-green-500/20">+{syncResult.stats.subscribers_created} subscribers</span>}
-            {syncResult.stats.subscribers_updated > 0 && <span className="bg-yellow-900/40 text-yellow-200 px-3 py-1.5 rounded-lg border border-yellow-500/20">↻ {syncResult.stats.subscribers_updated} actualizados</span>}
-            <span className="bg-blue-900/40 text-blue-200 px-3 py-1.5 rounded-lg border border-blue-500/20">📊 {syncResult.stats.reports_upserted} reportes</span>
-            {syncResult.stats.errors > 0 && <span className="bg-red-900/40 text-red-200 px-3 py-1.5 rounded-lg border border-red-500/20 font-bold">❌ {syncResult.stats.errors} errores</span>}
+            {syncResult.stats.subscribers_updated > 0 && <span className="bg-yellow-900/40 text-yellow-200 px-3 py-1.5 rounded-lg border border-yellow-500/20">â†» {syncResult.stats.subscribers_updated} actualizados</span>}
+            <span className="bg-blue-900/40 text-blue-200 px-3 py-1.5 rounded-lg border border-blue-500/20">ðŸ“Š {syncResult.stats.reports_upserted} reportes</span>
+            {syncResult.stats.errors > 0 && <span className="bg-red-900/40 text-red-200 px-3 py-1.5 rounded-lg border border-red-500/20 font-bold">âŒ {syncResult.stats.errors} errores</span>}
           </div>
           {syncResult.alerts.length > 0 && (
             <div className="rounded-xl border border-slate-700 bg-slate-900/40 px-4 py-3 text-xs text-slate-300">
@@ -1162,7 +1346,7 @@ export default function Reports() {
         <div className="bg-red-500/10 border border-red-500/30 p-4 rounded-2xl animate-in fade-in duration-300">
           <div className="flex items-center gap-3">
             <AlertTriangle className="w-5 h-5 text-red-400" />
-            <span className="font-bold text-red-300">⚠ {noVendorRows.length} reporte{noVendorRows.length > 1 ? 's' : ''} sin vendedor asignado</span>
+            <span className="font-bold text-red-300">⚠  {noVendorRows.length} reporte{noVendorRows.length > 1 ? 's' : ''} sin vendedor asignado</span>
           </div>
           <div className="mt-2 flex flex-wrap gap-2 text-xs">
             {noVendorRows.slice(0, 10).map((r, i) => (
@@ -1176,7 +1360,7 @@ export default function Reports() {
       )}
 
       {/* Informe Comparativo Tango vs CRM */}
-      {showComparison && comparisonData && (
+      {canViewCompanyFinancials && showComparison && comparisonData && (
         <div className="bg-slate-800/50 border border-cyan-500/30 rounded-2xl overflow-hidden animate-in fade-in duration-300">
           <div className="px-6 py-4 border-b border-slate-700 flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -1224,7 +1408,7 @@ export default function Reports() {
                           <span className="text-[10px] bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full font-bold">✓ OK</span>
                         ) : (
                           <span className="text-[10px] bg-red-500/20 text-red-400 px-2 py-0.5 rounded-full font-bold">
-                            {!ventasMatch ? `Δ ${row.tango.ventas - row.crm.ventas} ventas` : 'Δ $'}
+                            {!ventasMatch ? `Î” ${row.tango.ventas - row.crm.ventas} ventas` : 'Î” $'}
                           </span>
                         )}
                       </td>
@@ -1258,7 +1442,7 @@ export default function Reports() {
                     .filter(a => a.level === 'warn' && (a.msg.includes('actualizado') || a.msg.includes('vinculado') || a.msg.includes('creado')))
                     .map((a, i) => (
                       <div key={`cmp-w${i}`} className="flex items-start gap-2 text-xs bg-yellow-900/20 border border-yellow-500/20 rounded px-3 py-1.5">
-                        <span className="text-yellow-400 font-bold shrink-0">🟡</span>
+                        <span className="text-yellow-400 font-bold shrink-0">ðŸŸ¡</span>
                         {a.ban && <span className="text-yellow-300 font-mono shrink-0">[{a.ban}]</span>}
                         <span className="text-yellow-200">{a.msg}</span>
                       </div>
@@ -1267,7 +1451,7 @@ export default function Reports() {
                     .filter(a => a.level === 'info')
                     .map((a, i) => (
                       <div key={`cmp-i${i}`} className="flex items-start gap-2 text-xs bg-green-900/20 border border-green-500/20 rounded px-3 py-1.5">
-                        <span className="text-green-400 font-bold shrink-0">🟢</span>
+                        <span className="text-green-400 font-bold shrink-0">ðŸŸ¢</span>
                         {a.ban && <span className="text-green-300 font-mono shrink-0">[{a.ban}]</span>}
                         <span className="text-green-200">{a.msg}</span>
                       </div>
@@ -1281,7 +1465,7 @@ export default function Reports() {
           {tangoDetail && tangoDetail.length > 0 ? (
             <div className="border-t border-slate-700">
               <div className="px-6 py-3 bg-slate-900/40 border-b border-slate-700 flex items-center justify-between">
-                <h3 className="text-sm font-bold text-orange-400">📋 Detalle Ventas Tango PYMES ({(() => {
+                <h3 className="text-sm font-bold text-orange-400">ðŸ“‹ Detalle Ventas Tango PYMES ({(() => {
                   const filtered = detailMonthFilter ? tangoDetail.filter((v: any) => v.fecha && v.fecha.slice(0,7) === detailMonthFilter) : tangoDetail;
                   return filtered.length;
                 })()})</h3>
@@ -1469,7 +1653,7 @@ export default function Reports() {
       )}
 
       {/* Informe de ventas — acordeón con resumen por tipo + detalle */}
-      {isAdmin && (
+      {canViewCompanyFinancials && (
         <details className="bg-slate-800/40 border border-slate-700 rounded-2xl overflow-hidden group">
           <summary className="cursor-pointer p-5 flex items-center justify-between list-none [&::-webkit-details-marker]:hidden">
             <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2">
@@ -1593,11 +1777,14 @@ export default function Reports() {
                   <tbody className="divide-y divide-slate-800/60">
                     {informeDetalle.map((r) => {
                       const hasBono = r.bono_portabilidad > 0;
+                      const isReview = isReviewEconomicRow(r);
                       // Colores de fila por prioridad:
-                      // - auditada + portabilidad → fondo dorado + borde izquierdo cyan
-                      // - solo auditada → fondo dorado/emerald
-                      // - solo portabilidad → fondo cyan suave
-                      const rowClass = r.is_audited && hasBono
+                      // - auditada + portabilidad â†’ fondo dorado + borde izquierdo cyan
+                      // - solo auditada â†’ fondo dorado/emerald
+                      // - solo portabilidad â†’ fondo cyan suave
+                      const rowClass = isReview
+                        ? 'bg-red-500/10 border-l-4 border-red-500'
+                        : r.is_audited && hasBono
                         ? 'bg-amber-500/10 border-l-4 border-cyan-400'
                         : r.is_audited
                           ? 'bg-amber-500/10'
@@ -1618,7 +1805,7 @@ export default function Reports() {
                                 : 'bg-slate-800 border border-slate-600 text-slate-500 hover:border-amber-400/50 hover:text-amber-300'
                             } disabled:opacity-50 disabled:cursor-wait`}
                           >
-                            {r.is_audited ? <CheckCircle2 className="w-4 h-4" /> : <span className="text-xs">○</span>}
+                            {r.is_audited ? <CheckCircle2 className="w-4 h-4" /> : <span className="text-xs">â—‹</span>}
                           </button>
                         </td>
                         <td className="px-3 py-2 text-slate-400 font-mono">{r.fecha}</td>
@@ -1632,7 +1819,16 @@ export default function Reports() {
                             )}
                           </div>
                         </td>
-                        <td className="px-3 py-2 text-slate-300 font-mono">{r.ban}</td>
+                        <td className="px-3 py-2 text-slate-300 font-mono">
+                          <div className="flex items-center gap-2">
+                            <span>{r.ban}</span>
+                            {isReview && (
+                              <span className="text-[9px] uppercase font-bold tracking-wider bg-red-500/20 text-red-200 border border-red-400/40 rounded-full px-1.5 py-0.5" title="Fila no confirmada por Tango">
+                                No confirmado por Tango
+                              </span>
+                            )}
+                          </div>
+                        </td>
                         <td className="px-3 py-2 text-slate-300 font-mono">{r.phone}</td>
                         <td className="px-3 py-2 text-slate-300">{r.vendedor}</td>
                         <td className="px-3 py-2 text-slate-200">{r.tipo}</td>
@@ -1725,6 +1921,222 @@ export default function Reports() {
         </div>
       </div>
 
+      {/* Resumen ejecutivo de needs_review + pending_sync (Tanda B + C) */}
+      {reviewSummary && (reviewSummary.count > 0 || reviewSummary.pending_sync.count > 0) && (
+        <div className="rounded-2xl border border-red-500/40 bg-red-500/10 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="w-5 h-5 mt-0.5 text-red-300 shrink-0" />
+              <div>
+                <div className="text-sm font-bold text-red-100">
+                  {reviewSummary.count > 0
+                    ? `${reviewSummary.count} venta${reviewSummary.count === 1 ? '' : 's'} requiere${reviewSummary.count === 1 ? '' : 'n'} revisión`
+                    : 'Sin anomalías activas'}
+                  {reviewSummary.pending_sync.count > 0 && (
+                    <span className="ml-2 text-amber-200">
+                      · {reviewSummary.pending_sync.count} esperando sync
+                    </span>
+                  )}
+                </div>
+                <div className="mt-1 text-xs text-red-200 flex flex-wrap gap-x-4 gap-y-1">
+                  <span>Anomalías: <span className="font-semibold text-red-50">${reviewSummary.monthly_value_total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></span>
+                  {reviewSummary.pending_sync.count > 0 && (
+                    <span>Esperando sync: <span className="font-semibold text-amber-100">${reviewSummary.pending_sync.monthly_value_total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></span>
+                  )}
+                  <span>{reviewSummary.vendors_affected} vendedor{reviewSummary.vendors_affected === 1 ? '' : 'es'} afectado{reviewSummary.vendors_affected === 1 ? '' : 's'}</span>
+                  <span>{reviewSummary.clients_affected} cliente{reviewSummary.clients_affected === 1 ? '' : 's'} afectado{reviewSummary.clients_affected === 1 ? '' : 's'}</span>
+                </div>
+              </div>
+            </div>
+            {reviewSummary.count > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  setViewFilter('review');
+                  window.scrollTo({ top: window.scrollY + 200, behavior: 'smooth' });
+                }}
+                className="shrink-0 inline-flex items-center justify-center gap-2 rounded-lg bg-red-500/20 hover:bg-red-500/30 border border-red-400/50 px-3 py-2 text-xs font-semibold text-red-50 whitespace-nowrap transition"
+              >
+                <AlertTriangle className="w-3.5 h-3.5" />
+                Revisar solo anomalías
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Tanda D: Panel ejecutivo "Anomalías Activas" priorizado */}
+      {anomalies.length > 0 && (
+        <div className="rounded-2xl border border-red-500/30 bg-slate-900/60 overflow-hidden">
+          <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-b border-red-500/20 bg-red-500/5">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-red-400" />
+              <h3 className="text-sm font-bold text-red-100">Anomalías Activas</h3>
+              <span className="text-xs text-slate-400">{anomalies.length} caso{anomalies.length === 1 ? '' : 's'}</span>
+              {reviewSummary && (reviewSummary.oldest_pending_days || 0) > 0 && (
+                <span className="text-xs text-amber-300 ml-2">
+                  · más antiguo: {Math.round(reviewSummary.oldest_pending_days || 0)} días
+                  · promedio: {Math.round(reviewSummary.avg_days_unresolved || 0)} días sin resolver
+                </span>
+              )}
+            </div>
+            {anomalies.length > 10 && (
+              <button
+                type="button"
+                onClick={() => setAnomaliesExpanded((v) => !v)}
+                className="text-xs font-semibold text-red-200 hover:text-red-50 underline"
+              >
+                {anomaliesExpanded ? 'Ver menos' : `Ver todas (${anomalies.length})`}
+              </button>
+            )}
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="bg-slate-800/60 text-slate-400 uppercase text-[10px] tracking-wider">
+                <tr>
+                  <th className="text-left px-3 py-2">Cliente</th>
+                  <th className="text-left px-3 py-2">Vendedor</th>
+                  <th className="text-left px-3 py-2">Motivo principal</th>
+                  <th className="text-right px-3 py-2">Impacto</th>
+                  <th className="text-center px-3 py-2">Días</th>
+                  <th className="text-center px-3 py-2">Estado</th>
+                  <th className="text-right px-3 py-2">Acción</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800">
+                {(anomaliesExpanded ? anomalies : anomalies.slice(0, 10)).map((a) => {
+                  const isPending = a.validation_status === 'resolved_pending_sync';
+                  const motivoColor = a.motivo_principal === 'Vendedor no identificado'
+                    ? 'bg-purple-500/15 text-purple-200 border-purple-400/30'
+                    : a.motivo_principal === 'Venta Tango inválida'
+                      ? 'bg-orange-500/15 text-orange-200 border-orange-400/30'
+                      : a.motivo_principal === 'Activación incompleta'
+                        ? 'bg-blue-500/15 text-blue-200 border-blue-400/30'
+                        : a.motivo_principal === 'Venta sin comisión'
+                          ? 'bg-red-500/15 text-red-200 border-red-400/30'
+                          : 'bg-slate-700/40 text-slate-200 border-slate-500/40';
+                  const detailOpen = expandedAnomalyDetail.has(a.subscriber_id);
+                  return (
+                    <Fragment key={a.subscriber_id}>
+                      <tr className={isPending ? 'bg-amber-500/5 hover:bg-amber-500/10' : 'hover:bg-slate-800/40'}>
+                        <td className="px-3 py-2 text-slate-100 font-medium">{a.client_name || 'Sin nombre'}</td>
+                        <td className="px-3 py-2 text-slate-300">{a.vendor_name}</td>
+                        <td className="px-3 py-2">
+                          <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold ${motivoColor}`}>
+                            {a.motivo_principal}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums text-emerald-300 font-semibold">
+                          ${a.impact_monthly_value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </td>
+                        <td className="px-3 py-2 text-center text-slate-400 tabular-nums">
+                          {Math.round(a.days_unresolved)}
+                          {a.retry_count > 0 && <span className="text-amber-400 ml-1">·{a.retry_count}↻</span>}
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          {isPending ? (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-amber-400/50 bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold text-amber-100 uppercase">
+                              <RefreshCw className="w-2.5 h-2.5" />
+                              Esperando
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-red-400/50 bg-red-500/15 px-2 py-0.5 text-[10px] font-bold text-red-100 uppercase">
+                              Revisar
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-right whitespace-nowrap">
+                          <button
+                            type="button"
+                            onClick={() => setExpandedAnomalyDetail((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(a.subscriber_id)) next.delete(a.subscriber_id); else next.add(a.subscriber_id);
+                              return next;
+                            })}
+                            className="inline-flex items-center rounded-md border border-slate-600 bg-slate-800 hover:bg-slate-700 px-2 py-1 text-[10px] font-semibold text-slate-200 transition mr-1"
+                          >
+                            {detailOpen ? 'Ocultar' : 'Detalle'}
+                          </button>
+                          {!isPending && (
+                            <button
+                              type="button"
+                              disabled={Boolean(rowActionBusy[a.subscriber_id])}
+                              onClick={() => void handleMarkResolvedPendingSync(a.subscriber_id, a.report_month)}
+                              className="inline-flex items-center rounded-md border border-amber-400/50 bg-amber-500/20 hover:bg-amber-500/30 px-2 py-1 text-[10px] font-bold text-amber-100 uppercase transition disabled:opacity-50 disabled:cursor-wait"
+                            >
+                              {rowActionBusy[a.subscriber_id] ? '...' : 'Corregido'}
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                      {detailOpen && (
+                        <tr className="bg-slate-900/80">
+                          <td colSpan={7} className="px-6 py-2 text-[11px] text-slate-400">
+                            <div className="space-y-0.5">
+                              <div><span className="text-slate-500">Línea:</span> <span className="font-mono text-slate-200">{a.phone}</span></div>
+                              <div><span className="text-slate-500">Motivo detallado:</span> <span className="text-slate-200">{a.motivo_detalle || '—'}</span></div>
+                              {a.last_review_attempt_at && (
+                                <div><span className="text-slate-500">Último intento de resolución:</span> <span className="text-slate-200">{new Date(a.last_review_attempt_at).toLocaleString('es')}</span></div>
+                              )}
+                              {a.retry_count > 0 && (
+                                <div><span className="text-slate-500">Reintentos:</span> <span className="text-amber-300">{a.retry_count}</span></div>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Filtro Todos / Confirmadas / En revisión / Esperando Sync */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-bold text-slate-500 uppercase tracking-wider mr-1">Mostrar</span>
+        {([
+          { key: 'all' as const, label: 'Todos' },
+          { key: 'confirmed' as const, label: 'Confirmadas' },
+          { key: 'review' as const, label: 'En revisión' },
+          { key: 'pending_sync' as const, label: 'Esperando Sync' },
+        ]).map((opt) => {
+          const active = viewFilter === opt.key;
+          const isReview = opt.key === 'review';
+          const isPendingSync = opt.key === 'pending_sync';
+          const activeClass = isReview
+            ? 'bg-red-500/20 border-red-400/50 text-red-50'
+            : isPendingSync
+              ? 'bg-amber-500/20 border-amber-400/50 text-amber-50'
+              : 'bg-emerald-500/20 border-emerald-400/50 text-emerald-50';
+          return (
+            <button
+              key={opt.key}
+              type="button"
+              onClick={() => setViewFilter(opt.key)}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition ${
+                active ? activeClass : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white hover:border-slate-500'
+              }`}
+            >
+              {opt.label}
+              {opt.key === 'review' && reviewSummary && reviewSummary.count > 0 && (
+                <span className={`ml-1.5 inline-flex items-center justify-center min-w-[1.25rem] h-4 px-1 rounded-full text-[10px] font-bold ${active ? 'bg-red-200/20 text-red-50' : 'bg-red-500/30 text-red-200'}`}>
+                  {reviewSummary.count}
+                </span>
+              )}
+              {opt.key === 'pending_sync' && reviewSummary && reviewSummary.pending_sync.count > 0 && (
+                <span className={`ml-1.5 inline-flex items-center justify-center min-w-[1.25rem] h-4 px-1 rounded-full text-[10px] font-bold ${active ? 'bg-amber-200/20 text-amber-50' : 'bg-amber-500/30 text-amber-200'}`}>
+                  {reviewSummary.pending_sync.count}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
       {/* Main Flat Table */}
       <div className="bg-gray-900 rounded-xl shadow-lg border border-gray-800 overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
@@ -1748,7 +2160,7 @@ export default function Reports() {
                 <th className="px-1 py-2 text-center text-[10px] font-medium text-gray-400 uppercase">MPLS</th>
                 <th className="px-2 py-2 text-center text-[10px] font-medium text-purple-400 uppercase">Completado</th>
                 <th className="px-2 py-2 text-center text-[10px] font-medium text-gray-400 uppercase">Mensualidad</th>
-                {isAdmin && (
+                {canViewCompanyFinancials && (
                   <th className="px-2 py-2 text-center text-[10px] font-medium text-emerald-400 uppercase bg-emerald-500/5">Empresa($)</th>
                 )}
                 <th className="px-2 py-2 text-center text-[10px] font-medium text-blue-400 uppercase bg-blue-500/5">Comisión($)</th>
@@ -1792,8 +2204,8 @@ export default function Reports() {
                                 </span>
                               )}
                             </div>
-                            {!isExpanded && isAdmin && (
-                              <div className="text-[10px] text-emerald-500/70 font-semibold">▸ click para editar</div>
+                            {!isExpanded && canViewCompanyFinancials && (
+                              <div className="text-[10px] text-emerald-500/70 font-semibold">â–¸ click para editar</div>
                             )}
                           </div>
                         </div>
@@ -1810,7 +2222,7 @@ export default function Reports() {
                         const hasValue = numVal > 0;
                         return (
                           <td key={field} className={`px-1 py-2 text-center ${hasValue ? 'border border-green-500 bg-green-900/20' : ''}`}>
-                            {isAdmin && !!prods?.prospect_id ? (
+                            {canViewCompanyFinancials && !!prods?.prospect_id ? (
                               <input
                                 type="number" min="0"
                                 className="w-14 bg-gray-800 border border-gray-700 rounded text-center text-xs font-bold text-gray-300 px-1 py-1 outline-none focus:ring-1 focus:ring-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
@@ -1839,7 +2251,7 @@ export default function Reports() {
                         </span>
                       </td>
                       {/* Empresa($) */}
-                      {isAdmin && (
+                      {canViewCompanyFinancials && (
                         <td className="px-2 py-2 text-center whitespace-nowrap bg-emerald-500/5">
                           <span className="text-xs font-bold text-emerald-400">
                             {group.totalEarnings > 0 ? `$${group.totalEarnings.toLocaleString('es-ES', { minimumFractionDigits: 2 })}` : <span className="text-gray-600">0</span>}
@@ -1852,8 +2264,8 @@ export default function Reports() {
                           <span className="text-xs font-bold text-blue-400">
                             {group.totalCommission > 0 ? `$${group.totalCommission.toLocaleString('es-ES', { minimumFractionDigits: 2 })}` : <span className="text-gray-600">0</span>}
                           </span>
-                          {!isExpanded && isAdmin && group.subscribers.length > 0 && (
-                            <span className="text-[9px] text-blue-300/60 group-hover/comm:text-blue-300 transition-colors">↓ editar</span>
+                          {!isExpanded && canViewCompanyFinancials && group.subscribers.length > 0 && (
+                            <span className="text-[9px] text-blue-300/60 group-hover/comm:text-blue-300 transition-colors">â†“ editar</span>
                           )}
                         </div>
                       </td>
@@ -1866,13 +2278,13 @@ export default function Reports() {
                       {/* Ventas count */}
                       <td className="px-2 py-2 text-center whitespace-nowrap">
                         <span className={`px-2 py-1 rounded text-xs font-bold ${isExpanded ? 'bg-emerald-500/20 text-emerald-300' : 'bg-orange-500/20 text-orange-300'}`}>
-                          {group.subscribers.length} ventas {!isExpanded && '▶'}
+                          {group.subscribers.length} ventas {!isExpanded && 'â–¶'}
                         </span>
                       </td>
                     </tr>
 
                     {/* Save products button row - only if editing */}
-                    {isAdmin && !!prods?.prospect_id && editingProducts[key] && (
+                    {canViewCompanyFinancials && !!prods?.prospect_id && editingProducts[key] && (
                       <tr className="bg-gray-800/50">
                         <td colSpan={tableColSpan} className="px-3 py-1 text-right">
                           <button
@@ -1891,34 +2303,86 @@ export default function Reports() {
                     )}
 
                     {/* Expanded subscriber rows */}
-                    {isExpanded && group.subscribers.map(row => {
+                    {isExpanded && group.subscribers.map((row: any) => {
                       const isEditing = editingVendorComm[row.id] !== undefined
                         || editingCompanyEarn[row.id] !== undefined
                         || editingPaidAmount[row.id] !== undefined;
                       const subBono = Number(row.portability_bonus || 0);
                       const subHasBono = subBono > 0;
-                      // Color por prioridad: auditada+bono → amber + borde cyan; solo auditada → amber; solo bono → cyan suave.
-                      const subRowClass = row.is_audited && subHasBono
-                        ? 'bg-amber-500/10 border-l-4 border-cyan-400 hover:bg-amber-500/20'
-                        : row.is_audited
-                          ? 'bg-amber-500/10 hover:bg-amber-500/20'
-                          : subHasBono
-                            ? 'bg-cyan-500/[0.07] hover:bg-cyan-500/[0.12]'
-                            : 'bg-slate-800/30 hover:bg-slate-800/50';
+                      // Distinguir 3 estados: pending_sync (amber), needs_review (red), confirmed (normal).
+                      const isPendingSyncRow = isResolvedPendingSyncRow(row);
+                      const isReview = !isPendingSyncRow && isNeedsReviewStrictRow(row);
+                      const subRowClass = isPendingSyncRow
+                        ? 'bg-amber-500/10 border-l-4 border-amber-500 hover:bg-amber-500/20'
+                        : isReview
+                          ? 'bg-red-500/10 border-l-4 border-red-500 hover:bg-red-500/20'
+                          : row.is_audited && subHasBono
+                            ? 'bg-amber-500/10 border-l-4 border-cyan-400 hover:bg-amber-500/20'
+                            : row.is_audited
+                              ? 'bg-amber-500/10 hover:bg-amber-500/20'
+                              : subHasBono
+                                ? 'bg-cyan-500/[0.07] hover:bg-cyan-500/[0.12]'
+                                : 'bg-slate-800/30 hover:bg-slate-800/50';
 
                       return (
                         <tr key={row.id} className={`${subRowClass} transition-colors`}>
                           <td colSpan={2} className="px-6 py-2">
-                            <div className="flex items-center gap-3 flex-wrap">
-                              <span className="text-xs text-slate-400 font-mono">BAN: {row.ban_number || '-'}</span>
-                              {(row.phone || '').includes('SIN-TEL') || (row.phone || '').includes('LINEA-') || !row.phone
-                                ? <span className="text-xs text-red-400 font-bold font-mono">⚠ SIN TELÉFONO</span>
-                                : <span className="text-xs text-slate-300 font-mono">{row.phone}</span>
-                              }
-                              <span className="text-[10px] font-semibold uppercase rounded px-2 py-0.5 bg-cyan-950/70 text-cyan-300 border border-cyan-700/60">
-                                {formatSaleTypeLabel(row.account_type, row.line_type, row.sale_type, row.line_kind)}
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-900/70 px-2 py-0.5 text-[10px] text-slate-300">
+                                <span className="font-semibold uppercase text-slate-400">BAN</span>
+                                <span className="font-mono">{row.ban_number || '-'}</span>
                               </span>
-                              {subHasBono && (
+                              {(row.phone || '').includes('SIN-TEL') || (row.phone || '').includes('LINEA-') || !row.phone ? (
+                                <span className="inline-flex items-center gap-1 rounded-full border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[10px] font-semibold text-red-300">
+                                  <span className="uppercase tracking-[0.18em]">L?nea</span>
+                                  <span className="font-mono">SIN TEL?FONO</span>
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2 py-0.5 text-[10px] text-cyan-100">
+                                  <span className="font-semibold uppercase text-cyan-200">L?nea</span>
+                                  <span className="font-mono">{row.phone}</span>
+                                </span>
+                              )}
+                              <span className="inline-flex items-center gap-1 rounded-full border border-violet-500/30 bg-violet-500/10 px-2 py-0.5 text-[10px] text-violet-100">
+                                <span className="font-semibold uppercase text-violet-200">Tipo</span>
+                                <span className="font-mono">{formatSaleTypeLabel(row.account_type, row.line_type, row.sale_type, row.line_kind)}</span>
+                              </span>
+                              {isReview && (
+                                <>
+                                  <span
+                                    className="inline-flex items-center gap-1 rounded-full border border-red-500/50 bg-red-500/20 px-2 py-0.5 text-[10px] font-bold uppercase text-red-100 tracking-wider"
+                                    title={row.review_reason || 'En revisión'}
+                                  >
+                                    <AlertTriangle className="w-3 h-3" />
+                                    Revisar
+                                  </span>
+                                  {row.review_reason && (
+                                    <span className="inline-flex items-center gap-1 rounded-full border border-red-400/30 bg-red-500/5 px-2 py-0.5 text-[10px] text-red-200">
+                                      <span className="font-semibold uppercase text-red-300">Motivo</span>
+                                      <span>{row.review_reason}</span>
+                                    </span>
+                                  )}
+                                  <button
+                                    type="button"
+                                    disabled={Boolean(rowActionBusy[row.id])}
+                                    onClick={() => void handleMarkResolvedPendingSync(row.id, row.report_month)}
+                                    className="inline-flex items-center gap-1 rounded-full border border-amber-400/50 bg-amber-500/20 hover:bg-amber-500/30 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-100 tracking-wider transition disabled:opacity-50 disabled:cursor-wait"
+                                    title="Marca esta fila como corregida en Tango. El próximo sync la valida."
+                                  >
+                                    {rowActionBusy[row.id] ? 'Marcando...' : 'Ya corregido en Tango'}
+                                  </button>
+                                </>
+                              )}
+                              {isPendingSyncRow && (
+                                <span
+                                  className="inline-flex items-center gap-1 rounded-full border border-amber-500/50 bg-amber-500/20 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-100 tracking-wider"
+                                  title="Esperando próximo sync de Tango para validar"
+                                >
+                                  <RefreshCw className="w-3 h-3" />
+                                  Esperando Sync
+                                </span>
+                              )}
+{subHasBono && (
                                 <span
                                   className="text-[9px] uppercase font-bold tracking-wider bg-cyan-500/20 text-cyan-200 border border-cyan-400/40 rounded-full px-1.5 py-0.5"
                                   title={`Bono portabilidad: $${subBono.toFixed(2)}`}
@@ -1930,40 +2394,58 @@ export default function Reports() {
                           </td>
                           <td colSpan={7}></td>
                           <td className="px-2 py-2 text-center">
-                            <span className="text-xs text-slate-500">—</span>
+                            {isReview ? (
+                              <span className="inline-flex items-center rounded-full border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[10px] font-semibold text-red-200">
+                                En revisión
+                              </span>
+                            ) : (
+                              <span className="text-xs text-slate-500">—</span>
+                            )}
                           </td>
                           {/* Mensualidad per subscriber */}
                           <td className="px-2 py-2 text-center">
-                            <span className="text-xs font-bold text-white">
-                              {row.monthly_value != null ? `$${Number(row.monthly_value).toLocaleString('es-ES', { minimumFractionDigits: 2 })}` : '-'}
-                            </span>
+                            {isReview ? (
+                              <span className="inline-flex items-center rounded-full border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[10px] font-semibold text-red-200">
+                                En revisión
+                              </span>
+                            ) : (
+                              <span className="text-xs font-bold text-white">
+                                {row.monthly_value != null ? `$${Number(row.monthly_value).toLocaleString('es-ES', { minimumFractionDigits: 2 })}` : '-'}
+                              </span>
+                            )}
                           </td>
                           {/* Empresa($) editable (admin) / solo lectura (vendedor) */}
                           <td
                             className="px-2 py-2 text-center bg-emerald-500/10 cursor-text"
                             onClick={(e) => {
-                              if (!isAdmin) return;
+                              if (!canViewCompanyFinancials) return;
                               const inp = (e.currentTarget as HTMLElement).querySelector('input');
                               inp?.focus();
                               inp?.select();
                             }}
                           >
-                            {isAdmin ? (
-                              <input
-                                type="text"
-                                inputMode="decimal"
-                                autoComplete="off"
-                                className={`w-full max-w-[110px] bg-slate-950 border-2 text-center font-bold text-emerald-300 text-sm px-2 py-1.5 outline-none transition-all rounded shadow-inner ${editingCompanyEarn[row.id] !== undefined ? 'border-emerald-400 ring-2 ring-emerald-400/40' : 'border-emerald-700/60 hover:border-emerald-400 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/40'}`}
-                                value={editingCompanyEarn[row.id] !== undefined ? editingCompanyEarn[row.id] : String(row.company_earnings ?? '')}
-                                onChange={(e) => {
-                                  const raw = e.target.value.replace(',', '.');
-                                  if (raw === '' || /^\d*\.?\d*$/.test(raw)) {
-                                    setEditingCompanyEarn(prev => ({ ...prev, [row.id]: raw }));
-                                  }
-                                }}
-                                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleSave(row.id); } }}
-                                title="Click para editar · Enter para guardar"
-                              />
+                            {canViewCompanyFinancials ? (
+                              isReview ? (
+                                <span className="inline-flex items-center rounded-full border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[10px] font-semibold text-red-200">
+                                  En revisión
+                                </span>
+                              ) : (
+                                <input
+                                  type="text"
+                                  inputMode="decimal"
+                                  autoComplete="off"
+                                  className={`w-full max-w-[110px] bg-slate-950 border-2 text-center font-bold text-emerald-300 text-sm px-2 py-1.5 outline-none transition-all rounded shadow-inner ${editingCompanyEarn[row.id] !== undefined ? 'border-emerald-400 ring-2 ring-emerald-400/40' : 'border-emerald-700/60 hover:border-emerald-400 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/40'}`}
+                                  value={editingCompanyEarn[row.id] !== undefined ? editingCompanyEarn[row.id] : String(row.company_earnings ?? '')}
+                                  onChange={(e) => {
+                                    const raw = e.target.value.replace(',', '.');
+                                    if (raw === '' || /^\d*\.?\d*$/.test(raw)) {
+                                      setEditingCompanyEarn(prev => ({ ...prev, [row.id]: raw }));
+                                    }
+                                  }}
+                                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleSave(row.id); } }}
+                                  title="Click para editar · Enter para guardar"
+                                />
+                              )
                             ) : (
                               <span className="text-xs font-bold text-emerald-400">${safeMoneyNumber(row.company_earnings).toFixed(2)}</span>
                             )}
@@ -1972,28 +2454,34 @@ export default function Reports() {
                           <td
                             className="px-2 py-2 text-center bg-blue-500/10 cursor-text"
                             onClick={(e) => {
-                              if (!isAdmin) return;
+                              if (!canViewCompanyFinancials) return;
                               const inp = (e.currentTarget as HTMLElement).querySelector('input');
                               inp?.focus();
                               inp?.select();
                             }}
                           >
-                            {isAdmin ? (
-                              <input
-                                type="text"
-                                inputMode="decimal"
-                                autoComplete="off"
-                                className={`w-full max-w-[110px] bg-slate-950 border-2 text-center font-bold text-blue-300 text-sm px-2 py-1.5 outline-none transition-all rounded shadow-inner ${editingVendorComm[row.id] !== undefined ? 'border-blue-400 ring-2 ring-blue-400/40' : 'border-blue-700/60 hover:border-blue-400 focus:border-blue-400 focus:ring-2 focus:ring-blue-400/40'}`}
-                                value={getVendorCommissionInputValue(row)}
-                                onChange={(e) => {
-                                  const raw = e.target.value.replace(',', '.');
-                                  if (raw === '' || /^\d*\.?\d*$/.test(raw)) {
-                                    setEditingVendorComm(prev => ({ ...prev, [row.id]: raw }));
-                                  }
-                                }}
-                                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleSave(row.id); } }}
-                                title={row.is_paid ? 'Pagado · no editable' : (row.salesperson_commission_percentage ? `Auto ${row.salesperson_commission_percentage}% de Empresa($) · Enter para guardar` : 'Editar comisión (Enter para guardar)')}
-                              />
+                            {canViewCompanyFinancials ? (
+                              isReview ? (
+                                <span className="inline-flex items-center rounded-full border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[10px] font-semibold text-red-200">
+                                  En revisión
+                                </span>
+                              ) : (
+                                <input
+                                  type="text"
+                                  inputMode="decimal"
+                                  autoComplete="off"
+                                  className={`w-full max-w-[110px] bg-slate-950 border-2 text-center font-bold text-blue-300 text-sm px-2 py-1.5 outline-none transition-all rounded shadow-inner ${editingVendorComm[row.id] !== undefined ? 'border-blue-400 ring-2 ring-blue-400/40' : 'border-blue-700/60 hover:border-blue-400 focus:border-blue-400 focus:ring-2 focus:ring-blue-400/40'}`}
+                                  value={getVendorCommissionInputValue(row)}
+                                  onChange={(e) => {
+                                    const raw = e.target.value.replace(',', '.');
+                                    if (raw === '' || /^\d*\.?\d*$/.test(raw)) {
+                                      setEditingVendorComm(prev => ({ ...prev, [row.id]: raw }));
+                                    }
+                                  }}
+                                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleSave(row.id); } }}
+                                  title={row.is_paid ? 'Pagado · no editable' : (row.salesperson_commission_percentage ? `Auto ${row.salesperson_commission_percentage}% · Enter para guardar` : 'Editar comisión (Enter para guardar)')}
+                                />
+                              )
                             ) : (
                               <span className="text-xs font-bold text-blue-400">${safeMoneyNumber(getEffectiveVendorCommission(row)).toFixed(2)}</span>
                             )}
@@ -2006,7 +2494,7 @@ export default function Reports() {
                           </td>
                           {/* Save button */}
                           <td className="px-2 py-2 text-center">
-                            {isAdmin && (
+                            {canViewCompanyFinancials && !isReview && (
                               <div className="flex flex-col items-center gap-1">
                                 <button
                                   onClick={() => handleSave(row.id)}
@@ -2059,11 +2547,23 @@ export default function Reports() {
                                       ? 'bg-red-700/70 text-red-100'
                                       : 'bg-slate-700 hover:bg-slate-600 text-slate-200'
                                   }`}
-                                  title={row.withholding_applies !== false ? 'Retención 10% activa' : 'Retención 10% desactivada'}
+                                  title={row.withholding_applies !== false ? 'Retencion 10% activa' : 'Retencion 10% desactivada'}
                                 >
                                   {row.withholding_applies !== false ? 'Retiene' : 'Sin Ret.'}
                                 </button>
                               </div>
+                            )}
+                            {canViewCompanyFinancials && isReview && (
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteSubscriberReport(row.id)}
+                                disabled={Boolean(rowActionBusy[row.id])}
+                                className="inline-flex items-center gap-1 rounded-full border border-red-500/40 bg-red-500/10 px-3 py-1 text-[10px] font-semibold text-red-200 hover:bg-red-500/20 disabled:opacity-50 disabled:cursor-wait"
+                                title="Eliminar fila no confirmada"
+                              >
+                                {rowActionBusy[row.id] ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+                                Eliminar
+                              </button>
                             )}
                           </td>
                         </tr>

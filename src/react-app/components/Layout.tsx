@@ -1,5 +1,6 @@
 import { Link, useLocation, useNavigate } from "react-router";
 import { useMemo, useEffect, useState } from "react";
+import { authFetch } from "@/react-app/utils/auth";
 import type { LucideIcon } from "lucide-react";
 import {
   Users,
@@ -47,7 +48,7 @@ type NavItem = {
 // VERSION: 2025-01-15-CON-IMPORTADOR-VISUAL
 
 const navigation: NavItem[] = [
-  { name: "Panel General", href: "/", icon: LayoutDashboard, permissionKey: "nav.dashboard", roles: ["admin", "supervisor", "vendedor"] },
+  { name: "Panel General", href: "/panel", icon: LayoutDashboard, permissionKey: "nav.dashboard", roles: ["admin", "supervisor"] },
   { name: "Mi día", href: "/mi-dia", icon: Calendar, roles: ["admin", "supervisor", "vendedor"] },
   { name: "Clientes", href: "/clientes", icon: Users, permissionKey: "nav.clients", roles: ["admin", "supervisor", "vendedor"] },
   { name: "Correos", href: "/correos", icon: Mail, permissionKey: "nav.emails", roles: ["admin", "supervisor", "vendedor"] },
@@ -84,6 +85,21 @@ export default function Layout({ children }: LayoutProps) {
   const userLabel = authSnapshot?.salespersonName || authSnapshot?.username || "Usuario";
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [commercialOpen, setCommercialOpen] = useState(true);
+  // Tanda D: badge persistente con cantidad de anomalías del mes actual
+  const [anomaliesCount, setAnomaliesCount] = useState<number>(0);
+
+  useEffect(() => {
+    let cancel = false;
+    (async () => {
+      try {
+        const r = await authFetch('/api/subscriber-reports/needs-review-count');
+        if (!r.ok) return;
+        const data = await r.json();
+        if (!cancel) setAnomaliesCount(Number(data?.count || 0));
+      } catch { /* fallo silencioso */ }
+    })();
+    return () => { cancel = true; };
+  }, [location.pathname]);
 
   // Verificación de versión - CON IMPORTADOR VISUAL
   useEffect(() => {
@@ -228,7 +244,15 @@ export default function Layout({ children }: LayoutProps) {
                   onClick={() => setSidebarOpen(false)}
                 >
                   {icon}
-                  {item.name}
+                  <span className="flex-1">{item.name}</span>
+                  {item.href === '/reportes' && anomaliesCount > 0 && (
+                    <span
+                      className="ml-2 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full bg-red-500 text-white text-[10px] font-bold"
+                      title={`${anomaliesCount} venta${anomaliesCount === 1 ? '' : 's'} en revisión este mes`}
+                    >
+                      {anomaliesCount}
+                    </span>
+                  )}
                 </Link>
               );
             })}

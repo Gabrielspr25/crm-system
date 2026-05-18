@@ -10,6 +10,12 @@ uploads/
 **/.env.local
 **/.env.*.local
 
+# Credenciales GCP / service-account keys
+.gcp/
+**/.gcp/
+*-service-account*.json
+*gcp-key*.json
+
 # Archivos de configuracion legacy con credenciales
 **/Configuration.properties
 **/context.xml
@@ -48,6 +54,33 @@ notas-*
 *.log
 *.sql
 *.txt
+
+# Excepción: migraciones SQL del proyecto SÍ se versionan
+!scripts/migraciones/*.sql
+
+# Binarios grandes y temporales
+*.zip
+*.pdf
+*.traineddata
+
+# Scripts standalone con secretos potenciales (NUNCA commitear)
+# (versionada solo la variante sin password hardcoded — la actual lee de env)
+
+# Docs internas operativas (notas, checklists). Solo specs técnicas van al repo.
+CHECKLIST-OPERATIVO.md
+CONOCER-AL-USUARIO-Y-ERRORES.md
+GUIA-OPERACION-DIARIA.md
+HISTORIAL-FUNCIONAMIENTO.md
+INFORME_METAS_TANGO_DIRECTOR.md
+PERMISOS-USUARIO-CONTROL-Y-CONECTOR-CUARTEL.md
+PLANES-EXISTENTES-CRM-INPUT.md
+REEMPLAZO-PLANES-BD-CRM.md
+00-CORE/
+08-UX/
+Planes para web/
+
+# Scripts Python legacy (el motor real vive en src/backend/services/ocrEngineService.js)
+ocr_engine.py
 
 # TEST / SCRATCH
 scratch/

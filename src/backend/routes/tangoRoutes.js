@@ -1,7 +1,17 @@
 import { Router } from 'express';
+import { randomUUID } from 'node:crypto';
 import crmPool from '../database/db.js';
 import { getTangoPool } from '../database/externalPools.js';
 import { authenticateToken, requireRole } from '../middlewares/auth.js';
+import {
+    detectStaleLock,
+    acquireSyncLock,
+    releaseSyncLock,
+    touchHeartbeat,
+    computeIncrementalRange,
+    createSyncLog,
+    closeSyncLog,
+} from '../services/tangoSyncService.js';
 
 const router = Router();
 
@@ -23,6 +33,88 @@ function ensureAuthenticated(req, res, next) {
 }
 
 router.use(ensureAuthenticated);
+
+const TRACE_VALIDATION_SQL = `
+  CASE
+    WHEN COALESCE(sr.validation_status, '') <> '' THEN sr.validation_status
+    WHEN COALESCE(sr.source, '') = 'manual' THEN 'confirmed'
+    WHEN COALESCE(sr.source, '') = 'tango'
+      AND sr.external_sale_id IS NOT NULL
+      AND sr.sync_log_id IS NOT NULL
+      AND sr.source_activation_date IS NOT NULL
+      AND sr.source_report_month IS NOT NULL
+      AND sr.raw_payload IS NOT NULL
+    THEN 'confirmed'
+    ELSE 'needs_review'
+  END
+`;
+
+async function ensureSubscriberReportsTraceabilityColumns(client) {
+  try {
+    await client.query(`
+      ALTER TABLE subscriber_reports
+      ADD COLUMN IF NOT EXISTS source TEXT,
+      ADD COLUMN IF NOT EXISTS external_sale_id TEXT NULL,
+      ADD COLUMN IF NOT EXISTS sync_log_id UUID NULL,
+      ADD COLUMN IF NOT EXISTS source_activation_date DATE NULL,
+      ADD COLUMN IF NOT EXISTS source_report_month DATE NULL,
+      ADD COLUMN IF NOT EXISTS raw_payload JSONB NULL,
+      ADD COLUMN IF NOT EXISTS validation_status TEXT NULL,
+      ADD COLUMN IF NOT EXISTS validation_notes TEXT NULL
+    `);
+    await client.query(`
+      ALTER TABLE subscriber_reports
+      ALTER COLUMN validation_status SET DEFAULT 'confirmed'
+    `);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_subscriber_reports_source ON subscriber_reports (source)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_subscriber_reports_external_sale_id ON subscriber_reports (external_sale_id)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_subscriber_reports_sync_log_id ON subscriber_reports (sync_log_id)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_subscriber_reports_validation_status ON subscriber_reports (validation_status)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_subscriber_reports_source_report_month ON subscriber_reports (source_report_month)`);
+  } catch (error) {
+    if (error?.code !== '42501') throw error;
+    console.warn('[schema] Sin permisos para agregar columnas traceability en subscriber_reports; se usará fallback.');
+  }
+}
+
+async function ensureSyncLogsTable(client) {
+  try {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS sync_logs (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        sync_type TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'running',
+        details JSONB NULL,
+        stats JSONB NULL,
+        created_by UUID NULL,
+        started_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        finished_at TIMESTAMP NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+  } catch (error) {
+    if (error?.code !== '42501') {
+      // No tirar — la tabla puede preexistir con esquema legacy incompatible.
+      console.warn('[schema] sync_logs: no se pudo asegurar la tabla:', error?.message);
+    } else {
+      console.warn('[schema] Sin permisos para crear sync_logs; se usara fallback sin log persistente.');
+    }
+  }
+  // Cada índice en su propio try/catch: la tabla legacy puede no tener las columnas referenciadas.
+  const indices = [
+    [`idx_sync_logs_sync_type`, `CREATE INDEX IF NOT EXISTS idx_sync_logs_sync_type ON sync_logs (sync_type)`],
+    [`idx_sync_logs_started_at`, `CREATE INDEX IF NOT EXISTS idx_sync_logs_started_at ON sync_logs (started_at DESC)`],
+    [`idx_sync_logs_status`, `CREATE INDEX IF NOT EXISTS idx_sync_logs_status ON sync_logs (status)`],
+  ];
+  for (const [name, sql] of indices) {
+    try {
+      await client.query(sql);
+    } catch (idxErr) {
+      console.warn(`[schema] sync_logs: no se pudo crear ${name} (${idxErr?.code}): ${idxErr?.message}`);
+    }
+  }
+}
 
 // ======================================================
 // GET /api/tango/compare — Comparativa completa Tango vs CRM
@@ -260,11 +352,51 @@ router.get('/summary', async (req, res) => {
 });
 
 // ======================================================
-// POST /api/tango/sync — Sincronizar Tango → CRM
-// Tango es SOURCE OF TRUTH. Idempotente via tango_ventaid UNIQUE.
+// POST /api/tango/sync — Sync incremental controlado
+// Lee desde max(sync_from_date, last_successful_sync) hasta hoy.
+// NO ejecuta cleanup destructivo (solo lectura/upsert seguro).
+// Lock con heartbeat: auto-release si previo está stale >30min.
+// Tango es SOURCE OF TRUTH. Overrides gerenciales (Fase 3) viven aparte.
 // ======================================================
 router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
+  return runTangoSync({
+    req, res,
+    mode: 'incremental',
+    allowCleanup: false,
+    customRange: null, // se calcula desde tango_sync_config
+    reason: null,
+  });
+});
+
+// ======================================================
+// POST /api/tango/sync-range — Re-sync controlado por rango (admin)
+// Body: { from: 'YYYY-MM-DD', to: 'YYYY-MM-DD', reason: 'texto', cleanup?: bool }
+// No cambia sync_from_date global. No borra overrides. Cleanup opt-in.
+// ======================================================
+router.post('/sync-range', requireRole(['admin', 'supervisor']), async (req, res) => {
+  const { from, to, reason, cleanup } = req.body || {};
+  if (!from || !to || !/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+    return res.status(400).json({ error: 'from y to requeridos (YYYY-MM-DD)' });
+  }
+  if (from > to) {
+    return res.status(400).json({ error: 'from no puede ser posterior a to' });
+  }
+  if (!reason || String(reason).trim().length < 5) {
+    return res.status(400).json({ error: 'reason requerido (min 5 chars) para resync por rango' });
+  }
+  return runTangoSync({
+    req, res,
+    mode: 'resync_range',
+    allowCleanup: !!cleanup, // opt-in, default false
+    customRange: { from, to },
+    reason: String(reason).trim(),
+  });
+});
+
+async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason }) {
   const alerts = [];
+  const rejectedRows = [];
+  let syncLogId = randomUUID();
   const stats = {
     tango_ventas: 0,
     tango_ventas_validas: 0,
@@ -281,6 +413,7 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
     subscribers_deactivated: 0,
     subscribers_would_have_deactivated: 0,
     reports_upserted: 0,
+    reports_rejected: 0,
     errors: 0,
   };
 
@@ -312,8 +445,54 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
     return toYmd(d);
   }
 
+  const startedAtMs = Date.now();
+  const warnings = [];
+  let syncRange = null;
+  let lockHeld = false;
+
   try {
     const legacyPool = getTangoPool();
+    await ensureSubscriberReportsTraceabilityColumns(crmPool);
+    await ensureSyncLogsTable(crmPool);
+
+    // ── Lock + range + log estructurado (Fase 2A) ──
+    // Si la migración 2026-05-17-tango-sync-config.sql no fue aplicada,
+    // computeIncrementalRange() lanza error claro y abortamos sin tocar nada.
+    const stale = await detectStaleLock();
+    if (stale) {
+      warnings.push({ type: 'auto_released_lock', ...stale });
+      console.warn('[SYNC] Lock previo auto-liberado (heartbeat stale):', stale);
+    }
+    const lockResult = await acquireSyncLock({ syncLogId });
+    if (!lockResult.acquired) {
+      return res.status(409).json({
+        success: false,
+        error: 'Sync ya en ejecución',
+        current_log_id: lockResult.owner_log_id,
+        heartbeat_at: lockResult.heartbeat_at,
+      });
+    }
+    lockHeld = true;
+
+    // Rango efectivo: incremental usa config; resync_range usa el body.
+    syncRange = customRange
+      ? { from: customRange.from, to: customRange.to, sync_mode: mode }
+      : await computeIncrementalRange();
+
+    try {
+      const logEntry = await createSyncLog({
+        syncMode: mode,
+        rangeStart: syncRange.from,
+        rangeEnd: syncRange.to,
+        reason,
+        userId: req.user?.id || null,
+        userRole: req.user?.role || null,
+      });
+      syncLogId = logEntry.id; // sobrescribimos con el id real persistido
+    } catch (syncLogErr) {
+      console.warn('[SYNC] No se pudo crear sync_log estructurado (continuando con UUID en memoria):', syncLogErr.message);
+    }
+    console.log(`[SYNC] mode=${mode} range=${syncRange.from}→${syncRange.to} allowCleanup=${allowCleanup}`);
 
     // ── 0. Load salespeople for vendedor mapping ──
     const spResult = await crmPool.query(`SELECT id, name FROM salespeople`);
@@ -427,7 +606,9 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
     }
 
     // ── 2. Fetch ventas Tango con filtro 1 ──
-    // Solo PYMES (138-141) y solo desde 2026-01-01 — regla operativa del CRM.
+    // Solo PYMES (138-141). Rango dinámico (Fase 2A):
+    //   incremental: max(sync_from_date, last_successful_sync) → hoy
+    //   resync_range: rango manual del admin
     const tangoResult = await legacyPool.query(`
       SELECT DISTINCT
         v.ventaid,
@@ -454,9 +635,10 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
       LEFT JOIN vendedor vd ON v.vendedorid = vd.vendedorid
       WHERE v.ventatipoid IN (138, 139, 140, 141)
         AND v.activo = true
-        AND v.fechaactivacion >= '2026-01-01'
+        AND v.fechaactivacion >= $1::date
+        AND v.fechaactivacion <  ($2::date + INTERVAL '1 day')
       ORDER BY COALESCE(TRIM(cc.nombre), 'SIN NOMBRE'), TRIM(v.ban::text), v.ventaid
-    `);
+    `, [syncRange.from, syncRange.to]);
     console.log(`[SYNC] ${tangoResult.rows.length} ventas Tango pasaron filtro 1 (ventatipoid)`);
 
     // ── 3. Filtro 2 en JS: BAN debe existir en CRM. Las que no, van a external_sales. ──
@@ -701,7 +883,12 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
     }
 
     // ── 5. Process each venta valida ──
+    let _heartbeatCounter = 0;
     for (const v of ventasValidas) {
+      // Heartbeat cada 50 ventas para que el lock no se considere stale.
+      if (++_heartbeatCounter % 50 === 0) {
+        await touchHeartbeat().catch(() => { /* best effort */ });
+      }
       try {
         const banNum = v.ban;
         const ventaTipo = Number(v.ventatipoid);
@@ -720,6 +907,7 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
         const comEmpresa = parseFloat(v.com_empresa);
         const comVendedor = parseFloat(v.com_vendedor);
         const portabilityBonus = parseFloat(v.portability_bonus) || 0;
+        const sourceActivationDate = toYmd(v.fechaactivacion);
         // Para Fijo (140,141) phone puede ser vacío, para Móvil (138,139) es obligatorio
         let phone = v.phone || null;
         if (phone) {
@@ -738,8 +926,32 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
           alert('error', '', `Venta ${v.ventaid}: sin BAN, saltando`);
           continue;
         }
+        if (!Number.isFinite(Number(v.ventaid)) || Number(v.ventaid) <= 0) {
+          rejectedRows.push({
+            ban: banNum,
+            ventaid: null,
+            phone: phone || null,
+            cliente: v.cliente || null,
+            motivo: 'missing_ventaid',
+            fechaactivacion: sourceActivationDate,
+            report_month: monthVal,
+          });
+          stats.reports_rejected++;
+          alert('warn', banNum, `Venta sin ventaid marcada needs_review: ${banNum}`);
+          continue;
+        }
         if (!monthVal) {
-          alert('error', banNum, `Venta ${v.ventaid}: sin fecha activación, saltando`);
+          rejectedRows.push({
+            ban: banNum,
+            ventaid: v.ventaid || null,
+            phone: phone || null,
+            cliente: v.cliente || null,
+            motivo: 'missing_fechaactivacion',
+            fechaactivacion: sourceActivationDate,
+            report_month: monthVal,
+          });
+          stats.reports_rejected++;
+          alert('warn', banNum, `Venta ${v.ventaid || '∅'} marcada needs_review: missing_fechaactivacion`);
           continue;
         }
 
@@ -1083,12 +1295,87 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
         );
         const prevCompany = prevReport.rows[0]?.company_earnings != null ? Number(prevReport.rows[0].company_earnings) : null;
         const prevVendor = prevReport.rows[0]?.vendor_commission != null ? Number(prevReport.rows[0].vendor_commission) : null;
+        const rawPayload = {
+          ventaid: Number(v.ventaid),
+          ban: banNum,
+          phone,
+          plan_code: planCode,
+          months: v.meses,
+          ventatipoid: ventaTipo,
+          mensualidad: monthlyValue,
+          com_empresa: comEmpresa,
+          com_vendedor: comVendedor,
+          portability_bonus: portabilityBonus,
+          fechaactivacion: sourceActivationDate,
+          vendedorid: v.tango_vendor_id || null,
+          cliente: v.cliente || null,
+          vendedor: v.vendedor || null,
+          source: 'tango',
+          sync_log_id: syncLogId,
+          report_month: monthVal,
+        };
+
+        // Regla de negocio: una venta Tango entra como 'confirmed' SOLO si
+        // tiene todos los datos críticos completos. Si falta cualquiera,
+        // queda como 'needs_review' y NO suma a metas hasta validación manual.
+        const validationIssues = [];
+        if (!(comEmpresa > 0)) validationIssues.push('com_empresa<=0');
+        if (!(effectiveVendorCommission > 0)) validationIssues.push('com_vendedor<=0');
+        if (!spId) validationIssues.push('vendedor_no_mapeado');
+        const validationStatus = validationIssues.length === 0 ? 'confirmed' : 'needs_review';
+        const validationNotes = validationIssues.length > 0 ? validationIssues.join('; ') : null;
+        if (validationStatus === 'needs_review') {
+          alert('warn', banNum, `Venta ${v.ventaid} marcada needs_review: ${validationIssues.join(', ')}`);
+        }
 
         await crmPool.query(`
-          INSERT INTO subscriber_reports (subscriber_id, report_month, company_earnings, vendor_commission, portability_bonus, created_at, updated_at)
-          VALUES ($1, $2::date, $3, $4, $5, NOW(), NOW())
+          INSERT INTO subscriber_reports (
+            subscriber_id, report_month,
+            source, external_sale_id, sync_log_id,
+            source_activation_date, source_report_month, raw_payload,
+            validation_status, validation_notes,
+            company_earnings, vendor_commission, portability_bonus,
+            created_at, updated_at
+          )
+          VALUES (
+            $1, $2::date,
+            $3, $4, $5,
+            $6::date, $7::date, $8::jsonb,
+            $9, $10,
+            $11, $12, $13,
+            NOW(), NOW()
+          )
           ON CONFLICT (subscriber_id, report_month)
           DO UPDATE SET
+            source = EXCLUDED.source,
+            external_sale_id = COALESCE(EXCLUDED.external_sale_id, subscriber_reports.external_sale_id),
+            sync_log_id = COALESCE(EXCLUDED.sync_log_id, subscriber_reports.sync_log_id),
+            source_activation_date = COALESCE(EXCLUDED.source_activation_date, subscriber_reports.source_activation_date),
+            source_report_month = COALESCE(EXCLUDED.source_report_month, subscriber_reports.source_report_month),
+            raw_payload = COALESCE(EXCLUDED.raw_payload, subscriber_reports.raw_payload),
+            -- Tanda C: transición automática del workflow needs_review.
+            -- Nueva sync válida → confirmed siempre.
+            -- Si fila ya estaba confirmed → mantener confirmed (no degradar).
+            -- Si fila estaba resolved_pending_sync y nueva sigue inválida → volver a needs_review.
+            validation_status = CASE
+              WHEN EXCLUDED.validation_status = 'confirmed' THEN 'confirmed'
+              WHEN subscriber_reports.validation_status = 'confirmed' THEN 'confirmed'
+              WHEN subscriber_reports.validation_status = 'resolved_pending_sync'
+                   AND EXCLUDED.validation_status = 'needs_review' THEN 'needs_review'
+              ELSE COALESCE(subscriber_reports.validation_status, EXCLUDED.validation_status)
+            END,
+            retry_count = CASE
+              WHEN subscriber_reports.validation_status = 'resolved_pending_sync'
+                   AND EXCLUDED.validation_status = 'needs_review'
+              THEN COALESCE(subscriber_reports.retry_count, 0) + 1
+              ELSE COALESCE(subscriber_reports.retry_count, 0)
+            END,
+            last_review_attempt_at = CASE
+              WHEN subscriber_reports.validation_status = 'resolved_pending_sync'
+              THEN NOW()
+              ELSE subscriber_reports.last_review_attempt_at
+            END,
+            validation_notes = COALESCE(EXCLUDED.validation_notes, subscriber_reports.validation_notes),
             company_earnings = CASE
               WHEN EXCLUDED.company_earnings IS NOT NULL AND EXCLUDED.company_earnings > 0
                 THEN EXCLUDED.company_earnings
@@ -1105,7 +1392,21 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
               ELSE subscriber_reports.portability_bonus
             END,
             updated_at = NOW()
-        `, [subscriberId, monthVal, comEmpresa, effectiveVendorCommission, portabilityBonus]);
+        `, [
+          subscriberId,
+          monthVal,
+          'tango',
+          String(v.ventaid),
+          syncLogId,
+          sourceActivationDate,
+          monthVal,
+          rawPayload,
+          validationStatus,
+          validationNotes,
+          comEmpresa,
+          effectiveVendorCommission,
+          portabilityBonus
+        ]);
 
         // Alertar si se actualizó algún valor existente desde Tango.
         if (prevCompany !== null && comEmpresa > 0 && Math.abs(prevCompany - comEmpresa) > 0.001) {
@@ -1128,7 +1429,11 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
     }
 
     // ── 4b. Cleanup duplicates from legacy sync (same BAN+phone, keep canonical tango_ventaid row) ──
-    try {
+    // Solo se ejecuta si allowCleanup=true (resync_range con flag, o full sync).
+    // En sync incremental se omite para evitar merges destructivos silenciosos.
+    if (!allowCleanup) {
+      console.log('[SYNC] Cleanup destructivo OMITIDO (modo=' + mode + ', allowCleanup=false)');
+    } else try {
       const touchedBans = [...new Set(tangoResult.rows.map(v => (v.ban || '').trim()).filter(Boolean))];
       if (touchedBans.length > 0) {
         const dupRows = await crmPool.query(`
@@ -1172,6 +1477,14 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
             INSERT INTO subscriber_reports (
               subscriber_id,
               report_month,
+              source,
+              external_sale_id,
+              sync_log_id,
+              source_activation_date,
+              source_report_month,
+              raw_payload,
+              validation_status,
+              validation_notes,
               company_earnings,
               vendor_commission,
               paid_amount,
@@ -1182,6 +1495,14 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
             SELECT
               $1,
               sr.report_month,
+              sr.source,
+              sr.external_sale_id,
+              sr.sync_log_id,
+              sr.source_activation_date,
+              sr.source_report_month,
+              sr.raw_payload,
+              sr.validation_status,
+              sr.validation_notes,
               sr.company_earnings,
               sr.vendor_commission,
               sr.paid_amount,
@@ -1192,6 +1513,17 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
             WHERE sr.subscriber_id = $2
             ON CONFLICT (subscriber_id, report_month)
             DO UPDATE SET
+              source = COALESCE(subscriber_reports.source, EXCLUDED.source),
+              external_sale_id = COALESCE(subscriber_reports.external_sale_id, EXCLUDED.external_sale_id),
+              sync_log_id = COALESCE(subscriber_reports.sync_log_id, EXCLUDED.sync_log_id),
+              source_activation_date = COALESCE(subscriber_reports.source_activation_date, EXCLUDED.source_activation_date),
+              source_report_month = COALESCE(subscriber_reports.source_report_month, EXCLUDED.source_report_month),
+              raw_payload = COALESCE(subscriber_reports.raw_payload, EXCLUDED.raw_payload),
+              validation_status = CASE
+                WHEN EXCLUDED.validation_status = 'confirmed' THEN 'confirmed'
+                ELSE COALESCE(subscriber_reports.validation_status, EXCLUDED.validation_status)
+              END,
+              validation_notes = COALESCE(subscriber_reports.validation_notes, EXCLUDED.validation_notes),
               company_earnings = CASE
                 WHEN (subscriber_reports.company_earnings IS NULL OR subscriber_reports.company_earnings = 0)
                      AND EXCLUDED.company_earnings IS NOT NULL
@@ -1340,10 +1672,53 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
       return acc;
     }, {});
 
+    const summaryDetails = {
+      alerts,
+      external_sales_count: externalSales.length,
+      rejected_rows: rejectedRows,
+      external_motivos: externalMotivos,
+      finished_at: new Date().toISOString(),
+      mode,
+      range_from: syncRange?.from || null,
+      range_to: syncRange?.to || null,
+      reason: reason || null,
+    };
+    const durationMs = Date.now() - startedAtMs;
+    const structuredStats = {
+      ...stats,
+      ...summaryDetails,
+      // Métricas estructuradas que el panel admin lee
+      rows_new: stats.reports_upserted,    // upserted = new + updated; pg planner no diferencia trivialmente
+      rows_updated: 0,
+      rows_ignored: (rejectedRows?.length || 0) + (externalSales?.length || 0),
+      errors_count: stats.errors,
+    };
+
+    try {
+      await closeSyncLog({
+        id: syncLogId,
+        status: 'finished',
+        stats: structuredStats,
+        warnings,
+        durationMs,
+      });
+    } catch (closeErr) {
+      console.warn('[SYNC] No se pudo cerrar sync_log estructurado:', closeErr.message);
+    }
+    if (lockHeld) {
+      await releaseSyncLock({ success: true }).catch(err =>
+        console.warn('[SYNC] No se pudo liberar lock:', err.message));
+    }
+
     res.json({
       success: true,
+      mode,
+      range: syncRange,
+      warnings,
+      duration_ms: durationMs,
       stats,
       alerts,
+      rejected_rows: rejectedRows,
       external_sales: {
         count: externalSales.length,
         sample: externalSales.slice(0, 200),
@@ -1359,9 +1734,22 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
 
   } catch (error) {
     console.error('[SYNC] Error general:', error);
-    res.status(500).json({ success: false, error: 'Error en sync Tango→CRM', details: error.message, stats, alerts });
+    const durationMs = Date.now() - startedAtMs;
+    try {
+      await closeSyncLog({
+        id: syncLogId,
+        status: 'failed',
+        stats: { ...stats, error: error.message, rows_ignored: (rejectedRows?.length || 0), errors_count: (stats.errors || 0) + 1 },
+        warnings,
+        durationMs,
+      });
+    } catch (_) {}
+    if (lockHeld) {
+      await releaseSyncLock({ success: false }).catch(() => {});
+    }
+    res.status(500).json({ success: false, error: 'Error en sync Tango→CRM', details: error.message, stats, alerts, warnings });
   }
-});
+}
 
 // ======================================================
 // Helper: Build comparison structure

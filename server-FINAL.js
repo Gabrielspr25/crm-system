@@ -16,6 +16,7 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import multer from 'multer';
 import { createWorker } from 'tesseract.js';
+import { extractTextWithVision } from './src/backend/services/ocrVisionService.js';
 import { saveImportData } from './src/backend/controllers/importController.js';
 import { fullSystemCheck } from './src/backend/controllers/healthController.js';
 import { runFullSystemTest } from './src/backend/controllers/systemTestController.js';
@@ -40,6 +41,9 @@ import dealWorkflowRoutes from './src/backend/routes/dealWorkflowRoutes.js';
 import followUpConfigRoutes from './src/backend/routes/followUpConfigRoutes.js';
 import dashboardRoutes from './src/backend/routes/dashboardRoutes.js';
 import agentRoutes from './src/backend/routes/agentRoutes.js';
+import myDayRoutes from './src/backend/routes/myDayRoutes.js';
+import directorRoutes from './src/backend/routes/directorRoutes.js';
+import tangoSyncRoutes from './src/backend/routes/tangoSyncRoutes.js';
 import { getTangoPool } from './src/backend/database/externalPools.js';
 import { getPermissionCatalogResponse, ensurePermissionSchema, resolvePermissionsForUser, saveUserPermissionOverrides } from './src/backend/utils/permissionService.js';
 
@@ -422,6 +426,9 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/tango', tangoRoutes);
 app.use('/api/ocr', ocrRoutes);
 app.use('/api/agents', agentRoutes);
+app.use('/api/my-day', myDayRoutes);
+app.use('/api/director', directorRoutes);
+app.use('/api/tango-sync', tangoSyncRoutes);
 
 // Reglas y Procesos - Servir HTML estático
 app.get('/reglas-procesos', (req, res) => {
@@ -3915,8 +3922,144 @@ app.delete('/api/goals/:id', async (req, res) => {
 
 // ======================================================
 // Prospectos de seguimiento
+const FOLLOW_UP_NOTE_COLUMNS = `
+  fn.id,
+  fn.follow_up_id,
+  fn.client_id,
+  fn.deal_id,
+  fn.note,
+  fn.created_by,
+  fn.created_by_name,
+  fn.created_at,
+  fn.updated_at
+`;
+
+let followUpNotesReadyPromise = null;
+
+const ensureFollowUpNotesReady = async () => {
+  if (!followUpNotesReadyPromise) {
+    followUpNotesReadyPromise = (async () => {
+      await query(`
+        CREATE TABLE IF NOT EXISTS follow_up_notes (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          follow_up_id INTEGER NOT NULL,
+          client_id UUID NOT NULL,
+          deal_id UUID NULL,
+          note TEXT NOT NULL,
+          created_by UUID NULL,
+          created_by_name TEXT NULL,
+          created_at TIMESTAMP DEFAULT NOW(),
+          updated_at TIMESTAMP DEFAULT NOW()
+        )
+      `);
+
+      await query(`CREATE INDEX IF NOT EXISTS idx_follow_up_notes_follow_up_id ON follow_up_notes (follow_up_id)`);
+      await query(`CREATE INDEX IF NOT EXISTS idx_follow_up_notes_client_id ON follow_up_notes (client_id)`);
+      await query(`CREATE INDEX IF NOT EXISTS idx_follow_up_notes_created_at_desc ON follow_up_notes (created_at DESC)`);
+
+      await query(`
+        WITH legacy_notes AS (
+          SELECT
+            fp.id AS follow_up_id,
+            fp.client_id,
+            NULL::uuid AS deal_id,
+            TRIM(fp.notes) AS note,
+            NULL::uuid AS created_by,
+            'Sistema'::text AS created_by_name,
+            COALESCE(fp.updated_at, fp.created_at, NOW()) AS created_at,
+            COALESCE(fp.updated_at, fp.created_at, NOW()) AS updated_at
+          FROM follow_up_prospects fp
+          WHERE fp.client_id IS NOT NULL
+            AND fp.notes IS NOT NULL
+            AND TRIM(fp.notes) <> ''
+        )
+        INSERT INTO follow_up_notes (
+          follow_up_id,
+          client_id,
+          deal_id,
+          note,
+          created_by,
+          created_by_name,
+          created_at,
+          updated_at
+        )
+        SELECT
+          l.follow_up_id,
+          l.client_id,
+          l.deal_id,
+          l.note,
+          l.created_by,
+          l.created_by_name,
+          l.created_at,
+          l.updated_at
+        FROM legacy_notes l
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM follow_up_notes fn
+          WHERE fn.follow_up_id = l.follow_up_id
+            AND fn.client_id = l.client_id
+            AND fn.note = l.note
+            AND COALESCE(fn.created_by_name, '') = 'Sistema'
+        )
+      `);
+    })().catch((error) => {
+      followUpNotesReadyPromise = null;
+      throw error;
+    });
+  }
+
+  return followUpNotesReadyPromise;
+};
+
+const loadLastNoteJoinSql = `
+  LEFT JOIN LATERAL (
+    SELECT fn.note, fn.created_at, fn.created_by_name
+    FROM follow_up_notes fn
+    WHERE fn.follow_up_id = p.id
+    ORDER BY fn.created_at DESC, fn.id DESC
+    LIMIT 1
+  ) last_note ON TRUE
+`;
+
+const loadLastNoteFieldSql = `
+  CASE
+    WHEN last_note.note IS NULL THEN NULL
+    ELSE jsonb_build_object(
+      'text', last_note.note,
+      'at', last_note.created_at,
+      'author', last_note.created_by_name
+    )
+  END AS last_note
+`;
+
+const resolveFollowUpAccess = async (followUpId, req) => {
+  const rows = await query(
+    `
+      SELECT fp.id, fp.client_id, fp.vendor_id, c.salesperson_id AS client_salesperson_id
+      FROM follow_up_prospects fp
+      LEFT JOIN clients c ON c.id = fp.client_id
+      WHERE fp.id = $1
+      LIMIT 1
+    `,
+    [followUpId]
+  ).catch(() => []);
+
+  if (rows.length === 0) {
+    return { found: false, allowed: false, row: null };
+  }
+
+  const row = rows[0];
+  const scope = await getVendorScope(req);
+  if (!vendorOwnsProspect(row, scope)) {
+    return { found: true, allowed: false, row };
+  }
+
+  return { found: true, allowed: true, row };
+};
+
 app.get('/api/follow-up-prospects', authenticateRequest, async (req, res) => {
   try {
+    await ensureFollowUpNotesReady();
     const { include_completed } = req.query;
     const scope = await getVendorScope(req);
 
@@ -3938,21 +4081,41 @@ app.get('/api/follow-up-prospects', authenticateRequest, async (req, res) => {
       params.push(scope.salespersonId);
     }
 
+    // Excluir follow-ups apuntando a clientes fantasma (sin nombre real).
+    // Requiere que el cliente exista Y tenga al menos uno de los nombres no vacío.
+    // Tambien descarta "Sin nombre" literal (placeholder usado por imports antiguos).
+    conditions.push('c.id IS NOT NULL');
+    conditions.push(`(
+      (c.name IS NOT NULL AND TRIM(c.name) <> '' AND LOWER(TRIM(c.name)) NOT IN ('sin nombre','null','none','undefined'))
+      OR
+      (c.business_name IS NOT NULL AND TRIM(c.business_name) <> '' AND LOWER(TRIM(c.business_name)) NOT IN ('sin nombre','null','none','undefined'))
+    )`);
+
     const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
 
     const sql = `
-      SELECT 
+      SELECT
         p.*,
         c.name as client_name,
         pr.name as priority_name,
         pr.color_hex as priority_color,
         v.name as vendor_name,
-        s.name as step_name
+        s.name as step_name,
+        (
+          SELECT COALESCE(SUM(sub.monthly_value), 0)::float
+          FROM subscribers sub
+          JOIN bans bn ON sub.ban_id = bn.id
+          WHERE bn.client_id = p.client_id
+            AND COALESCE(LOWER(sub.status::text), 'activo')
+                NOT IN ('cancelado','cancelled','c','inactivo','inactive','no_renueva_ahora')
+        ) AS projected_monthly_value,
+        ${loadLastNoteFieldSql}
       FROM follow_up_prospects p
       LEFT JOIN clients c ON p.client_id = c.id
       LEFT JOIN priorities pr ON p.priority_id = pr.id
       LEFT JOIN vendors v ON p.vendor_id = v.id
       LEFT JOIN follow_up_steps s ON p.step_id = s.id
+      ${loadLastNoteJoinSql}
       ${whereClause}
       ORDER BY p.created_at DESC
     `;
@@ -3966,6 +4129,173 @@ app.get('/api/follow-up-prospects', authenticateRequest, async (req, res) => {
       return res.json([]);
     }
     serverError(res, error, 'Error obteniendo prospectos');
+  }
+});
+
+app.get('/api/follow-up-prospects/:id/notes', authenticateRequest, async (req, res) => {
+  try {
+    await ensureFollowUpNotesReady();
+    const followUpId = String(req.params.id || '').trim();
+    if (!followUpId) {
+      return res.status(400).json({ error: 'follow_up_id es obligatorio' });
+    }
+
+    const access = await resolveFollowUpAccess(followUpId, req);
+    if (!access.found) {
+      return res.status(404).json({ error: 'Prospecto no encontrado' });
+    }
+    if (!access.allowed) {
+      return res.status(403).json({ error: 'No tienes acceso a este seguimiento' });
+    }
+
+    const rows = await query(
+      `
+        SELECT ${FOLLOW_UP_NOTE_COLUMNS}
+        FROM follow_up_notes fn
+        WHERE fn.follow_up_id = $1
+        ORDER BY fn.created_at DESC, fn.id DESC
+      `,
+      [followUpId]
+    );
+
+    res.json(rows);
+  } catch (error) {
+    serverError(res, error, 'Error obteniendo notas del seguimiento');
+  }
+});
+
+app.post('/api/follow-up-prospects/:id/notes', authenticateRequest, async (req, res) => {
+  try {
+    await ensureFollowUpNotesReady();
+    const followUpId = String(req.params.id || '').trim();
+    const note = String(req.body?.note || '').trim();
+    const dealId = req.body?.deal_id == null || String(req.body?.deal_id).trim() === '' ? null : String(req.body.deal_id).trim();
+
+    if (!followUpId) {
+      return res.status(400).json({ error: 'follow_up_id es obligatorio' });
+    }
+    if (!note) {
+      return res.status(400).json({ error: 'La nota no puede estar vacía' });
+    }
+
+    const access = await resolveFollowUpAccess(followUpId, req);
+    if (!access.found) {
+      return res.status(404).json({ error: 'Prospecto no encontrado' });
+    }
+    if (!access.allowed) {
+      return res.status(403).json({ error: 'No tienes acceso a este seguimiento' });
+    }
+    if (!access.row?.client_id) {
+      return res.status(400).json({ error: 'El seguimiento no tiene cliente asociado' });
+    }
+
+    const createdBy = req.user?.salespersonId ? String(req.user.salespersonId).trim() : null;
+    const createdByName = String(req.user?.salespersonName || req.user?.username || 'Sistema').trim() || 'Sistema';
+
+    const inserted = await query(
+      `
+        INSERT INTO follow_up_notes (
+          follow_up_id,
+          client_id,
+          deal_id,
+          note,
+          created_by,
+          created_by_name,
+          created_at,
+          updated_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+        RETURNING
+          id,
+          follow_up_id,
+          client_id,
+          deal_id,
+          note,
+          created_by,
+          created_by_name,
+          created_at,
+          updated_at
+      `,
+      [
+        followUpId,
+        access.row.client_id,
+        dealId,
+        note,
+        createdBy,
+        createdByName
+      ]
+    );
+
+    await query('UPDATE follow_up_prospects SET updated_at = NOW() WHERE id = $1', [followUpId]);
+
+    res.status(201).json(inserted[0]);
+  } catch (error) {
+    serverError(res, error, 'Error guardando nota del seguimiento');
+  }
+});
+
+// ── Notas históricas del cliente (tabla client_notes, INSERT-only) ──
+// Mismo RBAC que updateClient: admin/supervisor todo; vendedor solo si el
+// cliente le pertenece o no tiene salesperson asignado.
+const resolveClientAccess = async (clientId, req) => {
+  if (!clientId) return { found: false, allowed: false };
+  const rows = await query('SELECT id, salesperson_id FROM clients WHERE id = $1', [clientId]);
+  if (rows.length === 0) return { found: false, allowed: false };
+  if (req.user?.role === 'vendedor') {
+    if (!req.user?.salespersonId) return { found: true, allowed: false };
+    const owner = rows[0].salesperson_id;
+    const isOwnedByOther = owner && String(owner) !== String(req.user.salespersonId);
+    if (isOwnedByOther) return { found: true, allowed: false };
+  }
+  return { found: true, allowed: true, row: rows[0] };
+};
+
+app.get('/api/clients/:id/notes', authenticateRequest, async (req, res) => {
+  try {
+    const clientId = String(req.params.id || '').trim();
+    if (!clientId) return res.status(400).json({ error: 'client_id es obligatorio' });
+
+    const access = await resolveClientAccess(clientId, req);
+    if (!access.found) return res.status(404).json({ error: 'Cliente no encontrado' });
+    if (!access.allowed) return res.status(403).json({ error: 'No tienes acceso a este cliente' });
+
+    const rows = await query(
+      `SELECT id, client_id, note, created_by, created_by_name, created_at, updated_at
+         FROM client_notes
+        WHERE client_id = $1
+        ORDER BY created_at DESC, id DESC`,
+      [clientId]
+    );
+    res.json(rows);
+  } catch (error) {
+    serverError(res, error, 'Error obteniendo notas del cliente');
+  }
+});
+
+app.post('/api/clients/:id/notes', authenticateRequest, async (req, res) => {
+  try {
+    const clientId = String(req.params.id || '').trim();
+    const note = String(req.body?.note || '').trim();
+    if (!clientId) return res.status(400).json({ error: 'client_id es obligatorio' });
+    if (!note) return res.status(400).json({ error: 'La nota no puede estar vacía' });
+
+    const access = await resolveClientAccess(clientId, req);
+    if (!access.found) return res.status(404).json({ error: 'Cliente no encontrado' });
+    if (!access.allowed) return res.status(403).json({ error: 'No tienes acceso a este cliente' });
+
+    const createdBy = req.user?.salespersonId ? String(req.user.salespersonId).trim() : null;
+    const createdByName = String(req.user?.salespersonName || req.user?.username || 'Sistema').trim() || 'Sistema';
+
+    const inserted = await query(
+      `INSERT INTO client_notes (client_id, note, created_by, created_by_name, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, NOW(), NOW())
+       RETURNING id, client_id, note, created_by, created_by_name, created_at, updated_at`,
+      [clientId, note, createdBy, createdByName]
+    );
+
+    res.status(201).json(inserted[0]);
+  } catch (error) {
+    serverError(res, error, 'Error guardando nota del cliente');
   }
 });
 
@@ -4396,6 +4726,30 @@ app.post('/api/subscriber-reports/sync-pymes', authenticateRequest, requireRole(
   const legacyPool = getTangoPool();
   const crmClient = await pool.connect();
   try {
+    await ensureSubscriberReportsWorkflowColumns(crmClient);
+    await ensureSyncLogsTable(crmClient);
+    let syncLogId = null;
+    try {
+      const syncLogInsert = await crmClient.query(
+        `INSERT INTO sync_logs (sync_type, status, details, stats, created_by, started_at, created_at, updated_at)
+         VALUES ($1, 'running', $2::jsonb, $3::jsonb, $4::uuid, NOW(), NOW(), NOW())
+         RETURNING id`,
+        [
+          'subscriber_reports_sync_pymes',
+          {
+            started_at: new Date().toISOString(),
+            user_id: req.user?.id || null,
+            user_role: req.user?.role || null,
+          },
+          { started: true },
+          req.user?.id || null,
+        ]
+      );
+      syncLogId = syncLogInsert.rows?.[0]?.id || null;
+    } catch (syncLogErr) {
+      console.warn('[SYNC-PYMES] No se pudo crear sync_log:', syncLogErr.message);
+    }
+
     // 1. Traer TODAS las ventas PYMES de Tango (fuente de verdad)
     const legacyResult = await legacyPool.query(`
       SELECT v.ventaid, v.ban, v.status as linea,
@@ -4601,10 +4955,36 @@ app.post('/api/subscriber-reports/sync-pymes', authenticateRequest, requireRole(
         // 9. Insert report (comisiones en 0 para entrada manual)
         try {
           await crmClient.query(`
-            INSERT INTO subscriber_reports (subscriber_id, report_month, company_earnings, vendor_commission)
-            VALUES ($1, $2, 0, 0)
+            INSERT INTO subscriber_reports (
+              subscriber_id, report_month,
+              source, external_sale_id, sync_log_id,
+              source_activation_date, source_report_month, raw_payload,
+              validation_status, validation_notes,
+              company_earnings, vendor_commission
+            )
+            VALUES ($1, $2, $3, $4, $5, $6::date, $7::date, $8::jsonb, $9, $10, 0, 0)
             ON CONFLICT (subscriber_id, report_month) DO NOTHING
-          `, [targetSub.sub_id, monthStr]);
+          `, [
+            targetSub.sub_id,
+            monthStr,
+            'tango',
+            String(v.ventaid || ''),
+            syncLogId,
+            v.fechaactivacion ? String(v.fechaactivacion).slice(0, 10) : null,
+            monthStr,
+            {
+              ventaid: v.ventaid || null,
+              ban: ban,
+              linea: v.linea || null,
+              tipo: v.tipo || null,
+              vendedor: v.vendedor || null,
+              cliente: v.cliente || null,
+              fechaactivacion: v.fechaactivacion ? String(v.fechaactivacion).slice(0, 10) : null,
+              source: 'tango_pymes',
+            },
+            'confirmed',
+            null
+          ]);
           inserted++;
         } catch (insErr) {
           console.error(`[SYNC-PYMES] Insert error sub=${targetSub.sub_id}:`, insErr.message);
@@ -4725,6 +5105,41 @@ app.post('/api/subscriber-reports/sync-pymes', authenticateRequest, requireRole(
 
     console.log(`[SYNC-PYMES] Tango: ${tangoCount} ventas | CRM: ${crmCount} reports | ${match ? '✓ MATCH PERFECTO' : `⚠ DIFF (${tangoCount - crmCount})`}`);
 
+    if (syncLogId) {
+      await crmClient.query(
+        `UPDATE sync_logs
+            SET status = $1,
+                details = $2::jsonb,
+                stats = $3::jsonb,
+                finished_at = NOW(),
+                updated_at = NOW()
+          WHERE id = $4`,
+        [
+          'finished',
+          {
+            report,
+            details,
+            finished_at: new Date().toISOString(),
+          },
+          {
+            total_legacy: ventas.length,
+            reports_created: inserted,
+            reports_cancelled: cancelled_reports,
+            clients_created: created_clients,
+            bans_created: created_bans,
+            subscribers_created: created_subs,
+            errors,
+            tango_ventas: tangoCount,
+            crm_reports: crmCount,
+            totals_match: match
+          },
+          syncLogId
+        ]
+      ).catch((err) => {
+        console.warn('[SYNC-PYMES] No se pudo actualizar sync_log:', err.message);
+      });
+    }
+
     await crmClient.query('COMMIT');
     console.log(`[SYNC-PYMES] COMMIT OK — ${inserted} reports, ${created_clients} clientes, ${created_bans} BANs, ${created_subs} subs creados, ${cancelled_reports} cancelados`);
 
@@ -4796,7 +5211,8 @@ app.get('/api/subscriber-reports/comparison', authenticateRequest, requireRole([
         COALESCE(SUM(company_earnings), 0) as empresa,
         COALESCE(SUM(vendor_commission), 0) as comision,
         COALESCE(SUM(paid_amount), 0) as pagado
-      FROM subscriber_reports
+      FROM subscriber_reports sr
+      WHERE ${TRACE_VALIDATION_SQL} = 'confirmed'
       GROUP BY TO_CHAR(report_month, 'YYYY-MM')
       ORDER BY month
     `);
@@ -4874,6 +5290,430 @@ function buildSubscriberReportDedupKey(row) {
   return [ban, month, lineType, monthlyValue ?? '', companyEarnings ?? ''].join('|');
 }
 
+const TRACE_VALIDATION_SQL = `
+  CASE
+    WHEN COALESCE(sr.validation_status, '') <> '' THEN sr.validation_status
+    WHEN COALESCE(sr.source, '') = 'manual' THEN 'confirmed'
+    WHEN COALESCE(sr.source, '') = 'tango'
+      AND sr.external_sale_id IS NOT NULL
+      AND sr.sync_log_id IS NOT NULL
+      AND sr.source_activation_date IS NOT NULL
+      AND sr.source_report_month IS NOT NULL
+      AND sr.raw_payload IS NOT NULL
+    THEN 'confirmed'
+    ELSE 'needs_review'
+  END
+`; 
+
+// ======================================================
+// Tanda C: marcar fila needs_review como resolved_pending_sync
+// POST /api/subscriber-reports/:subscriber_id/mark-resolved
+// Body: { report_month: 'YYYY-MM-DD' }
+app.post('/api/subscriber-reports/:subscriber_id/mark-resolved', authenticateRequest, async (req, res) => {
+  try {
+    await ensureSubscriberReportsWorkflowColumns(pool);
+    const { subscriber_id } = req.params;
+    const { report_month } = req.body || {};
+    if (!subscriber_id || !report_month) {
+      return res.status(400).json({ error: 'subscriber_id y report_month son requeridos' });
+    }
+
+    const role = String(req.user?.role || '').trim().toLowerCase();
+    const salespersonId = req.user?.salespersonId == null ? '' : String(req.user.salespersonId).trim();
+
+    // Validar acceso: vendedor solo puede marcar sus propias filas.
+    if (role === 'vendedor' && !salespersonId) {
+      return res.status(403).json({ error: 'Acceso denegado' });
+    }
+    const accessParams = [subscriber_id, report_month];
+    const accessConditions = [
+      `sr.subscriber_id = $1`,
+      `sr.report_month = $2::date`,
+    ];
+    if (role === 'vendedor' && salespersonId) {
+      accessParams.push(salespersonId);
+      accessConditions.push(`c.salesperson_id::text = $${accessParams.length}`);
+    }
+    const accessRow = await pool.query(`
+      SELECT sr.validation_status
+      FROM subscriber_reports sr
+      JOIN subscribers s ON s.id = sr.subscriber_id
+      JOIN bans b ON b.id = s.ban_id
+      JOIN clients c ON c.id = b.client_id
+      WHERE ${accessConditions.join(' AND ')}
+      LIMIT 1
+    `, accessParams);
+    if (accessRow.rows.length === 0) {
+      return res.status(404).json({ error: 'Fila no encontrada o sin acceso' });
+    }
+
+    // Solo se permite la transición desde needs_review.
+    const currentStatus = String(accessRow.rows[0].validation_status || '').trim();
+    if (currentStatus !== 'needs_review') {
+      return res.status(400).json({
+        error: 'La fila no está en needs_review',
+        current_status: currentStatus || 'needs_review',
+      });
+    }
+
+    await pool.query(`
+      UPDATE subscriber_reports
+      SET validation_status = 'resolved_pending_sync',
+          last_review_attempt_at = NOW(),
+          updated_at = NOW()
+      WHERE subscriber_id = $1 AND report_month = $2::date
+    `, [subscriber_id, report_month]);
+
+    res.json({ ok: true, validation_status: 'resolved_pending_sync' });
+  } catch (error) {
+    console.error('Error en mark-resolved:', error);
+    res.status(500).json({ error: 'Error marcando fila como resolved_pending_sync', details: error.message });
+  }
+});
+
+// ======================================================
+// Tanda D: lista priorizada de anomalías (panel directivo)
+// GET /api/subscriber-reports/needs-review-list?month=YYYY-MM&limit=50
+app.get('/api/subscriber-reports/needs-review-list', authenticateRequest, async (req, res) => {
+  try {
+    await ensureSubscriberReportsWorkflowColumns(pool);
+    const role = String(req.user?.role || '').trim().toLowerCase();
+    const salespersonId = req.user?.salespersonId == null ? '' : String(req.user.salespersonId).trim();
+    const now = new Date();
+    const defaultMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const month = String(req.query.month || defaultMonth).trim();
+    const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
+
+    if (role === 'vendedor' && !salespersonId) {
+      return res.json({ items: [], period: month });
+    }
+
+    const params = [month];
+    let vendorCondition = '';
+    if (role === 'vendedor' && salespersonId) {
+      params.push(salespersonId);
+      vendorCondition = `AND c.salesperson_id::text = $${params.length}`;
+    }
+    params.push(limit);
+    const limitIdx = params.length;
+
+    const sql = `
+      SELECT
+        sr.subscriber_id,
+        sr.report_month,
+        s.phone,
+        s.monthly_value,
+        c.id AS client_id,
+        c.name AS client_name,
+        c.owner_name AS client_business_name,
+        sp.id AS vendor_id,
+        sp.name AS vendor_name,
+        (${TRACE_VALIDATION_SQL}) AS validation_status,
+        sr.validation_notes,
+        COALESCE(sr.retry_count, 0) AS retry_count,
+        sr.last_review_attempt_at,
+        EXTRACT(EPOCH FROM (NOW() - sr.report_month::timestamp))/86400 AS days_unresolved,
+        CASE
+          WHEN c.salesperson_id IS NULL THEN 'Vendedor no identificado'
+          WHEN (sr.external_sale_id IS NULL OR sr.external_sale_id = '') THEN 'Venta Tango inválida'
+          WHEN sr.source_activation_date IS NULL THEN 'Activación incompleta'
+          WHEN COALESCE(sr.company_earnings, 0) <= 0 OR COALESCE(sr.vendor_commission, 0) <= 0 THEN 'Venta sin comisión'
+          ELSE 'Sync incompleto'
+        END AS motivo_principal,
+        sr.company_earnings,
+        sr.vendor_commission,
+        sr.external_sale_id,
+        sr.source_activation_date
+      FROM subscriber_reports sr
+      JOIN subscribers s ON s.id = sr.subscriber_id
+      JOIN bans b ON b.id = s.ban_id
+      JOIN clients c ON c.id = b.client_id
+      LEFT JOIN salespeople sp ON sp.id = c.salesperson_id
+      WHERE TO_CHAR(sr.report_month, 'YYYY-MM') = $1
+        AND (${TRACE_VALIDATION_SQL}) IN ('needs_review', 'resolved_pending_sync')
+        ${vendorCondition}
+      ORDER BY
+        COALESCE(s.monthly_value, 0) DESC,
+        sr.report_month ASC,
+        COALESCE(sr.retry_count, 0) DESC
+      LIMIT $${limitIdx}
+    `;
+    const result = await pool.query(sql, params);
+
+    // Reconstruir motivo_detalle igual que en el endpoint principal (legible)
+    const buildDetalle = (row) => {
+      const issues = [];
+      if (Number(row.company_earnings || 0) <= 0) issues.push('Comisión empresa = 0');
+      if (Number(row.vendor_commission || 0) <= 0) issues.push('Comisión vendedor = 0');
+      if (!row.vendor_id) issues.push('Vendedor no mapeado');
+      if (!row.external_sale_id) issues.push('VentaID faltante');
+      if (!row.source_activation_date) issues.push('Fecha activación faltante');
+      return issues.length > 0 ? issues.join('; ') : null;
+    };
+
+    const items = result.rows.map((row) => ({
+      subscriber_id: row.subscriber_id,
+      report_month: row.report_month,
+      client_id: row.client_id,
+      client_name: row.client_business_name || row.client_name,
+      vendor_id: row.vendor_id || null,
+      vendor_name: row.vendor_name || 'Sin asignar',
+      phone: row.phone,
+      motivo_principal: row.motivo_principal,
+      motivo_detalle: buildDetalle(row),
+      impact_monthly_value: Number(row.monthly_value || 0),
+      validation_status: row.validation_status,
+      days_unresolved: Math.round(Number(row.days_unresolved || 0) * 10) / 10,
+      retry_count: Number(row.retry_count || 0),
+      last_review_attempt_at: row.last_review_attempt_at,
+    }));
+
+    res.json({ items, period: month, limit });
+  } catch (error) {
+    console.error('Error en /needs-review-list:', error);
+    res.status(500).json({ error: 'Error obteniendo lista de anomalías' });
+  }
+});
+
+// ======================================================
+// Resumen ejecutivo de needs_review para el módulo Comisiones
+// GET /api/subscriber-reports/needs-review-summary?month=YYYY-MM
+app.get('/api/subscriber-reports/needs-review-summary', authenticateRequest, async (req, res) => {
+  try {
+    await ensureSubscriberReportsWorkflowColumns(pool);
+    const role = String(req.user?.role || '').trim().toLowerCase();
+    const salespersonId = req.user?.salespersonId == null ? '' : String(req.user.salespersonId).trim();
+    const now = new Date();
+    const defaultMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const month = String(req.query.month || defaultMonth).trim();
+
+    if (role === 'vendedor' && !salespersonId) {
+      return res.json({
+        count: 0, monthly_value_total: 0, vendors_affected: 0, clients_affected: 0,
+        pending_sync: { count: 0, monthly_value_total: 0 },
+        period: month,
+      });
+    }
+
+    const params = [month];
+    let vendorCondition = '';
+    if (role === 'vendedor' && salespersonId) {
+      params.push(salespersonId);
+      vendorCondition = `AND c.salesperson_id::text = $${params.length}`;
+    }
+
+    // Una sola query que agrega needs_review + resolved_pending_sync + métricas de antigüedad.
+    const sql = `
+      SELECT
+        SUM(CASE WHEN (${TRACE_VALIDATION_SQL}) = 'needs_review' THEN 1 ELSE 0 END)::int AS review_count,
+        COALESCE(SUM(CASE WHEN (${TRACE_VALIDATION_SQL}) = 'needs_review' THEN s.monthly_value ELSE 0 END), 0)::numeric AS review_monthly_total,
+        COUNT(DISTINCT CASE WHEN (${TRACE_VALIDATION_SQL}) IN ('needs_review','resolved_pending_sync') THEN c.salesperson_id END)::int AS vendors_affected,
+        COUNT(DISTINCT CASE WHEN (${TRACE_VALIDATION_SQL}) IN ('needs_review','resolved_pending_sync') THEN c.id END)::int AS clients_affected,
+        SUM(CASE WHEN (${TRACE_VALIDATION_SQL}) = 'resolved_pending_sync' THEN 1 ELSE 0 END)::int AS pending_count,
+        COALESCE(SUM(CASE WHEN (${TRACE_VALIDATION_SQL}) = 'resolved_pending_sync' THEN s.monthly_value ELSE 0 END), 0)::numeric AS pending_monthly_total,
+        -- Días sin resolver (desde report_month, solo anomalías activas no resueltas)
+        COALESCE(MAX(CASE WHEN (${TRACE_VALIDATION_SQL}) IN ('needs_review','resolved_pending_sync') THEN EXTRACT(EPOCH FROM (NOW() - sr.report_month::timestamp))/86400 END), 0)::numeric AS oldest_pending_days,
+        COALESCE(AVG(CASE WHEN (${TRACE_VALIDATION_SQL}) IN ('needs_review','resolved_pending_sync') THEN EXTRACT(EPOCH FROM (NOW() - sr.report_month::timestamp))/86400 END), 0)::numeric AS avg_days_unresolved
+      FROM subscriber_reports sr
+      JOIN subscribers s ON s.id = sr.subscriber_id
+      JOIN bans b        ON b.id = s.ban_id
+      JOIN clients c     ON c.id = b.client_id
+      WHERE TO_CHAR(sr.report_month, 'YYYY-MM') = $1
+        ${vendorCondition}
+    `;
+    const result = await pool.query(sql, params);
+    const row = result.rows[0] || {};
+    res.json({
+      count: Number(row.review_count || 0),
+      monthly_value_total: Number(row.review_monthly_total || 0),
+      vendors_affected: Number(row.vendors_affected || 0),
+      clients_affected: Number(row.clients_affected || 0),
+      pending_sync: {
+        count: Number(row.pending_count || 0),
+        monthly_value_total: Number(row.pending_monthly_total || 0),
+      },
+      oldest_pending_days: Math.round(Number(row.oldest_pending_days || 0) * 10) / 10,
+      avg_days_unresolved: Math.round(Number(row.avg_days_unresolved || 0) * 10) / 10,
+      period: month,
+    });
+  } catch (error) {
+    console.error('Error en /needs-review-summary:', error);
+    res.status(500).json({ error: 'Error obteniendo resumen de needs_review' });
+  }
+});
+
+// ======================================================
+// Contador de filas needs_review para banner de alerta operativa
+// GET /api/subscriber-reports/needs-review-count?month=YYYY-MM
+app.get('/api/subscriber-reports/needs-review-count', authenticateRequest, async (req, res) => {
+  try {
+    await ensureSubscriberReportsWorkflowColumns(pool);
+    const role = String(req.user?.role || '').trim().toLowerCase();
+    const salespersonId = req.user?.salespersonId == null ? '' : String(req.user.salespersonId).trim();
+    const now = new Date();
+    const defaultMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const month = String(req.query.month || defaultMonth).trim();
+
+    if (role === 'vendedor' && !salespersonId) {
+      return res.json({ count: 0, period: month });
+    }
+
+    const params = [month];
+    const conditions = [
+      `TO_CHAR(sr.report_month, 'YYYY-MM') = $1`,
+      `(${TRACE_VALIDATION_SQL}) = 'needs_review'`,
+    ];
+
+    if (role === 'vendedor' && salespersonId) {
+      params.push(salespersonId);
+      conditions.push(`c.salesperson_id::text = $${params.length}`);
+    }
+
+    const sql = `
+      SELECT COUNT(*)::int AS count
+      FROM subscriber_reports sr
+      JOIN subscribers s ON s.id = sr.subscriber_id
+      JOIN bans b        ON b.id = s.ban_id
+      JOIN clients c     ON c.id = b.client_id
+      WHERE ${conditions.join(' AND ')}
+    `;
+    const result = await pool.query(sql, params);
+    res.json({ count: Number(result.rows[0]?.count || 0), period: month });
+  } catch (error) {
+    console.error('Error en /needs-review-count:', error);
+    res.status(500).json({ error: 'Error obteniendo conteo de needs_review' });
+  }
+});
+
+// ======================================================
+// Auditoría de trazabilidad subscriber_reports
+app.get('/api/subscriber-reports/audit', authenticateRequest, requireRole(['admin', 'supervisor']), async (req, res) => {
+  try {
+    await ensureSalespeopleCommissionColumn(pool);
+    await ensureSubscriberReportsWorkflowColumns(pool);
+    const from = String(req.query.from || '2026-01-01').trim();
+
+    const suspiciousRows = await pool.query(`
+      SELECT
+        sr.subscriber_id,
+        sr.report_month,
+        sr.source,
+        sr.external_sale_id,
+        sr.sync_log_id,
+        sr.source_activation_date,
+        sr.source_report_month,
+        sr.validation_status,
+        sr.validation_notes,
+        sr.company_earnings,
+        sr.vendor_commission,
+        sr.paid_amount,
+        sr.created_at,
+        sr.updated_at,
+        s.phone,
+        b.ban_number,
+        c.id AS client_id,
+        c.name AS client_name
+      FROM subscriber_reports sr
+      JOIN subscribers s ON s.id = sr.subscriber_id
+      JOIN bans b ON b.id = s.ban_id
+      JOIN clients c ON c.id = b.client_id
+      WHERE sr.report_month >= $1::date
+        AND (
+          ${TRACE_VALIDATION_SQL} <> 'confirmed'
+          OR sr.external_sale_id IS NULL
+          OR sr.raw_payload IS NULL
+          OR sr.source_activation_date IS NULL
+          OR sr.source_report_month IS NULL
+        )
+      ORDER BY sr.report_month DESC, c.name ASC, b.ban_number ASC, s.phone ASC
+    `, [from]);
+
+    const duplicateMonthRows = await pool.query(`
+      SELECT
+        sr.subscriber_id,
+        s.phone,
+        b.ban_number,
+        c.name AS client_name,
+        COUNT(DISTINCT sr.report_month)::int AS month_count,
+        ARRAY_AGG(DISTINCT TO_CHAR(sr.report_month, 'YYYY-MM') ORDER BY TO_CHAR(sr.report_month, 'YYYY-MM')) AS months
+      FROM subscriber_reports sr
+      JOIN subscribers s ON s.id = sr.subscriber_id
+      JOIN bans b ON b.id = s.ban_id
+      JOIN clients c ON c.id = b.client_id
+      WHERE sr.report_month >= $1::date
+      GROUP BY sr.subscriber_id, s.phone, b.ban_number, c.name
+      HAVING COUNT(DISTINCT sr.report_month) > 1
+      ORDER BY month_count DESC, c.name ASC
+    `, [from]);
+
+    const mismatchRows = await pool.query(`
+      SELECT
+        sr.subscriber_id,
+        s.phone,
+        b.ban_number,
+        c.name AS client_name,
+        sr.report_month,
+        sr.source_activation_date,
+        sr.source_report_month,
+        sr.source,
+        sr.external_sale_id,
+        sr.validation_status,
+        sr.validation_notes
+      FROM subscriber_reports sr
+      JOIN subscribers s ON s.id = sr.subscriber_id
+      JOIN bans b ON b.id = s.ban_id
+      JOIN clients c ON c.id = b.client_id
+      WHERE sr.report_month >= $1::date
+        AND sr.source_activation_date IS NOT NULL
+        AND sr.source_report_month IS NOT NULL
+        AND DATE_TRUNC('month', sr.source_activation_date::timestamp) <> DATE_TRUNC('month', sr.source_report_month::timestamp)
+      ORDER BY sr.report_month DESC, c.name ASC
+    `, [from]);
+
+    const notConfirmedWithMoney = await pool.query(`
+      SELECT
+        sr.subscriber_id,
+        sr.report_month,
+        sr.company_earnings,
+        sr.vendor_commission,
+        sr.paid_amount,
+        sr.source,
+        sr.external_sale_id,
+        sr.sync_log_id,
+        sr.validation_status,
+        sr.validation_notes,
+        s.phone,
+        b.ban_number,
+        c.name AS client_name
+      FROM subscriber_reports sr
+      JOIN subscribers s ON s.id = sr.subscriber_id
+      JOIN bans b ON b.id = s.ban_id
+      JOIN clients c ON c.id = b.client_id
+      WHERE sr.report_month >= $1::date
+        AND (${TRACE_VALIDATION_SQL} <> 'confirmed')
+        AND (COALESCE(sr.company_earnings, 0) > 0 OR COALESCE(sr.vendor_commission, 0) > 0)
+      ORDER BY sr.report_month DESC, c.name ASC
+    `, [from]);
+
+    res.json({
+      from,
+      summary: {
+        suspicious_rows: suspiciousRows.rows.length,
+        duplicate_month_rows: duplicateMonthRows.rows.length,
+        month_mismatch_rows: mismatchRows.rows.length,
+        not_confirmed_with_money: notConfirmedWithMoney.rows.length
+      },
+      suspicious_rows: suspiciousRows.rows,
+      duplicate_month_rows: duplicateMonthRows.rows,
+      month_mismatch_rows: mismatchRows.rows,
+      not_confirmed_with_money: notConfirmedWithMoney.rows
+    });
+  } catch (error) {
+    console.error('Error generando auditoría de subscriber_reports:', error);
+    res.status(500).json({ error: 'Error generando auditoría de subscriber_reports', details: error.message });
+  }
+});
+
 app.get('/api/subscriber-reports', authenticateRequest, async (req, res) => {
   try {
     await ensureSalespeopleCommissionColumn(pool);
@@ -4926,6 +5766,50 @@ app.get('/api/subscriber-reports', authenticateRequest, async (req, res) => {
         ${salespeopleSchema.hasCommissionPercentage ? 'sp.commission_percentage as salesperson_commission_percentage,' : 'NULL::numeric AS salesperson_commission_percentage,'}
         s.monthly_value as monthly_value,
         sr.report_month,
+        ${workflowSchema.hasSource ? 'sr.source,' : 'NULL AS source,'}
+        ${workflowSchema.hasExternalSaleId ? 'sr.external_sale_id,' : 'NULL AS external_sale_id,'}
+        ${workflowSchema.hasSyncLogId ? 'sr.sync_log_id,' : 'NULL AS sync_log_id,'}
+        ${workflowSchema.hasSourceActivationDate ? 'sr.source_activation_date,' : 'NULL AS source_activation_date,'}
+        ${workflowSchema.hasSourceReportMonth ? 'sr.source_report_month,' : 'NULL AS source_report_month,'}
+        ${workflowSchema.hasRawPayload ? 'sr.raw_payload,' : 'NULL AS raw_payload,'}
+        ${workflowSchema.hasValidationNotes ? 'sr.validation_notes,' : 'NULL AS validation_notes,'}
+        ${workflowSchema.hasValidationStatus ? `${TRACE_VALIDATION_SQL} AS validation_status,` : `'needs_review' AS validation_status,`}
+        -- Motivo principal clasificado operativamente (lenguaje del Director, no técnico).
+        -- Solo se setea para filas needs_review o resolved_pending_sync.
+        CASE
+          WHEN ${workflowSchema.hasValidationStatus ? `(${TRACE_VALIDATION_SQL})` : `'needs_review'`} = 'confirmed' THEN NULL
+          WHEN c.salesperson_id IS NULL THEN 'Vendedor no identificado'
+          ${workflowSchema.hasExternalSaleId ? `WHEN (sr.external_sale_id IS NULL OR sr.external_sale_id = '') THEN 'Venta Tango inválida'` : ''}
+          ${workflowSchema.hasSourceActivationDate ? `WHEN sr.source_activation_date IS NULL THEN 'Activación incompleta'` : ''}
+          WHEN COALESCE(sr.company_earnings, 0) <= 0 OR COALESCE(sr.vendor_commission, 0) <= 0 THEN 'Venta sin comisión'
+          ELSE 'Sync incompleto'
+        END AS motivo_principal,
+        -- Motivo detallado: traduce validation_notes a labels operativos,
+        -- y si no hay notas explícitas, infiere desde los campos críticos.
+        CASE
+          WHEN ${workflowSchema.hasValidationStatus ? `(${TRACE_VALIDATION_SQL})` : `'needs_review'`} = 'confirmed' THEN NULL
+          ${workflowSchema.hasValidationNotes ? `WHEN COALESCE(sr.validation_notes, '') <> '' THEN
+            NULLIF(TRIM(BOTH '; ' FROM CONCAT_WS('; ',
+              CASE WHEN sr.validation_notes LIKE '%com_empresa%' THEN 'Comisión empresa = 0' END,
+              CASE WHEN sr.validation_notes LIKE '%com_vendedor%' THEN 'Comisión vendedor = 0' END,
+              CASE WHEN sr.validation_notes LIKE '%vendedor_no_mapeado%' THEN 'Vendedor no mapeado' END,
+              CASE WHEN sr.validation_notes LIKE '%missing_ventaid%' THEN 'VentaID faltante' END,
+              CASE WHEN sr.validation_notes LIKE '%missing_fechaactivacion%' THEN 'Fecha activación faltante' END
+            )), '')` : ''}
+          ELSE
+            COALESCE(
+              NULLIF(TRIM(BOTH '; ' FROM CONCAT_WS('; ',
+                CASE WHEN COALESCE(sr.company_earnings, 0) <= 0 THEN 'Comisión empresa = 0' END,
+                CASE WHEN COALESCE(sr.vendor_commission, 0) <= 0 THEN 'Comisión vendedor = 0' END,
+                CASE WHEN c.salesperson_id IS NULL THEN 'Vendedor no mapeado' END,
+                CASE WHEN c.name IS NULL OR TRIM(c.name) = '' THEN 'Cliente incompleto' END,
+                ${workflowSchema.hasExternalSaleId ? `CASE WHEN sr.external_sale_id IS NULL OR sr.external_sale_id = '' THEN 'VentaID faltante' END,` : ''}
+                ${workflowSchema.hasSourceActivationDate ? `CASE WHEN sr.source_activation_date IS NULL THEN 'Fecha activación faltante' END,` : ''}
+                NULL
+              )), ''),
+              'Error sync Tango'
+            )
+        END AS review_reason,
         sr.company_earnings,
         sr.vendor_commission,
         sr.paid_amount,
@@ -5058,6 +5942,16 @@ app.get('/api/subscriber-reports', authenticateRequest, async (req, res) => {
       vendor_name: row.salesperson_name,
       salesperson_commission_percentage: commissionPercentage,
       report_month: row.report_month,
+      source: row.source || null,
+      external_sale_id: row.external_sale_id || null,
+      sync_log_id: row.sync_log_id || null,
+      source_activation_date: row.source_activation_date || null,
+      source_report_month: row.source_report_month || null,
+      raw_payload: row.raw_payload || null,
+      validation_notes: row.validation_notes || null,
+      validation_status: row.validation_status || 'needs_review',
+      review_reason: row.review_reason || null,
+      motivo_principal: row.motivo_principal || null,
       monthly_value: row.monthly_value === null || row.monthly_value === undefined ? null : Number(row.monthly_value),
       company_earnings: row.company_earnings === null || row.company_earnings === undefined ? null : Number(row.company_earnings),
       vendor_commission: storedVendorCommission,
@@ -5208,6 +6102,14 @@ app.put('/api/subscriber-reports/:subscriber_id', authenticateRequest, async (re
     const columns = [
       'subscriber_id',
       'report_month',
+      'source',
+      'external_sale_id',
+      'sync_log_id',
+      'source_activation_date',
+      'source_report_month',
+      'raw_payload',
+      'validation_status',
+      'validation_notes',
       'company_earnings',
       'vendor_commission',
       'paid_amount',
@@ -5216,12 +6118,28 @@ app.put('/api/subscriber-reports/:subscriber_id', authenticateRequest, async (re
     const values = [
       subscriber_id,
       normalizedMonth,
+      'manual',
+      null,
+      null,
+      null,
+      normalizedMonth,
+      null,
+      'confirmed',
+      null,
       normalizedCompanyEarnings,
       finalVendorCommission,
       finalPaidAmount,
       finalPaidDate
     ];
     const updates = [
+      'source = COALESCE(subscriber_reports.source, EXCLUDED.source)',
+      'external_sale_id = COALESCE(subscriber_reports.external_sale_id, EXCLUDED.external_sale_id)',
+      'sync_log_id = COALESCE(subscriber_reports.sync_log_id, EXCLUDED.sync_log_id)',
+      'source_activation_date = COALESCE(subscriber_reports.source_activation_date, EXCLUDED.source_activation_date)',
+      'source_report_month = COALESCE(subscriber_reports.source_report_month, EXCLUDED.source_report_month)',
+      'raw_payload = COALESCE(subscriber_reports.raw_payload, EXCLUDED.raw_payload)',
+      "validation_status = CASE WHEN EXCLUDED.validation_status = 'confirmed' THEN 'confirmed' ELSE COALESCE(subscriber_reports.validation_status, EXCLUDED.validation_status) END",
+      'validation_notes = COALESCE(subscriber_reports.validation_notes, EXCLUDED.validation_notes)',
       'company_earnings = EXCLUDED.company_earnings',
       'vendor_commission = EXCLUDED.vendor_commission',
       'paid_amount = EXCLUDED.paid_amount',
@@ -5266,6 +6184,57 @@ app.put('/api/subscriber-reports/:subscriber_id', authenticateRequest, async (re
   } catch (error) {
     console.error('Error saving subscriber report:', error);
     res.status(500).json({ error: 'Error saving subscriber report' });
+  }
+});
+
+app.delete('/api/subscriber-reports/:subscriber_id', authenticateRequest, requireRole(['admin']), async (req, res) => {
+  try {
+    const { subscriber_id } = req.params;
+    const reportMonth = String(req.body?.report_month || req.query?.report_month || '').trim();
+
+    if (!reportMonth) {
+      return badRequest(res, 'report_month es obligatorio');
+    }
+
+    await ensureSalespeopleCommissionColumn(pool);
+    await ensureSubscriberReportsWorkflowColumns(pool);
+
+    const existingRows = await query(`
+      SELECT
+        sr.subscriber_id,
+        sr.report_month,
+        sr.validation_status,
+        ${TRACE_VALIDATION_SQL} AS computed_validation_status
+      FROM subscriber_reports sr
+      WHERE sr.subscriber_id = $1
+        AND sr.report_month = $2::date
+      LIMIT 1
+    `, [subscriber_id, reportMonth]);
+
+    if (existingRows.length === 0) {
+      return res.status(404).json({ error: 'Fila de comision no encontrada' });
+    }
+
+    const existing = existingRows[0];
+    const validationStatus = String(existing.computed_validation_status || existing.validation_status || '').trim().toLowerCase();
+    if (validationStatus === 'confirmed') {
+      return res.status(403).json({ error: 'No se puede eliminar una fila confirmada por Tango' });
+    }
+
+    const deletedRows = await query(`
+      DELETE FROM subscriber_reports
+      WHERE subscriber_id = $1
+        AND report_month = $2::date
+      RETURNING *
+    `, [subscriber_id, reportMonth]);
+
+    res.json({
+      success: true,
+      deleted: deletedRows[0] || null
+    });
+  } catch (error) {
+    console.error('Error deleting subscriber report:', error);
+    res.status(500).json({ error: 'Error deleting subscriber report', details: error.message });
   }
 });
 
@@ -5498,15 +6467,40 @@ function extractPlanFromLine(line) {
   return token ? token.toUpperCase() : null;
 }
 
+// Palabras inglesas comunes que NO son códigos de plan Claro. Sin esta blacklist
+// "Please ENTER..." o "Subscriber Type Status" se interpretarían como planes.
+const NON_PLAN_WORDS = new Set([
+  'PLEASE', 'ENTER', 'DOUBLE', 'CLICK', 'SELECT', 'SUBSCRIBER', 'SUBSCRIBERS',
+  'SUBSCRIBE', 'TYPE', 'STATUS', 'PRICE', 'PLAN', 'LIST', 'FOR', 'BAN',
+  'OK', 'CANCEL', 'YES', 'NO', 'FROM', 'THE', 'AND', 'NULL', 'TRUE', 'FALSE'
+]);
+
+// Heurística para validar que un token parezca un código de plan Claro.
+// Patrones aceptados: solo dígitos largos (1461, 69912), mezcla letras+dígitos (A1492, AUS3M, BAHOT40L),
+// con guion bajo (ISP_EMP1). Rechaza palabras puras de letras (Please, Active) y tokens >12 chars (BAN-NNNNNNN).
+function looksLikePlanCandidate(token) {
+  const upper = String(token || '').toUpperCase();
+  if (!upper || upper.length < 3 || upper.length > 12) return false;
+  if (NON_PLAN_WORDS.has(upper)) return false;
+  if (/^BAN[-\s]?\d/.test(upper)) return false;
+  if (/^\d{3,}$/.test(upper)) return true;
+  if (/[A-Z]/.test(upper) && /\d/.test(upper)) return true;
+  if (upper.includes('_')) return true;
+  return false;
+}
+
 function extractPlanFromStandaloneLine(line) {
   const cleaned = String(line || '').trim();
   if (!cleaned) return null;
   if (extractStatusOnlyLine(cleaned)) return null;
   const phoneCheck = extractPhoneFromLine(cleaned);
   if (phoneCheck.phone || phoneCheck.ignored100) return null;
-  let cleanedForPlan = cleaned.replace(new RegExp(STATUS_TOKEN_REGEX, 'gi'), '').trim();
-  const token = (cleanedForPlan.match(/[A-Za-z0-9_-]{3,}/g) || [])[0] || null;
-  return token ? token.toUpperCase() : null;
+  const cleanedForPlan = cleaned.replace(new RegExp(STATUS_TOKEN_REGEX, 'gi'), '').trim();
+  const tokens = cleanedForPlan.match(/[A-Za-z0-9_-]{3,}/g) || [];
+  for (const tok of tokens) {
+    if (looksLikePlanCandidate(tok)) return tok.toUpperCase();
+  }
+  return null;
 }
 
 function rowsToClipboardText(rows) {
@@ -5569,40 +6563,81 @@ function parseLocalOcrText(text) {
     .map((line) => line.replace(/\t/g, ' ').trim())
     .filter(Boolean);
 
-  const rows = [];
-  const warnings = [];
+  // Stream de eventos en orden de aparición: { kind: 'phone' | 'plan', ... }
+  const events = [];
   const seen = new Set();
-
   for (const line of lines) {
     const phone = extractPhoneFromOcrLine(line);
-    if (!phone) continue;
-    if (seen.has(phone)) continue;
-    seen.add(phone);
-
-    const lineNoPhone = line
-      .replace(/(?:\+?1\s*)?(?:\(?\d{3}\)?[\s\-\.]*)\d{3}[\s\-\.]*\d{4}/, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-    const tokens = lineNoPhone.split(' ').filter(Boolean);
-
-    let type = '';
-    if (tokens.length && tokens[0].length <= 3) {
-      type = tokens.shift() || '';
+    if (phone) {
+      if (seen.has(phone)) continue;
+      seen.add(phone);
+      const lineNoPhone = line
+        .replace(/(?:\+?1\s*)?(?:\(?\d{3}\)?[\s\-\.]*)\d{3}[\s\-\.]*\d{4}/, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      const tokens = lineNoPhone.split(' ').filter(Boolean);
+      let type = '';
+      if (tokens.length && tokens[0].length <= 3) type = tokens.shift() || '';
+      const parsedStatus = parseOcrStatus(tokens);
+      // inlinePlan: validamos como candidato real (descarta tokens basura tipo 'F' o duplicados de status).
+      let inlinePlan = '';
+      for (const t of parsedStatus.restTokens) {
+        if (looksLikePlanCandidate(t)) { inlinePlan = t.toUpperCase(); break; }
+      }
+      events.push({ kind: 'phone', phone, type, status: parsedStatus.status, inlinePlan, rawLine: line });
+    } else {
+      const planFromLine = extractPlanFromStandaloneLine(line);
+      if (planFromLine) events.push({ kind: 'plan', plan: planFromLine });
     }
-
-    const parsedStatus = parseOcrStatus(tokens);
-    const status = parsedStatus.status;
-    const pricePlan = parsedStatus.restTokens.join(' ').trim();
-
-    rows.push({
-      subscriber: phone,
-      type,
-      status,
-      pricePlan,
-      rawLine: line
-    });
   }
 
+  const orphanPhones = events.filter((e) => e.kind === 'phone' && !e.inlinePlan);
+  const orphanPlans = events.filter((e) => e.kind === 'plan');
+
+  if (orphanPhones.length > 0 && orphanPhones.length === orphanPlans.length) {
+    // Pairing 1:1 en orden. Vision mantiene el orden visual de la tabla; el N-ésimo phone
+    // huérfano corresponde al N-ésimo plan huérfano.
+    for (let k = 0; k < orphanPhones.length; k += 1) {
+      orphanPhones[k].assignedPlan = orphanPlans[k].plan;
+    }
+  } else {
+    // Conteos no coinciden: fallback conservador (forward + backward limitado al primer phone).
+    // Mejor "sin plan" que "asignación equivocada".
+    const phoneEvents = events.filter((e) => e.kind === 'phone');
+    const eventOrder = events.map((e, idx) => ({ e, idx }));
+    const phoneIdxInLines = new Map();
+    let cursor = 0;
+    for (const { e, idx } of eventOrder) phoneIdxInLines.set(e, idx);
+    for (let p = 0; p < phoneEvents.length; p += 1) {
+      const phEv = phoneEvents[p];
+      if (phEv.inlinePlan) continue;
+      const myIdx = phoneIdxInLines.get(phEv);
+      // forward hasta el próximo phone
+      for (let j = myIdx + 1; j < events.length; j += 1) {
+        if (events[j].kind === 'phone') break;
+        if (events[j].kind === 'plan') { phEv.assignedPlan = events[j].plan; break; }
+      }
+      // backward sólo para el primer phone si quedó sin plan
+      if (!phEv.assignedPlan && p === 0) {
+        for (let j = myIdx - 1; j >= 0; j -= 1) {
+          if (events[j].kind === 'phone') break;
+          if (events[j].kind === 'plan') { phEv.assignedPlan = events[j].plan; break; }
+        }
+      }
+    }
+  }
+
+  const rows = events
+    .filter((e) => e.kind === 'phone')
+    .map((e) => ({
+      subscriber: e.phone,
+      type: e.type,
+      status: e.status,
+      pricePlan: e.inlinePlan || e.assignedPlan || '',
+      rawLine: e.rawLine
+    }));
+
+  const warnings = [];
   if (!rows.length) {
     warnings.push('No se detectaron telefonos de 10 digitos. Sube imagen mas nitida o recortada a la tabla.');
   }
@@ -5618,6 +6653,40 @@ async function ocrImageBuffer(buffer) {
   } finally {
     await worker.terminate();
   }
+}
+
+// OCR motor con Vision principal + fallback Tesseract.
+// Devuelve { text, engine, ocr_warnings }. NO parsea filas.
+async function extractTextForSync(buffer) {
+  const mode = String(process.env.OCR_ENGINE || 'tesseract').toLowerCase().trim();
+  const credsPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+  const visionOk = credsPath && fs.existsSync(credsPath);
+  const ocrWarnings = [];
+
+  if (mode !== 'tesseract' && visionOk) {
+    try {
+      // documentTextDetection: optimizado para tablas/documentos densos (Subscriber List Claro).
+      const r = await extractTextWithVision(buffer, { mode: 'document' });
+      const rawText = String(r?.rawText || '').trim();
+      if (rawText) {
+        return { text: rawText, engine: 'google', ocr_warnings: ocrWarnings };
+      }
+      if (mode === 'google') {
+        const err = new Error('Google Vision no devolvio texto');
+        err.code = 'VISION_EMPTY';
+        throw err;
+      }
+      ocrWarnings.push('vision_empty: Vision no devolvio texto; usando fallback Tesseract');
+    } catch (err) {
+      const msg = err?.message || 'unknown error';
+      console.warn('[ocr-sync] Vision fallo:', msg);
+      if (mode === 'google') throw err;
+      ocrWarnings.push(`vision_failed: ${msg}`);
+    }
+  }
+
+  const text = await ocrImageBuffer(buffer);
+  return { text, engine: 'tesseract', ocr_warnings: ocrWarnings };
 }
 
 app.post('/api/subscribers/extract-image', authenticateRequest, uploadMemory.single('file'), async (req, res) => {
@@ -5640,6 +6709,8 @@ app.post('/api/subscribers/extract-image', authenticateRequest, uploadMemory.sin
     }
 
     let text = '';
+    let engine = 'tesseract';
+    let ocrWarnings = [];
     if (mime.includes('pdf')) {
       const parsedPdf = await pdfParse(fileBuffer);
       text = String(parsedPdf?.text || '').trim();
@@ -5648,11 +6719,39 @@ app.post('/api/subscribers/extract-image', authenticateRequest, uploadMemory.sin
           error: 'PDF escaneado sin texto. Exporta/recorta una imagen de la tabla y vuelve a subir.'
         });
       }
+      engine = 'pdf';
     } else {
-      text = await ocrImageBuffer(fileBuffer);
+      const ocrResult = await extractTextForSync(fileBuffer);
+      text = ocrResult.text;
+      engine = ocrResult.engine;
+      ocrWarnings = ocrResult.ocr_warnings || [];
     }
 
-    const parsed = parseLocalOcrText(text);
+    let parsed = parseLocalOcrText(text);
+
+    // Si Vision dio texto pero el parser local no detecto filas, reintento con Tesseract
+    // (mode != 'google' estricto). Comportamiento aprobado: priorizar recall.
+    if (
+      engine === 'google'
+      && parsed.rows.length === 0
+      && String(process.env.OCR_ENGINE || '').toLowerCase().trim() !== 'google'
+    ) {
+      try {
+        const tessText = await ocrImageBuffer(fileBuffer);
+        const tessParsed = parseLocalOcrText(tessText);
+        if (tessParsed.rows.length > 0) {
+          ocrWarnings.push('vision_zero_rows: Vision dio texto pero el parser no detecto filas; fallback Tesseract recupero filas');
+          text = tessText;
+          parsed = tessParsed;
+          engine = 'tesseract';
+        } else {
+          ocrWarnings.push('vision_zero_rows: ni Vision ni Tesseract detectaron filas');
+        }
+      } catch (err) {
+        ocrWarnings.push(`tesseract_fallback_failed: ${err?.message || 'unknown'}`);
+      }
+    }
+
     const rows = parsed.rows.map((row) => ({
       subscriber: row.subscriber,
       type: row.type,
@@ -5668,7 +6767,9 @@ app.post('/api/subscribers/extract-image', authenticateRequest, uploadMemory.sin
         detectedRows: rows.length,
         parsedLines: parsed.lineCount
       },
-      provider: 'local-ocr'
+      provider: 'local-ocr',
+      engine,
+      ocr_warnings: ocrWarnings
     });
   } catch (error) {
     return serverError(res, error, 'Error extrayendo texto con OCR local');
@@ -5914,9 +7015,79 @@ async function ensureSubscriberReportsWorkflowColumns(client) {
       ALTER TABLE subscriber_reports
       ADD COLUMN IF NOT EXISTS withholding_applies BOOLEAN DEFAULT TRUE
     `);
+    await client.query(`
+      ALTER TABLE subscriber_reports
+      ADD COLUMN IF NOT EXISTS source TEXT
+    `);
+    await client.query(`
+      ALTER TABLE subscriber_reports
+      ADD COLUMN IF NOT EXISTS external_sale_id TEXT NULL
+    `);
+    await client.query(`
+      ALTER TABLE subscriber_reports
+      ADD COLUMN IF NOT EXISTS sync_log_id UUID NULL
+    `);
+    await client.query(`
+      ALTER TABLE subscriber_reports
+      ADD COLUMN IF NOT EXISTS source_activation_date DATE NULL
+    `);
+    await client.query(`
+      ALTER TABLE subscriber_reports
+      ADD COLUMN IF NOT EXISTS source_report_month DATE NULL
+    `);
+    await client.query(`
+      ALTER TABLE subscriber_reports
+      ADD COLUMN IF NOT EXISTS raw_payload JSONB NULL
+    `);
+    await client.query(`
+      ALTER TABLE subscriber_reports
+      ADD COLUMN IF NOT EXISTS validation_status TEXT NULL
+    `);
+    await client.query(`
+      ALTER TABLE subscriber_reports
+      ADD COLUMN IF NOT EXISTS validation_notes TEXT NULL
+    `);
+    await client.query(`
+      ALTER TABLE subscriber_reports
+      ALTER COLUMN validation_status SET DEFAULT 'needs_review'
+    `);
+    // Tanda C: tracking de intentos de resolución manual desde Tango.
+    await client.query(`
+      ALTER TABLE subscriber_reports
+      ADD COLUMN IF NOT EXISTS last_review_attempt_at TIMESTAMP NULL
+    `);
+    await client.query(`
+      ALTER TABLE subscriber_reports
+      ADD COLUMN IF NOT EXISTS retry_count INTEGER DEFAULT 0
+    `);
   } catch (error) {
     if (error?.code !== '42501') throw error;
     console.warn('[schema] Sin permisos para agregar columnas workflow en subscriber_reports; se usará fallback.');
+  }
+}
+
+async function ensureSyncLogsTable(client) {
+  try {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS sync_logs (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        sync_type TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'running',
+        details JSONB NULL,
+        stats JSONB NULL,
+        created_by UUID NULL,
+        started_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        finished_at TIMESTAMP NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_sync_logs_sync_type ON sync_logs (sync_type)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_sync_logs_started_at ON sync_logs (started_at DESC)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_sync_logs_status ON sync_logs (status)`);
+  } catch (error) {
+    if (error?.code !== '42501') throw error;
+    console.warn('[schema] Sin permisos para crear sync_logs; se usará fallback sin log persistente.');
   }
 }
 
@@ -5931,7 +7102,15 @@ async function detectSubscriberReportsWorkflowSchema(client) {
   return {
     hasIsAudited: cols.has('is_audited'),
     hasAuditedAt: cols.has('audited_at'),
-    hasWithholdingApplies: cols.has('withholding_applies')
+    hasWithholdingApplies: cols.has('withholding_applies'),
+    hasSource: cols.has('source'),
+    hasExternalSaleId: cols.has('external_sale_id'),
+    hasSyncLogId: cols.has('sync_log_id'),
+    hasSourceActivationDate: cols.has('source_activation_date'),
+    hasSourceReportMonth: cols.has('source_report_month'),
+    hasRawPayload: cols.has('raw_payload'),
+    hasValidationStatus: cols.has('validation_status'),
+    hasValidationNotes: cols.has('validation_notes')
   };
 }
 

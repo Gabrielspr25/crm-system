@@ -6,6 +6,8 @@ import { msalConfig } from "@/react-app/auth/msalConfig";
 import ProtectedLayout from "@/react-app/components/ProtectedLayout";
 import HomePage from "@/react-app/pages/Home";
 import MyDayPage from "@/react-app/pages/MyDay";
+import MyDayV2Page from "@/react-app/pages/MyDayV2";
+import DirectorPage from "@/react-app/pages/Director";
 import ClientsPage from "@/react-app/pages/Clients";
 import ReportsPage from "@/react-app/pages/Reports";
 import VendorsPage from "@/react-app/pages/Vendors";
@@ -30,6 +32,8 @@ import VoiceClientPage from "@/react-app/pages/VoiceClient";
 import FollowUpPage from "@/react-app/pages/FollowUp";
 import GestionPage from "@/react-app/pages/Gestion";
 import MetasDashboard from "@/react-app/pages/MetasDashboard";
+import MetasAdmin from "@/react-app/pages/MetasAdmin";
+import OcrImportPreview from "@/react-app/pages/OcrImportPreview";
 
 
 // Inicializar MSAL fuera del componente
@@ -47,8 +51,12 @@ function ProtectedRoutes() {
       <SystemTestAgent />
       <Routes>
         <Route path="/" element={<HomePage />} />
-        <Route path="/panel" element={<HomePage />} />
+        {/* /panel y /director apuntan al nuevo Panel Director (Fase 2).
+            HomePage viejo solo accesible vía / hasta validar reemplazo total. */}
+        <Route path="/panel" element={<DirectorPage />} />
         <Route path="/mi-dia" element={<MyDayPage />} />
+        <Route path="/mi-dia-v2" element={<MyDayV2Page />} />
+        <Route path="/director" element={<DirectorPage />} />
         <Route path="/clientes" element={<ClientsPage />} />
         <Route path="/seguimiento" element={<FollowUpPage />} />
         <Route path="/reportes" element={<ReportsPage />} />
@@ -71,6 +79,8 @@ function ProtectedRoutes() {
         <Route path="/voz-cliente" element={<VoiceClientPage />} />
         <Route path="/gestion" element={<GestionPage />} />
         <Route path="/panel-metas" element={<MetasDashboard />} />
+        <Route path="/admin/metas" element={<MetasAdmin />} />
+        <Route path="/ocr-preview" element={<OcrImportPreview />} />
 
       </Routes>
     </ProtectedLayout>

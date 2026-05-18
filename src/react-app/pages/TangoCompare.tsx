@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { authFetch, API_BASE_URL } from '../utils/auth';
+import { authFetch, API_BASE_URL, getCurrentUser } from '../utils/auth';
 import {
   Search, RefreshCw, ChevronDown, ChevronRight, ArrowUpDown,
   CheckCircle2, AlertTriangle, XCircle, MinusCircle, Loader2,
@@ -83,6 +83,8 @@ const TIPO_LABELS: Record<number, string> = {
 };
 
 export default function TangoComparePage() {
+  const currentUser = getCurrentUser();
+  const canViewCompanyFinancials = String(currentUser?.role || '').toLowerCase() === 'admin';
   const [search, setSearch] = useState('');
   const [monthFilter, setMonthFilter] = useState('');
   const [comparison, setComparison] = useState<ComparisonItem[]>([]);
@@ -95,10 +97,6 @@ export default function TangoComparePage() {
   const [detailData, setDetailData] = useState<{ tango: DetailVenta[]; crm: DetailCrm[] } | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [error, setError] = useState('');
-
-  useEffect(() => {
-    loadSummary();
-  }, []);
 
   const loadSummary = async () => {
     setLoadingSummary(true);
@@ -117,6 +115,10 @@ export default function TangoComparePage() {
       setLoadingSummary(false);
     }
   };
+
+  useEffect(() => {
+    if (canViewCompanyFinancials) loadSummary();
+  }, [canViewCompanyFinancials]);
 
   const doSearch = useCallback(async () => {
     if (!search.trim() && !monthFilter) return;
@@ -206,6 +208,14 @@ export default function TangoComparePage() {
     missing_crm: comparison.filter(c => c.status === 'missing_crm').length,
     missing_tango: comparison.filter(c => c.status === 'missing_tango').length,
   };
+
+  if (!canViewCompanyFinancials) {
+    return (
+      <div className="rounded-xl border border-slate-700 bg-slate-800/50 p-6 text-slate-300">
+        No tienes acceso a informes financieros internos.
+      </div>
+    );
+  }
 
   return (
     <div className="px-4 py-6 max-w-7xl mx-auto">

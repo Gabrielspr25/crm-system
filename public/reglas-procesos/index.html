@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reglas y Procesos | VentasPro CRM</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #3b82f6;
+            --primary-dark: #1e40af;
+            --secondary: #6366f1;
+            --bg: #0f172a;
+            --surface: #1e293b;
+            --text: #f1f5f9;
+            --text-dim: #94a3b8;
+            --accent: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --border: #334155;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            padding: 40px 20px;
+        }
+
+        .container { max-width: 1100px; margin: 0 auto; }
+
+        header {
+            text-align: center;
+            margin-bottom: 60px;
+            padding-bottom: 30px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #60a5fa 0%, #a855f7 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 10px;
+        }
+
+        .version-badge {
+            display: inline-block;
+            padding: 4px 14px;
+            background: rgba(59, 130, 246, 0.1);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            border-radius: 20px;
+            font-size: 0.8rem;
+            color: #60a5fa;
+            font-weight: 600;
+        }
+
+        .section {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 36px 40px;
+            margin-bottom: 28px;
+            transition: border-color 0.2s ease;
+        }
+
+        .section:hover { border-color: var(--primary); }
+
+        h2 {
+            font-size: 1.35rem;
+            color: #fff;
+            margin-bottom: 24px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 14px;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 18px;
+        }
+
+        .grid-3 {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 18px;
+        }
+
+        .card {
+            background: rgba(15, 23, 42, 0.5);
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+        }
+
+        .card h3 {
+            font-size: 1rem;
+            margin-bottom: 12px;
+            color: var(--primary);
+            font-weight: 600;
+        }
+
+        .card p, .card ul {
+            font-size: 0.9rem;
+            color: var(--text-dim);
+        }
+
+        ul { list-style: none; }
+
+        li {
+            margin-bottom: 7px;
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            font-size: 0.9rem;
+            color: var(--text-dim);
+        }
+
+        li::before { content: "•"; color: var(--primary); font-weight: bold; flex-shrink: 0; }
+
+        .highlight { color: #fff; font-weight: 500; }
+        .accent { color: var(--accent); font-weight: 500; }
+        .warning { color: var(--warning); font-weight: 500; }
+        .danger { color: var(--danger); font-weight: 500; }
+
+        .rule-block {
+            background: rgba(16, 185, 129, 0.05);
+            border-left: 4px solid var(--accent);
+            padding: 14px 18px;
+            border-radius: 0 8px 8px 0;
+            margin-top: 16px;
+            font-size: 0.9rem;
+            color: var(--text-dim);
+        }
+
+        .rule-block.warning {
+            background: rgba(245, 158, 11, 0.05);
+            border-left-color: var(--warning);
+        }
+
+        .rule-block.danger {
+            background: rgba(239, 68, 68, 0.05);
+            border-left-color: var(--danger);
+        }
+
+        .flow-steps {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 16px;
+        }
+
+        .step-bubble {
+            background: rgba(59, 130, 246, 0.1);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            border-radius: 8px;
+            padding: 8px 16px;
+            font-size: 0.85rem;
+            color: #93c5fd;
+            font-weight: 500;
+            white-space: nowrap;
+        }
+
+        .step-bubble.done {
+            background: rgba(16, 185, 129, 0.1);
+            border-color: rgba(16, 185, 129, 0.3);
+            color: #6ee7b7;
+        }
+
+        .step-bubble.active {
+            background: rgba(245, 158, 11, 0.1);
+            border-color: rgba(245, 158, 11, 0.3);
+            color: #fcd34d;
+        }
+
+        .arrow { color: var(--text-dim); font-size: 1rem; }
+
+        .badge {
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-left: 8px;
+        }
+
+        .badge-blue { background: rgba(59,130,246,0.15); color: #60a5fa; }
+        .badge-green { background: rgba(16,185,129,0.15); color: #34d399; }
+        .badge-yellow { background: rgba(245,158,11,0.15); color: #fbbf24; }
+
+        .table-wrap { overflow-x: auto; margin-top: 16px; }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.875rem;
+        }
+
+        th {
+            background: rgba(59, 130, 246, 0.1);
+            color: #93c5fd;
+            padding: 10px 14px;
+            text-align: left;
+            font-weight: 600;
+            border-bottom: 1px solid var(--border);
+        }
+
+        td {
+            padding: 10px 14px;
+            color: var(--text-dim);
+            border-bottom: 1px solid rgba(51, 65, 85, 0.5);
+        }
+
+        tr:hover td { background: rgba(255,255,255,0.02); }
+
+        .tag {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .tag-admin { background: rgba(168,85,247,0.15); color: #c084fc; }
+        .tag-supervisor { background: rgba(59,130,246,0.15); color: #60a5fa; }
+        .tag-vendedor { background: rgba(16,185,129,0.15); color: #34d399; }
+
+        .code {
+            font-family: 'Courier New', monospace;
+            background: rgba(0,0,0,0.3);
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.82rem;
+            color: #7dd3fc;
+        }
+
+        .api-list li { color: var(--text-dim); font-family: 'Courier New', monospace; font-size: 0.83rem; }
+        .api-list li::before { content: "→"; color: var(--accent); }
+
+        footer {
+            text-align: center;
+            margin-top: 60px;
+            color: var(--text-dim);
+            font-size: 0.85rem;
+            border-top: 1px solid var(--border);
+            padding-top: 30px;
+        }
+
+        @media (max-width: 768px) {
+            .section { padding: 24px; }
+            h1 { font-size: 1.8rem; }
+            .grid-3 { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+
+    <header>
+        <h1>Reglas y Procesos del Sistema</h1>
+        <div class="version-badge">VentasProui v2026.419 — SS Group</div>
+        <p style="color: var(--text-dim); margin-top: 12px;">Documentación operativa y reglas de negocio del CRM</p>
+    </header>
+
+    <!-- 1. AUTENTICACIÓN Y ROLES -->
+    <section class="section">
+        <h2><span>🔐</span> Autenticación y Roles</h2>
+        <div class="grid">
+            <div class="card">
+                <h3>Sistema de login</h3>
+                <ul>
+                    <li>Autenticación con <span class="highlight">usuario + contraseña</span> (bcrypt + JWT)</li>
+                    <li>Token JWT sin expiración fija <span class="highlight">(persistente)</span></li>
+                    <li>Registro de <span class="highlight">último login</span> automático en DB</li>
+                    <li>Endpoint de refresh token disponible</li>
+                    <li>Soporte adicional <span class="highlight">Microsoft Azure MSAL</span> (SSO corporativo)</li>
+                </ul>
+            </div>
+            <div class="card">
+                <h3>Roles del sistema</h3>
+                <ul>
+                    <li><span class="tag tag-admin">admin</span> — Acceso total, ve todos los datos</li>
+                    <li><span class="tag tag-supervisor">supervisor</span> — Acceso ampliado a datos del equipo</li>
+                    <li><span class="tag tag-vendedor">vendedor</span> — Solo ve sus propios datos y ventas</li>
+                </ul>
+                <div class="rule-block" style="margin-top: 14px;">
+                    Un vendedor <span class="highlight">no puede</span> crear ventas para otro vendedor ni ver sus tareas o metas.
+                </div>
+            </div>
+            <div class="card">
+                <h3>Permisos granulares</h3>
+                <ul>
+                    <li>Permisos configurables por usuario independiente del rol</li>
+                    <li>Catálogo de permisos definido en <span class="code">permissionCatalog.js</span></li>
+                    <li>Middleware de auth valida token en cada request protegido</li>
+                    <li>Token contiene: <span class="code">userId, username, role, salespersonId</span></li>
+                </ul>
+            </div>
+            <div class="card">
+                <h3>Perfiles de acceso (Presets)</h3>
+                <ul>
+                    <li>Presets definidos en tabla <span class="code">permission_presets</span> con efectos JSONB</li>
+                    <li>Se asignan a vendedores desde <span class="highlight">Módulo Vendedores → Editar → Perfil de acceso</span></li>
+                    <li>Al aplicar un preset se escriben <span class="code">user_permission_overrides</span> y se actualiza <span class="code">salespeople.permission_preset_name</span></li>
+                    <li>Vendedores con preset asignado muestran badge morado en su tarjeta</li>
+                </ul>
+                <div class="rule-block" style="margin-top: 14px;">
+                    El rol en DB siempre prevalece. El sistema usa <span class="highlight">/api/me</span> para detectar el rol real (no el token de localStorage).
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 2. FLUJO OPERATIVO -->
+    <section class="section">
+        <h2><span>🔄</span> Flujo Operativo del Vendedor</h2>
+        <div class="grid">
+            <div class="card">
+                <h3>1. Búsqueda y análisis del cliente</h3>
+                <p>Localizar al cliente en el sistema para visualizar sus <span class="highlight">BANs</span> y suscriptores activos. Verificar convergencia (2+ productos).</p>
+            </div>
+            <div class="card">
+                <h3>2. Gestión de servicios</h3>
+                <p>Administrar renovaciones, nuevas ventas, cancelaciones y comparativas de planes. Cotización basada en tarifas Tango en tiempo real.</p>
+            </div>
+            <div class="card">
+                <h3>3. Registrar venta (Deal)</h3>
+                <p>Crear un <span class="highlight">Deal</span> con tipo de producto y tipo de venta. El sistema genera automáticamente las tareas del workflow correspondiente.</p>
+            </div>
+            <div class="card">
+                <h3>4. Avanzar tareas del workflow</h3>
+                <p>Completar cada paso secuencial del deal. No se puede avanzar al siguiente paso sin terminar el anterior. El sistema activa el próximo paso automáticamente.</p>
+            </div>
+            <div class="card">
+                <h3>5. Seguimiento y follow-up</h3>
+                <p>Gestionar prospectos en seguimiento mediante el módulo de <span class="highlight">follow-up</span>. Registrar campañas y referidos asociados.</p>
+            </div>
+            <div class="card">
+                <h3>6. Comunicación y cierre</h3>
+                <p>Envío de propuestas y correos desde la plataforma. Export PDF/Excel de reportes para cliente o supervisor.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- 3. DEAL WORKFLOW -->
+    <section class="section">
+        <h2><span>⚡</span> Deal Workflow — Reglas de Negocio</h2>
+
+        <div class="grid" style="margin-bottom: 20px;">
+            <div class="card">
+                <h3>Tipos de producto</h3>
+                <ul>
+                    <li><span class="highlight">FIJO</span> — Línea fija</li>
+                    <li><span class="highlight">MOVIL</span> — Línea móvil</li>
+                    <li><span class="highlight">CLARO_TV</span> — Televisión</li>
+                    <li><span class="highlight">CLOUD</span> — Servicios cloud</li>
+                    <li><span class="highlight">MPLS</span> — Red privada</li>
+                </ul>
+            </div>
+            <div class="card">
+                <h3>Tipos de venta</h3>
+                <ul>
+                    <li><span class="highlight">NEW</span> — Venta nueva</li>
+                    <li><span class="highlight">REN</span> — Renovación</li>
+                </ul>
+                <p style="margin-top: 12px;">Toda combinación de producto + tipo de venta <span class="accent">genera workflow</span> de tareas automáticamente.</p>
+            </div>
+            <div class="card">
+                <h3>Estados de tarea</h3>
+                <ul>
+                    <li><span class="highlight">pending</span> — Esperando turno</li>
+                    <li><span class="highlight">in_progress</span> — Tarea activa</li>
+                    <li><span class="highlight">done</span> — Completada</li>
+                </ul>
+                <div class="rule-block">
+                    Al completar una tarea (<span class="accent">done</span>), el siguiente paso se activa automáticamente a <span class="accent">in_progress</span>.
+                </div>
+            </div>
+        </div>
+
+        <p style="color: var(--text-dim); font-size: 0.9rem; margin-bottom: 12px;">Flujo de progresión de tareas dentro de un deal:</p>
+        <div class="flow-steps">
+            <div class="step-bubble done">✓ Paso 1 (done)</div>
+            <div class="arrow">→</div>
+            <div class="step-bubble active">⚡ Paso 2 (in_progress)</div>
+            <div class="arrow">→</div>
+            <div class="step-bubble">Paso 3 (pending)</div>
+            <div class="arrow">→</div>
+            <div class="step-bubble">Paso N (pending)</div>
+        </div>
+
+        <div class="rule-block warning" style="margin-top: 20px;">
+            <span class="warning">Regla estricta:</span> No se puede marcar un paso como <em>done</em> si el paso anterior no está completado. El sistema rechaza la operación.
+        </div>
+
+        <h3 style="margin-top: 28px; margin-bottom: 14px; color: var(--text);">🔄 Sincronización desde Seguimiento (Pasos tab)</h3>
+        <div class="grid">
+            <div class="card">
+                <h3>Cómo funciona el Sync</h3>
+                <ul>
+                    <li>En la pestaña <span class="highlight">Pasos</span> del cliente, el botón <em>Sincronizar tareas</em> lee la matriz de seguimiento activa</li>
+                    <li>Mapeo automático de columnas a deals:<br>
+                        <span class="code">fijo_ren → FIJO/REN</span>, <span class="code">fijo_new → FIJO/NEW</span>,<br>
+                        <span class="code">movil_nueva → MOVIL/NEW</span>, <span class="code">movil_renovacion → MOVIL/REN</span>,<br>
+                        <span class="code">claro_tv → CLARO_TV/NEW</span>, <span class="code">cloud → CLOUD/NEW</span>, <span class="code">mpls → MPLS/NEW</span>
+                    </li>
+                    <li>Solo se sincronizan las combinaciones marcadas como activas en la matriz</li>
+                </ul>
+            </div>
+            <div class="card">
+                <h3>Qué hace el endpoint de sync</h3>
+                <ul>
+                    <li>Elimina deals <span class="highlight">sin tareas completadas</span> (preserva deals con al menos 1 tarea done)</li>
+                    <li>Crea nuevos deals por cada combinación activa</li>
+                    <li>Genera las tareas del workflow según la plantilla correspondiente</li>
+                    <li>Endpoint: <span class="code">POST /api/clients/:clientId/sync</span></li>
+                </ul>
+                <div class="rule-block warning" style="margin-top: 12px;">
+                    El sync requiere que el cliente tenga un seguimiento activo guardado. Sin matriz de seguimiento, el botón queda deshabilitado.
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 4. METAS Y COMISIONES -->
+    <section class="section">
+        <h2><span>🎯</span> Metas y Comisiones</h2>
+        <div class="grid">
+            <div class="card">
+                <h3>Productos con meta</h3>
+                <ul>
+                    <li>Fijo Renovación</li>
+                    <li>Fijo Nueva</li>
+                    <li>Móvil Nueva</li>
+                    <li>Móvil Renovación</li>
+                    <li>Claro TV</li>
+                    <li>Cloud</li>
+                </ul>
+            </div>
+            <div class="card">
+                <h3>Cálculo de comisiones</h3>
+                <ul>
+                    <li>Metas por <span class="highlight">vendedor + producto + periodo (año/mes)</span></li>
+                    <li>Comisiones calculadas desde <span class="code">sales_history</span></li>
+                    <li>Retención automática del <span class="highlight">10%</span></li>
+                    <li>Neto = Ganado − Retención</li>
+                    <li>Porcentaje de cumplimiento = Ganado / Meta × 100</li>
+                </ul>
+            </div>
+            <div class="card">
+                <h3>Visibilidad por rol</h3>
+                <ul>
+                    <li><span class="tag tag-admin">admin</span> / <span class="tag tag-supervisor">supervisor</span> — Ve resumen global de todos los vendedores + botón "Configurar Metas"</li>
+                    <li><span class="tag tag-vendedor">vendedor</span> — Solo ve su propia tarjeta de rendimiento</li>
+                    <li>Permiso granular <span class="code">goals.configure</span> permite configurar metas sin ser admin</li>
+                    <li>Permiso granular <span class="code">reports.admin_view</span> permite ver datos globales</li>
+                    <li>El sistema usa <span class="highlight">/api/me</span> (rol en vivo) en lugar del token de localStorage para evitar permisos obsoletos</li>
+                </ul>
+                <div class="rule-block" style="margin-top: 12px;">
+                    El botón "Configurar Metas" y la página <span class="code">/metas/configurar</span> verifican rol en tiempo real. Un cambio de rol en DB tiene efecto sin necesidad de re-login.
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 5. CLIENTES, BAN Y SUSCRIPTORES -->
+    <section class="section">
+        <h2><span>📊</span> Clientes, BAN y Suscriptores</h2>
+        <div class="grid">
+            <div class="card">
+                <h3>Clientes</h3>
+                <ul>
+                    <li><span class="highlight">Convergencia:</span> cliente con 2 o más productos activos</li>
+                    <li><span class="danger">Prohibida</span> la creación de clientes duplicados</li>
+                    <li>Cada cliente puede tener múltiples BANs</li>
+                </ul>
+            </div>
+            <div class="card">
+                <h3>BAN (Business Account Number)</h3>
+                <ul>
+                    <li>Ciclo de vida ligado estrictamente al cliente</li>
+                    <li>Cada BAN puede contener múltiples suscriptores</li>
+                    <li>Módulo de <span class="highlight">bans</span> independiente con gestión completa</li>
+                </ul>
+            </div>
+            <div class="card">
+                <h3>Suscriptores</h3>
+                <ul>
+                    <li>ID obligatorio de <span class="highlight">19 dígitos</span></li>
+                    <li>Contrato siempre debe tener plan y fechas (inicio/fin)</li>
+                    <li>Reportes de suscriptores disponibles por periodo</li>
+                </ul>
+            </div>
+        </div>
+    </section>
+
+    <!-- 6. OCR -->
+    <section class="section">
+        <h2><span>🤖</span> Motor OCR — Sincronización automática</h2>
+        <p style="color: var(--text-dim); font-size: 0.9rem; margin-bottom: 18px;">
+            Al subir capturas de pantalla del portal de Claro, el sistema aplica la siguiente lógica de sincronización sobre los suscriptores:
+        </p>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Estado en sistema</th>
+                        <th>Estado detectado en captura</th>
+                        <th>Acción aplicada</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><span class="accent">Activo</span></td>
+                        <td><span class="accent">Activo</span></td>
+                        <td>Actualiza plan del suscriptor</td>
+                    </tr>
+                    <tr>
+                        <td><span class="accent">Activo</span></td>
+                        <td><span class="danger">Cancelado</span></td>
+                        <td>Cancela suscriptor en sistema</td>
+                    </tr>
+                    <tr>
+                        <td><span class="accent">Activo</span></td>
+                        <td><span class="warning">Suspendido</span></td>
+                        <td>Sin cambios</td>
+                    </tr>
+                    <tr>
+                        <td><span class="warning">Suspendido</span></td>
+                        <td>Cualquier estado</td>
+                        <td>Sin cambios</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="rule-block warning" style="margin-top: 18px;">
+            El OCR también procesa <span class="warning">documentos PDF</span> para extracción de datos. Soporta lectura de facturas y contratos.
+        </div>
+    </section>
+
+    <!-- 7. INTEGRACIONES -->
+    <section class="section">
+        <h2><span>🔌</span> Integraciones Externas</h2>
+        <div class="grid">
+            <div class="card" style="grid-column: span 2;">
+                <h3>Tango Dealer Management</h3>
+                <p>El CRM se sincroniza con <span class="highlight">Tango</span> para obtener la base de datos maestra de planes, tarifas y precios en tiempo real. Permite cotización precisa y cálculo automático de comisiones basado en la tabla de márgenes vigente.</p>
+            </div>
+            <div class="card">
+                <h3>Integración IA</h3>
+                <p>Módulo <span class="highlight">/api/ai</span> disponible para asistencia inteligente dentro del CRM. Utilizado para búsqueda semántica, sugerencias y análisis de datos.</p>
+            </div>
+            <div class="card">
+                <h3>Importador masivo</h3>
+                <p>Importación de datos vía <span class="highlight">/api/importador</span>. Soporta archivos Excel/CSV. Validación y normalización automática de datos al importar.</p>
+            </div>
+            <div class="card">
+                <h3>POS Integration</h3>
+                <p>Integración con sistema de punto de venta externo vía <span class="highlight">/api/importador</span> y <span class="highlight">posIntegration</span> para sincronización de transacciones.</p>
+            </div>
+            <div class="card">
+                <h3>Microsoft Azure MSAL</h3>
+                <p>Login corporativo via <span class="highlight">Single Sign-On</span> de Microsoft. Permite acceso con credenciales de la organización SS Group.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- 8. MÓDULOS ADICIONALES -->
+    <section class="section">
+        <h2><span>🧩</span> Módulos del Sistema</h2>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Módulo</th>
+                        <th>Endpoint API</th>
+                        <th>Descripción</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td class="highlight">Autenticación</td><td class="code">/api/auth</td><td>Login, refresh token, sesiones JWT</td></tr>
+                    <tr><td class="highlight">Usuarios</td><td class="code">/api/users</td><td>Gestión de usuarios del sistema</td></tr>
+                    <tr><td class="highlight">Permisos</td><td class="code">/api/permissions</td><td>Permisos granulares por usuario</td></tr>
+                    <tr><td class="highlight">Clientes</td><td class="code">/api/clients</td><td>CRUD completo de clientes + pasos de proceso</td></tr>
+                    <tr><td class="highlight">Vendedores</td><td class="code">/api/vendors</td><td>Gestión de vendedores y comisiones</td></tr>
+                    <tr><td class="highlight">Categorías</td><td class="code">/api/categories</td><td>Categorías con flujos de pasos configurables</td></tr>
+                    <tr><td class="highlight">BANs</td><td class="code">/api/bans</td><td>Gestión de Business Account Numbers</td></tr>
+                    <tr><td class="highlight">Suscriptores</td><td class="code">/api/subscribers</td><td>Suscriptores + reportes por periodo</td></tr>
+                    <tr><td class="highlight">Follow-up</td><td class="code">/api/follow-up-prospects</td><td>Seguimiento de prospectos</td></tr>
+                    <tr><td class="highlight">Productos</td><td class="code">/api/products</td><td>Catálogo de productos</td></tr>
+                    <tr><td class="highlight">Importador</td><td class="code">/api/importador</td><td>Importación masiva de datos Excel/CSV</td></tr>
+                    <tr><td class="highlight">IA</td><td class="code">/api/ai</td><td>Asistencia inteligente y búsqueda semántica</td></tr>
+                    <tr><td class="highlight">Referidos</td><td class="code">/api/referidos</td><td>Programa de referidos</td></tr>
+                    <tr><td class="highlight">Discrepancias</td><td class="code">/api/discrepancias</td><td>Control y auditoría de discrepancias</td></tr>
+                    <tr><td class="highlight">Tarifas</td><td class="code">/api/tarifas</td><td>Tarifas y tiers fijos por producto</td></tr>
+                    <tr><td class="highlight">OCR</td><td class="code">/api/ocr</td><td>Lectura automática de capturas y documentos</td></tr>
+                    <tr><td class="highlight">Deal Workflow</td><td class="code">/api (deals, tasks)</td><td>Pipeline de ventas con tareas secuenciales</td></tr>
+                    <tr><td class="highlight">Metas</td><td class="code">/api/goals</td><td>Metas por vendedor, producto y periodo</td></tr>
+                    <tr><td class="highlight">Tracking</td><td class="code">/api/tracking</td><td>Seguimiento de actividad</td></tr>
+                    <tr><td class="highlight">Campañas</td><td class="code">/api/campaigns</td><td>Gestión de campañas comerciales</td></tr>
+                    <tr><td class="highlight">Tango</td><td class="code">/api/tango</td><td>Sincronización con Tango Dealer Management</td></tr>
+                    <tr><td class="highlight">Sistema</td><td class="code">/api/system</td><td>Estado, diagnóstico y tests del servidor</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <!-- 9. INFRAESTRUCTURA -->
+    <section class="section">
+        <h2><span>🏗️</span> Infraestructura y Deploy</h2>
+        <div class="grid-3">
+            <div class="card">
+                <h3>Frontend</h3>
+                <ul>
+                    <li>React 19 + Vite + Tailwind CSS</li>
+                    <li>Recharts para analytics</li>
+                    <li>Framer Motion para animaciones</li>
+                    <li>Export PDF con jsPDF</li>
+                    <li>Export Excel con XLSX</li>
+                    <li>Deploy en <span class="highlight">Cloudflare Workers</span></li>
+                </ul>
+            </div>
+            <div class="card">
+                <h3>Backend</h3>
+                <ul>
+                    <li>Node.js + Express (ESModules)</li>
+                    <li>PostgreSQL DB <span class="code">cuartel</span></li>
+                    <li>Servidor <span class="highlight">DigitalOcean Ubuntu</span></li>
+                    <li>JWT + bcrypt + Azure MSAL</li>
+                    <li>Rate limiting + Helmet (seguridad)</li>
+                    <li>Script de deploy: <span class="code">deploy-simple.ps1</span></li>
+                </ul>
+            </div>
+            <div class="card">
+                <h3>Notas operativas</h3>
+                <ul>
+                    <li>Usar <span class="highlight">SCP</span> para transferir archivos al servidor</li>
+                    <li>Nunca pegar código largo directo en terminal</li>
+                    <li>Entregar siempre archivos completos</li>
+                    <li>Ruta local: <span class="code">C:\Users\Gabriel\Documentos\Programas\</span></li>
+                    <li>Dominio: <span class="code">ss-group.cloud</span></li>
+                </ul>
+            </div>
+        </div>
+    </section>
+
+    <footer>
+        &copy; 2026 SS Group — VentasProui CRM — Fuente de Verdad Absoluta<br>
+        <span style="font-size: 0.75rem; margin-top: 6px; display: block;">Última actualización: 19 Abril 2026 — Presets de acceso, permisos Metas en vivo, sync Pasos→Deals</span>
+    </footer>
+
+</div>
+</body>
+</html>

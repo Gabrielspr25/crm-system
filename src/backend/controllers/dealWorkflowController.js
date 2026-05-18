@@ -3,6 +3,11 @@ import { badRequest, conflict, notFound, serverError } from '../middlewares/erro
 
 const PRODUCT_TYPES = new Set(['FIJO', 'MOVIL', 'CLARO_TV', 'CLOUD', 'MPLS']);
 const SALE_TYPES = new Set(['NEW', 'REN']);
+const DEAL_SYNC_LOG_PREFIX = '[deal-sync]';
+
+function logDealSync(...args) {
+  console.log(DEAL_SYNC_LOG_PREFIX, ...args);
+}
 const TASK_STATUSES = new Set(['pending', 'in_progress', 'done']);
 const WORKFLOW_RULES = Object.freeze({
   FIJO: Object.freeze({ NEW: true, REN: true }),
@@ -37,6 +42,70 @@ function normalizeTaskStatus(value) {
   if (normalized === 'en_proceso' || normalized === 'en proceso') return 'in_progress';
   if (normalized === 'completado' || normalized === 'completed') return 'done';
   return TASK_STATUSES.has(normalized) ? normalized : 'pending';
+}
+
+const INACTIVE_SUBSCRIBER_STATUSES = new Set(['cancelado', 'cancelled', 'inactivo', 'no_renueva_ahora']);
+
+function isActiveSubscriberStatus(value) {
+  return !INACTIVE_SUBSCRIBER_STATUSES.has(String(value || '').trim().toLowerCase());
+}
+
+function resolveSubscriberDealType(row) {
+  const haystack = [
+    row.ban_account_type,
+    row.ban_description,
+    row.product_type,
+    row.product_class,
+    row.service_type,
+    row.plan,
+    row.item_description,
+    row.price_code,
+    row.activity_code,
+    row.line_type,
+    row.sale_type,
+    row.phone,
+    row.phone_number,
+  ].map((value) => String(value || '').trim().toUpperCase()).filter(Boolean).join(' ');
+
+  let productType = '';
+  if (haystack.includes('MPLS')) productType = 'MPLS';
+  else if (haystack.includes('CLOUD')) productType = 'CLOUD';
+  else if (haystack.includes('CLARO TV') || haystack.includes('CLAROTV') || (haystack.includes('CLARO') && haystack.includes('TV'))) productType = 'CLARO_TV';
+  else if (haystack.includes('FIJO') || haystack.includes('FIXED') || haystack.includes('INTERNET') || String(row.phone || row.phone_number || '').toUpperCase().startsWith('FIJO-')) productType = 'FIJO';
+  else productType = 'MOVIL';
+
+  const explicitSaleType = normalizeSaleType(row.sale_type || row.line_type);
+  const isRenewal = explicitSaleType === 'REN'
+    || haystack.includes(' REN ')
+    || haystack.includes('RENOV')
+    || haystack.includes('RENEWAL');
+  const saleType = productType === 'FIJO' || productType === 'MOVIL'
+    ? (isRenewal ? 'REN' : 'NEW')
+    : (explicitSaleType || 'NEW');
+
+  if (!PRODUCT_TYPES.has(productType) || !SALE_TYPES.has(saleType)) return null;
+  return { product_type: productType, sale_type: saleType };
+}
+
+async function loadActiveSubscribersForClient(dbQuery, clientId) {
+  const rows = await dbQuery(
+    `SELECT s.*,
+            b.ban_number AS ban_number,
+            b.account_type AS ban_account_type,
+            b.account_type AS ban_description,
+            b.status AS ban_status,
+            b.client_id::text AS client_id
+       FROM subscribers s
+       JOIN bans b ON b.id = s.ban_id
+      WHERE b.client_id::text = $1
+      ORDER BY s.created_at DESC`,
+    [clientId]
+  );
+
+  return rows
+    .filter((row) => isActiveSubscriberStatus(row.status))
+    .map((row) => ({ ...row, dealType: resolveSubscriberDealType(row) }))
+    .filter((row) => row.dealType);
 }
 
 function normalizeStepName(value) {
@@ -132,6 +201,7 @@ function buildDealMap(rows) {
         subscriber_id: row.subscriber_id || null,
         ban_number: row.ban_number || null,
         phone: row.phone || null,
+        is_orphan: Boolean(row.is_orphan),
         notes: row.notes || null,
         created_at: row.deal_created_at,
         updated_at: row.deal_updated_at,
@@ -330,6 +400,23 @@ async function validateSeller(clientOrQuery, sellerId, options = {}) {
       role: sellerRole || 'vendedor'
     }
   };
+}
+
+async function resolveSellerForSync(clientOrQuery, sellerIds, options = {}) {
+  const candidates = [...new Set((Array.isArray(sellerIds) ? sellerIds : [sellerIds])
+    .map((value) => String(value || '').trim())
+    .filter(Boolean))];
+
+  let lastError = 'No se pudo resolver un vendedor valido para la sincronizacion';
+  for (const sellerId of candidates) {
+    const validation = await validateSeller(clientOrQuery, sellerId, options);
+    if (validation.ok) {
+      return { ok: true, seller: validation.seller, sellerId };
+    }
+    lastError = validation.error || lastError;
+  }
+
+  return { ok: false, error: lastError };
 }
 
 async function loadTemplateWithSteps(clientOrQuery, productType, saleType, options = {}) {
@@ -684,6 +771,7 @@ export const createDeal = async (req, res) => {
 export const getDeals = async (req, res) => {
   const clientId = String(req.query?.client_id || '').trim();
   const sellerIdFilter = String(req.query?.seller_id || '').trim();
+  const includeOrphans = String(req.query?.include_orphans || '').trim() === '1';
   const currentRole = String(req.user?.role || '').trim().toLowerCase();
   const requesterSalespersonId = String(req.user?.salespersonId || '').trim() || null;
 
@@ -707,6 +795,15 @@ export const getDeals = async (req, res) => {
       conditions.push(`d.seller_id = $${params.length}`);
     }
 
+    if (!includeOrphans) {
+      conditions.push(`
+        d.subscriber_id IS NOT NULL
+        AND sub.id IS NOT NULL
+        AND ban.client_id::text = d.client_id
+        AND LOWER(COALESCE(sub.status, '')) NOT IN ('cancelado', 'cancelled', 'inactivo', 'no_renueva_ahora')
+      `);
+    }
+
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
     const rows = await query(
       `SELECT d.id AS deal_id,
@@ -722,6 +819,13 @@ export const getDeals = async (req, res) => {
               d.subscriber_id,
               d.ban_number,
               d.phone,
+              CASE
+                WHEN d.subscriber_id IS NULL THEN TRUE
+                WHEN sub.id IS NULL THEN TRUE
+                WHEN ban.client_id::text <> d.client_id THEN TRUE
+                WHEN LOWER(COALESCE(sub.status, '')) IN ('cancelado', 'cancelled', 'inactivo', 'no_renueva_ahora') THEN TRUE
+                ELSE FALSE
+              END AS is_orphan,
               d.notes,
               d.created_at AS deal_created_at,
               d.updated_at AS deal_updated_at,
@@ -738,6 +842,8 @@ export const getDeals = async (req, res) => {
          FROM crm_deals d
          LEFT JOIN clients c ON c.id::text = d.client_id
          LEFT JOIN salespeople s ON s.id::text = d.seller_id
+         LEFT JOIN subscribers sub ON sub.id::text = d.subscriber_id
+         LEFT JOIN bans ban ON ban.id = sub.ban_id
          LEFT JOIN crm_deal_tasks t ON t.deal_id = d.id
          LEFT JOIN salespeople assignee ON assignee.id::text = t.assigned_to
          ${whereClause}
@@ -751,8 +857,167 @@ export const getDeals = async (req, res) => {
   }
 };
 
+/**
+ * Sincronización idempotente: para cada (product_type, sale_type) detectado en
+ * suscriptores activos del cliente, asegura que exista UN deal y que tenga TODOS
+ * los pasos según category_steps. No duplica, no borra, no toca pasos existentes.
+ * Skip silencioso si: el cliente no tiene salesperson_id, o la categoría no
+ * tiene pasos configurados (caso MPLS).
+ */
+async function ensureCategoryDealsAndSteps(clientId) {
+  if (!clientId) return;
+  const cid = String(clientId).trim();
+  if (!cid) return;
+
+  const clientRows = await query(
+    `SELECT id::text AS id, salesperson_id::text AS salesperson_id
+       FROM clients WHERE id::text = $1 LIMIT 1`,
+    [cid]
+  );
+  if (clientRows.length === 0) return;
+  const sellerId = clientRows[0].salesperson_id;
+  if (!sellerId) return;
+
+  const subs = await loadActiveSubscribersForClient(query, cid);
+  if (subs.length === 0) return;
+
+  // Set único de categorías activas
+  const categories = new Map();
+  for (const sub of subs) {
+    const dt = sub.dealType;
+    if (!dt) continue;
+    const key = `${dt.product_type}|${dt.sale_type}`;
+    if (!categories.has(key)) categories.set(key, dt);
+  }
+  if (categories.size === 0) return;
+
+  for (const dt of categories.values()) {
+    const steps = await loadCategorySteps(
+      (sql, params) => query(sql, params),
+      dt.product_type,
+      dt.sale_type
+    );
+    // Sin pasos configurados (ej. MPLS) -> skip silencioso, no crear deal vacío.
+    if (!steps || steps.length === 0) continue;
+
+    // Buscar deal existente por (client, product_type, sale_type) — uno por categoría.
+    // Solo reusar deals "genéricos" (sin subscriber individual): los deals con
+    // subscriber_id pertenecen a syncClientDealsFromSubscribers y no deben
+    // mezclarse con el sync de categoría.
+    const existing = await query(
+      `SELECT id FROM crm_deals
+        WHERE client_id = $1 AND product_type = $2 AND sale_type = $3
+          AND (subscriber_id IS NULL OR source_type = 'category-sync')
+        ORDER BY created_at ASC, id ASC LIMIT 1`,
+      [cid, dt.product_type, dt.sale_type]
+    );
+
+    let dealId = existing[0]?.id;
+    if (!dealId) {
+      const created = await query(
+        `INSERT INTO crm_deals
+            (client_id, seller_id, product_type, sale_type,
+             source_type, source_label, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, 'category-sync', $5, NOW(), NOW())
+         RETURNING id`,
+        [cid, sellerId, dt.product_type, dt.sale_type, `${dt.product_type} ${dt.sale_type}`]
+      );
+      dealId = created[0].id;
+    }
+
+    // Insertar solo los step_order faltantes; mantener intactos los existentes.
+    const existingTaskRows = await query(
+      `SELECT step_order FROM crm_deal_tasks WHERE deal_id = $1`,
+      [dealId]
+    );
+    const existingOrders = new Set(existingTaskRows.map((r) => Number(r.step_order)));
+
+    for (const step of steps) {
+      const stepOrder = Number(step.step_order);
+      if (existingOrders.has(stepOrder)) continue;
+      await query(
+        `INSERT INTO crm_deal_tasks
+            (deal_id, step_name, step_order, status, assigned_to, created_at, updated_at)
+         VALUES ($1, $2, $3, 'pending', $4, NOW(), NOW())`,
+        [dealId, step.step_name, stepOrder, sellerId]
+      );
+    }
+  }
+}
+
 export const getClientDeals = async (req, res) => {
-  req.query.client_id = String(req.params.id || '').trim();
+  const clientId = String(req.params.id || '').trim();
+  req.query.client_id = clientId;
+  // Sync silencioso: idempotente, crea faltantes sin duplicar.
+  if (clientId) {
+    try {
+      await ensureCategoryDealsAndSteps(clientId);
+    } catch (e) {
+      logDealSync('auto-sync:error', { clientId, error: String(e?.message || e) });
+    }
+
+    // Filtro de deals zombie: solo categorías activas según subs/BANs actuales,
+    // y subscribers que sigan clasificando en la misma categoría que su deal.
+    // No borra nada: solo oculta del response.
+    try {
+      const subs = await loadActiveSubscribersForClient(query, clientId);
+      const activeCats = new Set();
+      const subCatById = new Map();
+      for (const s of subs) {
+        if (!s.dealType) continue;
+        const key = `${s.dealType.product_type}|${s.dealType.sale_type}`;
+        activeCats.add(key);
+        subCatById.set(String(s.id), key);
+      }
+
+      const originalJson = res.json.bind(res);
+      res.json = (deals) => {
+        if (!Array.isArray(deals)) return originalJson(deals);
+        const skippedZombie = [];
+        const skippedOrphan = [];
+        const filtered = deals.filter((d) => {
+          const dealCat = `${d.product_type}|${d.sale_type}`;
+          if (!activeCats.has(dealCat)) {
+            skippedZombie.push({
+              deal_id: d.id,
+              product_type: d.product_type,
+              sale_type: d.sale_type,
+              reason: 'category_not_active'
+            });
+            return false;
+          }
+          if (d.subscriber_id) {
+            const subCat = subCatById.get(String(d.subscriber_id));
+            if (!subCat) {
+              skippedOrphan.push({
+                deal_id: d.id,
+                subscriber_id: d.subscriber_id,
+                reason: 'subscriber_inactive_or_missing'
+              });
+              return false;
+            }
+            if (subCat !== dealCat) {
+              skippedZombie.push({
+                deal_id: d.id,
+                subscriber_id: d.subscriber_id,
+                from: dealCat,
+                to: subCat,
+                reason: 'subscriber_recategorized'
+              });
+              return false;
+            }
+          }
+          return true;
+        });
+        if (skippedZombie.length || skippedOrphan.length) {
+          logDealSync('client-deals:filtered', { clientId, skippedZombie, skippedOrphan });
+        }
+        return originalJson(filtered);
+      };
+    } catch (e) {
+      logDealSync('client-deals:filter-error', { clientId, error: String(e?.message || e) });
+    }
+  }
   return getDeals(req, res);
 };
 
@@ -762,6 +1027,7 @@ export const getDealTasks = async (req, res) => {
   const pendingOnly = String(req.query?.pending_only || '').trim() === '1';
   const sellerIdFilter = String(req.query?.seller_id || '').trim();
   const clientIdFilter = String(req.query?.client_id || '').trim();
+  const includeOrphans = String(req.query?.include_orphans || '').trim() === '1';
 
   try {
     await ensureDealWorkflowSchema();
@@ -785,6 +1051,15 @@ export const getDealTasks = async (req, res) => {
     if (currentRole === 'vendedor' && requesterSalespersonId) {
       params.push(requesterSalespersonId);
       conditions.push(`t.assigned_to = $${params.length}`);
+    }
+
+    if (!includeOrphans) {
+      conditions.push(`
+        d.subscriber_id IS NOT NULL
+        AND sub.id IS NOT NULL
+        AND ban.client_id::text = d.client_id
+        AND LOWER(COALESCE(sub.status, '')) NOT IN ('cancelado', 'cancelled', 'inactivo', 'no_renueva_ahora')
+      `);
     }
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -825,6 +1100,8 @@ export const getDealTasks = async (req, res) => {
          LEFT JOIN clients c ON c.id::text = d.client_id
          LEFT JOIN salespeople seller ON seller.id::text = d.seller_id
          LEFT JOIN salespeople assignee ON assignee.id::text = t.assigned_to
+         LEFT JOIN subscribers sub ON sub.id::text = d.subscriber_id
+         LEFT JOIN bans ban ON ban.id = sub.ban_id
          ${whereClause}
         ORDER BY
           CASE t.status WHEN 'in_progress' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END,
@@ -875,19 +1152,33 @@ const PRODUCT_CATEGORY_NAME = {
 };
 
 async function loadCategorySteps(dbQuery, productType, saleType) {
+  // Fuente oficial: category_steps (módulo Categorías).
   const key = `${productType}_${saleType}`;
   const categoryName = PRODUCT_CATEGORY_NAME[key];
-  if (!categoryName) return [];
+  if (categoryName) {
+    const rows = await dbQuery(
+      `SELECT cs.step_name, cs.step_order
+         FROM category_steps cs
+         JOIN categories c ON c.id = cs.category_id
+        WHERE UPPER(TRIM(c.name)) = UPPER(TRIM($1))
+        ORDER BY cs.step_order ASC`,
+      [categoryName]
+    );
+    if (rows.length > 0) return rows;
+  }
 
-  const rows = await dbQuery(
-    `SELECT cs.step_name, cs.step_order
-       FROM category_steps cs
-       JOIN categories c ON c.id = cs.category_id
-      WHERE UPPER(TRIM(c.name)) = UPPER(TRIM($1))
-      ORDER BY cs.step_order ASC`,
-    [categoryName]
+  // Fallback: crm_workflow_template_steps (sistema antiguo, backwards compat).
+  const templateRows = await dbQuery(
+    `SELECT s.step_name, s.step_order
+       FROM crm_workflow_template_steps s
+       JOIN crm_workflow_templates t ON t.id = s.template_id
+      WHERE t.product_type = $1
+        AND t.sale_type = $2
+        AND t.is_active = TRUE
+      ORDER BY s.step_order ASC, s.id ASC`,
+    [productType, saleType]
   );
-  return rows;
+  return templateRows;
 }
 
 // Mapeo de columnas de follow_up_prospects a tipos de deal
@@ -917,15 +1208,18 @@ export const syncClientDealsFromProspect = async (req, res) => {
   if (!clientId) return badRequest(res, 'client_id requerido');
   if (!rawSellerId) return badRequest(res, 'seller_id requerido');
 
+  logDealSync('prospect-sync:start', { clientId, currentRole, currentUserId, rawSellerId });
+
   try {
     await ensureDealWorkflowSchema();
 
     // 1. Validar vendedor
-    const sellerValidation = await validateSeller(query, rawSellerId, {
+    const sellerValidation = await resolveSellerForSync(query, [rawSellerId], {
       allowAdminSeller: ['admin', 'supervisor'].includes(currentRole)
     });
     if (!sellerValidation.ok) return badRequest(res, sellerValidation.error);
     const sellerId = sellerValidation.seller.id;
+    logDealSync('prospect-sync:seller', { clientId, sellerId, sellerRole: sellerValidation.seller.role });
 
     // 2. Obtener prospecto activo del cliente
     let prospects;
@@ -944,6 +1238,7 @@ export const syncClientDealsFromProspect = async (req, res) => {
     }
 
     if (!prospects || prospects.length === 0) {
+      logDealSync('prospect-sync:skip', { clientId, reason: 'no_active_follow_up_prospect' });
       return res.status(404).json({ error: 'No hay seguimiento activo para este cliente' });
     }
 
@@ -955,6 +1250,12 @@ export const syncClientDealsFromProspect = async (req, res) => {
     );
 
     if (activeCombinations.length === 0) {
+      logDealSync('prospect-sync:skip', {
+        clientId,
+        prospectId: String(prospect.id),
+        reason: 'no_active_combinations',
+        activeFlags: PROSPECT_COLUMN_TO_DEAL.map(({ col }) => ({ col, value: Number(prospect[col] || 0) }))
+      });
       return res.json({ deleted: 0, created: [], message: 'No hay tipos de venta activos en el seguimiento' });
     }
 
@@ -987,6 +1288,14 @@ export const syncClientDealsFromProspect = async (req, res) => {
 
         if (!steps || steps.length === 0) continue;
 
+        logDealSync('prospect-sync:category', {
+          clientId,
+          prospectId: String(prospect.id),
+          product_type,
+          sale_type,
+          steps: steps.length
+        });
+
         const dealResult = await dbClient.query(
           `INSERT INTO crm_deals (
              client_id, seller_id, product_type, sale_type,
@@ -1002,6 +1311,13 @@ export const syncClientDealsFromProspect = async (req, res) => {
         );
 
         const dealId = dealResult.rows[0].id;
+        logDealSync('prospect-sync:deal-created', {
+          clientId,
+          prospectId: String(prospect.id),
+          dealId: String(dealId),
+          product_type,
+          sale_type
+        });
 
         for (const step of steps) {
           await dbClient.query(
@@ -1016,6 +1332,14 @@ export const syncClientDealsFromProspect = async (req, res) => {
             ]
           );
         }
+
+        logDealSync('prospect-sync:tasks-created', {
+          clientId,
+          dealId: String(dealId),
+          createdTasks: steps.length,
+          product_type,
+          sale_type
+        });
 
         created.push({
           deal_id: Number(dealId),
@@ -1042,6 +1366,239 @@ export const syncClientDealsFromProspect = async (req, res) => {
     });
   } catch (error) {
     serverError(res, error, 'Error sincronizando tareas del cliente');
+  }
+};
+
+export const syncClientDealsFromSubscribers = async (req, res) => {
+  const clientId = String(req.params.clientId || '').trim();
+  const currentRole = String(req.user?.role || '').trim().toLowerCase();
+  const currentUserId = String(req.user?.userId || '').trim() || null;
+  const requesterSalespersonId = String(req.user?.salespersonId || '').trim() || null;
+  const rawSellerId = String(req.body?.seller_id || requesterSalespersonId || '').trim();
+
+  if (!clientId) return badRequest(res, 'client_id requerido');
+  if (!rawSellerId) return badRequest(res, 'seller_id requerido');
+
+  logDealSync('subscriber-sync:start', { clientId, currentRole, currentUserId, rawSellerId });
+
+  try {
+    await ensureDealWorkflowSchema();
+
+    const sellerValidation = await resolveSellerForSync(query, [rawSellerId], {
+      allowAdminSeller: ['admin', 'supervisor'].includes(currentRole)
+    });
+    if (!sellerValidation.ok) return badRequest(res, sellerValidation.error);
+    const sellerId = sellerValidation.seller.id;
+    logDealSync('subscriber-sync:seller', { clientId, sellerId, sellerRole: sellerValidation.seller.role });
+
+    const clientRows = await query(
+      `SELECT id::text AS id, name
+         FROM clients
+        WHERE id::text = $1
+        LIMIT 1`,
+      [clientId]
+    );
+    if (clientRows.length === 0) return notFound(res, 'Cliente');
+
+    const activeSubscribers = await loadActiveSubscribersForClient(query, clientId);
+    if (activeSubscribers.length === 0) {
+      logDealSync('subscriber-sync:skip', { clientId, reason: 'no_active_subscribers' });
+      return res.json({
+        ok: true,
+        created: [],
+        updated: [],
+        skipped: [],
+        message: 'No hay suscriptores activos con producto valido para sincronizar'
+      });
+    }
+
+    const dbClient = await getClient();
+    const created = [];
+    const updated = [];
+    const skipped = [];
+
+    try {
+      await dbClient.query('BEGIN');
+
+      for (const subscriber of activeSubscribers) {
+        const { product_type, sale_type } = subscriber.dealType;
+        logDealSync('subscriber-sync:subscriber-detected', {
+          clientId,
+          subscriberId: String(subscriber.id),
+          phone: subscriber.phone || subscriber.phone_number || null,
+          status: String(subscriber.status || ''),
+          product_type,
+          sale_type
+        });
+        const steps = await loadCategorySteps(
+          (sql, params) => dbClient.query(sql, params).then((r) => r.rows),
+          product_type,
+          sale_type
+        );
+
+        if (!steps || steps.length === 0) {
+          logDealSync('subscriber-sync:skip', {
+            clientId,
+            subscriberId: String(subscriber.id),
+            product_type,
+            sale_type,
+            reason: 'sin_pasos_configurados'
+          });
+          skipped.push({
+            subscriber_id: String(subscriber.id),
+            phone: subscriber.phone || subscriber.phone_number || null,
+            product_type,
+            sale_type,
+            reason: 'sin_pasos_configurados'
+          });
+          continue;
+        }
+
+        logDealSync('subscriber-sync:category', {
+          clientId,
+          subscriberId: String(subscriber.id),
+          product_type,
+          sale_type,
+          steps: steps.length
+        });
+
+        const existingDealRows = await dbClient.query(
+          `SELECT id
+             FROM crm_deals
+            WHERE client_id = $1
+              AND subscriber_id = $2
+              AND product_type = $3
+              AND sale_type = $4
+            ORDER BY updated_at DESC, id DESC
+            LIMIT 1`,
+          [clientId, String(subscriber.id), product_type, sale_type]
+        );
+
+        let dealId = existingDealRows.rows[0]?.id;
+        const subscriberPhone = subscriber.phone || subscriber.phone_number || null;
+        const sourceLabel = `${subscriber.ban_number || 'BAN'} ${subscriberPhone || String(subscriber.id)}`.trim();
+
+        if (dealId) {
+          await dbClient.query(
+            `UPDATE crm_deals
+                SET seller_id = $1,
+                    source_type = 'subscriber',
+                    source_ref = $2,
+                    source_label = $3,
+                    ban_number = $4,
+                    phone = $5,
+                    updated_at = NOW()
+              WHERE id = $6`,
+            [sellerId, String(subscriber.id), sourceLabel, subscriber.ban_number || null, subscriberPhone, dealId]
+          );
+          updated.push({
+            deal_id: Number(dealId),
+            subscriber_id: String(subscriber.id),
+            product_type,
+            sale_type
+          });
+          logDealSync('subscriber-sync:deal-updated', {
+            clientId,
+            subscriberId: String(subscriber.id),
+            dealId: String(dealId),
+            product_type,
+            sale_type
+          });
+        } else {
+          const dealResult = await dbClient.query(
+            `INSERT INTO crm_deals (
+               client_id, seller_id, product_type, sale_type,
+               source_type, source_ref, source_label, subscriber_id, ban_number, phone, created_by, created_at, updated_at
+             ) VALUES ($1, $2, $3, $4, 'subscriber', $5, $6, $7, $8, $9, $10, NOW(), NOW())
+             RETURNING id`,
+            [
+              clientId,
+              sellerId,
+              product_type,
+              sale_type,
+              String(subscriber.id),
+              sourceLabel,
+              String(subscriber.id),
+              subscriber.ban_number || null,
+              subscriberPhone,
+              currentUserId
+            ]
+          );
+          dealId = dealResult.rows[0].id;
+          created.push({
+            deal_id: Number(dealId),
+            subscriber_id: String(subscriber.id),
+            product_type,
+            sale_type,
+            label: formatCombinationLabel(product_type, sale_type),
+            steps: steps.length
+          });
+          logDealSync('subscriber-sync:deal-created', {
+            clientId,
+            subscriberId: String(subscriber.id),
+            dealId: String(dealId),
+            product_type,
+            sale_type
+          });
+        }
+
+        const existingTaskRows = await dbClient.query(
+          `SELECT COUNT(*)::int AS total
+             FROM crm_deal_tasks
+            WHERE deal_id = $1`,
+          [dealId]
+        );
+
+        if (Number(existingTaskRows.rows[0]?.total || 0) === 0) {
+          for (const step of steps) {
+            await dbClient.query(
+              `INSERT INTO crm_deal_tasks (deal_id, step_name, step_order, status, assigned_to, created_at, updated_at)
+               VALUES ($1, $2, $3, $4, $5, NOW(), NOW())`,
+              [
+                dealId,
+                step.step_name,
+                step.step_order,
+                step.step_order === 1 ? 'in_progress' : 'pending',
+                sellerId
+              ]
+            );
+          }
+          logDealSync('subscriber-sync:tasks-created', {
+            clientId,
+            subscriberId: String(subscriber.id),
+            dealId: String(dealId),
+            createdTasks: steps.length,
+            product_type,
+            sale_type
+          });
+        } else {
+          logDealSync('subscriber-sync:tasks-skipped', {
+            clientId,
+            subscriberId: String(subscriber.id),
+            dealId: String(dealId),
+            reason: 'existing_tasks',
+            totalTasks: Number(existingTaskRows.rows[0]?.total || 0)
+          });
+        }
+      }
+
+      await dbClient.query('COMMIT');
+    } catch (err) {
+      await dbClient.query('ROLLBACK');
+      throw err;
+    } finally {
+      dbClient.release();
+    }
+
+    res.json({
+      ok: true,
+      created,
+      updated,
+      skipped,
+      message: `${created.length} deal(s) creados, ${updated.length} deal(s) sincronizados desde suscriptores activos`
+    });
+  } catch (error) {
+    serverError(res, error, 'Error sincronizando tareas del cliente desde suscriptores activos');
   }
 };
 
@@ -1197,6 +1754,47 @@ export const updateDealTaskStatus = async (req, res) => {
     );
 
     const row = rows[0];
+
+    // ── Fix A v2: sincronizar follow_up_prospects.next_call_date con
+    // la fecha del paso ACTIVO del workflow del cliente.
+    //   Prioridad 1: status = 'in_progress' (el paso que se trabaja ahora).
+    //   Fallback:    status = 'pending' (cuando no hay in_progress, edge case).
+    //   Done nunca entra.
+    // Mantiene la columna legacy en sync con Mi Día para que /seguimiento
+    // muestre la misma fecha. Cast client_id::text por mismatch de tipos.
+    if (row?.client_id) {
+      // Intentamos primero el MIN sobre in_progress; si no hay, caemos a pending.
+      const inProgressRows = await query(
+        `SELECT MIN(t.due_date) AS next_date
+           FROM crm_deal_tasks t
+           JOIN crm_deals d ON d.id = t.deal_id
+          WHERE d.client_id = $1
+            AND t.status = 'in_progress'
+            AND t.due_date IS NOT NULL`,
+        [row.client_id]
+      );
+      let nextDate = inProgressRows[0]?.next_date || null;
+      if (!nextDate) {
+        const pendingRows = await query(
+          `SELECT MIN(t.due_date) AS next_date
+             FROM crm_deal_tasks t
+             JOIN crm_deals d ON d.id = t.deal_id
+            WHERE d.client_id = $1
+              AND t.status = 'pending'
+              AND t.due_date IS NOT NULL`,
+          [row.client_id]
+        );
+        nextDate = pendingRows[0]?.next_date || null;
+      }
+      await query(
+        `UPDATE follow_up_prospects
+            SET next_call_date = $1, updated_at = NOW()
+          WHERE client_id::text = $2
+            AND completed_date IS NULL`,
+        [nextDate, row.client_id]
+      );
+    }
+
     res.json({
       id: Number(row.id),
       deal_id: Number(row.deal_id),
@@ -1271,4 +1869,3 @@ export const getPanelTasks = async (req, res) => {
     serverError(res, error, 'Error obteniendo tareas del panel');
   }
 };
-

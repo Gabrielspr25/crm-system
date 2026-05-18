@@ -10,6 +10,26 @@ interface GoalsData {
   vendors: { vendor_id: number; vendor_name: string; goals: Record<string, number> }[];
 }
 
+type Scope = "this" | "until_dec" | "all_year";
+
+function monthsForScope(scope: Scope, year: number, fromMonth: number): Array<[number, number]> {
+  if (scope === "this") return [[year, fromMonth]];
+  if (scope === "until_dec") {
+    const out: Array<[number, number]> = [];
+    for (let m = fromMonth; m <= 12; m++) out.push([year, m]);
+    return out;
+  }
+  const out: Array<[number, number]> = [];
+  for (let m = 1; m <= 12; m++) out.push([year, m]);
+  return out;
+}
+
+const SCOPE_LABEL: Record<Scope, string> = {
+  this: "Solo este mes",
+  until_dec: "Hasta diciembre",
+  all_year: "Todo el año",
+};
+
 export default function Gestion() {
   const currentMonth = new Date().toISOString().slice(0, 7);
   const [selectedMonth, setSelectedMonth] = useState(currentMonth);
@@ -17,6 +37,8 @@ export default function Gestion() {
   const [vendorGoals, setVendorGoals] = useState<Record<number, Record<string, string>>>({});
   const [saving, setSaving] = useState<Record<string, boolean>>({});
   const [saved, setSaved] = useState<Record<string, boolean>>({});
+  const [scopeByVendor, setScopeByVendor] = useState<Record<number, Scope>>({});
+  const [bizScope, setBizScope] = useState<Scope>("this");
 
   const { data: products } = useApi<Product[]>("/api/products");
   const { data: vendors } = useApi<Vendor[]>("/api/vendors");
@@ -56,12 +78,19 @@ export default function Gestion() {
     if (!products || !selectedMonth) return;
     setSaving(p => ({ ...p, biz: true }));
     const [y, m] = selectedMonth.split("-").map(Number);
-    await Promise.all(products.map(p =>
-      authFetch("/api/gestion/goals/business", {
-        method: "POST",
-        json: { product_id: p.id, period_year: y, period_month: m, amount: parseFloat(biz[p.id] || "0") || 0 },
-      })
-    ));
+    const months = monthsForScope(bizScope, y, m);
+    const tasks: Promise<unknown>[] = [];
+    for (const [yr, mn] of months) {
+      for (const p of products) {
+        tasks.push(
+          authFetch("/api/gestion/goals/business", {
+            method: "POST",
+            json: { product_id: p.id, period_year: yr, period_month: mn, amount: parseFloat(biz[p.id] || "0") || 0 },
+          })
+        );
+      }
+    }
+    await Promise.all(tasks);
     setSaving(p => ({ ...p, biz: false }));
     flash("biz");
   };
@@ -71,12 +100,26 @@ export default function Gestion() {
     const k = String(vendorId);
     setSaving(p => ({ ...p, [k]: true }));
     const [y, m] = selectedMonth.split("-").map(Number);
-    await Promise.all(products.map(p =>
-      authFetch("/api/gestion/goals/vendor", {
-        method: "POST",
-        json: { vendor_id: vendorId, product_id: p.id, period_year: y, period_month: m, amount: parseFloat(vendorGoals[vendorId]?.[p.id] || "0") || 0 },
-      })
-    ));
+    const scope = scopeByVendor[vendorId] || "this";
+    const months = monthsForScope(scope, y, m);
+    const tasks: Promise<unknown>[] = [];
+    for (const [yr, mn] of months) {
+      for (const p of products) {
+        tasks.push(
+          authFetch("/api/gestion/goals/vendor", {
+            method: "POST",
+            json: {
+              vendor_id: vendorId,
+              product_id: p.id,
+              period_year: yr,
+              period_month: mn,
+              amount: parseFloat(vendorGoals[vendorId]?.[p.id] || "0") || 0,
+            },
+          })
+        );
+      }
+    }
+    await Promise.all(tasks);
     setSaving(p => ({ ...p, [k]: false }));
     flash(k);
   };
@@ -111,7 +154,13 @@ export default function Gestion() {
         </div>
         <select
           value={selectedMonth}
-          onChange={(e) => { setSelectedMonth(e.target.value); setSaved({}); }}
+          onChange={(e) => {
+            setSelectedMonth(e.target.value);
+            setSaved({});
+            // Reset scopes a "Solo este mes" para evitar pisar meses sin querer al editar puntualmente
+            setBizScope("this");
+            setScopeByVendor({});
+          }}
           className="bg-slate-800 border border-slate-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
         >
           {monthOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -128,7 +177,7 @@ export default function Gestion() {
                 {products.map(p => (
                   <th key={p.id} className="px-4 py-3 text-center text-slate-400 font-semibold text-xs uppercase">{p.name}</th>
                 ))}
-                <th className="px-4 py-3 w-28" />
+                <th className="px-4 py-3 text-center text-slate-400 font-semibold text-xs uppercase w-64">Acción</th>
               </tr>
             </thead>
             <tbody>
@@ -144,8 +193,23 @@ export default function Gestion() {
                     />
                   </td>
                 ))}
-                <td className="px-3 py-3 text-center">
-                  <SaveBtn rowKey="biz" onClick={() => void saveBiz()} />
+                <td className="px-3 py-3">
+                  <div className="flex items-center gap-2 justify-center">
+                    <select
+                      value={bizScope}
+                      onChange={(e) => {
+                        setBizScope(e.target.value as Scope);
+                        setSaved(s => ({ ...s, biz: false }));
+                      }}
+                      title="Aplicar los valores cargados a..."
+                      className="bg-slate-700 border border-slate-600 text-white rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    >
+                      <option value="this">{SCOPE_LABEL.this}</option>
+                      <option value="until_dec">{SCOPE_LABEL.until_dec}</option>
+                      <option value="all_year">{SCOPE_LABEL.all_year}</option>
+                    </select>
+                    <SaveBtn rowKey="biz" onClick={() => void saveBiz()} />
+                  </div>
                 </td>
               </tr>
             </tbody>
@@ -164,7 +228,7 @@ export default function Gestion() {
                 {products.map(p => (
                   <th key={p.id} className="px-4 py-3 text-center text-slate-400 font-semibold text-xs uppercase">{p.name}</th>
                 ))}
-                <th className="px-4 py-3 w-28" />
+                <th className="px-4 py-3 text-center text-slate-400 font-semibold text-xs uppercase w-64">Acción</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-700/50">
@@ -196,8 +260,23 @@ export default function Gestion() {
                         />
                       </td>
                     ))}
-                    <td className="px-3 py-3 text-center">
-                      <SaveBtn rowKey={vk} onClick={() => void saveVendor(v.id)} />
+                    <td className="px-3 py-3">
+                      <div className="flex items-center gap-2 justify-center">
+                        <select
+                          value={scopeByVendor[v.id] || "this"}
+                          onChange={(e) => {
+                            setScopeByVendor(prev => ({ ...prev, [v.id]: e.target.value as Scope }));
+                            setSaved(s => ({ ...s, [vk]: false }));
+                          }}
+                          title="Aplicar los valores cargados a..."
+                          className="bg-slate-700 border border-slate-600 text-white rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                        >
+                          <option value="this">{SCOPE_LABEL.this}</option>
+                          <option value="until_dec">{SCOPE_LABEL.until_dec}</option>
+                          <option value="all_year">{SCOPE_LABEL.all_year}</option>
+                        </select>
+                        <SaveBtn rowKey={vk} onClick={() => void saveVendor(v.id)} />
+                      </div>
                     </td>
                   </tr>
                 );

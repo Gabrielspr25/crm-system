@@ -1,4 +1,4 @@
-// VERSION: 2025-01-15-T16-FINAL-V5.1.37-PRODUCTION
+﻿// VERSION: 2025-01-15-T16-FINAL-V5.1.37-PRODUCTION
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { Plus, Search, Edit, Users, Building, Phone, Mail, MapPin, Hash, Calendar, Trash2, UserPlus, Download, FileSpreadsheet, FileText, Check, X, Package, BarChart3, Sparkles, Send, Merge, Save, FileDown, ShoppingCart, ArrowRightLeft, Undo2, Upload, Mic } from "lucide-react";
@@ -237,6 +237,7 @@ interface FollowUpProspect {
   is_active?: boolean | number | null;
   is_completed?: boolean | number | null;
   completed_date?: string | null;
+  notes?: string | null;
 }
 
 const isProspectActive = (prospect: FollowUpProspect | any): boolean => {
@@ -326,12 +327,12 @@ export default function Clients() {
   const navigate = useNavigate();
   const UNIQUE_BUILD_ID = APP_VERSION;
 
-  console.log("🚀🚀🚀 ============================================");
-  console.log("🚀 Clients Tab Configuration Fix", UNIQUE_BUILD_ID);
-  console.log("🚀 Build Label:", BUILD_LABEL);
-  console.log("🚀 Unique Build ID:", UNIQUE_BUILD_ID);
-  console.log("🚀 Runtime:", new Date().toISOString());
-  console.log("🚀🚀🚀 ============================================");
+  console.log("ðŸš€ðŸš€ðŸš€ ============================================");
+  console.log("ðŸš€ Clients Tab Configuration Fix", UNIQUE_BUILD_ID);
+  console.log("ðŸš€ Build Label:", BUILD_LABEL);
+  console.log("ðŸš€ Unique Build ID:", UNIQUE_BUILD_ID);
+  console.log("ðŸš€ Runtime:", new Date().toISOString());
+  console.log("ðŸš€ðŸš€ðŸš€ ============================================");
 
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedMonth, setSelectedMonth] = useState<string>(""); // Nuevo: filtro de mes
@@ -389,8 +390,8 @@ export default function Clients() {
   // DEBUG: Log para verificar filtro de vendedor
   useEffect(() => {
     if (clientsResponse) {
-      console.log(`🔍 [Clients] user=${currentUser?.username} role=${currentUser?.role} → ${clients.length} clientes recibidos (tab=${activeTab})`);
-      console.log(`🔍 [Clients] stats=`, clientStats);
+      console.log(`ðŸ” [Clients] user=${currentUser?.username} role=${currentUser?.role} â†’ ${clients.length} clientes recibidos (tab=${activeTab})`);
+      console.log(`ðŸ” [Clients] stats=`, clientStats);
     }
   }, [clientsResponse]);
   useEffect(() => {
@@ -564,15 +565,15 @@ export default function Clients() {
 
   // Load all client data with their BANs and subscribers
   useEffect(() => {
-    // Evitar ejecutar si aún está cargando
+    // Evitar ejecutar si aún esta cargando
     if (sourceLoading) {
       return;
     }
 
     const loadClientData = async () => {
-      console.log('🔄 loadClientData iniciado. Clientes recibidos:', sourceClients?.length || 0);
+      console.log('ðŸ”„ loadClientData iniciado. Clientes recibidos:', sourceClients?.length || 0);
       if (!sourceClients || sourceClients.length === 0) {
-        console.log('⚠️ No hay clientes, limpiando clientItems');
+        console.log('⚠ ï¸ No hay clientes, limpiando clientItems');
         setClientItems([]);
         return;
       }
@@ -582,7 +583,7 @@ export default function Clients() {
 
         // PRIMERO: Crear clientItems básicos SIN cargar BANs/suscriptores (más rápido)
         const clientData: ClientItem[] = [];
-        console.log(`📊 Creando ${sourceClients.length} clientItems básicos (sin BANs/suscriptores)...`);
+        console.log(`ðŸ“Š Creando ${sourceClients.length} clientItems básicos (sin BANs/suscriptores)...`);
 
         for (const client of sourceClients) {
           // Check if this client is being followed
@@ -683,7 +684,7 @@ export default function Clients() {
         // SEGUNDO: Cargar detalles de BANs/suscriptores en segundo plano (opcional, no bloquea la UI)
         // Esto se puede hacer de forma lazy cuando el usuario expande un cliente
       } catch (error) {
-        console.error('❌ Error loading client data:', error);
+        console.error('âŒ Error loading client data:', error);
         setClientItems([]);
       }
     };
@@ -803,11 +804,11 @@ export default function Clients() {
     // Crear un mapa de clientId a lastActivity, banType, hasCancelledBans e isIncomplete desde clients
     const clientMetadata = new Map<number, { lastActivity: string | null; banType: string | null; hasCancelledBans: boolean; isIncomplete: boolean }>();
     if (sourceClients) {
-      console.log(`🔄 Procesando ${sourceClients.length} clientes para detectar incompletos...`);
+      console.log(`ðŸ”„ Procesando ${sourceClients.length} clientes para detectar incompletos...`);
       sourceClients.forEach(client => {
         const lastActivity = client.last_activity || client.updated_at || null;
 
-        // Usar ban_descriptions primero (desde la tabla bans), si no está disponible usar all_service_types (desde subscribers)
+        // Usar ban_descriptions primero (desde la tabla bans), si no esta disponible usar all_service_types (desde subscribers)
         const banDescriptions = (client as any).ban_descriptions || null;
         const allServiceTypes = client.all_service_types || null;
 
@@ -818,11 +819,11 @@ export default function Clients() {
         } else if (allServiceTypes) {
           // Si no hay descripciones, inferir del tipo de servicio de suscriptores
           const types = allServiceTypes.toLowerCase();
-          const hasMovil = types.includes('móvil') || types.includes('movil') || types.includes('mobile');
+          const hasMóvil = types.includes('móvil') || types.includes('movil') || types.includes('mobile');
           const hasFijo = types.includes('fijo') || types.includes('fixed');
-          if (hasMovil && hasFijo) {
+          if (hasMóvil && hasFijo) {
             banType = 'Convergente';
-          } else if (hasMovil) {
+          } else if (hasMóvil) {
             banType = 'Móvil';
           } else if (hasFijo) {
             banType = 'Fijo';
@@ -860,7 +861,7 @@ export default function Clients() {
         sinNombreNiEmpresa: 0,
         conNombreBAN: 0,
         conEmpresaBAN: 0,
-        muestrasIncompletos: [] as any[]
+        muestraIncompletos: [] as any[]
       };
 
       sourceClients.forEach(client => {
@@ -888,9 +889,9 @@ export default function Clients() {
           if (!hasSubscriber) stats.sinSuscriptor++;
           if (!hasNameOrBusiness) stats.sinNombreNiEmpresa++;
 
-          // Guardar muestra de incompletos (primeros 10)
-          if (stats.muestrasIncompletos.length < 10) {
-            stats.muestrasIncompletos.push({
+          // Guardar muestrade incompletos (primeros 10)
+          if (stats.muestraIncompletos.length < 10) {
+            stats.muestraIncompletos.push({
               id: client.id,
               name: client.name || 'NULL',
               business_name: client.business_name || 'NULL',
@@ -905,20 +906,20 @@ export default function Clients() {
         }
       });
 
-      console.log('📊 ===== ESTADÍSTICAS DE VALIDACIÓN =====');
+      console.log('ðŸ“Š ===== ESTADÍSTICAS DE VALIDACIÃ“N =====');
       console.log('Total clientes:', stats.total);
       console.log('✅ Completos (tienen BAN + Suscriptor + Nombre/Empresa):', stats.completos);
-      console.log('⚠️ Incompletos:', stats.incompletos);
+      console.log('⚠ ï¸ Incompletos:', stats.incompletos);
       console.log('  - Sin BAN:', stats.sinBAN);
       console.log('  - Sin Suscriptor:', stats.sinSuscriptor);
       console.log('  - Sin Nombre ni Empresa:', stats.sinNombreNiEmpresa);
       console.log('');
-      console.log('🏷️ CLIENTES CON NOMBRE/EMPRESA AUTO-GENERADOS (BAN):');
+      console.log('ðŸ·ï¸ CLIENTES CON NOMBRE/EMPRESA AUTO-GENERADOS (BAN):');
       console.log('  - Con nombre "Cliente BAN ..." o "BAN ...":', stats.conNombreBAN);
       console.log('  - Con empresa "Empresa BAN ..." o "BAN ...":', stats.conEmpresaBAN);
       console.log('  - Total con nombre/empresa BAN:', stats.conNombreBAN + stats.conEmpresaBAN);
       console.log('');
-      console.log('📋 Muestra de incompletos (primeros 10):', stats.muestrasIncompletos);
+      console.log('ðŸ“‹ Muestáde incompletos (primeros 10):', stats.muestraIncompletos);
       console.log('==========================================');
     }
 
@@ -1031,7 +1032,7 @@ export default function Clients() {
   const incompleteClients = filteredClients.filter(item => item.isIncomplete);
   const cancelledClients = filteredClients.filter(item => item.hasCancelledBans);
 
-  // Contadores para tabs (usar stats del backend si están disponibles, sino calcular localmente)
+  // Contadores para tabs (usar stats del backend si está disponibles, sino calcular localmente)
   const searchModeTabCounts = {
     active: filteredClients.filter(item => !item.isBeingFollowed && !item.wasCompleted && !item.hasCancelledBans && !item.isIncomplete).length,
     cancelled: filteredClients.filter(item => item.hasCancelledBans).length,
@@ -1050,16 +1051,16 @@ export default function Clients() {
   const totalAllClients = clientSummaries.length;
 
   // Debug: mostrar conteo y verificar lógica
-  console.log('🔍 ===== ESTADÍSTICAS CLIENTES =====');
-  console.log('📊 Total filteredClients:', filteredClients.length);
-  console.log('📊 Total TODOS los clientes:', totalAllClients);
-  console.log('📊 Activos:', activeClientsCount);
-  console.log('📊 Cancelados:', cancelledClientsCount);
-  console.log('📊 Seguimiento:', followingClientsCount);
-  console.log('📊 Completadas:', completedClientsCount);
-  console.log('📊 Incompletos:', incompleteClientsCount);
-  console.log('🧮 Suma verificación:', activeClientsCount + cancelledClientsCount + incompleteClientsCount);
-  console.log('🔍 ===== FIN ESTADÍSTICAS =====');
+  console.log('ðŸ” ===== ESTADÍSTICAS CLIENTES =====');
+  console.log('ðŸ“Š Total filteredClients:', filteredClients.length);
+  console.log('ðŸ“Š Total TODOS los clientes:', totalAllClients);
+  console.log('ðŸ“Š Activos:', activeClientsCount);
+  console.log('ðŸ“Š Cancelados:', cancelledClientsCount);
+  console.log('ðŸ“Š Seguimiento:', followingClientsCount);
+  console.log('ðŸ“Š Completadas:', completedClientsCount);
+  console.log('ðŸ“Š Incompletos:', incompleteClientsCount);
+  console.log('ðŸ§® Suma verificación:', activeClientsCount + cancelledClientsCount + incompleteClientsCount);
+  console.log('ðŸ” ===== FIN ESTADÍSTICAS =====');
 
   const getClientPriorityDate = (item: ClientRowSummary) => {
     const dateValue = item.primaryContractEndDate || item.primarySubscriberCreatedAt || item.lastActivity || null;
@@ -1140,13 +1141,13 @@ export default function Clients() {
   const endIndex = startIndex + itemsPerPage;
   const displayedClients = clientsForTab.slice(startIndex, endIndex);
 
-  // Reset página cuando cambien filtros o pestañas
+  // Reset página cuando cambien filtros o pestanas
   useEffect(() => {
     setCurrentPage(1);
   }, [activeTab, searchTerm, selectedMonth]);
 
   const handleSendToFollowUp = async (clientId: number) => {
-    console.log('🔵 handleSendToFollowUp EJECUTADO - clientId:', clientId);
+    console.log('ðŸ”µ handleSendToFollowUp EJECUTADO - clientId:', clientId);
     try {
       const clientResponse = await authFetch(`/api/clients/${clientId}`);
       if (!clientResponse.ok) {
@@ -1154,11 +1155,11 @@ export default function Clients() {
       }
 
       const client = await clientResponse.json();
-      console.log('🔵 Cliente cargado:', client.name);
+      console.log('ðŸ”µ Cliente cargado:', client.name);
 
       // Verificar si tiene seguimiento activo (no completado)
       if (clientHasActiveFollowUp(clientId)) {
-        notify('info', 'Este cliente ya está en seguimiento activo.');
+        notify('info', 'Este cliente ya esta en seguimiento activo.');
         return;
       }
 
@@ -1174,7 +1175,7 @@ export default function Clients() {
         vendor_id: resolvedVendorId,
         contact_phone: client.phone || '',
         contact_email: client.email || '',
-        notes: 'Cliente enviado desde gestión de clientes',
+        notes: 'Cliente enviado desde gestion de clientes',
         fijo_ren: 0,
         fijo_new: 0,
         movil_nueva: 0,
@@ -1184,7 +1185,7 @@ export default function Clients() {
         mpls: 0
       };
 
-      console.log('📤 Enviando prospecto:', prospectData);
+      console.log('ðŸ“¤ Enviando prospecto:', prospectData);
       const response = await authFetch('/api/follow-up-prospects', {
         method: 'POST',
         json: prospectData
@@ -1192,7 +1193,7 @@ export default function Clients() {
 
       if (!response.ok) {
         const errorPayload = await response.json().catch(() => null);
-        console.error('❌ Error del servidor:', errorPayload);
+        console.error('âŒ Error del servidor:', errorPayload);
         throw new Error(errorPayload?.error || 'No fue posible enviar el cliente a seguimiento.');
       }
 
@@ -1202,8 +1203,8 @@ export default function Clients() {
 
       await Promise.all([refetchProspects(), refetchClients()]);
 
-      // Mantener al usuario en Clientes y refrescar vista
-      console.log('🔄 Cliente enviado a seguimiento dentro del módulo Clientes');
+      // Manténer al usuario en Clientes y refrescar vista
+      console.log('ðŸ”„ Cliente enviado a seguimiento dentro del módulo Clientes');
       setActiveTab('following');
     } catch (error) {
       console.error('Error sending client to follow-up:', error);
@@ -1248,7 +1249,7 @@ export default function Clients() {
       return;
     }
 
-    if (!window.confirm("¿Estás seguro de fusionar estos clientes? Esta acción NO se puede deshacer. El cliente 'Origen' será eliminado y sus datos pasarán al 'Destino'.")) {
+    if (!window.confirm("¿Estás seguro de fusionar estáclientes? Esta acción NO se puede deshacer. El cliente 'Origen' será eliminado y sus datos pasarán al 'Destino'.")) {
       return;
     }
 
@@ -1358,7 +1359,7 @@ export default function Clients() {
   const handleViewClientDetail = async (clientId: number, initialTab: 'info' | 'bans' | 'history' | 'comparativas' | 'ventas' | 'tareas' = 'bans') => {
     try {
       setLoadingClientDetail(true);
-      setClientDetailInitialTab(initialTab); // Establecer la pestaña inicial
+      setClientDetailInitialTab(initialTab); // Establecer la pestana inicial
       setShowClientDetailModal(true); // Mostrar modal inmediatamente para mejor UX
 
       const clientResponse = await authFetch(`/api/clients/${clientId}`);
@@ -1404,7 +1405,7 @@ export default function Clients() {
 
   // Función para cargar BANs del cliente cuando se abre el modal de edición
   const loadClientBANs = async (clientId: number) => {
-    console.log('🚨🚨🚨 loadClientBANs INICIADO para cliente:', clientId);
+    console.log('ðŸš¨ðŸš¨ðŸš¨ loadClientBANs INICIADO para cliente:', clientId);
     try {
       // Load client's BANs and Subscribers in parallel (Optimized)
       const [bansResponse, subscribersResponse] = await Promise.all([
@@ -1414,7 +1415,7 @@ export default function Clients() {
 
       if (bansResponse.ok) {
         const fetchedBans: BAN[] = await bansResponse.json();
-        console.log('🔵 BANs recibidos del API:', fetchedBans);
+        console.log('ðŸ”µ BANs recibidos del API:', fetchedBans);
         let allSubscribers: any[] = [];
 
         if (subscribersResponse.ok) {
@@ -1427,15 +1428,15 @@ export default function Clients() {
           subscribers: allSubscribers.filter((s: any) => s.ban_id === ban.id)
         }));
 
-        console.log('🟢 BANs con suscriptores mapeados:', bansWithSubscribers);
-        console.log('🟢 Primer BAN account_type:', bansWithSubscribers[0]?.account_type);
+        console.log('ðŸŸ¢ BANs con suscriptores mapeados:', bansWithSubscribers);
+        console.log('ðŸŸ¢ Primer BAN account_type:', bansWithSubscribers[0]?.account_type);
         setClientBANs(bansWithSubscribers);
         evaluateBanRequirement(clientId, bansWithSubscribers);
       } else {
-        console.error('❌ Error en bansResponse:', bansResponse.status);
+        console.error('âŒ Error en bansResponse:', bansResponse.status);
       }
     } catch (error) {
-      console.error('❌❌❌ Error loading client BANs:', error);
+      console.error('âŒâŒâŒ Error loading client BANs:', error);
       setClientBANs([]);
     }
   };
@@ -1474,7 +1475,7 @@ export default function Clients() {
         // Alerta recordando agregar BAN
         setTimeout(() => {
           const agregarBan = window.confirm(
-            `⚠️ El cliente "${data.name}" fue creado sin BAN.\n\nRecuerda agregar al menos un BAN para que aparezca correctamente en el sistema.\n\n¿Deseas agregar un BAN ahora?`
+            `⚠ ï¸ El cliente "${data.name}" fue creado sin BAN.\n\nRecuerda agregar al menos un BAN para que aparezca correctamente en el sistema.\n\n¿Deseas agregar un BAN ahora?`
           );
           if (agregarBan) {
             setEditingClient(responseData as Client);
@@ -1505,7 +1506,7 @@ export default function Clients() {
         throw new Error(error.error || "Error al actualizar el cliente");
       }
 
-      // Verificar si el cliente estaba incompleto (sin nombre/empresa) y ahora está completo
+      // Verificar si el cliente está incompleto (sin nombre/empresa) y ahora esta completo
       // La condición de "incompleto" del sistema es: !name && !business_name
       const wasIncomplete = (
         !editingClient.name ||
@@ -1580,7 +1581,7 @@ export default function Clients() {
         notify('success', `BAN ${data.ban_number} creado correctamente.`);
         setShowBANModal(false);
 
-        // Recargar BANs del cliente si estamos editando
+        // Recargar BANs del cliente si estás editando
         if (selectedClientId) {
           const bansResponse = await authFetch(`/api/bans?client_id=${selectedClientId}`);
           if (bansResponse.ok) {
@@ -1613,15 +1614,15 @@ export default function Clients() {
       }
 
       // Manejar errores
-      console.error('❌ Error del servidor:', response.status, responseData);
+      console.error('âŒ Error del servidor:', response.status, responseData);
       let errorMessage = responseData.error || 'No fue posible crear el BAN.';
 
       if (response.status === 409) {
         // El backend ahora incluye información sobre qué cliente tiene el BAN
         const backendMessage = responseData.error || '';
-        if (backendMessage.includes('ya existe y está asignado a este cliente')) {
+        if (backendMessage.includes('ya existe y esta asignado a este cliente')) {
           errorMessage = backendMessage;
-        } else if (backendMessage.includes('ya existe y está asignado al cliente')) {
+        } else if (backendMessage.includes('ya existe y esta asignado al cliente')) {
           errorMessage = backendMessage;
         } else {
           errorMessage = `El BAN ${data.ban_number} ya existe en el sistema. Por favor, verifica el número o edita el BAN existente.`;
@@ -1637,7 +1638,7 @@ export default function Clients() {
       notify('error', errorMessage);
       throw new Error(errorMessage);
 
-      // Recargar BANs del cliente si estamos editando
+      // Recargar BANs del cliente si estás editando
       if (selectedClientId) {
         const bansResponse = await authFetch(`/api/bans?client_id=${selectedClientId}`);
         if (bansResponse.ok) {
@@ -1891,7 +1892,7 @@ export default function Clients() {
   // DEBUG: Verificar conteo de BANs
   // IMPORTANTE: 1 BAN con 5 suscriptores = 1 BAN (no 5)
   // El backend ya cuenta BANs correctamente con COUNT(*) en la tabla bans
-  console.log('📊 Estadísticas calculadas:', {
+  console.log('ðŸ“Š Estadísticas calculadas:', {
     totalClients,
     totalBans,
     totalSubscribers,
@@ -1903,12 +1904,12 @@ export default function Clients() {
     // FIX: Usar clientSummaries en lugar de clientItems para tener los campos calculados (isIncomplete, etc)
     const dataToProcess = scope === 'all' ? clientSummaries : clientsForTab;
 
-    console.log(`📊 Exportando ${scope === 'all' ? 'TODO' : 'VISTA ACTUAL'} - Registros: ${dataToProcess.length}`);
+    console.log(`ðŸ“Š Exportando ${scope === 'all' ? 'TODO' : 'VISTA ACTUAL'} - Registros: ${dataToProcess.length}`);
 
     const dataToExport: any[] = [];
 
     dataToProcess.forEach(client => {
-      // Si tiene detalles de suscriptores, generamos una fila por cada uno (EXPLOSIÓN)
+      // Si tiene detalles de suscriptores, generamos una fila por cada uno (EXPLOSIÃ“N)
       const details = client.subscribersDetail;
       if (details && details.length > 0) {
         details.forEach(sub => {
@@ -1963,10 +1964,10 @@ export default function Clients() {
       { wch: 30 }, // Empresa
       { wch: 20 }, // Tipo
       { wch: 25 }, // Email
-      { wch: 15 }, // Telefono Principal
-      { wch: 15 }, // Movil Contacto
+      { wch: 15 }, // Teléfono Principal
+      { wch: 15 }, // Móvil Contacto
       { wch: 15 }, // Tel Secundario
-      { wch: 30 }, // Direccion
+      { wch: 30 }, // Dirección
       { wch: 15 }, // Ciudad
       { wch: 10 }, // CP
       { wch: 20 }, // Persona Contacto
@@ -1994,7 +1995,7 @@ export default function Clients() {
   };
 
   const handleExportForMailMerge = () => {
-    console.log('📧 Exportando para Mail Merge (Correspondencia)');
+    console.log('ðŸ“§ Exportando para Mail Merge (Correspondencia)');
 
     const dataToExport: any[] = [];
     
@@ -2044,7 +2045,7 @@ export default function Clients() {
     const fileName = `Emails_Correspondencia_${activeTab}_${new Date().toISOString().split('T')[0]}.xlsx`;
     XLSX.writeFile(wb, fileName);
     
-    notify('success', `✅ ${validCount} válidos | ⚠️ ${invalidCount} inválidos | Total: ${dataToExport.length}`);
+    notify('success', `✅ ${validCount} válidos | ⚠ ï¸ ${invalidCount} inválidos | Total: ${dataToExport.length}`);
     setShowExportMenu(false);
   };
 
@@ -2503,7 +2504,7 @@ export default function Clients() {
                           onClick={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
-                            console.log('🟣 CLICK FUSIONAR - ID:', item.clientId);
+                            console.log('ðŸŸ£ CLICK FUSIONAR - ID:', item.clientId);
                             setMergeSourceId(item.clientId);
                             setShowMergeModal(true);
                           }}
@@ -2630,7 +2631,7 @@ export default function Clients() {
                   value={stopFollowNotes}
                   onChange={(e) => setStopFollowNotes(e.target.value)}
                   className="w-full h-24 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:ring-2 focus:ring-orange-500 focus:border-transparent resize-none"
-                  placeholder="Ej: Cliente no está interesado en renovar contrato, Cliente cambió de proveedor, etc."
+                  placeholder="Ej: Cliente no esta interesado en renovar contrato, Cliente cambió de proveedor, etc."
                   required
                 />
                 <p className="text-xs text-gray-500 mt-1">
@@ -2689,7 +2690,7 @@ export default function Clients() {
               // Luego refrescar el detalle del cliente en el modal
               if (clientDetail) {
                 await handleViewClientDetail(clientDetail.id);
-                // Verificar si el cliente ahora tiene BANs cancelados y cambiar de pestaña
+                // Verificar si el cliente ahora tiene BANs cancelados y cambiar de pestana
                 const updatedClientResponse = await authFetch(`/api/clients/${clientDetail.id}`);
                 if (updatedClientResponse.ok) {
                   const updatedClient = await updatedClientResponse.json();
@@ -2701,7 +2702,7 @@ export default function Clients() {
             }}
             onFollowUpUpdated={async () => {
               await refetchProspects();
-              // Mantener navegación en módulo Clientes
+              // Manténer navegación en módulo Clientes
               setActiveTab('following');
             }}
             onEditSubscriber={(subscriber, banId) => {
@@ -2883,9 +2884,9 @@ export function ClientManagementModal({
   onFollowUpUpdated?: () => Promise<void> | void;
   clientHasActiveFollowUp: (clientId: number) => boolean;
   resolveFollowUpVendorId: (client: { vendor_id?: number | null; salesperson_id?: string | number | null }) => number | null;
-  initialTab?: 'info' | 'bans' | 'history' | 'comparativas' | 'ventas' | 'tareas';
+  initialTab?: 'info' | 'bans' | 'history' | 'comparativas' | 'ventas' | 'tareas' | 'notas';
 }) {
-  const [activeTab, setActiveTab] = useState<'info' | 'bans' | 'history' | 'comparativas' | 'ventas' | 'tareas'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'info' | 'bans' | 'history' | 'comparativas' | 'ventas' | 'tareas' | 'notas'>(initialTab);
   const [showBANForm, setShowBANForm] = useState(false);
   const [showEmailModal, setShowEmailModal] = useState(false);
   const [showComparativaModal, setShowComparativaModal] = useState(false);
@@ -2896,6 +2897,71 @@ export function ClientManagementModal({
   const [isReturningToPool, setIsReturningToPool] = useState(false);
   const [isEditingClient, setIsEditingClient] = useState(false);
   const [subscriberSubTabs, setSubscriberSubTabs] = useState<Record<string, 'activas' | 'no_renueva' | 'canceladas'>>({});
+
+  // ── Tab "Notas": historial de notas del cliente (INSERT-only, sin edit/delete) ──
+  type ClientNote = {
+    id: string;
+    client_id: string;
+    note: string;
+    created_by: string | null;
+    created_by_name: string;
+    created_at: string;
+    updated_at: string;
+  };
+  const [clientNotes, setClientNotes] = useState<ClientNote[]>([]);
+  const [noteDraft, setNoteDraft] = useState('');
+  const [loadingNotes, setLoadingNotes] = useState(false);
+  const [savingNote, setSavingNote] = useState(false);
+  const [notesError, setNotesError] = useState<string | null>(null);
+
+  const fetchClientNotes = useCallback(async () => {
+    if (!client?.id) return;
+    setLoadingNotes(true);
+    setNotesError(null);
+    try {
+      const res = await authFetch(`/api/clients/${client.id}/notes`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Error ${res.status}`);
+      }
+      const rows = await res.json();
+      setClientNotes(Array.isArray(rows) ? rows : []);
+    } catch (e: any) {
+      setNotesError(e?.message || 'Error cargando notas');
+    } finally {
+      setLoadingNotes(false);
+    }
+  }, [client?.id]);
+
+  useEffect(() => {
+    if (activeTab === 'notas') {
+      void fetchClientNotes();
+    }
+  }, [activeTab, fetchClientNotes]);
+
+  const handleSaveNote = async () => {
+    const text = noteDraft.trim();
+    if (!text || !client?.id) return;
+    setSavingNote(true);
+    setNotesError(null);
+    try {
+      const res = await authFetch(`/api/clients/${client.id}/notes`, {
+        method: 'POST',
+        json: { note: text },
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Error ${res.status}`);
+      }
+      const created = await res.json();
+      setClientNotes((prev) => [created, ...prev]);
+      setNoteDraft('');
+    } catch (e: any) {
+      setNotesError(e?.message || 'Error guardando la nota');
+    } finally {
+      setSavingNote(false);
+    }
+  };
 
   useEffect(() => {
     setActiveTab(initialTab);
@@ -3144,14 +3210,14 @@ export function ClientManagementModal({
   };
 
   const handleSendToFollowUpFromDetail = async () => {
-    console.log('🟢 handleSendToFollowUpFromDetail EJECUTADO - client:', client?.name);
+    console.log('ðŸŸ¢ handleSendToFollowUpFromDetail EJECUTADO - client:', client?.name);
     try {
       if (clientHasActiveFollowUp(client.id)) {
-        setFormMessage({ type: 'info', text: 'Este cliente ya está en seguimiento activo.' });
+        setFormMessage({ type: 'info', text: 'Este cliente ya esta en seguimiento activo.' });
         return;
       }
 
-      console.log('🟢 Enviando a seguimiento...');
+      console.log('ðŸŸ¢ Enviando a seguimiento...');
       const resolvedVendorId = resolveFollowUpVendorId(client);
       if (!resolvedVendorId) {
         throw new Error('Este cliente no tiene vendedor asignado. No se puede enviar a seguimiento.');
@@ -3166,7 +3232,7 @@ export function ClientManagementModal({
         vendor_id: resolvedVendorId,
         contact_phone: client.phone || '',
         contact_email: client.email || '',
-        notes: 'Cliente enviado desde gestión de clientes',
+        notes: 'Cliente enviado desde gestion de clientes',
         fijo_ren: 0,
         fijo_new: 0,
         movil_nueva: 0,
@@ -3176,7 +3242,7 @@ export function ClientManagementModal({
         mpls: 0
       };
 
-      console.log('📤 [MODAL] Enviando prospecto:', prospectData);
+      console.log('ðŸ“¤ [MODAL] Enviando prospecto:', prospectData);
       const response = await authFetch('/api/follow-up-prospects', {
         method: 'POST',
         json: prospectData
@@ -3184,7 +3250,7 @@ export function ClientManagementModal({
 
       if (!response.ok) {
         const error = await response.json().catch(() => null);
-        console.error('❌ [MODAL] Error del servidor:', error);
+        console.error('âŒ [MODAL] Error del servidor:', error);
         throw new Error(error?.error || 'No fue posible enviar a seguimiento.');
       }
 
@@ -3358,7 +3424,7 @@ export function ClientManagementModal({
         },
       });
     } catch (error) {
-      console.error('Error guardando gestión automática:', error);
+      console.error('Error guardando gestá automática:', error);
     }
   };
 
@@ -3367,7 +3433,7 @@ export function ClientManagementModal({
       e.preventDefault();
       e.stopPropagation();
     }
-    console.log('🟢 Guardando cambios cliente...', editClientData);
+    console.log('ðŸŸ¢ Guardando cambios cliente...', editClientData);
     try {
       const response = await authFetch(`/api/clients/${client.id}`, {
         method: 'PUT',
@@ -3398,13 +3464,13 @@ export function ClientManagementModal({
 
   const handleUpdateBAN = async (banId: number, data: any) => {
     try {
-      // Asegurar que se incluye el client_id del BAN que se está editando
+      // Asegurar que se incluye el client_id del BAN que se estáeditando
       const updateData = {
         ...data,
         client_id: editingBAN?.client_id || client.id
       };
 
-      console.log('🔄 Actualizando BAN:', banId, 'con datos:', updateData);
+      console.log('ðŸ”„ Actualizando BAN:', banId, 'con datos:', updateData);
       const response = await authFetch(`/api/bans/${banId}`, {
         method: "PUT",
         json: updateData,
@@ -3431,11 +3497,11 @@ export function ClientManagementModal({
 
   const handleCreateBAN = async (data: any) => {
     try {
-      console.log('🔄 Creando BAN para cliente:', client.id, 'Datos:', data);
+      console.log('ðŸ”„ Creando BAN para cliente:', client.id, 'Datos:', data);
 
       if (!client || !client.id) {
         setFormMessage({ type: 'error', text: 'Error: No se pudo identificar el cliente.' });
-        console.error('❌ Cliente no disponible:', client);
+        console.error('âŒ Cliente no disponible:', client);
         return false;
       }
 
@@ -3469,7 +3535,7 @@ export function ClientManagementModal({
           // Cerrar el modal después de un pequeño delay
           setShowBANForm(false);
 
-          // Refrescar los datos del cliente (esto recargará los BANs)
+          // Refrescar los datos del cliente (estáecargará los BANs)
           if (onRefreshClient) {
             try {
               await onRefreshClient();
@@ -3495,15 +3561,15 @@ export function ClientManagementModal({
       }
 
       // Manejar errores
-      console.error('❌ Error del servidor:', response.status, responseData);
+      console.error('âŒ Error del servidor:', response.status, responseData);
       let errorMessage = responseData?.error || responseData?.message || "Error desconocido al crear el BAN";
 
       if (response.status === 409) {
         // El backend ahora incluye información sobre qué cliente tiene el BAN
         const backendMessage = responseData?.error || responseData?.message || '';
-        if (backendMessage.includes('ya existe y está asignado a este cliente')) {
+        if (backendMessage.includes('ya existe y esta asignado a este cliente')) {
           errorMessage = backendMessage;
-        } else if (backendMessage.includes('ya existe y está asignado al cliente')) {
+        } else if (backendMessage.includes('ya existe y esta asignado al cliente')) {
           errorMessage = backendMessage;
         } else if (backendMessage.includes('ya existe')) {
           errorMessage = backendMessage;
@@ -3520,13 +3586,13 @@ export function ClientManagementModal({
         errorMessage = responseData?.error || responseData?.message || `Error del servidor (${response.status}). Intenta nuevamente.`;
       }
 
-      console.error('❌ Mensaje de error final:', errorMessage);
+      console.error('âŒ Mensaje de error final:', errorMessage);
       setFormMessage({ type: 'error', text: errorMessage });
 
-      // Retornar el mensaje de error para que el BANModal lo muestre
+      // Retornar el mensaje de error para que el BANModal lo muestra
       return { error: true, message: errorMessage } as any;
     } catch (error) {
-      console.error("❌ Error creating BAN:", error);
+      console.error("âŒ Error creating BAN:", error);
       setFormMessage({ type: 'error', text: error instanceof Error ? error.message : 'Error al crear el BAN.' });
       return false;
     }
@@ -3709,7 +3775,7 @@ export function ClientManagementModal({
                 ? 'bg-amber-900/40 text-amber-100 border-amber-500/30'
                 : 'bg-gray-800/60 text-gray-300 border-gray-600/50'
                 }`}>
-                {hasActiveFollowUpInModal ? 'En seguimiento' : 'No está en seguimiento'}
+                {hasActiveFollowUpInModal ? 'En seguimiento' : 'No están seguimiento'}
               </span>
               {client.vendor_name && (
                 <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border bg-blue-900/30 text-blue-100 border-blue-500/30">
@@ -3717,7 +3783,7 @@ export function ClientManagementModal({
                 </span>
               )}
             </div>
-            <p className="text-gray-300 mt-1 text-sm">Gestión completa del cliente</p>
+            <p className="text-gray-300 mt-1 text-sm">Gesti?n completa del cliente</p>
           </div>
           <div className="flex items-center space-x-3">
             {!hasActiveFollowUpInModal && (
@@ -3751,9 +3817,10 @@ export function ClientManagementModal({
             )}
             <button
               onClick={onClose}
-              className="text-gray-400 hover:text-white text-2xl p-2 hover:bg-gray-800 rounded-lg transition-colors"
+              className="text-gray-400 hover:text-white p-2 hover:bg-gray-800 rounded-lg transition-colors"
+              aria-label="Cerrar"
             >
-              ×
+              <X className="w-5 h-5" />
             </button>
           </div>
         </div>
@@ -3833,6 +3900,19 @@ export function ClientManagementModal({
           >
             Pendientes
           </button>
+          <button
+            onClick={() => setActiveTab('notas')}
+            className={`px-6 py-3 text-sm font-medium transition-colors flex items-center gap-1.5 ${activeTab === 'notas'
+              ? 'text-cyan-400 border-b-2 border-cyan-400 bg-gray-750'
+              : 'text-gray-400 hover:text-white hover:bg-gray-750'
+              }`}
+          >
+            <FileText className="w-3.5 h-3.5" />
+            Notas
+            {clientNotes.length > 0 && (
+              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-cyan-700">{clientNotes.length}</span>
+            )}
+          </button>
         </div>
 
         {/* Content */}
@@ -3886,7 +3966,7 @@ export function ClientManagementModal({
                         className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white px-4 py-2 rounded-lg text-sm flex items-center gap-2 transition-all shadow-lg shadow-purple-500/25"
                         title="Enviar cliente al sistema POS"
                       >
-                        <span>📤</span>
+                        <span>ðŸ“¤</span>
                         Enviar a POS
                       </button>
                       <button
@@ -3943,7 +4023,7 @@ export function ClientManagementModal({
                         onClick={(e) => {
                           e.preventDefault();
                           e.stopPropagation();
-                          console.log('🔴 Cancelando edición...');
+                          console.log('ðŸ”´ Cancelando edición...');
                           setIsEditingClient(false);
                           setEditClientData({
                             name: client.name || '',
@@ -4618,7 +4698,7 @@ export function ClientManagementModal({
                     <div className="text-center py-8 bg-gray-800/50 rounded-lg border-2 border-dashed border-gray-600">
                       <Hash className="mx-auto h-12 w-12 text-gray-600 mb-3" />
                       <h3 className="text-base font-medium text-gray-300 mb-2">Este cliente no tiene BANs asignados</h3>
-                      <p className="text-gray-500 text-sm mb-4">Crea el primer BAN para comenzar a gestionar suscriptores</p>
+                      <p className="text-gray-500 text-sm mb-4">Crea el primer BAN para comenzar a gestáar suscriptores</p>
                       <button
                         onClick={() => setShowBANForm(true)}
                         className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-4 py-2 rounded-lg text-sm transition-all duration-200 shadow-lg shadow-blue-500/25"
@@ -4633,7 +4713,8 @@ export function ClientManagementModal({
 
           {activeTab === 'history' && (
             <div className="space-y-4">
-              <FollowUpGestionesTab clientId={client.id} />
+              <FollowUpNotesPanel clientId={client.id} />
+              <FollowUpGestionTab clientId={client.id} />
               <SalesHistoryTab clientId={client.id} />
             </div>
           )}
@@ -4641,7 +4722,7 @@ export function ClientManagementModal({
           {/* ====== TAB COMPARATIVAS ====== */}
           {activeTab === 'comparativas' && (
             <div className="space-y-6">
-              {/* SECCIÓN 1: PLAN ACTUAL (EDITABLE) */}
+              {/* SECCIÃ“N 1: PLAN ACTUAL (EDITABLE) */}
               <div>
                 <h3 className="text-lg font-bold text-white mb-3 flex items-center gap-2">
                   <Package className="w-5 h-5 text-blue-400" />
@@ -4761,7 +4842,7 @@ export function ClientManagementModal({
                 <div className="flex-1 border-t border-emerald-500/30"></div>
               </div>
 
-              {/* SECCIÓN 2: OFERTA (EDITABLE, PRE-LLENADA CON BAN/PHONE) */}
+              {/* SECCIÃ“N 2: OFERTA (EDITABLE, PRE-LLENADA CON BAN/PHONE) */}
               <div>
                 <div className="flex items-center justify-between mb-3">
                   <h3 className="text-lg font-bold text-white flex items-center gap-2">
@@ -4951,7 +5032,70 @@ export function ClientManagementModal({
 
           {/* ====== TAB TAREAS ====== */}
           {activeTab === 'tareas' && (
-            <ClientTasksPanel client={client} />
+            <ClientTasksPanel
+              client={client}
+              onTaskUpdated={async () => {
+                if (onFollowUpUpdated) await onFollowUpUpdated();
+              }}
+            />
+          )}
+
+          {activeTab === 'notas' && (
+            <div className="space-y-4">
+              <div className="bg-gray-800 rounded-lg p-4">
+                <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
+                  <FileText className="w-5 h-5 text-cyan-400" />
+                  Nueva nota
+                </h3>
+                <textarea
+                  value={noteDraft}
+                  onChange={(e) => setNoteDraft(e.target.value)}
+                  placeholder="Escribe una nota sobre este cliente..."
+                  rows={4}
+                  className="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-white placeholder-gray-500 outline-none focus:border-cyan-500"
+                />
+                <div className="mt-3 flex items-center justify-between gap-3">
+                  <p className="text-xs text-gray-500">
+                    Las notas son históricas: no se editan ni borran.
+                  </p>
+                  <button
+                    onClick={() => void handleSaveNote()}
+                    disabled={savingNote || !noteDraft.trim()}
+                    className="inline-flex items-center gap-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 disabled:cursor-not-allowed disabled:opacity-50 px-4 py-2 text-sm font-medium text-white transition-colors"
+                  >
+                    {savingNote ? 'Guardando…' : 'Guardar nota'}
+                  </button>
+                </div>
+                {notesError && (
+                  <div className="mt-3 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300">
+                    {notesError}
+                  </div>
+                )}
+              </div>
+
+              <div className="bg-gray-800 rounded-lg p-4">
+                <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-3">
+                  Historial ({clientNotes.length})
+                </h3>
+                {loadingNotes ? (
+                  <p className="text-sm italic text-gray-500">Cargando notas…</p>
+                ) : clientNotes.length === 0 ? (
+                  <p className="text-sm italic text-gray-500">Sin notas todavía. Agrega la primera arriba.</p>
+                ) : (
+                  <ul className="space-y-3">
+                    {clientNotes.map((n) => (
+                      <li key={n.id} className="rounded-lg border border-gray-700 bg-gray-900 p-3">
+                        <div className="mb-1 flex items-center justify-between gap-2 text-xs text-gray-400">
+                          <span className="font-medium text-cyan-300">{n.created_by_name || 'Sistema'}</span>
+                          <span>{new Date(n.created_at).toLocaleString()}</span>
+                        </div>
+                        <p className="text-sm text-gray-100 whitespace-pre-wrap">{n.note}</p>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
           )}
         </div>
 
@@ -5047,7 +5191,7 @@ export function ClientManagementModal({
   );
 }
 
-function FollowUpGestionesTab({ clientId }: { clientId: number | string }) {
+function FollowUpGestionTab({ clientId }: { clientId: number | string }) {
   const [loading, setLoading] = useState(true);
   const [prospects, setProspects] = useState<any[]>([]);
   const [logsByProspect, setLogsByProspect] = useState<Record<number, any[]>>({});
@@ -5126,7 +5270,7 @@ function FollowUpGestionesTab({ clientId }: { clientId: number | string }) {
             <div className="flex items-center justify-between">
               <div className="text-sm text-white font-medium">{p.company_name || 'Cliente'}</div>
               <span className={`text-[10px] px-2 py-0.5 rounded-full ${p.completed_date ? 'bg-emerald-900/40 text-emerald-200 border border-emerald-500/30' : 'bg-blue-900/40 text-blue-200 border border-blue-500/30'}`}>
-                {p.completed_date ? 'Completado' : 'En gestión'}
+                {p.completed_date ? 'Completado' : 'En gestá'}
               </span>
             </div>
             <div className="text-xs text-gray-400">
@@ -5154,7 +5298,212 @@ function FollowUpGestionesTab({ clientId }: { clientId: number | string }) {
   );
 }
 
+type ProspectNote = {
+  id: string;
+  text: string;
+  at: string | null;
+  author: string | null;
+  prospectId: number;
+};
+
+function formatNoteDateTime(value?: string | null) {
+  if (!value) return "Sin fecha";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Sin fecha";
+  return date.toLocaleString("es-PR", { dateStyle: "short", timeStyle: "short" });
+}
+
+type FollowUpNoteApiRow = {
+  id: string;
+  follow_up_id: string;
+  client_id: string;
+  deal_id?: string | null;
+  note: string;
+  created_by?: string | null;
+  created_by_name?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+function FollowUpNotesPanel({ clientId }: { clientId: number | string }) {
+  const currentUser = getCurrentUser();
+  const [loading, setLoading] = useState(true);
+  const [loadingNotes, setLoadingNotes] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [prospects, setProspects] = useState<FollowUpProspect[]>([]);
+  const [notes, setNotes] = useState<FollowUpNoteApiRow[]>([]);
+  const [note, setNote] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const activeProspect = useMemo(() => {
+    const matching = prospects
+      .filter((p) => String(p.client_id || "") === String(clientId))
+      .sort((a, b) => new Date(b.updated_at || b.completed_date || 0).getTime() - new Date(a.updated_at || a.completed_date || 0).getTime());
+    return matching[0] || null;
+  }, [clientId, prospects]);
+
+  const noteHistory = useMemo<ProspectNote[]>(() => {
+    return [...notes]
+      .sort((a, b) => new Date(b.created_at || b.updated_at || 0).getTime() - new Date(a.created_at || a.updated_at || 0).getTime())
+      .map((entry) => ({
+        id: entry.id,
+        text: entry.note,
+        at: entry.created_at || entry.updated_at || null,
+        author: entry.created_by_name || null,
+        prospectId: Number(activeProspect?.id || 0) || 0,
+      }));
+  }, [activeProspect?.id, notes]);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const resp = await authFetch('/api/follow-up-prospects?include_completed=true');
+      if (!resp.ok) throw new Error('No se pudo cargar el historial de notas.');
+      const data = await resp.json();
+      const rows = Array.isArray(data) ? data : [];
+      setProspects(rows.filter((p: FollowUpProspect) => String(p.client_id || "") === String(clientId)));
+    } catch (err) {
+      setProspects([]);
+      setError(err instanceof Error ? err.message : 'Error cargando notas.');
+    } finally {
+      setLoading(false);
+    }
+  }, [clientId]);
+
+  const loadNotes = useCallback(async (followUpId: string | number | null) => {
+    if (!followUpId) {
+      setNotes([]);
+      setLoadingNotes(false);
+      return;
+    }
+
+    setNotes([]);
+    setLoadingNotes(true);
+    try {
+      const resp = await authFetch(`/api/follow-up-prospects/${followUpId}/notes`);
+      if (!resp.ok) throw new Error('No se pudo cargar el historial de notas.');
+      const data = await resp.json();
+      setNotes(Array.isArray(data) ? data : []);
+    } catch (err) {
+      setNotes([]);
+      setError(err instanceof Error ? err.message : 'Error cargando notas.');
+    } finally {
+      setLoadingNotes(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  useEffect(() => {
+    void loadNotes(activeProspect?.id || null);
+  }, [activeProspect?.id, loadNotes]);
+
+  const saveNote = async () => {
+    const trimmed = note.trim();
+    if (!trimmed) {
+      setError("La nota no puede estávacía.");
+      return;
+    }
+    if (!activeProspect?.id) {
+      setError("No hay seguimiento activo para guardar la nota.");
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    try {
+      const author = currentUser?.salespersonName || currentUser?.username || "Sistema";
+      const resp = await authFetch(`/api/follow-up-prospects/${activeProspect.id}/notes`, {
+        method: "POST",
+        json: {
+          note: trimmed,
+          created_by_name: author,
+        },
+      });
+      if (!resp.ok) {
+        const payload = await resp.json().catch(() => ({ error: "Error guardando nota" }));
+        throw new Error(payload.error || "Error guardando nota");
+      }
+      setNote("");
+      await loadNotes(activeProspect.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error guardando nota.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="rounded-lg border border-gray-700 bg-gray-800/50 p-4">
+        <p className="text-xs text-gray-400">Cargando historial de notas...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-gray-700 bg-gray-800/50 p-4 space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-gray-200">Historial de notas</h3>
+          <p className="text-xs text-gray-500">Se guarda en el seguimiento activo del cliente.</p>
+        </div>
+      </div>
+
+      {error && (
+        <div className="rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+          {error}
+        </div>
+      )}
+
+      <div className="space-y-2">
+        <label className="block text-xs font-medium uppercase text-gray-400">Nueva nota</label>
+        <textarea
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          rows={3}
+          className="w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-white outline-none focus:border-blue-500"
+          placeholder="Escribe una nota de seguimiento..."
+        />
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={() => void saveNote()}
+            disabled={saving}
+            className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Guardar nota
+          </button>
+        </div>
+      </div>
+
+      {loadingNotes ? (
+        <p className="text-xs text-gray-400">Cargando notas...</p>
+      ) : noteHistory.length === 0 ? (
+        <p className="text-xs text-gray-400">Sin notas recientes.</p>
+      ) : (
+        <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+          {noteHistory.map((entry) => (
+            <div key={entry.id} className="rounded-lg border border-gray-700 bg-gray-900/70 p-3">
+              <p className="text-sm text-gray-100 whitespace-pre-line leading-relaxed">{entry.text}</p>
+              <div className="mt-2 text-[10px] text-gray-500">
+                {formatNoteDateTime(entry.at)}
+                {entry.author ? ` · ${entry.author}` : ""}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ClientSalesReportsTab({ clientId }: { clientId: number | string }) {
+  const currentUser = getCurrentUser();
+  const canViewCompanyFinancials = String(currentUser?.role || "").toLowerCase() === "admin";
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<any[]>([]);
   const [pendingRows, setPendingRows] = useState<any[]>([]);
@@ -5342,7 +5691,7 @@ function ClientSalesReportsTab({ clientId }: { clientId: number | string }) {
       {rows.length === 0 && pendingRows.length > 0 && (
         <div className="rounded-lg border border-amber-700/40 bg-amber-900/15 p-3 space-y-3">
           <div className="text-xs text-amber-200">
-            Este cliente no tiene reportes en comisiones todavía. Mostrando líneas del CRM pendientes de sincronización Tango.
+            Este cliente no tiene reportes en comisiónes todavía. Mostrando líneas del CRM pendientes de sincronización Tango.
           </div>
           <div className="overflow-x-auto rounded-lg border border-gray-700">
             <table className="w-full text-sm">
@@ -5379,7 +5728,9 @@ function ClientSalesReportsTab({ clientId }: { clientId: number | string }) {
               <th className="px-3 py-2 text-left text-gray-300">Mes</th>
               <th className="px-3 py-2 text-left text-gray-300">BAN</th>
               <th className="px-3 py-2 text-left text-gray-300">Línea</th>
-              <th className="px-3 py-2 text-right text-gray-300">Empresa($)</th>
+              {canViewCompanyFinancials && (
+                <th className="px-3 py-2 text-right text-gray-300">Empresa($)</th>
+              )}
               <th className="px-3 py-2 text-right text-gray-300">Comisión($)</th>
               <th className="px-3 py-2 text-right text-gray-300">Pagado($)</th>
             </tr>
@@ -5388,9 +5739,20 @@ function ClientSalesReportsTab({ clientId }: { clientId: number | string }) {
             {rows.map((r) => (
               <tr key={`${r.subscriber_id}-${r.report_month}`} className="hover:bg-gray-800/70">
                 <td className="px-3 py-2 text-gray-200">{formatMonth(r.report_month)}</td>
-                <td className="px-3 py-2 text-gray-200 font-mono">{r.ban_number || '-'}</td>
+                <td className="px-3 py-2 text-gray-200 font-mono">
+                  <div className="flex items-center gap-2">
+                    <span>{r.ban_number || '-'}</span>
+                    {String((r as any).validation_status || '').toLowerCase() !== 'confirmed' && (
+                      <span className="text-[9px] uppercase font-bold tracking-wider bg-amber-500/20 text-amber-200 border border-amber-400/40 rounded-full px-1.5 py-0.5" title="Fila sin trazabilidad confirmada">
+                        Revisión
+                      </span>
+                    )}
+                  </div>
+                </td>
                 <td className="px-3 py-2 text-gray-200 font-mono">{r.phone || '-'}</td>
-                <td className="px-3 py-2 text-right text-emerald-300">{formatMoney(r.company_earnings)}</td>
+                {canViewCompanyFinancials && (
+                  <td className="px-3 py-2 text-right text-emerald-300">{formatMoney(r.company_earnings)}</td>
+                )}
                 <td className="px-3 py-2 text-right text-blue-300">{formatMoney(r.vendor_commission)}</td>
                 <td className="px-3 py-2 text-right text-amber-300">{formatMoney(r.paid_amount)}</td>
               </tr>
@@ -5506,7 +5868,7 @@ function TasksPanelClient({ client }: { client: any }) {
       };
       const res = await authFetch("/api/tasks", { method: "POST", json: body });
       if (!res.ok) throw new Error("Error");
-      setMsg({ type: "success", text: "Pendiente creado y visible en Mi dia" });
+      setMsg({ type: "success", text: "Pendiente creado y visible en Mi día" });
       setFormData({ title: "", due_date: "", priority: "normal", notes: "" });
       setShowForm(false);
       await loadTasks();
@@ -5537,7 +5899,7 @@ function TasksPanelClient({ client }: { client: any }) {
       <div className="px-6 py-3 border-b border-gray-800 flex justify-between items-center bg-gray-800/30">
         <div>
           <h3 className="text-sm font-semibold text-gray-200">Pendientes vinculados a <span className="text-purple-400">{clientName}</span></h3>
-          <p className="text-xs text-gray-500 mt-0.5">Estos pendientes tambien aparecen en Mi dia</p>
+          <p className="text-xs text-gray-500 mt-0.5">Estos pendientes tambien aparecen en Mi día</p>
         </div>
         <button
           onClick={() => setShowForm(v => !v)}
@@ -5560,7 +5922,7 @@ function TasksPanelClient({ client }: { client: any }) {
                 type="text"
                 value={formData.title}
                 onChange={e => setFormData(p => ({...p, title: e.target.value}))}
-                placeholder="Ej: Enviar propuesta, Llamar gerente..."
+                placeholder="Ej: Enviar propuestáLlamar gerente..."
                 className="w-full px-3 py-1.5 bg-gray-900 border border-gray-700 rounded-lg text-white text-sm focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                 autoFocus
               />
@@ -5636,5 +5998,6 @@ function TasksPanelClient({ client }: { client: any }) {
     </div>
   );
 }
+
 
 

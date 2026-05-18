@@ -3,7 +3,7 @@ import {
   Activity, CheckCircle, XCircle, AlertTriangle, RefreshCw,
   Play, User, CreditCard, Users, FileText, Link2, Trash2,
   ChevronDown, ChevronRight, DollarSign, BarChart3, Mail,
-  Zap, Database, Gift
+  Zap, Database
 } from 'lucide-react';
 import { authFetch, getCurrentRole } from '@/react-app/utils/auth';
 
@@ -48,7 +48,6 @@ const MODULE_ICONS: Record<string, any> = {
   'TARIFAS': FileText,
   'CAMPANAS': Mail,
   'CAMPAÑAS': Mail,
-  'REFERIDOS': Gift,
   'TANGO': Database,
   'LIMPIEZA': Trash2,
   // Nuevos módulos del árbol de permisos
@@ -57,13 +56,60 @@ const MODULE_ICONS: Record<string, any> = {
   'CATEGORIAS': FileText,
   'METAS': BarChart3,
   'CORREOS': Mail,
-  'COGNOS': Database,
   'HISTORIAL': FileText,
   'PERFIL': User,
   'USUARIOS': Users,
   'SEGURIDAD': Zap,
   'PASOS': Link2,
 };
+
+const RETIRED_MODULES = new Set(['REFERIDOS', 'COGNOS', 'TAREAS']);
+
+const ACTIVE_TEST_MODULES = [
+  'Clientes',
+  'BANs',
+  'Suscriptores',
+  'Seguimientos',
+  'Vendedores',
+  'Productos',
+  'Categorías',
+  'Metas',
+  'Correos',
+  'Comisiones',
+  'Usuarios',
+  'Seguridad',
+  'Importador',
+  'Tango',
+];
+
+async function readJsonResponse<T>(response: Response, endpoint: string): Promise<T> {
+  const contentType = response.headers.get('content-type') || '';
+  if (!contentType.toLowerCase().includes('application/json')) {
+    const body = await response.text().catch(() => '');
+    const preview = body.trim().slice(0, 120);
+    throw new Error(`Respuesta no JSON en ${endpoint}. Content-Type: ${contentType || 'sin content-type'}. Preview: ${preview || 'sin cuerpo'}`);
+  }
+  return response.json() as Promise<T>;
+}
+
+function filterRetiredTests(payload: SystemTestResponse): SystemTestResponse {
+  const tests = (Array.isArray(payload.tests) ? payload.tests : []).filter(
+    (test) => !RETIRED_MODULES.has(String(test.module || '').trim().toUpperCase())
+  );
+  const passed = tests.filter((test) => test.status === 'pass').length;
+  const failed = tests.filter((test) => test.status === 'fail').length;
+  return {
+    ...payload,
+    tests,
+    summary: {
+      ...payload.summary,
+      total: tests.length,
+      passed,
+      failed,
+      overallStatus: failed === 0 ? 'SISTEMA OK' : payload.summary.overallStatus,
+    },
+  };
+}
 
 export default function SystemTestAgent() {
   const currentRole = getCurrentRole();
@@ -89,13 +135,13 @@ export default function SystemTestAgent() {
       'Verificando suscriptores...',
       'Probando seguimientos...',
       'Verificando integridad de datos...',
-      'Verificando pendientes operativos...',
+      'Verificando pendientes comerciales y personales...',
       'Verificando vendedores y presets de acceso...',
       'Verificando productos y categorías...',
       'Comprobando metas, permisos y correos...',
       'Verificando usuarios y seguridad...',
       'Probando sync de deals desde Pasos...',
-      'Comprobando Tango y Cognos...',
+      'Comprobando Tango...',
       'Limpiando datos de prueba...',
     ];
     
@@ -108,14 +154,15 @@ export default function SystemTestAgent() {
     }, 400);
 
     try {
-      const response = await authFetch('/api/system-test/full', { method: 'POST' });
-      const data = await response.json();
+      const endpoint = '/api/system-test/full';
+      const response = await authFetch(endpoint, { method: 'POST' });
+      const data = await readJsonResponse<SystemTestResponse>(response, endpoint);
       
       clearInterval(stepInterval);
       
       if (!response.ok) throw new Error(data.error || 'Error en pruebas del sistema');
       
-      setResults(data);
+      setResults(filterRetiredTests(data));
       setCurrentStep('');
     } catch (err: any) {
       clearInterval(stepInterval);
@@ -338,7 +385,7 @@ export default function SystemTestAgent() {
             {/* Footer */}
             <div className="p-4 border-t border-gray-800 bg-gray-800/30 flex justify-between items-center">
               <p className="text-xs text-gray-500">
-                Este agente prueba: Clientes, BANs, Suscriptores, Seguimientos, Vendedores, Productos, Categorías, Metas, Correos, Cognos, Comisiones, Usuarios, Seguridad, Importador, Referidos, Tango
+                Este agente prueba: {ACTIVE_TEST_MODULES.join(', ')}
               </p>
               <button 
                 onClick={runSystemTest}

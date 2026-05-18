@@ -9,9 +9,9 @@ import {
   getPanelTasks,
   getSalespeople,
   getWorkflowTemplates,
+  syncClientDealsFromSubscribers,
   updateDealTaskStatus,
   updateWorkflowTemplate,
-  syncClientDealsFromProspect
 } from '../controllers/dealWorkflowController.js';
 import { authenticateToken, requireRole } from '../middlewares/auth.js';
 
@@ -34,7 +34,7 @@ router.get('/deal-tasks', getDealTasks);
 router.patch('/deal-tasks/:id', updateDealTaskStatus);
 
 // Sync deals from prospect
-router.post('/clients/:clientId/sync', syncClientDealsFromProspect);
+router.post('/clients/:clientId/sync', syncClientDealsFromSubscribers);
 
 // Panel general tasks
 router.get('/panel/tasks', getPanelTasks);
