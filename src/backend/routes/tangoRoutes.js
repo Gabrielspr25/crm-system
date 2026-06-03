@@ -12,11 +12,12 @@ import {
     createSyncLog,
     closeSyncLog,
 } from '../services/tangoSyncService.js';
+import { mergeTangoApiV2RowsWithLegacyRows } from '../services/tangoV2SyncMapper.js';
 
 const router = Router();
 
 // Normaliza fechas a string ISO 'YYYY-MM-DD'. El driver pg devuelve columnas
-// `date` como objetos Date — String(Date) produce 'Day Mon DD …' que rompe
+// `date` como objetos Date â€” String(Date) produce 'Day Mon DD â€¦' que rompe
 // comparaciones cross-formato. Esta utilidad las uniforma.
 function toIsoDate(val) {
   if (!val) return null;
@@ -25,6 +26,226 @@ function toIsoDate(val) {
     return val.toISOString().slice(0, 10);
   }
   return String(val).slice(0, 10);
+}
+
+const normalizePlanLookup = (value) => String(value || '').trim().toUpperCase().replace(/\s+/g, ' ');
+
+function planLookupTerms(planCode) {
+  const full = normalizePlanLookup(planCode);
+  if (!full) return [];
+  const withoutTrailingRate = full.replace(/\s+\d{1,4}(?:\.\d{1,2})?\s*$/, '').trim();
+  return [...new Set([full, withoutTrailingRate].filter(Boolean))];
+}
+
+function extractTrailingRate(planCode) {
+  const match = String(planCode || '').trim().match(/\b(\d{1,4}\.\d{2})\s*$/);
+  const value = match ? Number(match[1]) : 0;
+  return value > 0 ? value : null;
+}
+
+function normalizePositiveRate(value) {
+  const rate = Number(value);
+  return Number.isFinite(rate) && rate > 0 ? rate : null;
+}
+
+function readRateFromPlanPayload(plan) {
+  return normalizePositiveRate(
+    plan?.rate ?? plan?.monthly_value ?? plan?.monthlyValue ?? plan?.price ?? plan?.precio ?? plan?.amount
+  );
+}
+
+async function resolveRateFromTangoApi(planCode) {
+  const baseUrl = String(process.env.TANGO_API_BASE_URL || '').trim().replace(/\/+$/, '');
+  const apiKey = String(process.env.TANGO_API_KEY || '').trim();
+  if (!baseUrl || !apiKey) return null;
+
+  const terms = planLookupTerms(planCode);
+  const headers = {
+    Authorization: `Bearer ${apiKey}`,
+    'x-api-key': apiKey,
+    Accept: 'application/json',
+  };
+
+  for (const term of terms) {
+    const urls = [
+      `${baseUrl}/api/external/planes`,
+      `${baseUrl}/api/external/planes?search=${encodeURIComponent(term)}`,
+      `${baseUrl}/api/external/planes?codigovoz=${encodeURIComponent(term)}`,
+      `${baseUrl}/api/external/planes?codigo=${encodeURIComponent(term)}`,
+      `${baseUrl}/plans?search=${encodeURIComponent(term)}`,
+      `${baseUrl}/plans?code=${encodeURIComponent(term)}`,
+      `${baseUrl}/planes?search=${encodeURIComponent(term)}`,
+      `${baseUrl}/planes?code=${encodeURIComponent(term)}`,
+    ];
+
+    for (const url of urls) {
+      try {
+        const response = await fetch(url, { headers });
+        if (!response.ok) continue;
+        const payload = await response.json().catch(() => null);
+        const rows = Array.isArray(payload)
+          ? payload
+          : Array.isArray(payload?.data)
+            ? payload.data
+            : Array.isArray(payload?.plans)
+              ? payload.plans
+              : Array.isArray(payload?.planes)
+                ? payload.planes
+                : payload ? [payload] : [];
+
+        const normalizedTerm = normalizePlanLookup(term);
+        const match = rows.find((plan) => {
+          const values = [
+            plan?.code,
+            plan?.codigo,
+            plan?.codigovoz,
+            plan?.codigo_voz,
+            plan?.pricecode,
+            plan?.name,
+            plan?.nombre,
+            plan?.description,
+            plan?.descripcion,
+          ].map(normalizePlanLookup);
+          return values.some((value) => value === normalizedTerm || value.includes(normalizedTerm));
+        }) || rows[0];
+
+        const rate = readRateFromPlanPayload(match);
+        if (rate != null) return { value: rate, source: 'tango-api-v2' };
+      } catch (error) {
+        console.warn('[TANGO API V2] No se pudo consultar plan:', error?.message || error);
+      }
+    }
+  }
+
+  return null;
+}
+
+function rowsFromTangoApiPayload(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.data)) return payload.data;
+  if (Array.isArray(payload?.ventas)) return payload.ventas;
+  if (Array.isArray(payload?.comisiones)) return payload.comisiones;
+  if (Array.isArray(payload?.items)) return payload.items;
+  return [];
+}
+
+function normalizeTangoApiPhone(row) {
+  const value = row?.telefono ?? row?.phone ?? row?.numerocelularactivado ?? row?.status ?? row?.numero ?? null;
+  const digits = String(value || '').replace(/\D/g, '');
+  return digits || null;
+}
+
+function numberOrNull(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function readTangoApiCommission(row) {
+  const commission = row?.comisiones || row?.comision || {};
+  return {
+    company: numberOrNull(row?.comisionclaro ?? commission?.comisionclaro),
+    vendor: numberOrNull(row?.comisionvendedor ?? commission?.comisionvendedor),
+    total: numberOrNull(row?.total ?? commission?.total),
+  };
+}
+
+async function fetchTangoApiV2Range(from, to) {
+  const baseUrl = String(process.env.TANGO_API_BASE_URL || '').trim().replace(/\/+$/, '');
+  const apiKey = String(process.env.TANGO_API_KEY || '').trim();
+  if (!baseUrl || !apiKey || !from || !to) {
+    return { salesById: new Map(), commissionsById: new Map(), warnings: ['api_v2_not_configured'] };
+  }
+
+  const headers = {
+    Authorization: `Bearer ${apiKey}`,
+    'x-api-key': apiKey,
+    Accept: 'application/json',
+  };
+  const result = { salesById: new Map(), commissionsById: new Map(), salesRows: [], commissionRows: [], warnings: [] };
+
+  for (const [kind, target] of [['ventas', result.salesById], ['comisiones', result.commissionsById]]) {
+    let offset = 0;
+    const limit = 200;
+    let guard = 0;
+    do {
+      const url = `${baseUrl}/api/external/${kind}?desde=${encodeURIComponent(from)}&hasta=${encodeURIComponent(to)}&limit=${limit}&offset=${offset}`;
+      try {
+        const response = await fetch(url, { headers });
+        if (!response.ok) {
+          result.warnings.push(`${kind}_http_${response.status}`);
+          break;
+        }
+        const payload = await response.json().catch(() => null);
+        const rows = rowsFromTangoApiPayload(payload);
+        for (const row of rows) {
+          const ventaid = Number(row?.ventaid ?? row?.id ?? row?.venta_id);
+          if (Number.isFinite(ventaid) && ventaid > 0) target.set(ventaid, row);
+        }
+        if (kind === 'ventas') result.salesRows.push(...rows);
+        else result.commissionRows.push(...rows);
+        const pagination = payload?.pagination || {};
+        const hasMore = Boolean(pagination.hasMore);
+        const nextOffset = Number(pagination.offset ?? offset) + Number(pagination.limit ?? limit);
+        if (!hasMore || !rows.length || nextOffset <= offset) break;
+        offset = nextOffset;
+      } catch (error) {
+        result.warnings.push(`${kind}_error:${error?.message || error}`);
+        break;
+      }
+      guard++;
+    } while (guard < 20);
+  }
+
+  return result;
+}
+
+async function resolveMonthlyValueForPlan(crmPool, legacyPool, planCode, legacyRate) {
+  const legacyRateValue = normalizePositiveRate(legacyRate);
+  if (legacyRateValue != null) return { value: legacyRateValue, source: 'legacy-tipoplan' };
+
+  const terms = planLookupTerms(planCode);
+  if (terms.length === 0) return { value: null, source: null };
+
+  const apiRate = await resolveRateFromTangoApi(planCode);
+  if (apiRate?.value != null) return apiRate;
+
+  try {
+    const localResult = await crmPool.query(
+      `SELECT COALESCE(price, price_autopay) AS rate
+         FROM plans
+        WHERE UPPER(TRIM(COALESCE(code, ''))) = ANY($1::text[])
+           OR UPPER(TRIM(COALESCE(alpha_code, ''))) = ANY($1::text[])
+           OR UPPER(TRIM(COALESCE(name, ''))) = ANY($1::text[])
+           OR UPPER(TRIM(COALESCE(description, ''))) = ANY($1::text[])
+        ORDER BY id ASC
+        LIMIT 1`,
+      [terms]
+    );
+    const localRate = normalizePositiveRate(localResult.rows[0]?.rate);
+    if (localRate != null) return { value: localRate, source: 'plans-local' };
+  } catch (error) {
+    console.warn('[TANGO SYNC] No se pudo consultar plans local:', error?.message || error);
+  }
+
+  try {
+    const legacyResult = await legacyPool.query(
+      `SELECT rate
+         FROM tipoplan
+        WHERE UPPER(TRIM(COALESCE(codigovoz, ''))) = ANY($1::text[])
+        ORDER BY tipoplanid ASC
+        LIMIT 1`,
+      [terms]
+    );
+    const exactLegacyRate = normalizePositiveRate(legacyResult.rows[0]?.rate);
+    if (exactLegacyRate != null) return { value: exactLegacyRate, source: 'legacy-tipoplan-variant' };
+  } catch (error) {
+    console.warn('[TANGO SYNC] No se pudo consultar tipoplan:', error?.message || error);
+  }
+
+  const trailingRate = extractTrailingRate(planCode);
+  if (trailingRate != null) return { value: trailingRate, source: 'plan-code-trailing-rate' };
+
+  return { value: null, source: null };
 }
 
 function ensureAuthenticated(req, res, next) {
@@ -55,12 +276,17 @@ async function ensureSubscriberReportsTraceabilityColumns(client) {
       ALTER TABLE subscriber_reports
       ADD COLUMN IF NOT EXISTS source TEXT,
       ADD COLUMN IF NOT EXISTS external_sale_id TEXT NULL,
-      ADD COLUMN IF NOT EXISTS sync_log_id UUID NULL,
+      ADD COLUMN IF NOT EXISTS sync_log_id TEXT NULL,
       ADD COLUMN IF NOT EXISTS source_activation_date DATE NULL,
       ADD COLUMN IF NOT EXISTS source_report_month DATE NULL,
       ADD COLUMN IF NOT EXISTS raw_payload JSONB NULL,
       ADD COLUMN IF NOT EXISTS validation_status TEXT NULL,
-      ADD COLUMN IF NOT EXISTS validation_notes TEXT NULL
+      ADD COLUMN IF NOT EXISTS validation_notes TEXT NULL,
+      ADD COLUMN IF NOT EXISTS portability_bonus NUMERIC(10,2) NULL
+    `);
+    await client.query(`
+      ALTER TABLE subscriber_reports
+      ALTER COLUMN sync_log_id TYPE TEXT USING sync_log_id::text
     `);
     await client.query(`
       ALTER TABLE subscriber_reports
@@ -73,7 +299,42 @@ async function ensureSubscriberReportsTraceabilityColumns(client) {
     await client.query(`CREATE INDEX IF NOT EXISTS idx_subscriber_reports_source_report_month ON subscriber_reports (source_report_month)`);
   } catch (error) {
     if (error?.code !== '42501') throw error;
-    console.warn('[schema] Sin permisos para agregar columnas traceability en subscriber_reports; se usará fallback.');
+    console.warn('[schema] Sin permisos para agregar columnas traceability en subscriber_reports; se usarÃ¡ fallback.');
+  }
+}
+
+async function ensureTangoSyncCrmColumns(client) {
+  try {
+    await client.query(`
+      ALTER TABLE clients
+      ADD COLUMN IF NOT EXISTS owner_name TEXT NULL,
+      ADD COLUMN IF NOT EXISTS source TEXT NULL,
+      ADD COLUMN IF NOT EXISTS pendiente_validacion BOOLEAN NOT NULL DEFAULT false
+    `);
+    await client.query(`
+      ALTER TABLE bans
+      ADD COLUMN IF NOT EXISTS source TEXT NULL
+    `);
+    await client.query(`
+      ALTER TABLE subscribers
+      ADD COLUMN IF NOT EXISTS tango_ventaid BIGINT NULL,
+      ADD COLUMN IF NOT EXISTS phone_number TEXT NULL,
+      ADD COLUMN IF NOT EXISTS contract_term INTEGER NULL,
+      ADD COLUMN IF NOT EXISTS cancel_reason TEXT NULL
+    `);
+    await client.query(`
+      ALTER TABLE subscribers
+      ALTER COLUMN phone_number DROP NOT NULL
+    `);
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS subscribers_tango_ventaid_key
+      ON subscribers (tango_ventaid)
+      WHERE tango_ventaid IS NOT NULL
+    `);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_subscribers_tango_ventaid ON subscribers (tango_ventaid)`);
+  } catch (error) {
+    if (error?.code !== '42501') throw error;
+    console.warn('[schema] Sin permisos para preparar columnas CRM del sync Tango; se usara el esquema existente.');
   }
 }
 
@@ -95,13 +356,13 @@ async function ensureSyncLogsTable(client) {
     `);
   } catch (error) {
     if (error?.code !== '42501') {
-      // No tirar — la tabla puede preexistir con esquema legacy incompatible.
+      // No tirar â€” la tabla puede preexistir con esquema legacy incompatible.
       console.warn('[schema] sync_logs: no se pudo asegurar la tabla:', error?.message);
     } else {
       console.warn('[schema] Sin permisos para crear sync_logs; se usara fallback sin log persistente.');
     }
   }
-  // Cada índice en su propio try/catch: la tabla legacy puede no tener las columnas referenciadas.
+  // Cada Ã­ndice en su propio try/catch: la tabla legacy puede no tener las columnas referenciadas.
   const indices = [
     [`idx_sync_logs_sync_type`, `CREATE INDEX IF NOT EXISTS idx_sync_logs_sync_type ON sync_logs (sync_type)`],
     [`idx_sync_logs_started_at`, `CREATE INDEX IF NOT EXISTS idx_sync_logs_started_at ON sync_logs (started_at DESC)`],
@@ -117,7 +378,7 @@ async function ensureSyncLogsTable(client) {
 }
 
 // ======================================================
-// GET /api/tango/compare — Comparativa completa Tango vs CRM
+// GET /api/tango/compare â€” Comparativa completa Tango vs CRM
 // ======================================================
 router.get('/compare', async (req, res) => {
   try {
@@ -211,7 +472,7 @@ router.get('/compare', async (req, res) => {
 });
 
 // ======================================================
-// GET /api/tango/detail/:ban — Detalle de un BAN específico
+// GET /api/tango/detail/:ban â€” Detalle de un BAN especÃ­fico
 // ======================================================
 router.get('/detail/:ban', async (req, res) => {
   try {
@@ -296,7 +557,7 @@ router.get('/detail/:ban', async (req, res) => {
 });
 
 // ======================================================
-// GET /api/tango/summary — Resumen mensual Tango vs CRM
+// GET /api/tango/summary â€” Resumen mensual Tango vs CRM
 // ======================================================
 router.get('/summary', async (req, res) => {
   try {
@@ -352,10 +613,10 @@ router.get('/summary', async (req, res) => {
 });
 
 // ======================================================
-// POST /api/tango/sync — Sync incremental controlado
+// POST /api/tango/sync â€” Sync incremental controlado
 // Lee desde max(sync_from_date, last_successful_sync) hasta hoy.
 // NO ejecuta cleanup destructivo (solo lectura/upsert seguro).
-// Lock con heartbeat: auto-release si previo está stale >30min.
+// Lock con heartbeat: auto-release si previo estÃ¡ stale >30min.
 // Tango es SOURCE OF TRUTH. Overrides gerenciales (Fase 3) viven aparte.
 // ======================================================
 router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
@@ -369,7 +630,7 @@ router.post('/sync', requireRole(['admin', 'supervisor']), async (req, res) => {
 });
 
 // ======================================================
-// POST /api/tango/sync-range — Re-sync controlado por rango (admin)
+// POST /api/tango/sync-range â€” Re-sync controlado por rango (admin)
 // Body: { from: 'YYYY-MM-DD', to: 'YYYY-MM-DD', reason: 'texto', cleanup?: bool }
 // No cambia sync_from_date global. No borra overrides. Cleanup opt-in.
 // ======================================================
@@ -418,9 +679,9 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
   };
 
   // Flag opt-in: si AUTO_CREATE_FROM_TANGO=true, cuando una venta Tango trae un
-  // BAN que no existe en CRM, creamos cliente + BAN automáticamente y la venta
+  // BAN que no existe en CRM, creamos cliente + BAN automÃ¡ticamente y la venta
   // sigue el flujo normal de sync (subs + report). Sin flag, esa venta cae en
-  // external_sales con motivo 'ban_no_existe_en_crm' (comportamiento histórico).
+  // external_sales con motivo 'ban_no_existe_en_crm' (comportamiento histÃ³rico).
   const AUTO_CREATE_FROM_TANGO = String(process.env.AUTO_CREATE_FROM_TANGO || '').toLowerCase() === 'true';
 
   function alert(level, ban, msg) {
@@ -453,10 +714,11 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
   try {
     const legacyPool = getTangoPool();
     await ensureSubscriberReportsTraceabilityColumns(crmPool);
+    await ensureTangoSyncCrmColumns(crmPool);
     await ensureSyncLogsTable(crmPool);
 
-    // ── Lock + range + log estructurado (Fase 2A) ──
-    // Si la migración 2026-05-17-tango-sync-config.sql no fue aplicada,
+    // â”€â”€ Lock + range + log estructurado (Fase 2A) â”€â”€
+    // Si la migraciÃ³n 2026-05-17-tango-sync-config.sql no fue aplicada,
     // computeIncrementalRange() lanza error claro y abortamos sin tocar nada.
     const stale = await detectStaleLock();
     if (stale) {
@@ -467,7 +729,7 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
     if (!lockResult.acquired) {
       return res.status(409).json({
         success: false,
-        error: 'Sync ya en ejecución',
+        error: 'Sync ya en ejecuciÃ³n',
         current_log_id: lockResult.owner_log_id,
         heartbeat_at: lockResult.heartbeat_at,
       });
@@ -492,9 +754,9 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
     } catch (syncLogErr) {
       console.warn('[SYNC] No se pudo crear sync_log estructurado (continuando con UUID en memoria):', syncLogErr.message);
     }
-    console.log(`[SYNC] mode=${mode} range=${syncRange.from}→${syncRange.to} allowCleanup=${allowCleanup}`);
+    console.log(`[SYNC] mode=${mode} range=${syncRange.from}â†’${syncRange.to} allowCleanup=${allowCleanup}`);
 
-    // ── 0. Load salespeople for vendedor mapping ──
+    // â”€â”€ 0. Load salespeople for vendedor mapping â”€â”€
     const spResult = await crmPool.query(`SELECT id, name FROM salespeople`);
     const salespeople = spResult.rows; // [{id, name}, ...]
     const vendorResult = await crmPool.query(`SELECT id, name FROM vendors`);
@@ -577,17 +839,17 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
       return null;
     }
 
-    // ── 0b. Tipos permitidos (FASE FINAL — 2026-04-30) ──
+    // â”€â”€ 0b. Tipos permitidos (FASE FINAL â€” 2026-04-30) â”€â”€
     // Solo PYMES Update (138/139) y PYMES Fijo (140/141) desde 2026-01-01.
     // Quedan EXCLUIDOS: Claro Update (25/26), 2 Play (121), 3 Play (41-50)
     // y todo lo anterior a 2026-01-01. Eso refleja la regla operativa real
-    // del CRM (decisión de Gabriel, 2026-04-30).
+    // del CRM (decisiÃ³n de Gabriel, 2026-04-30).
     const MOBILE_TIPOS = [138, 139];
     const FIJO_TIPOS = [140, 141];
     const REN_TIPOS = [138, 140];
     // NEW por default: 139 y 141.
 
-    // ── 1. Pre-load CRM bans + clients ANTES del fetch Tango ──
+    // â”€â”€ 1. Pre-load CRM bans + clients ANTES del fetch Tango â”€â”€
     // Necesario para aplicar el filtro 2 (BAN debe existir en CRM).
     const banRows = await crmPool.query(
       `SELECT id, ban_number, client_id, account_type FROM bans`
@@ -605,9 +867,11 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
       clientById.set(c.id, c);
     }
 
-    // ── 2. Fetch ventas Tango con filtro 1 ──
-    // Solo PYMES (138-141). Rango dinámico (Fase 2A):
-    //   incremental: max(sync_from_date, last_successful_sync) → hoy
+    // â”€â”€ 2. Fetch ventas Tango con filtro 1 â”€â”€
+    // Fuente oficial: Tango API V2. Legacy/POS queda como fallback/comparacion
+    // historica y para completar campos cuando V2 no trae algun dato.
+    // Rango dinamico (Fase 2A):
+    //   incremental: max(sync_from_date, last_successful_sync) -> hoy
     //   resync_range: rango manual del admin
     const tangoResult = await legacyPool.query(`
       SELECT DISTINCT
@@ -639,9 +903,38 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
         AND v.fechaactivacion <  ($2::date + INTERVAL '1 day')
       ORDER BY COALESCE(TRIM(cc.nombre), 'SIN NOMBRE'), TRIM(v.ban::text), v.ventaid
     `, [syncRange.from, syncRange.to]);
-    console.log(`[SYNC] ${tangoResult.rows.length} ventas Tango pasaron filtro 1 (ventatipoid)`);
+    const legacyRows = tangoResult.rows;
+    console.log(`[SYNC] ${legacyRows.length} ventas legacy/POS pasaron filtro 1 (ventatipoid)`);
 
-    // ── 3. Filtro 2 en JS: BAN debe existir en CRM. Las que no, van a external_sales. ──
+    const apiV2 = await fetchTangoApiV2Range(syncRange.from, syncRange.to);
+    stats.tango_api_v2_sales = apiV2.salesById.size;
+    stats.tango_api_v2_commissions = apiV2.commissionsById.size;
+    stats.tango_ventas_legacy = legacyRows.length;
+    stats.tango_api_v2_only = 0;
+    stats.tango_legacy_fallback_only = 0;
+    if (apiV2.warnings.length > 0) {
+      for (const warning of apiV2.warnings) alert('warn', '', `API V2 Tango: ${warning}`);
+    }
+
+    const mergedRowsRaw = mergeTangoApiV2RowsWithLegacyRows({
+      apiRows: apiV2.salesRows,
+      legacyRows,
+      commissionsById: apiV2.commissionsById,
+    });
+    const allowedTipoIds = new Set([...MOBILE_TIPOS, ...FIJO_TIPOS]);
+    const mergedRows = mergedRowsRaw.filter((row) => allowedTipoIds.has(Number(row.ventatipoid)));
+    stats.tango_v2_first_excluded_by_tipo = mergedRowsRaw.length - mergedRows.length;
+    const legacyVentaIds = new Set(
+      legacyRows
+        .map((row) => Number(row.ventaid))
+        .filter((ventaid) => Number.isFinite(ventaid) && ventaid > 0)
+    );
+    stats.tango_api_v2_only = mergedRows.filter((row) => row.source_priority === 'api_v2' && !legacyVentaIds.has(Number(row.ventaid))).length;
+    stats.tango_legacy_fallback_only = mergedRows.filter((row) => row.source_priority === 'legacy_fallback').length;
+    tangoResult.rows = mergedRows;
+    console.log(`[SYNC] ${tangoResult.rows.length} ventas Tango V2-first para procesar (${stats.tango_api_v2_only} solo V2, ${stats.tango_legacy_fallback_only} solo legacy)`);
+
+    // â”€â”€ 3. Filtro 2 en JS: BAN debe existir en CRM. Las que no, van a external_sales. â”€â”€
     // Si AUTO_CREATE_FROM_TANGO=true, antes de descartarlas se intenta crear
     // cliente + BAN en CRM y la venta pasa al flujo normal.
     const externalSales = [];
@@ -685,9 +978,9 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
       ventasValidas.push(v);
     }
 
-    // ── 3b. AUTO-CREATE clientes/BANs desde Tango ──
+    // â”€â”€ 3b. AUTO-CREATE clientes/BANs desde Tango â”€â”€
     // Agrupa ventasBanNuevo por banNum, decide nombre cliente y account_type,
-    // y crea cliente + BAN. Después mueve las ventas a ventasValidas para que
+    // y crea cliente + BAN. DespuÃ©s mueve las ventas a ventasValidas para que
     // el flujo normal genere subscriber + report.
     if (AUTO_CREATE_FROM_TANGO && ventasBanNuevo.length > 0) {
       const ventasPorBan = new Map();
@@ -696,11 +989,11 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
         if (!ventasPorBan.has(banNum)) ventasPorBan.set(banNum, []);
         ventasPorBan.get(banNum).push(v);
       }
-      console.log(`[SYNC][AUTO] ${ventasPorBan.size} BANs nuevos de Tango — intentando auto-create`);
+      console.log(`[SYNC][AUTO] ${ventasPorBan.size} BANs nuevos de Tango â€” intentando auto-create`);
 
       for (const [banNum, ventasDelBan] of ventasPorBan) {
         try {
-          // 1) Determinar account_type del BAN según ventatipoids del grupo
+          // 1) Determinar account_type del BAN segÃºn ventatipoids del grupo
           let hasMobile = false;
           let hasFijo = false;
           for (const v of ventasDelBan) {
@@ -736,39 +1029,39 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
           if (!clientId) {
             const ventaid = sampleVenta.ventaid;
             const fechaIso = toIsoDate(sampleVenta.fechaactivacion) || toYmd(new Date());
-            const notes = `auto-creado desde tango sync · ventaid=${ventaid} · ${fechaIso}`;
+            const notes = `auto-creado desde tango sync Â· ventaid=${ventaid} Â· ${fechaIso}`;
             const newClient = await crmPool.query(
               `INSERT INTO clients (name, owner_name, salesperson_id, source, pendiente_validacion, notes, created_at, updated_at)
-               VALUES ($1, $1, $2, 'tango', true, $3, NOW(), NOW())
+               VALUES ($1::text, $2::text, $3::uuid, 'tango', true, $4::text, NOW(), NOW())
                RETURNING id, name, salesperson_id`,
-              [clientName, spId || null, notes]
+              [clientName, clientName, spId || null, notes]
             );
             clientId = newClient.rows[0].id;
             const created = newClient.rows[0];
             clientByName.set(clientName.toUpperCase(), { id: clientId, name: created.name, salesperson_id: created.salesperson_id });
             clientById.set(clientId, { id: clientId, name: created.name, salesperson_id: created.salesperson_id });
             stats.clients_auto_created++;
-            alert('info', banNum, `[AUTO] Cliente creado: ${clientName}${usePlaceholder ? ' (placeholder, requiere validación)' : ''}`);
+            alert('info', banNum, `[AUTO] Cliente creado: ${clientName}${usePlaceholder ? ' (placeholder, requiere validaciÃ³n)' : ''}`);
           }
 
           // 6) Crear BAN
           const newBan = await crmPool.query(
-            `INSERT INTO bans (ban_number, client_id, account_type, status, source, created_at, updated_at)
-             VALUES ($1, $2, $3, 'A', 'tango', NOW(), NOW())
+            `INSERT INTO bans (ban_number, number, client_id, account_type, status, source, created_at, updated_at)
+             VALUES ($1::text, $1::text, $2::uuid, $3::text, 'activo', 'tango', NOW(), NOW())
              RETURNING id, ban_number, client_id, account_type`,
             [banNum, clientId, accountType]
           );
           const banRecord = newBan.rows[0];
           banByNumber.set(banNum, banRecord);
           stats.bans_auto_created++;
-          alert('info', banNum, `[AUTO] BAN creado tipo ${accountType} → cliente ${clientName}`);
+          alert('info', banNum, `[AUTO] BAN creado tipo ${accountType} â†’ cliente ${clientName}`);
 
           // 7) Mover ventas del BAN al flujo normal
           for (const v of ventasDelBan) ventasValidas.push(v);
         } catch (autoErr) {
-          // Falla en auto-create → mandar TODAS las ventas del BAN a external_sales
-          // con motivo distinto para diagnóstico, no bloquea el resto del sync.
-          alert('error', banNum, `[AUTO] Falló auto-create: ${autoErr.message}`);
+          // Falla en auto-create â†’ mandar TODAS las ventas del BAN a external_sales
+          // con motivo distinto para diagnÃ³stico, no bloquea el resto del sync.
+          alert('error', banNum, `[AUTO] FallÃ³ auto-create: ${autoErr.message}`);
           console.error(`[SYNC][AUTO] Error auto-create BAN ${banNum}:`, autoErr);
           for (const v of ventasDelBan) {
             externalSales.push({
@@ -789,9 +1082,9 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
     stats.tango_ventas = tangoResult.rows.length;
     stats.tango_ventas_validas = ventasValidas.length;
     stats.tango_ventas_external = externalSales.length;
-    console.log(`[SYNC] ${stats.tango_ventas} totales | ${stats.tango_ventas_validas} válidas | ${stats.tango_ventas_external} external (BAN no existe en CRM)`);
+    console.log(`[SYNC] ${stats.tango_ventas} totales | ${stats.tango_ventas_validas} vÃ¡lidas | ${stats.tango_ventas_external} external (BAN no existe en CRM)`);
 
-    // ── 4. Pre-procesamiento sobre ventasValidas ──
+    // â”€â”€ 4. Pre-procesamiento sobre ventasValidas â”€â”€
     const banTypeByBan = new Map();
     const activePhonesByBan = new Map();
     for (const row of ventasValidas) {
@@ -820,7 +1113,27 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
       return null;
     };
 
-    // ── 3. Pre-load existing tango_ventaid subscribers ──
+    const fixedBundleKeyFromSale = (sale) => {
+      const ventaTipo = Number(sale?.ventatipoid);
+      if (!FIJO_TIPOS.includes(ventaTipo)) return null;
+      const ban = String(sale?.ban || '').trim();
+      const activationDate = toYmd(sale?.fechaactivacion);
+      const vendor = String(sale?.tango_vendor_id || sale?.vendedor || '').trim().toUpperCase();
+      const saleType = REN_TIPOS.includes(ventaTipo) ? 'REN' : 'NEW';
+      if (!ban || !activationDate || !vendor) return null;
+      return [ban, activationDate, vendor, saleType].join('|');
+    };
+
+    const paidFixedBundleKeys = new Set();
+    for (const sale of ventasValidas) {
+      const key = fixedBundleKeyFromSale(sale);
+      if (!key) continue;
+      const company = Number(sale.com_empresa || 0);
+      const vendor = Number(sale.com_vendedor || 0);
+      if (company > 0 || vendor > 0) paidFixedBundleKeys.add(key);
+    }
+
+    // â”€â”€ 3. Pre-load existing tango_ventaid subscribers â”€â”€
     const existingSubs = await crmPool.query(
       `SELECT id, tango_ventaid, ban_id, phone, plan, line_type, line_kind, monthly_value, contract_term, contract_end_date, status
        FROM subscribers
@@ -829,8 +1142,15 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
     const subByVentaId = new Map();
     for (const s of existingSubs.rows) subByVentaId.set(Number(s.tango_ventaid), s);
 
-    // ── 3a. Pre-cargar fechaactivacion de Tango para los tango_ventaid existentes en CRM. ──
-    // Usado por PASO 1.5 (resolución de conflictos por phone_norm: la fecha más reciente gana).
+    const subscriberColumnRows = await crmPool.query(`
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'subscribers'
+    `);
+    const subscriberColumns = new Set(subscriberColumnRows.rows.map((row) => row.column_name));
+
+    // â”€â”€ 3a. Pre-cargar fechaactivacion de Tango para los tango_ventaid existentes en CRM. â”€â”€
+    // Usado por PASO 1.5 (resoluciÃ³n de conflictos por phone_norm: la fecha mÃ¡s reciente gana).
     const fechaByVentaid = new Map();
     const existingVentaids = [...subByVentaId.keys()].filter((vid) => Number.isFinite(vid));
     if (existingVentaids.length > 0) {
@@ -844,7 +1164,7 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
       }
     }
 
-    // ── 3a.bis: Pre-cargar commission_percentage por salesperson ──
+    // â”€â”€ 3a.bis: Pre-cargar commission_percentage por salesperson â”€â”€
     // Usado para calcular vendor_commission cuando Tango trae com_vendedor=NULL/0.
     // La regla: si Tango omite comision pero hay company_earnings > 0, completar
     // con vendor.commission_percentage del salesperson asignado al cliente.
@@ -862,11 +1182,11 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
         vendorPctBySpId.set(String(r.sp_id), Number(r.pct));
       }
     } catch (err) {
-      // tabla puede no existir en alguna instalación — sigue sin map (regla = no calcula)
+      // tabla puede no existir en alguna instalaciÃ³n â€” sigue sin map (regla = no calcula)
       console.warn('[SYNC] No se pudo pre-cargar vendor commission_percentage:', err.message);
     }
 
-    // ── 3b. Cleanup DESACTIVADO TEMPORALMENTE ──
+    // â”€â”€ 3b. Cleanup DESACTIVADO TEMPORALMENTE â”€â”€
     // Solo loguea lo que hubiera borrado. NO ejecuta DELETE.
     // Para reactivar, descomentar las queries DELETE y restaurar subByVentaId.delete().
     const activeVentaIds = new Set(tangoResult.rows.map(v => Number(v.ventaid)));
@@ -874,7 +1194,7 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
     for (const [ventaId, sub] of subByVentaId) {
       if (!activeVentaIds.has(ventaId)) {
         wouldDelete.push({ ventaid: ventaId, subscriber_id: sub.id, phone: sub.phone || null });
-        alert('warn', sub.phone || '', `[CLEANUP DESACTIVADO] Venta ${ventaId} ya no activa en Tango — habria eliminado subscriber id ${sub.id}`);
+        alert('warn', sub.phone || '', `[CLEANUP DESACTIVADO] Venta ${ventaId} ya no activa en Tango â€” habria eliminado subscriber id ${sub.id}`);
       }
     }
     stats.subscribers_would_have_deactivated = wouldDelete.length;
@@ -882,7 +1202,7 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
       console.log(`[SYNC] CLEANUP DESACTIVADO: habria eliminado ${wouldDelete.length} subscribers`);
     }
 
-    // ── 5. Process each venta valida ──
+    // â”€â”€ 5. Process each venta valida â”€â”€
     let _heartbeatCounter = 0;
     for (const v of ventasValidas) {
       // Heartbeat cada 50 ventas para que el lock no se considere stale.
@@ -895,20 +1215,21 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
         const isMobile = MOBILE_TIPOS.includes(ventaTipo);
         const isFijo = FIJO_TIPOS.includes(ventaTipo);
         const lineType = REN_TIPOS.includes(ventaTipo) ? 'REN' : 'NEW';
-        // Tipo real de línea según ventatipoid Tango (independiente del account_type
+        // Tipo real de lÃ­nea segÃºn ventatipoid Tango (independiente del account_type
         // del BAN). Manda en comisiones/metas; CONVERGENTE solo es atributo del BAN.
         const lineKind = isMobile ? 'movil' : (isFijo ? 'fijo' : null);
         const monthVal = v.fechaactivacion
           ? new Date(v.fechaactivacion).toISOString().slice(0, 7) + '-01'
           : null;
-        const monthlyValue = v.mensualidad ? parseFloat(v.mensualidad) : 0;
+        const monthlyValueResolution = await resolveMonthlyValueForPlan(crmPool, legacyPool, v.plan_code, v.mensualidad);
+        const monthlyValue = monthlyValueResolution.value;
         const contractTerm = Number.isFinite(Number(v.meses)) ? Number(v.meses) : null;
         const contractEndDate = contractTerm && contractTerm > 0 ? addMonthsYmd(v.fechaactivacion, contractTerm) : null;
         const comEmpresa = parseFloat(v.com_empresa);
         const comVendedor = parseFloat(v.com_vendedor);
         const portabilityBonus = parseFloat(v.portability_bonus) || 0;
         const sourceActivationDate = toYmd(v.fechaactivacion);
-        // Para Fijo (140,141) phone puede ser vacío, para Móvil (138,139) es obligatorio
+        // Para Fijo (140,141) phone puede ser vacÃ­o, para MÃ³vil (138,139) es obligatorio
         let phone = v.phone || null;
         if (phone) {
           const normalizedPhone = String(phone).replace(/\D/g, '');
@@ -917,7 +1238,7 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
           }
         }
         if (isMobile && !phone) {
-          alert('error', banNum, `Venta ${v.ventaid}: Móvil sin teléfono, ignorando`);
+          alert('error', banNum, `Venta ${v.ventaid}: MÃ³vil sin telÃ©fono, ignorando`);
           continue;
         }
         const planCode = v.plan_code || null;
@@ -951,11 +1272,11 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
             report_month: monthVal,
           });
           stats.reports_rejected++;
-          alert('warn', banNum, `Venta ${v.ventaid || '∅'} marcada needs_review: missing_fechaactivacion`);
+          alert('warn', banNum, `Venta ${v.ventaid || 'âˆ…'} marcada needs_review: missing_fechaactivacion`);
           continue;
         }
 
-        // ── PASO 1: Resolver Client + BAN ──
+        // â”€â”€ PASO 1: Resolver Client + BAN â”€â”€
         // El filtro 2 garantiza que banByNumber.has(banNum) === true.
         // Defensa: si no se encuentra, se loguea como bug y se salta (no se crea nada).
         const banRecord = banByNumber.get(banNum);
@@ -1006,7 +1327,7 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
 
         if (spId && (!clientRecord?.salesperson_id || clientRecord.salesperson_id !== spId)) {
           await crmPool.query(`UPDATE clients SET salesperson_id = $1 WHERE id = $2`, [spId, clientId]);
-          alert('info', banNum, `Vendedor actualizado: ${v.vendedor} → cliente ${clientRecord?.name || v.cliente}`);
+          alert('info', banNum, `Vendedor actualizado: ${v.vendedor} â†’ cliente ${clientRecord?.name || v.cliente}`);
           if (clientRecord) {
             clientRecord.salesperson_id = spId;
           } else {
@@ -1014,36 +1335,47 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
           }
         }
 
-        // ── PASO 2: Resolver Subscriber via tango_ventaid ──
+        // â”€â”€ PASO 2: Resolver Subscriber via tango_ventaid â”€â”€
         let subscriberId;
         const existingSub = subByVentaId.get(Number(v.ventaid));
 
         if (existingSub) {
           subscriberId = existingSub.id;
           // Check for changes and update (compare against actual values that would be written)
-          // Para Fijo: phone puede ser vacío, para Móvil nunca debe ser vacío
-          const actualPhone = phone || (isFijo ? '' : `LINEA-${v.ventaid}`);
+          // Para Fijo: phone puede ser vacÃ­o, para MÃ³vil nunca debe ser vacÃ­o
           const changes = [];
           if (existingSub.ban_id !== banRecord.id) changes.push(`ban_id`);
-          if ((existingSub.phone || '') !== actualPhone) changes.push(`phone: '${existingSub.phone}'→'${actualPhone}'`);
-          if ((existingSub.plan || '') !== (planCode || '')) changes.push(`plan: '${existingSub.plan}'→'${planCode}'`);
-          if ((existingSub.line_type || '') !== lineType) changes.push(`line_type: '${existingSub.line_type}'→'${lineType}'`);
-          if (parseFloat(existingSub.monthly_value || 0) !== monthlyValue) changes.push(`monthly_value: ${existingSub.monthly_value}→${monthlyValue}`);
-          if (Number(existingSub.contract_term || 0) !== Number(contractTerm || 0)) changes.push(`contract_term: '${existingSub.contract_term}'→'${contractTerm}'`);
+          if ((existingSub.plan || '') !== (planCode || '')) changes.push(`plan: '${existingSub.plan}'â†’'${planCode}'`);
+          if ((existingSub.line_type || '') !== lineType) changes.push(`line_type: '${existingSub.line_type}'â†’'${lineType}'`);
+          const existingPhoneDigits = String(existingSub.phone || '').replace(/\D/g, '');
+          if (phone && !existingPhoneDigits) changes.push(`phone: 'vacio'â†’'${phone}'`);
+          if (monthlyValue != null && parseFloat(existingSub.monthly_value || 0) !== monthlyValue) changes.push(`monthly_value: ${existingSub.monthly_value}â†’${monthlyValue}`);
+          if (Number(existingSub.contract_term || 0) !== Number(contractTerm || 0)) changes.push(`contract_term: '${existingSub.contract_term}'â†’'${contractTerm}'`);
           if ((existingSub.contract_end_date ? String(existingSub.contract_end_date).slice(0, 10) : '') !== (contractEndDate || '')) {
-            changes.push(`contract_end_date: '${existingSub.contract_end_date}'→'${contractEndDate}'`);
+            changes.push(`contract_end_date: '${existingSub.contract_end_date}'â†’'${contractEndDate}'`);
           }
-          if ((existingSub.status || '').toLowerCase() !== 'activo') changes.push(`status: '${existingSub.status}'→'activo'`);
-          if ((existingSub.line_kind || null) !== lineKind) changes.push(`line_kind: '${existingSub.line_kind || '∅'}'→'${lineKind || '∅'}'`);
+          if ((existingSub.status || '').toLowerCase() !== 'activo') changes.push(`status: '${existingSub.status}'â†’'activo'`);
+          if ((existingSub.line_kind || null) !== lineKind) changes.push(`line_kind: '${existingSub.line_kind || 'âˆ…'}'â†’'${lineKind || 'âˆ…'}'`);
 
           if (changes.length > 0) {
             await crmPool.query(`
               UPDATE subscribers
               SET ban_id=$1,
-                  phone=$2,
-                  plan=$3,
-                  line_type=$4,
-                  monthly_value=$5,
+                  plan=$2,
+                  line_type=$3,
+                  phone=CASE
+                    WHEN NULLIF(TRIM(COALESCE(phone, '')), '') IS NULL
+                      AND $4::text IS NOT NULL
+                      AND NOT EXISTS (
+                        SELECT 1
+                        FROM subscribers sx
+                        WHERE sx.phone_norm = $4::text
+                          AND sx.id <> $9
+                      )
+                      THEN $4::text
+                    ELSE phone
+                  END,
+                  monthly_value=COALESCE($5, monthly_value),
                   contract_term=$6,
                   contract_end_date=$7,
                   line_kind=$8,
@@ -1051,7 +1383,7 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
                   cancel_reason=NULL,
                   updated_at=NOW()
               WHERE id=$9
-            `, [banRecord.id, actualPhone, planCode, lineType, monthlyValue, contractTerm, contractEndDate, lineKind, subscriberId]);
+            `, [banRecord.id, planCode, lineType, phone, monthlyValue, contractTerm, contractEndDate, lineKind, subscriberId]);
             stats.subscribers_updated++;
             alert('warn', banNum, `Subscriber actualizado (ventaid ${v.ventaid}): ${changes.join(', ')}`);
           }
@@ -1070,7 +1402,7 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
                 SET tango_ventaid=$1,
                     plan=$2,
                     line_type=$3,
-                    monthly_value=$4,
+                    monthly_value=COALESCE($4, monthly_value),
                     contract_term=$5,
                     contract_end_date=$6,
                     line_kind=$7,
@@ -1082,11 +1414,12 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
               subByVentaId.set(Number(v.ventaid), { id: subscriberId, tango_ventaid: v.ventaid });
               stats.subscribers_updated++;
               matched = true;
-              alert('info', banNum, `Subscriber vinculado por teléfono: ${phone} → ventaid ${v.ventaid}`);
+              alert('info', banNum, `Subscriber vinculado por telÃ©fono: ${phone} â†’ ventaid ${v.ventaid}`);
             }
           }
 
-          // Fallback: match by ban_id + existing report with same month+commission (for FIJO-*, SIN-TEL-* placeholders)
+          // Fallback legacy: vincula reportes por comision si ya existe un subscriber sin telefono real.
+          // Si Tango API V2 ya trajo phone, se guarda porque es dato real de la venta.
           if (!matched) {
             const fallbackResult = await crmPool.query(`
               SELECT s.id, s.phone FROM subscribers s
@@ -1094,41 +1427,43 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
               WHERE s.ban_id = $1 AND s.tango_ventaid IS NULL
                 AND sr.report_month = $2::date
                 AND sr.company_earnings = $3
-                AND (s.phone LIKE 'FIJO-%' OR s.phone LIKE 'SIN-TEL-%' OR s.phone LIKE 'LINEA-%')
+                AND NULLIF(TRIM(COALESCE(s.phone, '')), '') IS NULL
               LIMIT 1
             `, [banRecord.id, monthVal, comEmpresa]);
             if (fallbackResult.rows.length > 0) {
               subscriberId = fallbackResult.rows[0].id;
-              const oldPhone = fallbackResult.rows[0].phone;
-              const newPhone = phone || oldPhone; // Keep old placeholder if Tango also has no phone
               await crmPool.query(`
                 UPDATE subscribers
                 SET tango_ventaid=$1,
-                    phone=$2,
-                    plan=$3,
-                    line_type=$4,
-                    monthly_value=$5,
-                    contract_term=$6,
-                    contract_end_date=$7,
-                    line_kind=$8,
+                    plan=$2,
+                    line_type=$3,
+                    phone=CASE
+                      WHEN NULLIF(TRIM(COALESCE(phone, '')), '') IS NULL AND $9::text IS NOT NULL
+                        THEN $9::text
+                      ELSE phone
+                    END,
+                    monthly_value=COALESCE($4, monthly_value),
+                    contract_term=$5,
+                    contract_end_date=$6,
+                    line_kind=$7,
                     status='activo',
                     cancel_reason=NULL,
                     updated_at=NOW()
-                WHERE id=$9
-              `, [v.ventaid, newPhone, planCode, lineType, monthlyValue, contractTerm, contractEndDate, lineKind, subscriberId]);
+                WHERE id=$8
+              `, [v.ventaid, planCode, lineType, monthlyValue, contractTerm, contractEndDate, lineKind, subscriberId, phone]);
               subByVentaId.set(Number(v.ventaid), { id: subscriberId, tango_ventaid: v.ventaid });
               stats.subscribers_updated++;
               matched = true;
-              alert('info', banNum, `Subscriber vinculado por comisión: ${oldPhone} → ventaid ${v.ventaid}${phone ? ` (phone: ${phone})` : ''}`);
+              alert('info', banNum, `Subscriber sin numero vinculado por comision -> ventaid ${v.ventaid}${phone ? `, phone ${phone}` : ''}`);
             }
           }
 
-          // ── PASO 1.5: Resolver conflicto por phone_norm (última fecha gana) ──
+          // â”€â”€ PASO 1.5: Resolver conflicto por phone_norm (Ãºltima fecha gana) â”€â”€
           // Constraint phone_norm_uniq es GLOBAL: el mismo phone NO puede existir en
           // dos filas. Antes del INSERT, verificamos si existe otro subscriber con ese
-          // phone en otro tango_ventaid (mismo BAN o no). Si Tango trae fecha más
-          // reciente con margen >3 días, movemos/actualizamos el existente. Si Tango
-          // es más viejo o equivalente, se ignora como histórico.
+          // phone en otro tango_ventaid (mismo BAN o no). Si Tango trae fecha mÃ¡s
+          // reciente con margen >3 dÃ­as, movemos/actualizamos el existente. Si Tango
+          // es mÃ¡s viejo o equivalente, se ignora como histÃ³rico.
           if (!matched && phone) {
             const conflict = await crmPool.query(
               `SELECT s.id, s.ban_id, s.tango_ventaid, s.created_at, s.updated_at, b.ban_number
@@ -1143,7 +1478,7 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
             if (conflict.rows.length > 0) {
               const c = conflict.rows[0];
 
-              // 1) Obtener fecha existente (PRIORIDAD: tango_ventaid → created_at → updated_at)
+              // 1) Obtener fecha existente (PRIORIDAD: tango_ventaid â†’ created_at â†’ updated_at)
               let existingDate = null;
               if (c.tango_ventaid && fechaByVentaid.get(Number(c.tango_ventaid))) {
                 existingDate = fechaByVentaid.get(Number(c.tango_ventaid));
@@ -1165,29 +1500,27 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
               const newDateObj = new Date(newDate);
               const existingDateObj = new Date(existingDate);
 
-              // Filtro de seguridad: solo mover si la diferencia supera 3 días
+              // Filtro de seguridad: solo mover si la diferencia supera 3 dÃ­as
               const diffDays = Math.abs((newDateObj - existingDateObj) / (1000 * 60 * 60 * 24));
 
               if (newDateObj > existingDateObj && diffDays > 3) {
-                // Tango más reciente → UPDATE del existente
+                // Tango mÃ¡s reciente â†’ UPDATE del existente
                 await crmPool.query(
                   `UPDATE subscribers
                      SET ban_id=$1,
-                         phone=$2,
-                         plan=$3,
-                         line_type=$4,
-                         monthly_value=$5,
-                         tango_ventaid=$6,
-                         contract_term=$7,
-                         contract_end_date=$8,
-                         line_kind=$9,
+                         plan=$2,
+                         line_type=$3,
+                         monthly_value=COALESCE($4, monthly_value),
+                         tango_ventaid=$5,
+                         contract_term=$6,
+                         contract_end_date=$7,
+                         line_kind=$8,
                          status='activo',
                          cancel_reason=NULL,
                          updated_at=NOW()
-                   WHERE id=$10`,
+                   WHERE id=$9`,
                   [
                     banRecord.id,
-                    phone,
                     planCode,
                     lineType,
                     monthlyValue,
@@ -1208,15 +1541,15 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
                   sameBan ? 'info' : 'warn',
                   banNum,
                   sameBan
-                    ? `Renovación: ventaid ${c.tango_ventaid || '∅'} → ${v.ventaid} (${existingDate} → ${newDate})`
-                    : `Movimiento: phone ${phone} de BAN ${c.ban_number} → ${banNum} (${existingDate} → ${newDate})`
+                    ? `RenovaciÃ³n: ventaid ${c.tango_ventaid || 'âˆ…'} â†’ ${v.ventaid} (${existingDate} â†’ ${newDate})`
+                    : `Movimiento: phone ${phone} de BAN ${c.ban_number} â†’ ${banNum} (${existingDate} â†’ ${newDate})`
                 );
               } else {
-                // Venta vieja o diferencia <= 3 días → ignorar
+                // Venta vieja o diferencia <= 3 dÃ­as â†’ ignorar
                 alert(
                   'info',
                   banNum,
-                  `Histórico ignorado: phone ${phone} ya en BAN ${c.ban_number} (${existingDate}) vs Tango ${newDate}`
+                  `HistÃ³rico ignorado: phone ${phone} ya en BAN ${c.ban_number} (${existingDate}) vs Tango ${newDate}`
                 );
                 continue;
               }
@@ -1224,47 +1557,90 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
           }
 
           if (!matched) {
-            // Create new subscriber OR update existing (ON CONFLICT handles idempotency)
-            // Para Fijo: phone puede ser vacío, para Móvil nunca debe ser vacío
-            const subPhone = phone || (isFijo ? '' : `LINEA-${v.ventaid}`);
-            if (!phone && isMobile) {
-              alert('error', banNum, `Venta ${v.ventaid}: Móvil sin teléfono, ignorando`);
-              continue;
-            }
-            if (!phone && isFijo) {
-              alert('info', banNum, `Venta ${v.ventaid} Fijo sin teléfono, se deja en blanco`);
-            }
-            const newSub = await crmPool.query(`
-              INSERT INTO subscribers (ban_id, phone, plan, line_type, monthly_value, tango_ventaid, contract_term, contract_end_date, line_kind, status)
-              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'activo')
-              ON CONFLICT (tango_ventaid) DO UPDATE SET
-                ban_id = EXCLUDED.ban_id,
-                phone = CASE WHEN subscribers.phone LIKE 'LINEA-%' OR subscribers.phone LIKE 'SIN-TEL-%' OR subscribers.phone LIKE 'FIJO-%'
-                             THEN EXCLUDED.phone ELSE COALESCE(NULLIF(EXCLUDED.phone, subscribers.phone), subscribers.phone) END,
-                plan = EXCLUDED.plan,
-                line_type = EXCLUDED.line_type,
-                monthly_value = EXCLUDED.monthly_value,
-                contract_term = EXCLUDED.contract_term,
-                contract_end_date = EXCLUDED.contract_end_date,
-                line_kind = EXCLUDED.line_kind,
-                status = 'activo',
-                cancel_reason = NULL,
-                updated_at = NOW()
-              RETURNING id, (xmax = 0) AS was_inserted
-            `, [banRecord.id, subPhone, planCode, lineType, monthlyValue, v.ventaid, contractTerm, contractEndDate, lineKind]);
-            subscriberId = newSub.rows[0].id;
-            const wasInserted = newSub.rows[0].was_inserted;
-            subByVentaId.set(Number(v.ventaid), { id: subscriberId, tango_ventaid: v.ventaid });
-            if (wasInserted) {
+            const canCreateSubscriberFromTango = Boolean(
+              Number.isFinite(Number(v.ventaid)) &&
+              Number(v.ventaid) > 0 &&
+              (phone || isFijo)
+            );
+            if (canCreateSubscriberFromTango) {
+              const hasPhoneNumberColumn = subscriberColumns.has('phone_number');
+              const phoneColumns = hasPhoneNumberColumn ? 'phone_number, phone,' : 'phone,';
+              const phoneValues = hasPhoneNumberColumn ? '$2::text, $2::text,' : '$2::text,';
+              const phoneNumberUpdate = hasPhoneNumberColumn
+                ? `phone_number = CASE
+                    WHEN NULLIF(TRIM(COALESCE(subscribers.phone_number, '')), '') IS NULL
+                      THEN EXCLUDED.phone_number
+                    ELSE subscribers.phone_number
+                  END,`
+                : '';
+              const createdSub = await crmPool.query(`
+                INSERT INTO subscribers (
+                  ban_id, ${phoneColumns} plan, line_type, monthly_value,
+                  contract_term, contract_end_date, line_kind, tango_ventaid,
+                  status, cancel_reason, created_at, updated_at
+                )
+                VALUES (
+                  $1::uuid, ${phoneValues} $3::text, $4::text, $5::numeric,
+                  $6::integer, $7::date, $8::text, $9::bigint,
+                  'activo', NULL, NOW(), NOW()
+                )
+                ON CONFLICT (tango_ventaid) WHERE tango_ventaid IS NOT NULL
+                DO UPDATE SET
+                  ban_id = EXCLUDED.ban_id,
+                  phone = CASE
+                    WHEN NULLIF(TRIM(COALESCE(subscribers.phone, '')), '') IS NULL
+                      THEN EXCLUDED.phone
+                    ELSE subscribers.phone
+                  END,
+                  ${phoneNumberUpdate}
+                  plan = EXCLUDED.plan,
+                  line_type = EXCLUDED.line_type,
+                  monthly_value = COALESCE(EXCLUDED.monthly_value, subscribers.monthly_value),
+                  contract_term = EXCLUDED.contract_term,
+                  contract_end_date = EXCLUDED.contract_end_date,
+                  line_kind = EXCLUDED.line_kind,
+                  status = 'activo',
+                  cancel_reason = NULL,
+                  updated_at = NOW()
+                RETURNING id
+              `, [
+                banRecord.id,
+                phone || null,
+                planCode,
+                lineType,
+                monthlyValue,
+                contractTerm,
+                contractEndDate,
+                lineKind,
+                Number(v.ventaid),
+              ]);
+              subscriberId = createdSub.rows[0].id;
+              subByVentaId.set(Number(v.ventaid), { id: subscriberId, tango_ventaid: v.ventaid });
               stats.subscribers_created++;
-              alert('info', banNum, `Subscriber creado: ${subPhone} plan ${planCode} (ventaid ${v.ventaid})`);
-            } else {
-              stats.subscribers_updated++;
+              matched = true;
+              alert('info', banNum, `Subscriber creado desde Tango V2: ventaid ${v.ventaid}${phone ? `, phone ${phone}` : ''}`);
             }
+          }
+
+          if (!matched) {
+            externalSales.push({
+              tango_ventaid: Number(v.ventaid),
+              ban: banNum,
+              ventatipoid: Number(v.ventatipoid),
+              fechaactivacion: v.fechaactivacion ? String(v.fechaactivacion).slice(0, 10) : null,
+              vendedor: v.vendedor || null,
+              cliente: v.cliente || null,
+              com_empresa: Number(v.com_empresa || 0),
+              com_vendedor: Number(v.com_vendedor || 0),
+              motivo: 'subscriber_no_existe_en_crm',
+            });
+            stats.reports_rejected++;
+            alert('warn', banNum, `Venta ${v.ventaid}: sin subscriber CRM existente; Tango no crea ni modifica telefonos`);
+            continue;
           }
         }
 
-        // ── PASO 3: Upsert subscriber_report ──
+        // â”€â”€ PASO 3: Upsert subscriber_report â”€â”€
         // Protege company_earnings cargado manualmente: solo se actualiza si es NULL o = 0.
         //
         // vendor_commission: si Tango trae comVendedor > 0, se usa tal cual.
@@ -1303,6 +1679,7 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
           months: v.meses,
           ventatipoid: ventaTipo,
           mensualidad: monthlyValue,
+          mensualidad_source: monthlyValueResolution.source,
           com_empresa: comEmpresa,
           com_vendedor: comVendedor,
           portability_bonus: portabilityBonus,
@@ -1315,15 +1692,28 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
           report_month: monthVal,
         };
 
+        const fixedBundleKey = fixedBundleKeyFromSale(v);
+        const isIncludedFixedBundle =
+          Boolean(isFijo && fixedBundleKey && paidFixedBundleKeys.has(fixedBundleKey))
+          && !(comEmpresa > 0)
+          && !(effectiveVendorCommission > 0);
+        if (isIncludedFixedBundle) {
+          rawPayload.included_in_fixed_bundle = true;
+          rawPayload.fixed_bundle_key = fixedBundleKey;
+        }
+
         // Regla de negocio: una venta Tango entra como 'confirmed' SOLO si
-        // tiene todos los datos críticos completos. Si falta cualquiera,
-        // queda como 'needs_review' y NO suma a metas hasta validación manual.
+        // tiene todos los datos crÃ­ticos completos. Si falta cualquiera,
+        // queda como 'needs_review' y NO suma a metas hasta validaciÃ³n manual.
         const validationIssues = [];
-        if (!(comEmpresa > 0)) validationIssues.push('com_empresa<=0');
-        if (!(effectiveVendorCommission > 0)) validationIssues.push('com_vendedor<=0');
-        if (!spId) validationIssues.push('vendedor_no_mapeado');
+        if (!isIncludedFixedBundle) {
+          if (!(comEmpresa > 0)) validationIssues.push('com_empresa<=0');
+          if (!(effectiveVendorCommission > 0)) validationIssues.push('com_vendedor<=0');
+          if (!(monthlyValue > 0)) validationIssues.push('mensualidad_sin_rate');
+        }
+        if (!spId && !String(v.vendedor || '').trim()) validationIssues.push('vendedor_no_mapeado');
         const validationStatus = validationIssues.length === 0 ? 'confirmed' : 'needs_review';
-        const validationNotes = validationIssues.length > 0 ? validationIssues.join('; ') : null;
+        const validationNotes = isIncludedFixedBundle ? 'incluida_paquete_fijo' : (validationIssues.length > 0 ? validationIssues.join('; ') : null);
         if (validationStatus === 'needs_review') {
           alert('warn', banNum, `Venta ${v.ventaid} marcada needs_review: ${validationIssues.join(', ')}`);
         }
@@ -1353,10 +1743,10 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
             source_activation_date = COALESCE(EXCLUDED.source_activation_date, subscriber_reports.source_activation_date),
             source_report_month = COALESCE(EXCLUDED.source_report_month, subscriber_reports.source_report_month),
             raw_payload = COALESCE(EXCLUDED.raw_payload, subscriber_reports.raw_payload),
-            -- Tanda C: transición automática del workflow needs_review.
-            -- Nueva sync válida → confirmed siempre.
-            -- Si fila ya estaba confirmed → mantener confirmed (no degradar).
-            -- Si fila estaba resolved_pending_sync y nueva sigue inválida → volver a needs_review.
+            -- Tanda C: transiciÃ³n automÃ¡tica del workflow needs_review.
+            -- Nueva sync vÃ¡lida â†’ confirmed siempre.
+            -- Si fila ya estaba confirmed â†’ mantener confirmed (no degradar).
+            -- Si fila estaba resolved_pending_sync y nueva sigue invÃ¡lida â†’ volver a needs_review.
             validation_status = CASE
               WHEN EXCLUDED.validation_status = 'confirmed' THEN 'confirmed'
               WHEN subscriber_reports.validation_status = 'confirmed' THEN 'confirmed'
@@ -1408,13 +1798,13 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
           portabilityBonus
         ]);
 
-        // Alertar si se actualizó algún valor existente desde Tango.
+        // Alertar si se actualizÃ³ algÃºn valor existente desde Tango.
         if (prevCompany !== null && comEmpresa > 0 && Math.abs(prevCompany - comEmpresa) > 0.001) {
-          alert('info', banNum, `Ganancia empresa actualizada desde Tango: ${prevCompany} → ${comEmpresa} (ventaid ${v.ventaid})`);
+          alert('info', banNum, `Ganancia empresa actualizada desde Tango: ${prevCompany} â†’ ${comEmpresa} (ventaid ${v.ventaid})`);
           stats.reports_company_updated = (stats.reports_company_updated || 0) + 1;
         }
         if (prevVendor !== null && effectiveVendorCommission > 0 && Math.abs(prevVendor - effectiveVendorCommission) > 0.001) {
-          alert('info', banNum, `Comisión vendedor actualizada desde Tango: ${prevVendor} → ${effectiveVendorCommission} (ventaid ${v.ventaid})`);
+          alert('info', banNum, `ComisiÃ³n vendedor actualizada desde Tango: ${prevVendor} â†’ ${effectiveVendorCommission} (ventaid ${v.ventaid})`);
           stats.reports_vendor_updated = (stats.reports_vendor_updated || 0) + 1;
         }
         stats.reports_upserted++;
@@ -1428,7 +1818,43 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
       }
     }
 
-    // ── 4b. Cleanup duplicates from legacy sync (same BAN+phone, keep canonical tango_ventaid row) ──
+    // Regla oficial: Tango API V2 manda. En el rango procesado, cualquier
+    // reporte Tango que no exista en API V2 sobra y se elimina del informe.
+    if (allowCleanup && apiV2.salesById.size > 0) {
+      const apiVentaIds = [...apiV2.salesById.keys()].map(String);
+      const obsoleteReports = await crmPool.query(`
+        DELETE FROM subscriber_reports sr
+        WHERE COALESCE(sr.source, 'tango') = 'tango'
+          AND sr.source_activation_date >= $1::date
+          AND sr.source_activation_date < ($2::date + INTERVAL '1 day')
+          AND COALESCE(sr.external_sale_id, sr.tango_ventaid::text, '') <> ''
+          AND NOT (COALESCE(sr.external_sale_id, sr.tango_ventaid::text) = ANY($3::text[]))
+        RETURNING sr.subscriber_id, sr.external_sale_id
+      `, [syncRange.from, syncRange.to, apiVentaIds]);
+
+      if (obsoleteReports.rows.length > 0) {
+        stats.tango_api_v2_obsolete_reports_deleted = obsoleteReports.rows.length;
+        const obsoleteSubscriberIds = [...new Set(obsoleteReports.rows.map((row) => row.subscriber_id).filter(Boolean))];
+        const obsoleteSaleIds = obsoleteReports.rows.map((row) => row.external_sale_id).filter(Boolean).join(', ');
+        alert('warn', '', `API V2 manda: reportes fuera de Tango eliminados (${obsoleteSaleIds})`);
+
+        if (obsoleteSubscriberIds.length > 0) {
+          const obsoleteSubscribers = await crmPool.query(`
+            DELETE FROM subscribers s
+            WHERE s.id = ANY($1::uuid[])
+              AND s.tango_ventaid IS NOT NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM subscriber_reports sr
+                WHERE sr.subscriber_id = s.id
+              )
+            RETURNING s.id, s.tango_ventaid, s.phone
+          `, [obsoleteSubscriberIds]);
+          stats.tango_api_v2_obsolete_subscribers_deleted = obsoleteSubscribers.rows.length;
+        }
+      }
+    }
+
+    // â”€â”€ 4b. Cleanup duplicates from legacy sync (same BAN+phone, keep canonical tango_ventaid row) â”€â”€
     // Solo se ejecuta si allowCleanup=true (resync_range con flag, o full sync).
     // En sync incremental se omite para evitar merges destructivos silenciosos.
     if (!allowCleanup) {
@@ -1548,7 +1974,7 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
         }
       }
 
-      // ── 4c. Cleanup placeholder subscribers (LINEA-/SIN-TEL-/FIJO-) if real Tango line exists ──
+      // 4c. Cleanup legacy placeholder subscribers if real Tango line exists.
       // Rule: if a placeholder has no tango_ventaid and there is at least one real tango_ventaid
       // line in the same BAN with same plan + line_type, drop the placeholder.
       const placeholderRows = await crmPool.query(`
@@ -1564,7 +1990,6 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
           AND (
             s.phone LIKE 'LINEA-%'
             OR s.phone LIKE 'SIN-TEL-%'
-            OR s.phone LIKE 'FIJO-%'
           )
           AND EXISTS (
             SELECT 1
@@ -1660,11 +2085,11 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
         alert('warn', banNum, `Subscriber legacy eliminado sin Tango/reportes: ${stale.phone}`);
       }
     } catch (mergeErr) {
-      alert('error', '', `Cleanup duplicados falló: ${mergeErr.message}`);
+      alert('error', '', `Cleanup duplicados fallÃ³: ${mergeErr.message}`);
       console.error('[SYNC] Error limpiando duplicados legacy:', mergeErr);
     }
 
-    // ── 6. Summary ──
+    // â”€â”€ 6. Summary â”€â”€
     console.log(`[SYNC] Completado:`, JSON.stringify(stats));
 
     const externalMotivos = externalSales.reduce((acc, e) => {
@@ -1687,7 +2112,7 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
     const structuredStats = {
       ...stats,
       ...summaryDetails,
-      // Métricas estructuradas que el panel admin lee
+      // MÃ©tricas estructuradas que el panel admin lee
       rows_new: stats.reports_upserted,    // upserted = new + updated; pg planner no diferencia trivialmente
       rows_updated: 0,
       rows_ignored: (rejectedRows?.length || 0) + (externalSales?.length || 0),
@@ -1747,7 +2172,7 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
     if (lockHeld) {
       await releaseSyncLock({ success: false }).catch(() => {});
     }
-    res.status(500).json({ success: false, error: 'Error en sync Tango→CRM', details: error.message, stats, alerts, warnings });
+    res.status(500).json({ success: false, error: 'Error en sync Tangoâ†’CRM', details: error.message, stats, alerts, warnings });
   }
 }
 
@@ -1870,3 +2295,4 @@ function buildComparison(tangoVentas, crmSubs, extraCrm) {
 }
 
 export default router;
+

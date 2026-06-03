@@ -37,13 +37,11 @@ import goalsRoutes from './src/backend/routes/goalsRoutes.js';
 import gestionRoutes from './src/backend/routes/gestionRoutes.js';
 import tangoRoutes from './src/backend/routes/tangoRoutes.js';
 import ocrRoutes from './src/backend/routes/ocrRoutes.js';
-import dealWorkflowRoutes from './src/backend/routes/dealWorkflowRoutes.js';
-import followUpConfigRoutes from './src/backend/routes/followUpConfigRoutes.js';
 import dashboardRoutes from './src/backend/routes/dashboardRoutes.js';
 import agentRoutes from './src/backend/routes/agentRoutes.js';
-import myDayRoutes from './src/backend/routes/myDayRoutes.js';
 import directorRoutes from './src/backend/routes/directorRoutes.js';
 import tangoSyncRoutes from './src/backend/routes/tangoSyncRoutes.js';
+import sov2Routes from './src/backend/routes/sov2Routes.js';
 import { getTangoPool } from './src/backend/database/externalPools.js';
 import { getPermissionCatalogResponse, ensurePermissionSchema, resolvePermissionsForUser, saveUserPermissionOverrides } from './src/backend/utils/permissionService.js';
 
@@ -126,6 +124,7 @@ const normalizeAuthenticatedRole = (value, fallbackSalespersonId = null) => {
 const hydrateAuthenticatedUser = async (tokenUser) => {
   const userId = tokenUser?.userId ?? null;
   const username = String(tokenUser?.username || '').trim();
+  const userIdText = userId === null || userId === undefined ? '' : String(userId).trim();
 
   if (!userId && !username) {
     return tokenUser;
@@ -139,11 +138,11 @@ const hydrateAuthenticatedUser = async (tokenUser) => {
             s.role AS salesperson_role
        FROM users_auth u
        LEFT JOIN salespeople s ON s.id::text = u.salesperson_id::text
-      WHERE ($1::int IS NOT NULL AND u.id = $1)
+      WHERE ($1::text <> '' AND u.id::text = $1)
          OR ($2::text <> '' AND u.username = $2)
-      ORDER BY CASE WHEN ($1::int IS NOT NULL AND u.id = $1) THEN 0 ELSE 1 END
+      ORDER BY CASE WHEN ($1::text <> '' AND u.id::text = $1) THEN 0 ELSE 1 END
       LIMIT 1`,
-    [userId ? Number(userId) : null, username]
+    [userIdText, username]
   );
 
   if (rows.length === 0) {
@@ -423,12 +422,14 @@ app.use('/api/tracking', trackingRoutes);
 app.use('/api/goals', goalsRoutes);
 app.use('/api/gestion', gestionRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+// /api/tango/sync y /api/tango/sync-range viven en src/backend/routes/tangoRoutes.js.
+// Comisiones debe entrar V2-first; legacy/POS no es puerta de entrada.
 app.use('/api/tango', tangoRoutes);
 app.use('/api/ocr', ocrRoutes);
 app.use('/api/agents', agentRoutes);
-app.use('/api/my-day', myDayRoutes);
 app.use('/api/director', directorRoutes);
 app.use('/api/tango-sync', tangoSyncRoutes);
+app.use('/api/sov2', sov2Routes);
 
 // Reglas y Procesos - Servir HTML estático
 app.get('/reglas-procesos', (req, res) => {
@@ -671,6 +672,7 @@ const CLIENT_PRODUCT_SOURCE_TYPES = new Set(['manual', 'subscriber_report', 'sub
 const LEGACY_TASK_CHECKLIST_REGEX = /(^|\n)\[(x| )\]\s+/i;
 let ensureTasksSchemaPromise = null;
 let ensureClientProductWorkflowSchemaPromise = null;
+let ensureAuditLogSchemaPromise = null;
 
 function normalizeTaskStatus(value) {
   const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
@@ -765,7 +767,8 @@ function normalizeTaskWorkflowSteps(value) {
       return {
         id: String(entry.id || `step-${index + 1}`),
         label,
-        is_done: Boolean(entry.is_done ?? entry.done)
+        is_done: Boolean(entry.is_done ?? entry.done),
+        is_active: entry.is_active !== false
       };
     })
     .filter(Boolean)
@@ -1294,8 +1297,6 @@ app.get('/api/version', (_req, res) => {
   res.json({ version: packageJson.version });
 });
 
-app.use('/api', followUpConfigRoutes);
-app.use('/api', dealWorkflowRoutes);
 
 // ======================================================
 // Endpoint para limpiar nombres BAN
@@ -2855,7 +2856,14 @@ app.delete('/api/client-product-workflows/:id', authenticateRequest, async (req,
 app.get('/api/categories', async (_req, res) => {
   try {
     const rows = await query(
-      `SELECT * FROM categories ORDER BY name ASC`
+      `SELECT * FROM categories
+       ORDER BY CASE LOWER(TRIM(name))
+         WHEN 'movil' THEN 1
+         WHEN 'fijo' THEN 2
+         WHEN 'tv' THEN 3
+         WHEN 'cloud' THEN 4
+         ELSE 99
+       END, name ASC`
     );
     const mapped = rows.map((row) =>
       enrich(row, [], [], ['created_at', 'updated_at'])
@@ -2959,157 +2967,10 @@ app.delete('/api/categories/:id', async (req, res) => {
   }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// CATEGORY STEPS (plantillas de pasos por categoría)
-// ─────────────────────────────────────────────────────────────────────────────
 
-// GET /api/categories/:id/steps  → lista pasos de una categoría
-app.get('/api/categories/:id/steps', authenticateRequest, async (req, res) => {
-  try {
-    const rows = await query(
-      `SELECT * FROM category_steps WHERE category_id = $1 ORDER BY step_order ASC, id ASC`,
-      [req.params.id]
-    );
-    res.json(rows);
-  } catch (error) {
-    serverError(res, error, 'Error obteniendo pasos de categoría');
-  }
-});
-
-// POST /api/categories/:id/steps  → crear paso
-app.post('/api/categories/:id/steps', authenticateRequest, requireRole(['admin', 'supervisor']), async (req, res) => {
-  const { step_name, step_order } = req.body || {};
-  if (!step_name || typeof step_name !== 'string' || step_name.trim() === '') {
-    return badRequest(res, 'El nombre del paso es obligatorio');
-  }
-  try {
-    const maxOrder = await query(
-      `SELECT COALESCE(MAX(step_order), 0) AS max_order FROM category_steps WHERE category_id = $1`,
-      [req.params.id]
-    );
-    const order = (step_order != null ? Number(step_order) : maxOrder[0].max_order + 1);
-    const result = await query(
-      `INSERT INTO category_steps (category_id, step_name, step_order)
-       VALUES ($1, $2, $3) RETURNING *`,
-      [req.params.id, step_name.trim(), order]
-    );
-    res.status(201).json(result[0]);
-  } catch (error) {
-    serverError(res, error, 'Error creando paso');
-  }
-});
-
-// PUT /api/category-steps/:stepId  → editar paso
-app.put('/api/category-steps/:stepId', authenticateRequest, requireRole(['admin', 'supervisor']), async (req, res) => {
-  const { step_name, step_order } = req.body || {};
-  try {
-    const updates = [];
-    const values = [];
-    let pi = 1;
-    if (step_name !== undefined) { updates.push(`step_name = $${pi++}`); values.push(step_name.trim()); }
-    if (step_order !== undefined) { updates.push(`step_order = $${pi++}`); values.push(Number(step_order)); }
-    if (updates.length === 0) return badRequest(res, 'Nada que actualizar');
-    values.push(req.params.stepId);
-    const result = await query(
-      `UPDATE category_steps SET ${updates.join(', ')} WHERE id = $${pi} RETURNING *`,
-      values
-    );
-    if (result.length === 0) return res.status(404).json({ error: 'Paso no encontrado' });
-    res.json(result[0]);
-  } catch (error) {
-    serverError(res, error, 'Error actualizando paso');
-  }
-});
-
-// DELETE /api/category-steps/:stepId  → eliminar paso
-app.delete('/api/category-steps/:stepId', authenticateRequest, requireRole(['admin', 'supervisor']), async (req, res) => {
-  try {
-    await query(`DELETE FROM category_steps WHERE id = $1`, [req.params.stepId]);
-    res.json({ success: true });
-  } catch (error) {
-    serverError(res, error, 'Error eliminando paso');
-  }
-});
-
-// PATCH /api/category-steps/reorder  → reordenar pasos de plantilla
-app.patch('/api/category-steps/reorder', authenticateRequest, requireRole(['admin', 'supervisor']), async (req, res) => {
-  const { steps } = req.body || {};
-  if (!Array.isArray(steps)) {
-    return badRequest(res, 'Se esperaba una lista de pasos {step_id, step_order}');
-  }
-  try {
-    await query('BEGIN');
-    for (const s of steps) {
-      await query(
-        `UPDATE category_steps SET step_order = $1 WHERE id = $2`,
-        [Number(s.step_order), s.step_id]
-      );
-    }
-    await query('COMMIT');
-    res.json({ success: true });
-  } catch (error) {
-    await query('ROLLBACK');
-    serverError(res, error, 'Error reordenando pasos');
-  }
-});
 
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CLIENT STEPS (progreso del cliente en cada paso)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// GET /api/clients/:clientId/steps  → progreso del cliente en todos sus pasos
-app.get('/api/clients/:clientId/steps', authenticateRequest, async (req, res) => {
-  try {
-    const rows = await query(
-      `SELECT
-         cs.id            AS step_id,
-         cs.category_id,
-         cs.step_name,
-         cs.step_order,
-         cat.name         AS category_name,
-         COALESCE(csp.is_done, false) AS is_done,
-         csp.done_at,
-         csp.notes,
-         csp.id           AS client_step_id
-       FROM category_steps cs
-       JOIN categories cat ON cat.id = cs.category_id
-       LEFT JOIN client_steps csp
-              ON csp.category_step_id = cs.id
-             AND csp.client_id = $1
-       ORDER BY cat.name ASC, cs.step_order ASC, cs.id ASC`,
-      [req.params.clientId]
-    );
-    res.json(rows);
-  } catch (error) {
-    serverError(res, error, 'Error obteniendo progreso del cliente');
-  }
-});
-
-// PATCH /api/clients/:clientId/steps/:stepId  → marcar/desmarcar paso
-app.patch('/api/clients/:clientId/steps/:stepId', authenticateRequest, async (req, res) => {
-  const { is_done, notes } = req.body || {};
-  const clientId = String(req.params.clientId);  // UUID
-  const stepId   = Number(req.params.stepId);
-  try {
-    const result = await query(
-      `INSERT INTO client_steps (client_id, category_step_id, is_done, done_at, notes, updated_at)
-       VALUES ($1, $2, $3, $4, $5, NOW())
-       ON CONFLICT (client_id, category_step_id)
-       DO UPDATE SET
-         is_done    = EXCLUDED.is_done,
-         done_at    = CASE WHEN EXCLUDED.is_done THEN COALESCE(client_steps.done_at, NOW()) ELSE NULL END,
-         notes      = COALESCE(EXCLUDED.notes, client_steps.notes),
-         updated_at = NOW()
-       RETURNING *`,
-      [clientId, stepId, Boolean(is_done), is_done ? new Date() : null, notes ?? null]
-    );
-    res.json(result[0]);
-  } catch (error) {
-    serverError(res, error, 'Error actualizando paso del cliente');
-  }
-});
-
 // LEGACY ENDPOINT - Reemplazado por productRoutes modular (línea ~78)
 /*
 app.get('/api/products', async (_req, res) => {
@@ -3940,6 +3801,18 @@ const ensureFollowUpNotesReady = async () => {
   if (!followUpNotesReadyPromise) {
     followUpNotesReadyPromise = (async () => {
       await query(`
+        CREATE TABLE IF NOT EXISTS priorities (
+          id BIGSERIAL PRIMARY KEY,
+          name TEXT NOT NULL,
+          color_hex TEXT DEFAULT '#3B82F6',
+          order_index INTEGER DEFAULT 0,
+          is_active INTEGER DEFAULT 1,
+          created_at TIMESTAMP DEFAULT NOW(),
+          updated_at TIMESTAMP DEFAULT NOW()
+        )
+      `);
+
+      await query(`
         CREATE TABLE IF NOT EXISTS follow_up_notes (
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
           follow_up_id INTEGER NOT NULL,
@@ -4094,13 +3967,14 @@ app.get('/api/follow-up-prospects', authenticateRequest, async (req, res) => {
     const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
 
     const sql = `
+      WITH ranked AS (
       SELECT
         p.*,
         c.name as client_name,
         pr.name as priority_name,
         pr.color_hex as priority_color,
         v.name as vendor_name,
-        s.name as step_name,
+        NULL::text as step_name,
         (
           SELECT COALESCE(SUM(sub.monthly_value), 0)::float
           FROM subscribers sub
@@ -4114,7 +3988,6 @@ app.get('/api/follow-up-prospects', authenticateRequest, async (req, res) => {
       LEFT JOIN clients c ON p.client_id = c.id
       LEFT JOIN priorities pr ON p.priority_id = pr.id
       LEFT JOIN vendors v ON p.vendor_id = v.id
-      LEFT JOIN follow_up_steps s ON p.step_id = s.id
       ${loadLastNoteJoinSql}
       ${whereClause}
       ORDER BY p.created_at DESC
@@ -4423,25 +4296,371 @@ app.delete('/api/follow-up-prospects/:id', authenticateRequest, async (req, res)
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/seguimiento
+// Vista operativa de seguimiento: follow_up_prospects + clients + vendors + priorities
+// Soporta filtros: estado, vendedor_id, search, limit, offset, sort, order
+// Preparado para frontend con drag & drop por estado/prioridad y columnas editables
+// ─────────────────────────────────────────────────────────────────────────────
+let seguimientoMetadataReadyPromise = null;
+const ensureSeguimientoMetadataReady = async () => {
+  if (!seguimientoMetadataReadyPromise) {
+    seguimientoMetadataReadyPromise = (async () => {
+      await query(`
+        CREATE TABLE IF NOT EXISTS seguimiento_metadata (
+          id BIGSERIAL PRIMARY KEY,
+          follow_up_prospect_id BIGINT NOT NULL UNIQUE,
+          priority TEXT NULL,
+          owner TEXT NULL,
+          next_action TEXT NULL,
+          due_date DATE NULL,
+          blocked BOOLEAN NOT NULL DEFAULT FALSE,
+          tags TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+          notes TEXT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+      await query(`
+        CREATE INDEX IF NOT EXISTS idx_seguimiento_metadata_follow_up
+          ON seguimiento_metadata (follow_up_prospect_id)
+      `);
+    })().catch((error) => {
+      seguimientoMetadataReadyPromise = null;
+      throw error;
+    });
+  }
+  return seguimientoMetadataReadyPromise;
+};
+
+app.get('/api/seguimiento', authenticateRequest, async (req, res) => {
+  try {
+    await ensureSeguimientoMetadataReady();
+    const scope = await getVendorScope(req);
+
+    // ── Parámetros de query ───────────────────────────────────────────────
+    const estadoParam = String(req.query.estado || 'activo').trim().toLowerCase();
+    const estado      = ['completado', 'inactivo'].includes(estadoParam) ? estadoParam : 'activo';
+    const vendedorId  = req.query.vendedor_id || null;  // UUID de vendors.id
+    const search      = req.query.search     || null;   // texto libre sobre cliente/empresa
+    const limit       = Math.min(parseInt(req.query.limit  || '100', 10), 500);
+    const offset      = parseInt(req.query.offset || '0', 10);
+    const sortField   = ['cliente', 'vendedor', 'estado', 'prioridad', 'updated_at'].includes(req.query.sort)
+                          ? req.query.sort : 'updated_at';
+    const sortOrder   = req.query.order === 'asc' ? 'ASC' : 'DESC';
+
+    const clientVendorColumn = await query(
+      `SELECT 1
+         FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'clients'
+          AND column_name = 'vendor_id'
+        LIMIT 1`
+    ).catch(() => []);
+    const clientVendorIdExpr = clientVendorColumn.length > 0 ? 'c.vendor_id' : 'NULL::integer';
+    const effectiveVendorIdExpr = `COALESCE(fp.vendor_id, ${clientVendorIdExpr})`;
+
+    // ── Cláusulas WHERE dinámicas ─────────────────────────────────────────
+    const conditions = [];
+    const params     = [];
+    let   p          = 1;
+
+    // Scope de acceso: vendedores solo ven sus prospectos
+    if (scope.isVendor && scope.vendorId) {
+      conditions.push(`${effectiveVendorIdExpr} = $${p++}`);
+      params.push(scope.vendorId);
+    } else if (vendedorId) {
+      conditions.push(`${effectiveVendorIdExpr} = $${p++}`);
+      params.push(vendedorId);
+    }
+
+    // Filtro por estado (computed)
+    if (estado === 'completado') {
+      conditions.push(`fp.completed_date IS NOT NULL`);
+    } else if (estado === 'inactivo') {
+      conditions.push(`fp.completed_date IS NULL AND fp.is_active = false`);
+    } else if (estado === 'activo') {
+      conditions.push(`fp.completed_date IS NULL AND fp.is_active = true`);
+    }
+
+    // Búsqueda libre
+    if (search) {
+      conditions.push(`(
+        c.name        ILIKE $${p}
+        OR c.business_name ILIKE $${p}
+        OR fp.company_name  ILIKE $${p}
+        OR COALESCE(v.name, 'Sin asignar') ILIKE $${p}
+        OR sm.priority ILIKE $${p}
+        OR sm.owner ILIKE $${p}
+        OR sm.next_action ILIKE $${p}
+        OR sm.notes ILIKE $${p}
+        OR array_to_string(COALESCE(sm.tags, ARRAY[]::text[]), ',') ILIKE $${p}
+      )`);
+      params.push(`%${search}%`);
+      p++;
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    // ── Columna de ordenamiento mapeada ───────────────────────────────────
+    const sortMap = {
+      cliente:    'cliente',
+      vendedor:   'vendedor',
+      estado:     'estado',
+      prioridad:  'prioridad_order',
+      updated_at: 'updated_at',
+    };
+    const orderExpr = sortMap[sortField] || 'updated_at';
+
+    // ── SQL principal ─────────────────────────────────────────────────────
+    const sql = `
+      WITH ranked AS (
+      SELECT
+        fp.id,
+        fp.client_id,
+
+        -- Nombre del cliente
+        COALESCE(c.name, fp.company_name)           AS cliente,
+
+        -- Teléfono del cliente
+        c.phone                                      AS telefono,
+
+        -- Vendedor asignado
+        COALESCE(v.name, 'Sin asignar')              AS vendedor,
+        ${effectiveVendorIdExpr}                     AS vendor_id,
+
+        -- Estado computado
+        CASE
+          WHEN fp.completed_date IS NOT NULL THEN 'completado'
+          WHEN fp.is_active = false          THEN 'inactivo'
+          ELSE                                    'activo'
+        END                                          AS estado,
+
+        -- Prioridad (de tabla priorities)
+        COALESCE(sm.priority, pr.name)               AS prioridad,
+        pr.color_hex                                 AS prioridad_color,
+        pr.order_index                               AS prioridad_order,
+        fp.priority_id,
+        sm.id                                        AS seguimiento_metadata_id,
+
+        -- Campos de gestión futura (no existen en BD aún — siempre NULL)
+        sm.owner                                     AS responsable,
+        sm.owner                                     AS owner,
+        sm.next_action                               AS proxima_accion,
+        sm.due_date                                  AS fecha_compromiso,
+        COALESCE(sm.blocked, false)                  AS bloqueado,
+        COALESCE(sm.tags, ARRAY[]::text[])           AS tags,
+
+        -- Notas del prospecto
+        COALESCE(sm.notes, fp.notes)                 AS notes,
+
+        -- Fechas de seguimiento
+        fp.completed_date,
+        fp.updated_at,
+        fp.created_at,
+
+        -- Flags de productos de interés
+        fp.fijo_ren,
+        fp.fijo_new,
+        fp.movil_nueva,
+        fp.movil_renovacion,
+        fp.claro_tv,
+        fp.cloud,
+        fp.mpls,
+        ROW_NUMBER() OVER (
+          PARTITION BY fp.client_id
+          ORDER BY fp.updated_at DESC NULLS LAST, fp.created_at DESC NULLS LAST, fp.id DESC
+        ) AS rn
+
+      FROM follow_up_prospects fp
+      LEFT JOIN clients  c  ON c.id  = fp.client_id
+      LEFT JOIN vendors  v  ON v.id  = ${effectiveVendorIdExpr}
+      LEFT JOIN priorities pr ON pr.id = fp.priority_id
+      LEFT JOIN seguimiento_metadata sm ON sm.follow_up_prospect_id = fp.id
+      ${whereClause}
+      )
+      SELECT
+        id,
+        client_id,
+        cliente,
+        telefono,
+        vendedor,
+        vendor_id,
+        estado,
+        prioridad,
+        prioridad_color,
+        priority_id,
+        seguimiento_metadata_id,
+        responsable,
+        owner,
+        proxima_accion,
+        fecha_compromiso,
+        bloqueado,
+        tags,
+        notes,
+        completed_date,
+        updated_at,
+        created_at,
+        fijo_ren,
+        fijo_new,
+        movil_nueva,
+        movil_renovacion,
+        claro_tv,
+        cloud,
+        mpls
+      FROM ranked
+      WHERE rn = 1
+      ORDER BY ${orderExpr} ${sortOrder}, id ASC
+      LIMIT  $${p++}
+      OFFSET $${p++}
+    `;
+    params.push(limit, offset);
+
+    // ── Count total (para paginación) ─────────────────────────────────────
+    const countSql = `
+      SELECT COUNT(*) AS total
+      FROM (
+        SELECT ROW_NUMBER() OVER (
+                 PARTITION BY fp.client_id
+                 ORDER BY fp.updated_at DESC NULLS LAST, fp.created_at DESC NULLS LAST, fp.id DESC
+               ) AS rn
+        FROM follow_up_prospects fp
+        LEFT JOIN clients  c  ON c.id  = fp.client_id
+        LEFT JOIN vendors  v  ON v.id  = ${effectiveVendorIdExpr}
+        LEFT JOIN priorities pr ON pr.id = fp.priority_id
+        LEFT JOIN seguimiento_metadata sm ON sm.follow_up_prospect_id = fp.id
+        ${whereClause}
+      ) ranked
+      WHERE rn = 1
+    `;
+    const countParams = params.slice(0, params.length - 2); // sin limit/offset
+
+    const [rows, countResult] = await Promise.all([
+      query(sql, params),
+      query(countSql, countParams),
+    ]);
+
+    res.json({
+      total:  parseInt(countResult[0]?.total || '0', 10),
+      limit,
+      offset,
+      rows,
+    });
+  } catch (error) {
+    console.error('Error en GET /api/seguimiento:', error);
+    res.status(500).json({ error: 'Error obteniendo seguimiento' });
+  }
+});
+
+app.patch('/api/seguimiento/:id', authenticateRequest, async (req, res) => {
+  try {
+    await ensureSeguimientoMetadataReady();
+    const { id } = req.params;
+    const scope = await getVendorScope(req);
+
+    const prospectRows = await query(
+      `SELECT fp.id, fp.vendor_id, c.salesperson_id AS client_salesperson_id
+         FROM follow_up_prospects fp
+         LEFT JOIN clients c ON c.id = fp.client_id
+        WHERE fp.id = $1
+        LIMIT 1`,
+      [id]
+    );
+
+    if (prospectRows.length === 0) {
+      return res.status(404).json({ error: 'Seguimiento no encontrado' });
+    }
+    if (!vendorOwnsProspect(prospectRows[0], scope)) {
+      return res.status(403).json({ error: 'No tienes acceso a este seguimiento' });
+    }
+
+    const allowed = new Set(['priority', 'owner', 'next_action', 'due_date', 'blocked', 'tags', 'notes']);
+    const body = req.body || {};
+    const updates = {};
+
+    for (const key of Object.keys(body)) {
+      if (!allowed.has(key)) continue;
+      if (key === 'blocked') {
+        updates.blocked = Boolean(body.blocked);
+      } else if (key === 'tags') {
+        if (Array.isArray(body.tags)) {
+          updates.tags = body.tags.map((tag) => String(tag || '').trim()).filter(Boolean);
+        } else if (typeof body.tags === 'string') {
+          updates.tags = body.tags.split(',').map((tag) => tag.trim()).filter(Boolean);
+        } else if (body.tags == null) {
+          updates.tags = [];
+        } else {
+          return res.status(400).json({ error: 'tags debe ser lista o texto separado por comas' });
+        }
+      } else if (key === 'due_date') {
+        const value = String(body.due_date || '').trim();
+        if (value && !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+          return res.status(400).json({ error: 'due_date debe tener formato YYYY-MM-DD' });
+        }
+        updates.due_date = value || null;
+      } else {
+        const value = body[key] == null ? '' : String(body[key]);
+        updates[key] = value.trim() === '' ? null : value.trim();
+      }
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: 'Nada que actualizar' });
+    }
+
+    const currentRows = await query(
+      `SELECT priority, owner, next_action, due_date, blocked, tags, notes
+         FROM seguimiento_metadata
+        WHERE follow_up_prospect_id = $1
+        LIMIT 1`,
+      [id]
+    );
+    const current = currentRows[0] || {};
+    const values = {
+      priority: Object.prototype.hasOwnProperty.call(updates, 'priority') ? updates.priority : current.priority ?? null,
+      owner: Object.prototype.hasOwnProperty.call(updates, 'owner') ? updates.owner : current.owner ?? null,
+      next_action: Object.prototype.hasOwnProperty.call(updates, 'next_action') ? updates.next_action : current.next_action ?? null,
+      due_date: Object.prototype.hasOwnProperty.call(updates, 'due_date') ? updates.due_date : current.due_date ?? null,
+      blocked: Object.prototype.hasOwnProperty.call(updates, 'blocked') ? updates.blocked : Boolean(current.blocked),
+      tags: Object.prototype.hasOwnProperty.call(updates, 'tags') ? updates.tags : current.tags ?? [],
+      notes: Object.prototype.hasOwnProperty.call(updates, 'notes') ? updates.notes : current.notes ?? null,
+    };
+
+    const rows = await query(
+      `INSERT INTO seguimiento_metadata (
+          follow_up_prospect_id, priority, owner, next_action, due_date, blocked, tags, notes, created_at, updated_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7::text[], $8, NOW(), NOW())
+        ON CONFLICT (follow_up_prospect_id)
+        DO UPDATE SET
+          priority = EXCLUDED.priority,
+          owner = EXCLUDED.owner,
+          next_action = EXCLUDED.next_action,
+          due_date = EXCLUDED.due_date,
+          blocked = EXCLUDED.blocked,
+          tags = EXCLUDED.tags,
+          notes = EXCLUDED.notes,
+          updated_at = NOW()
+        RETURNING *`,
+      [id, values.priority, values.owner, values.next_action, values.due_date, values.blocked, values.tags, values.notes]
+    );
+
+    res.json(rows[0]);
+  } catch (error) {
+    console.error('Error en PATCH /api/seguimiento/:id:', error);
+    res.status(500).json({ error: 'Error actualizando seguimiento' });
+  }
+});
+
 // GET /api/priorities - Obtener prioridades
 app.get('/api/priorities', authenticateRequest, async (req, res) => {
   try {
+    await ensureFollowUpNotesReady();
     const result = await pool.query('SELECT * FROM priorities ORDER BY order_index ASC');
     res.json(result.rows);
   } catch (error) {
     console.error('Error getting priorities:', error);
     res.status(500).json({ error: 'Error obteniendo prioridades' });
-  }
-});
-
-// GET /api/follow-up-steps - Obtener pasos de seguimiento
-app.get('/api/follow-up-steps', authenticateRequest, async (req, res) => {
-  try {
-    const result = await pool.query('SELECT * FROM follow_up_steps ORDER BY order_index ASC');
-    res.json(result.rows);
-  } catch (error) {
-    console.error('Error getting follow-up steps:', error);
-    res.status(500).json({ error: 'Error obteniendo pasos de seguimiento' });
   }
 });
 
@@ -4604,9 +4823,8 @@ app.get('/api/call-logs/:prospect_id', authenticateRequest, async (req, res) => 
     const { prospect_id } = req.params;
 
     const logs = await query(
-      `SELECT cl.*, s.name as step_name
+      `SELECT cl.*, NULL::text as step_name
        FROM call_logs cl
-       LEFT JOIN follow_up_steps s ON cl.step_id = s.id
        WHERE cl.follow_up_id = $1
        ORDER BY cl.call_date DESC`,
       [prospect_id]
@@ -4622,40 +4840,23 @@ app.get('/api/call-logs/:prospect_id', authenticateRequest, async (req, res) => 
 // POST: Crear nuevo call log
 app.post('/api/call-logs', authenticateRequest, async (req, res) => {
   try {
-    const { follow_up_id, call_date, notes, outcome, next_call_date, step_completed, step_id } = req.body;
+    const { follow_up_id, call_date, notes, outcome, next_call_date } = req.body;
 
-    // Guardar call log
     const result = await query(
       `INSERT INTO call_logs (follow_up_id, call_date, notes, outcome, next_call_date, step_completed, step_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
-      [follow_up_id, call_date, notes, outcome, next_call_date, step_completed || false, step_id]
+      [follow_up_id, call_date, notes, outcome, next_call_date, false, null]
     );
 
-    // Si se completó el paso, avanzar al siguiente
-    let next_step_id = step_id; // mantener actual si no avanza
-
-    if (step_completed && step_id) {
-      // Obtener siguiente paso
-      const nextSteps = await query(
-        `SELECT id FROM follow_up_steps 
-         WHERE order_index > (SELECT order_index FROM follow_up_steps WHERE id = $1)
-         ORDER BY order_index ASC LIMIT 1`,
-        [step_id]
-      );
-      if (nextSteps.length > 0) next_step_id = nextSteps[0].id;
-    }
-
-    // Actualizar prospecto: Última llamada, Próxima llamada, Nuevo Paso (si aplica)
     await query(
-      `UPDATE follow_up_prospects 
-       SET 
+      `UPDATE follow_up_prospects
+       SET
          last_call_date = $1,
          next_call_date = $2,
-         step_id = COALESCE($3, step_id),
          updated_at = NOW()
-       WHERE id = $4`,
-      [call_date, next_call_date, step_completed ? next_step_id : null, follow_up_id]
+       WHERE id = $3`,
+      [call_date, next_call_date, follow_up_id]
     );
 
     res.json({ success: true, log: result[0] });
@@ -4664,7 +4865,6 @@ app.post('/api/call-logs', authenticateRequest, async (req, res) => {
     res.status(500).json({ error: 'Error guardando llamada' });
   }
 });
-
 // ======================================================
 // Prospectos COMPLETADOS (Reportes)
 app.get('/api/completed-prospects', authenticateRequest, async (req, res) => {
@@ -5407,14 +5607,32 @@ app.get('/api/subscriber-reports/needs-review-list', authenticateRequest, async 
         c.name AS client_name,
         c.owner_name AS client_business_name,
         sp.id AS vendor_id,
-        sp.name AS vendor_name,
+        COALESCE(
+          NULLIF(TRIM(sr.raw_payload->>'vendedor'), ''),
+          NULLIF(TRIM(sr.raw_payload->>'vendedor_nombre'), ''),
+          NULLIF(TRIM(sr.raw_payload->>'salesperson'), ''),
+          NULLIF(TRIM(sr.raw_payload->>'seller'), ''),
+          sp.name
+        ) AS vendor_name,
+        COALESCE(
+          NULLIF(TRIM(sr.raw_payload->>'vendedor'), ''),
+          NULLIF(TRIM(sr.raw_payload->>'vendedor_nombre'), ''),
+          NULLIF(TRIM(sr.raw_payload->>'salesperson'), ''),
+          NULLIF(TRIM(sr.raw_payload->>'seller'), '')
+        ) AS tango_vendor_name,
         (${TRACE_VALIDATION_SQL}) AS validation_status,
         sr.validation_notes,
         COALESCE(sr.retry_count, 0) AS retry_count,
         sr.last_review_attempt_at,
         EXTRACT(EPOCH FROM (NOW() - sr.report_month::timestamp))/86400 AS days_unresolved,
         CASE
-          WHEN c.salesperson_id IS NULL THEN 'Vendedor no identificado'
+          WHEN c.salesperson_id IS NULL
+            AND COALESCE(
+              NULLIF(TRIM(sr.raw_payload->>'vendedor'), ''),
+              NULLIF(TRIM(sr.raw_payload->>'vendedor_nombre'), ''),
+              NULLIF(TRIM(sr.raw_payload->>'salesperson'), ''),
+              NULLIF(TRIM(sr.raw_payload->>'seller'), '')
+            ) IS NULL THEN 'Vendedor no identificado'
           WHEN (sr.external_sale_id IS NULL OR sr.external_sale_id = '') THEN 'Venta Tango inválida'
           WHEN sr.source_activation_date IS NULL THEN 'Activación incompleta'
           WHEN COALESCE(sr.company_earnings, 0) <= 0 OR COALESCE(sr.vendor_commission, 0) <= 0 THEN 'Venta sin comisión'
@@ -5445,7 +5663,7 @@ app.get('/api/subscriber-reports/needs-review-list', authenticateRequest, async 
       const issues = [];
       if (Number(row.company_earnings || 0) <= 0) issues.push('Comisión empresa = 0');
       if (Number(row.vendor_commission || 0) <= 0) issues.push('Comisión vendedor = 0');
-      if (!row.vendor_id) issues.push('Vendedor no mapeado');
+      if (!row.vendor_name) issues.push('Vendedor no mapeado');
       if (!row.external_sale_id) issues.push('VentaID faltante');
       if (!row.source_activation_date) issues.push('Fecha activación faltante');
       return issues.length > 0 ? issues.join('; ') : null;
@@ -5762,7 +5980,13 @@ app.get('/api/subscriber-reports', authenticateRequest, async (req, res) => {
         c.id as client_id,
         c.name as client_name,
         c.salesperson_id,
-        sp.name as salesperson_name,
+        COALESCE(
+          NULLIF(TRIM(sr.raw_payload->>'vendedor'), ''),
+          NULLIF(TRIM(sr.raw_payload->>'vendedor_nombre'), ''),
+          NULLIF(TRIM(sr.raw_payload->>'salesperson'), ''),
+          NULLIF(TRIM(sr.raw_payload->>'seller'), ''),
+          sp.name
+        ) as salesperson_name,
         ${salespeopleSchema.hasCommissionPercentage ? 'sp.commission_percentage as salesperson_commission_percentage,' : 'NULL::numeric AS salesperson_commission_percentage,'}
         s.monthly_value as monthly_value,
         sr.report_month,
@@ -5778,7 +6002,13 @@ app.get('/api/subscriber-reports', authenticateRequest, async (req, res) => {
         -- Solo se setea para filas needs_review o resolved_pending_sync.
         CASE
           WHEN ${workflowSchema.hasValidationStatus ? `(${TRACE_VALIDATION_SQL})` : `'needs_review'`} = 'confirmed' THEN NULL
-          WHEN c.salesperson_id IS NULL THEN 'Vendedor no identificado'
+          WHEN c.salesperson_id IS NULL
+            AND COALESCE(
+              NULLIF(TRIM(sr.raw_payload->>'vendedor'), ''),
+              NULLIF(TRIM(sr.raw_payload->>'vendedor_nombre'), ''),
+              NULLIF(TRIM(sr.raw_payload->>'salesperson'), ''),
+              NULLIF(TRIM(sr.raw_payload->>'seller'), '')
+            ) IS NULL THEN 'Vendedor no identificado'
           ${workflowSchema.hasExternalSaleId ? `WHEN (sr.external_sale_id IS NULL OR sr.external_sale_id = '') THEN 'Venta Tango inválida'` : ''}
           ${workflowSchema.hasSourceActivationDate ? `WHEN sr.source_activation_date IS NULL THEN 'Activación incompleta'` : ''}
           WHEN COALESCE(sr.company_earnings, 0) <= 0 OR COALESCE(sr.vendor_commission, 0) <= 0 THEN 'Venta sin comisión'
@@ -5801,7 +6031,13 @@ app.get('/api/subscriber-reports', authenticateRequest, async (req, res) => {
               NULLIF(TRIM(BOTH '; ' FROM CONCAT_WS('; ',
                 CASE WHEN COALESCE(sr.company_earnings, 0) <= 0 THEN 'Comisión empresa = 0' END,
                 CASE WHEN COALESCE(sr.vendor_commission, 0) <= 0 THEN 'Comisión vendedor = 0' END,
-                CASE WHEN c.salesperson_id IS NULL THEN 'Vendedor no mapeado' END,
+                CASE WHEN c.salesperson_id IS NULL
+                  AND COALESCE(
+                    NULLIF(TRIM(sr.raw_payload->>'vendedor'), ''),
+                    NULLIF(TRIM(sr.raw_payload->>'vendedor_nombre'), ''),
+                    NULLIF(TRIM(sr.raw_payload->>'salesperson'), ''),
+                    NULLIF(TRIM(sr.raw_payload->>'seller'), '')
+                  ) IS NULL THEN 'Vendedor no mapeado' END,
                 CASE WHEN c.name IS NULL OR TRIM(c.name) = '' THEN 'Cliente incompleto' END,
                 ${workflowSchema.hasExternalSaleId ? `CASE WHEN sr.external_sale_id IS NULL OR sr.external_sale_id = '' THEN 'VentaID faltante' END,` : ''}
                 ${workflowSchema.hasSourceActivationDate ? `CASE WHEN sr.source_activation_date IS NULL THEN 'Fecha activación faltante' END,` : ''}
@@ -5881,6 +6117,13 @@ app.get('/api/subscriber-reports', authenticateRequest, async (req, res) => {
     )];
 
     const saleTypeByVentaId = new Map();
+    const saleTypeFromVentaTipo = (ventaTipo) => {
+      if (ventaTipo === 138) return 'MOVIL_RENOVACION';
+      if (ventaTipo === 139) return 'MOVIL_NUEVA';
+      if (ventaTipo === 140) return 'FIJO_REN';
+      if (ventaTipo === 141) return 'FIJO_NEW';
+      return null;
+    };
     if (tangoVentaIds.length > 0) {
       try {
         const tangoPool = getTangoPool();
@@ -5893,11 +6136,7 @@ app.get('/api/subscriber-reports', authenticateRequest, async (req, res) => {
         for (const row of tangoResult.rows) {
           const ventaId = Number(row.ventaid);
           const ventaTipo = Number(row.ventatipoid);
-          let saleType = null;
-          if (ventaTipo === 138) saleType = 'MOVIL_RENOVACION';
-          else if (ventaTipo === 139) saleType = 'MOVIL_NUEVA';
-          else if (ventaTipo === 140) saleType = 'FIJO_REN';
-          else if (ventaTipo === 141) saleType = 'FIJO_NEW';
+          const saleType = saleTypeFromVentaTipo(ventaTipo);
           if (saleType) {
             saleTypeByVentaId.set(ventaId, saleType);
           }
@@ -5931,7 +6170,7 @@ app.get('/api/subscriber-reports', authenticateRequest, async (req, res) => {
       subscriber_id: row.subscriber_id,
       phone: row.phone,
       line_type: row.line_type || null,
-      sale_type: saleTypeByVentaId.get(Number(row.tango_ventaid)) || null,
+      sale_type: saleTypeByVentaId.get(Number(row.tango_ventaid)) || saleTypeFromVentaTipo(Number(row.raw_payload?.ventatipoid)) || null,
       activation_date: row.activation_date,
       ban_number: row.ban_number,
       account_type: row.account_type || null,
@@ -7850,10 +8089,37 @@ const server = app.listen(PORT, () => {
 // ============================================================
 
 // Función helper para registrar eventos
+async function ensureAuditLogSchema() {
+  if (ensureAuditLogSchemaPromise) {
+    return ensureAuditLogSchemaPromise;
+  }
+
+  ensureAuditLogSchemaPromise = query(`
+    CREATE TABLE IF NOT EXISTS audit_log (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT NULL,
+      username TEXT NULL,
+      action TEXT NULL,
+      entity_type TEXT NULL,
+      entity_id BIGINT NULL,
+      entity_name TEXT NULL,
+      details TEXT NULL,
+      ip_address TEXT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `).catch((error) => {
+    ensureAuditLogSchemaPromise = null;
+    throw error;
+  });
+
+  return ensureAuditLogSchemaPromise;
+}
+
 async function logAudit(userId, username, action, entityType, entityId, entityName, details, ipAddress = null) {
   try {
     const safeUserId = Number.isFinite(Number(userId)) ? Number(userId) : null;
     const safeEntityId = Number.isFinite(Number(entityId)) ? Number(entityId) : null;
+    await ensureAuditLogSchema();
     await query(
       `INSERT INTO audit_log(user_id, username, action, entity_type, entity_id, entity_name, details, ip_address)
 VALUES($1, $2, $3, $4, $5, $6, $7, $8)`,

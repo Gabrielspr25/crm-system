@@ -445,7 +445,7 @@ export default function Reports() {
 
   const handleSyncTango = async () => {
     if (syncing) return;
-    if (!confirm('¿Sincronizar ventas de Tango â†’ CRM?\nTango es la fuente de verdad.')) return;
+    if (!confirm(`¿Re-sincronizar Tango para ${selectedMonth}?\nTango es la fuente de verdad.`)) return;
     setSyncing(true);
     setSyncResult(null);
     // El sync puede procesar miles de filas y tardar >1 min. Usamos fetch directo
@@ -456,19 +456,28 @@ export default function Reports() {
     try {
       const token = (typeof localStorage !== 'undefined' ? localStorage.getItem('crm_token') : null) || '';
       const apiBase = (import.meta.env.VITE_API_BASE_URL && String(import.meta.env.VITE_API_BASE_URL).trim()) || window.location.origin;
-      const resp = await fetch(`${apiBase}/api/tango/sync`, {
+      const [year, month] = selectedMonth.split('-').map(Number);
+      const from = `${selectedMonth}-01`;
+      const to = new Date(year, month, 0).toISOString().slice(0, 10);
+      const resp = await fetch(`${apiBase}/api/tango/sync-range`, {
         method: 'POST',
         headers: {
           'Authorization': token ? `Bearer ${token}` : '',
           'Content-Type': 'application/json',
           'Accept': 'application/json',
         },
+        body: JSON.stringify({
+          from,
+          to,
+          reason: `Resync comisiones ${selectedMonth}`,
+          cleanup: false,
+        }),
         signal: controller.signal,
       });
       const data = await resp.json();
       if (resp.ok && data.success) {
         setSyncResult({ stats: data.stats, alerts: data.alerts || [] });
-        refetchProspects();
+        await refetchProspects();
       } else {
         alert('Error en sync: ' + (data.error || `HTTP ${resp.status}`));
         if (data.stats) setSyncResult({ stats: data.stats, alerts: data.alerts || [] });
@@ -684,7 +693,7 @@ export default function Reports() {
   // Alerta: reportes sin vendedor
   const noVendorRows = useMemo(() => {
     if (!reportRows) return [];
-    return reportRows.filter(r => !r.vendor_id || !r.vendor_name);
+    return reportRows.filter(r => !String(r.vendor_name || '').trim());
   }, [reportRows]);
   const toggleClient = (key: string) => {
     setExpandedClients(prev => {

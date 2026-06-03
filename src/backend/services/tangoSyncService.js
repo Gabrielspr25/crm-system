@@ -185,7 +185,7 @@ export async function createSyncLog({ syncMode, rangeStart, rangeEnd, reason, us
             'tango_pymes', 'running', $1,
             $2::date, $3::date, $4,
             $5::uuid,
-            jsonb_build_object('user_role', $6, 'started_at', NOW()),
+            jsonb_build_object('user_role', $6::text, 'started_at', NOW()),
             NOW()
          )
          RETURNING id::text AS id, started_at`,
