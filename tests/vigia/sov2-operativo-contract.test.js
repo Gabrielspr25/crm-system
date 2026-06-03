@@ -99,6 +99,18 @@ describe("SOV2 contrato operativo", () => {
     expect(seguimiento).toContain("metrics?.projection_quantity");
   });
 
+  test("SOV2 resuelve metas por description cuando product_id es legacy", () => {
+    const controller = read("src/backend/controllers/sov2Controller.js");
+
+    expect(controller).toContain("LEFT JOIN products p_by_product_id ON p_by_product_id.id::text = pg.product_id::text");
+    expect(controller).toContain("LEFT JOIN products p_by_description ON p_by_description.id::text = pg.description");
+    expect(controller).toContain("COALESCE(p_by_product_id.name, p_by_description.name) AS product_name");
+    expect(controller).toContain("metaMoney += targetRevenue");
+    expect(controller).toContain("metaQuantity += targetUnits");
+    expect(controller).not.toContain("LEFT JOIN products p ON p.id::text = COALESCE(pg.product_id::text, pg.description)");
+    expect(controller).not.toContain("fallbackAmount");
+  });
+
   test("productos no muestra comisiones y actualiza usando columnas reales", () => {
     const productsPage = read("src/react-app/pages/Products.tsx");
     const productController = read("src/backend/controllers/productController.js");

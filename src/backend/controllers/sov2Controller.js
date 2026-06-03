@@ -650,7 +650,7 @@ async function fetchSov2GoalMetrics(req) {
        pg.description,
        COALESCE(pg.target_revenue, 0)::numeric AS target_revenue,
        COALESCE(pg.target_units, 0)::numeric AS target_units,
-       p.name AS product_name,
+       COALESCE(p_by_product_id.name, p_by_description.name) AS product_name,
        v.id AS vendor_id,
        vsm.salesperson_id AS mapped_salesperson_id,
        sp.id AS name_salesperson_id
@@ -658,7 +658,8 @@ async function fetchSov2GoalMetrics(req) {
      LEFT JOIN vendors v ON v.id = pg.vendor_id
      LEFT JOIN vendor_salesperson_mapping vsm ON vsm.vendor_id = v.id
      LEFT JOIN salespeople sp ON UPPER(TRIM(sp.name)) = UPPER(TRIM(v.name))
-     LEFT JOIN products p ON p.id::text = COALESCE(pg.product_id::text, pg.description)
+     LEFT JOIN products p_by_product_id ON p_by_product_id.id::text = pg.product_id::text
+     LEFT JOIN products p_by_description ON p_by_description.id::text = pg.description
      WHERE ${conditions.join(' AND ')}`,
     params
   );
@@ -666,17 +667,10 @@ async function fetchSov2GoalMetrics(req) {
   let metaMoney = 0;
   let metaQuantity = 0;
   for (const row of rows) {
-    const productKey = normalizeProductKeyFromGoal(row);
-    if (!productKey) continue;
-
     const targetRevenue = Number(row.target_revenue || 0);
     const targetUnits = Number(row.target_units || 0);
-    const fallbackAmount = targetRevenue || targetUnits;
-    if (MONEY_KEYS.has(productKey)) {
-      metaMoney += targetRevenue || fallbackAmount;
-    } else if (QUANTITY_KEYS.has(productKey)) {
-      metaQuantity += targetUnits || fallbackAmount;
-    }
+    metaMoney += targetRevenue;
+    metaQuantity += targetUnits;
   }
 
   const metricScopeParams = [year, month];
