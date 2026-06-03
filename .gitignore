@@ -23,6 +23,8 @@ uploads/
 # Logs
 *.log
 logs/
+test-results/
+playwright-report/
 
 # Large files and temp directories
 claropr-root.tar.gz

@@ -29,5 +29,8 @@ Proyecto CRM de ventas con frontend React/Vite y backend Node/Express.
 ## Regla de trabajo
 Todo script nuevo debe vivir dentro de `scripts/` en su categoría. No crear scripts sueltos en raíz.
 
+## QA y E2E
+- Los E2E/scripts que hacen `PATCH` deben correr solo contra local/staging o datos QA controlados. Nunca ejecutarlos contra producción real sin autorización explícita.
+
 ## Control operativo
 - Historial: `HISTORIAL-FUNCIONAMIENTO.md`
