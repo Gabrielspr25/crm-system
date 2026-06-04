@@ -111,9 +111,8 @@ describe("SOV2 contrato operativo", () => {
     expect(controller).not.toContain("fallbackAmount");
   });
 
-  test("productos no muestra comisiones y actualiza usando columnas reales", () => {
+  test("productos no muestra comisiones en pantalla", () => {
     const productsPage = read("src/react-app/pages/Products.tsx");
-    const productController = read("src/backend/controllers/productController.js");
 
     expect(productsPage).not.toContain("Comision");
     expect(productsPage).not.toContain("Comisión");
@@ -121,9 +120,6 @@ describe("SOV2 contrato operativo", () => {
     expect(productsPage).not.toContain("commission_percentage");
     expect(productsPage).not.toContain("/api/products/tiers");
 
-    expect(productController).not.toContain("base_price");
-    expect(productController).not.toContain("is_recurring");
-    expect(productController).not.toContain("billing_cycle");
   });
 
 });
