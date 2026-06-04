@@ -13,7 +13,6 @@ import OfferGenerator from "../components/OfferGenerator";
 import EmailModal from "../components/EmailModal";
 import ComparativaModal from "../components/ComparativaModal";
 import BanPasteSubscribersModal from "../components/BanPasteSubscribersModal";
-import ClientTasksPanel from "@/react-app/components/tasks/ClientTasksPanel";
 import * as XLSX from 'xlsx';
 
 const OPEN_CLIENT_INTENT_KEY = "crm_open_client_task_intent";
@@ -1900,62 +1899,133 @@ export default function Clients() {
     nota: '1 BAN con N suscriptores = 1 BAN (ban_count cuenta BANs, no suscriptores)'
   });
 
-  const handleExport = (type: 'excel' | 'csv', scope: 'current' | 'all' = 'current') => {
-    // FIX: Usar clientSummaries en lugar de clientItems para tener los campos calculados (isIncomplete, etc)
-    const dataToProcess = scope === 'all' ? clientSummaries : clientsForTab;
+  const buildClientExportRows = (dataToProcess: ClientRowSummary[], groupLabel: string) => {
+    const exportStatusByGroup: Record<string, string> = {
+      Activos: 'Activo',
+      Cancelados: 'Cancelado',
+      Incompletos: 'Sin revisar',
+      Seguimiento: 'En seguimiento',
+      Completados: 'Completado',
+      Todos: 'Sin revisar',
+    };
+    const exportStatus = exportStatusByGroup[groupLabel] || groupLabel || 'Sin revisar';
 
-    console.log(`ðŸ“Š Exportando ${scope === 'all' ? 'TODO' : 'VISTA ACTUAL'} - Registros: ${dataToProcess.length}`);
+    return dataToProcess.map(client => ({
+      'Grupo': groupLabel,
+      'ID': client.clientId,
+      'Nombre': client.contactPerson || client.clientName,
+      'Empresa': client.businessName || client.clientName || 'Sin Nombre',
+      'Tipo': client.banType || 'Indefinido',
+      'Email': client.email || '',
+      'Teléfono Principal': client.phone || '',
+      'Dirección': client.address || '',
+      'Ciudad': client.city || '',
+      'Base': (client as any).base || 'BD propia',
+      'Estado': exportStatus,
+      'Vendedor': client.vendorName || 'Sin asignar',
+      'BANs': client.banNumbers?.length ? client.banNumbers.join(', ') : (client.primaryBanNumber && client.primaryBanNumber !== '-' ? client.primaryBanNumber : ''),
+      'Suscriptores': client.subscriberPhones?.length ? client.subscriberPhones.join(', ') : (client.primarySubscriberPhone || ''),
+      'Total BANs': Number(client.totalBans || 0),
+      'Total Suscriptores': Number(client.totalSubscribers || 0),
+      'Suscriptores Activos': Number((client as any).activeSubscribers || 0),
+      'Fecha Vencimiento': client.primaryContractEndDate ? new Date(client.primaryContractEndDate).toLocaleDateString() : '',
+      'Notas': client.notes || ''
+    }));
+  };
 
-    const dataToExport: any[] = [];
+  const summarizeExportRows = (groupLabel: string, clientsList: ClientRowSummary[], rows: any[]) => ({
+    'Grupo': groupLabel,
+    'Clientes': clientsList.length,
+    'Filas Detalle': rows.length,
+    'BANs': clientsList.reduce((sum, client) => sum + Number(client.totalBans || 0), 0),
+    'Suscriptores': clientsList.reduce((sum, client) => sum + Number(client.totalSubscribers || 0), 0),
+    'Suscriptores Activos': clientsList.reduce((sum, client) => sum + Number((client as any).activeSubscribers || 0), 0),
+    'Clientes sin BAN': clientsList.filter((client) => Number(client.totalBans || 0) === 0).length,
+    'Clientes sin Suscriptores': clientsList.filter((client) => Number(client.totalSubscribers || 0) === 0).length,
+  });
 
-    dataToProcess.forEach(client => {
-      // Si tiene detalles de suscriptores, generamos una fila por cada uno (EXPLOSIÃ“N)
-      const details = client.subscribersDetail;
-      if (details && details.length > 0) {
-        details.forEach(sub => {
-          dataToExport.push({
-            'ID': client.clientId,
-            'Nombre': client.contactPerson || client.clientName,
-            'Empresa': client.businessName || client.clientName || 'Sin Nombre',
-            'Tipo': client.banType || 'Indefinido',
-            'Email': client.email || '',
-            'Teléfono Principal': client.phone || '',
-            'Dirección': client.address || '',
-            'Ciudad': client.city || '',
-            'Base': (client as any).base || 'BD propia',
-            'Estado': sub.status || 'Activo', // Estado del suscriptor si existe, o general
-            'Vendedor': client.vendorName || 'Sin asignar',
-            'BAN': sub.ban_number, // BAN específico de este suscriptor
-            'Suscriptor': sub.phone, // Teléfono de este suscriptor
-            'Fecha Vencimiento': client.primaryContractEndDate ? new Date(client.primaryContractEndDate).toLocaleDateString() : '',
-            'Notas': client.notes || ''
-          });
-        });
-      } else {
-        // Si no tiene suscriptores, generamos una fila única con la info general
-        dataToExport.push({
-          'ID': client.clientId,
-          'Nombre': client.contactPerson || client.clientName,
-          'Empresa': client.businessName || client.clientName || 'Sin Nombre',
-          'Tipo': client.banType || 'Indefinido',
-          'Email': client.email || '',
-          'Teléfono Principal': client.phone || '',
-          'Dirección': client.address || '',
-          'Ciudad': client.city || '',
-          'Base': (client as any).base || 'BD propia',
-          'Estado': client.hasCancelledBans ? 'Cancelado' : 'Disponible',
-          'Vendedor': client.vendorName || 'Sin asignar',
-          'BAN': client.primaryBanNumber !== '-' ? client.primaryBanNumber : '',
-          'Suscriptor': '',
-          'Fecha Vencimiento': client.primaryContractEndDate ? new Date(client.primaryContractEndDate).toLocaleDateString() : '',
-          'Notas': client.notes || ''
-        });
-      }
+  const apiClientsToSummaries = (apiClients: Client[], tabLabel: string): ClientRowSummary[] => {
+    return apiClients.map((client) => {
+      const banNumbers = client.ban_numbers ? client.ban_numbers.split(',').map((ban) => ban.trim()).filter(Boolean) : [];
+      const subscriberPhones = client.subscriber_phones ? client.subscriber_phones.split(',').map((phone) => phone.trim()).filter(Boolean) : [];
+      return {
+        clientId: client.id,
+        clientName: client.name,
+        businessName: client.business_name,
+        vendorId: client.vendor_id,
+        vendorName: client.vendor_name,
+        totalBans: Number(client.ban_count || 0),
+        totalSubscribers: Number(client.subscriber_count || 0),
+        activeSubscribers: Number((client as any).active_subscriber_count || 0),
+        primaryBanNumber: banNumbers[0] || '',
+        primarySubscriberPhone: (client as any).primary_subscriber_phone || subscriberPhones[0] || '',
+        primaryContractEndDate: (client as any).primary_contract_end_date || null,
+        primarySubscriberCreatedAt: (client as any).primary_subscriber_created_at || null,
+        daysUntilExpiry: 999999,
+        status: 'no-date',
+        isBeingFollowed: tabLabel === 'Seguimiento',
+        wasCompleted: tabLabel === 'Completados',
+        lastActivity: (client as any).last_activity || null,
+        banType: (client as any).primary_service_type || (client.all_service_types ? client.all_service_types.split(',')[0] : null),
+        followUpProspectId: undefined,
+        banNumbers,
+        subscriberPhones,
+        includesBan: Boolean(client.has_bans),
+        hasCancelledBans: tabLabel === 'Cancelados',
+        isIncomplete: tabLabel === 'Incompletos',
+        email: client.email,
+        phone: client.phone,
+        secondary_phone: client.secondary_phone,
+        mobile_phone: client.mobile_phone,
+        address: client.address,
+        city: client.city,
+        zipCode: client.zip_code,
+        contactPerson: client.contact_person,
+        base: client.base,
+        notes: null,
+        subscribersDetail: client.subscribers_detail || [],
+      };
     });
+  };
 
-    const ws = XLSX.utils.json_to_sheet(dataToExport);
+  const handleExport = async (type: 'excel' | 'csv', scope: 'current' | 'all' = 'current') => {
+    console.log(`ðŸ“Š Exportando ${scope === 'all' ? 'TODO' : 'VISTA ACTUAL'}`);
+
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Clientes");
+    const summaryRows: any[] = [];
+
+    if (scope === 'all') {
+      const tabsToExport = [
+        { key: 'active', label: 'Activos' },
+        { key: 'cancelled', label: 'Cancelados' },
+        { key: 'incomplete', label: 'Incompletos' },
+      ];
+
+      for (const tabInfo of tabsToExport) {
+        const response = await authFetch(`/api/clients?tab=${tabInfo.key}`);
+        if (!response.ok) throw new Error(`No se pudo exportar ${tabInfo.label}`);
+        const payload = await response.json();
+        const summaries = apiClientsToSummaries(payload.clients || [], tabInfo.label);
+        const rows = buildClientExportRows(summaries, tabInfo.label);
+        summaryRows.push(summarizeExportRows(tabInfo.label, summaries, rows));
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), tabInfo.label.slice(0, 31));
+      }
+    } else {
+      const labelByTab: Record<string, string> = {
+        active: 'Activos',
+        cancelled: 'Cancelados',
+        incomplete: 'Incompletos',
+        following: 'Seguimiento',
+        completed: 'Completados',
+        all: 'Todos',
+      };
+      const groupLabel = labelByTab[activeTab] || activeTab;
+      const rows = buildClientExportRows(clientsForTab, groupLabel);
+      summaryRows.push(summarizeExportRows(groupLabel, clientsForTab, rows));
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), "Clientes");
+    }
+
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summaryRows), "Resumen");
 
     // Ajustar ancho de columnas
     const wscols = [
@@ -1980,7 +2050,9 @@ export default function Clients() {
       { wch: 15 }, // Ultima Actividad
       { wch: 30 }  // Notas
     ];
-    ws['!cols'] = wscols;
+    wb.SheetNames.forEach((sheetName) => {
+      if (wb.Sheets[sheetName]) wb.Sheets[sheetName]['!cols'] = wscols;
+    });
 
     const fileName = scope === 'all'
       ? `Clientes_TODOS_${new Date().toISOString().split('T')[0]}.${type === 'excel' ? 'xlsx' : 'csv'}`
@@ -1989,7 +2061,15 @@ export default function Clients() {
     if (type === 'excel') {
       XLSX.writeFile(wb, fileName);
     } else {
-      XLSX.writeFile(wb, fileName, { bookType: 'csv' });
+      const firstDetailSheet = scope === 'all' ? 'Activos' : 'Clientes';
+      const csv = XLSX.utils.sheet_to_csv(wb.Sheets[firstDetailSheet]);
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = fileName;
+      link.click();
+      URL.revokeObjectURL(url);
     }
     setShowExportMenu(false);
   };
@@ -2117,7 +2197,7 @@ export default function Clients() {
                   className="w-full px-4 py-2 text-left text-gray-300 hover:bg-gray-700 hover:text-white flex items-center gap-2"
                 >
                   <FileSpreadsheet className="w-4 h-4 text-green-500" />
-                  Exportar TODO (Activos + Cancelados)
+                  Exportar TODO (sin Seguimiento)
                 </button>
 
                 <div className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider border-t border-b border-gray-700 mt-1">
@@ -5028,16 +5108,6 @@ export function ClientManagementModal({
           {/* ====== TAB VENTAS ====== */}
           {activeTab === 'ventas' && (
             <ClientSalesReportsTab clientId={client.id} />
-          )}
-
-          {/* ====== TAB TAREAS ====== */}
-          {activeTab === 'tareas' && (
-            <ClientTasksPanel
-              client={client}
-              onTaskUpdated={async () => {
-                if (onFollowUpUpdated) await onFollowUpUpdated();
-              }}
-            />
           )}
 
           {activeTab === 'notas' && (
