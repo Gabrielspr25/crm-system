@@ -5,17 +5,15 @@ import { msalConfig } from "@/react-app/auth/msalConfig";
 
 import ProtectedLayout from "@/react-app/components/ProtectedLayout";
 import HomePage from "@/react-app/pages/Home";
-import MyDayPage from "@/react-app/pages/MyDay";
-import MyDayV2Page from "@/react-app/pages/MyDayV2";
 import DirectorPage from "@/react-app/pages/Director";
 import ClientsPage from "@/react-app/pages/Clients";
 import ReportsPage from "@/react-app/pages/Reports";
 import VendorsPage from "@/react-app/pages/Vendors";
 
-import CategoriesPage from "@/react-app/pages/Categories";
 import UsersPermissionsPage from "@/react-app/pages/UsersPermissions";
 import ControlSecurityPage from "@/react-app/pages/ControlSecurity";
 import ProductsPage from "@/react-app/pages/Products";
+import CategoriesPage from "@/react-app/pages/Categories";
 import ProfilePage from "@/react-app/pages/Profile";
 import LoginPage from "@/react-app/pages/Login";
 import ImportNew from "@/react-app/pages/ImportNew";
@@ -29,11 +27,11 @@ import SystemStatus from "@/react-app/pages/SystemStatus";
 import TangoComparePage from "@/react-app/pages/TangoCompare";
 import SubscriberBanSync from "@/react-app/pages/SubscriberBanSync";
 import VoiceClientPage from "@/react-app/pages/VoiceClient";
-import FollowUpPage from "@/react-app/pages/FollowUp";
 import GestionPage from "@/react-app/pages/Gestion";
 import MetasDashboard from "@/react-app/pages/MetasDashboard";
 import MetasAdmin from "@/react-app/pages/MetasAdmin";
 import OcrImportPreview from "@/react-app/pages/OcrImportPreview";
+import SeguimientoOperativo from "@/react-app/pages/SeguimientoOperativo";
 
 
 // Inicializar MSAL fuera del componente
@@ -54,11 +52,10 @@ function ProtectedRoutes() {
         {/* /panel y /director apuntan al nuevo Panel Director (Fase 2).
             HomePage viejo solo accesible vía / hasta validar reemplazo total. */}
         <Route path="/panel" element={<DirectorPage />} />
-        <Route path="/mi-dia" element={<MyDayPage />} />
-        <Route path="/mi-dia-v2" element={<MyDayV2Page />} />
+        <Route path="/mi-dia" element={<Navigate to="/clientes" replace />} />
         <Route path="/director" element={<DirectorPage />} />
         <Route path="/clientes" element={<ClientsPage />} />
-        <Route path="/seguimiento" element={<FollowUpPage />} />
+        <Route path="/seguimiento" element={<SeguimientoOperativo />} />
         <Route path="/reportes" element={<ReportsPage />} />
         <Route path="/correos" element={<CorreosPage />} />
         <Route path="/vendedores" element={<VendorsPage />} />

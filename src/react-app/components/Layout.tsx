@@ -13,7 +13,6 @@ import {
   Sun,
   Moon,
   Upload,
-
   Mail,
   Layers,
   Activity,
@@ -27,7 +26,7 @@ import {
   ShieldCheck,
   KeyRound,
   Settings2,
-  Calendar
+  Columns3,
 } from "lucide-react";
 
 
@@ -49,8 +48,8 @@ type NavItem = {
 
 const navigation: NavItem[] = [
   { name: "Panel General", href: "/panel", icon: LayoutDashboard, permissionKey: "nav.dashboard", roles: ["admin", "supervisor"] },
-  { name: "Mi día", href: "/mi-dia", icon: Calendar, roles: ["admin", "supervisor", "vendedor"] },
   { name: "Clientes", href: "/clientes", icon: Users, permissionKey: "nav.clients", roles: ["admin", "supervisor", "vendedor"] },
+  { name: "Seguimiento", href: "/seguimiento", icon: Columns3, roles: ["admin", "supervisor", "vendedor"] },
   { name: "Correos", href: "/correos", icon: Mail, permissionKey: "nav.emails", roles: ["admin", "supervisor", "vendedor"] },
   { name: "Campañas", href: "/campanas", icon: SendHorizontal, roles: ["admin"] },
   { name: "Vendedores", href: "/vendedores", icon: Building2, permissionKey: "nav.vendors", roles: ["admin", "supervisor"] },
@@ -142,7 +141,7 @@ export default function Layout({ children }: LayoutProps) {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 dark:from-slate-900 dark:to-slate-800 transition-colors duration-300">
+    <div className="min-h-screen bg-[#e7ebf0] text-slate-900 transition-colors duration-300 dark:bg-gradient-to-br dark:from-slate-900 dark:to-slate-800 dark:text-slate-100">
       {/* Botón Hamburguesa - Solo visible en móvil */}
       <button
         onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -160,15 +159,15 @@ export default function Layout({ children }: LayoutProps) {
       )}
 
       {/* Sidebar */}
-      <div className={`fixed inset-y-0 left-0 z-50 w-64 bg-slate-800 dark:bg-slate-800 shadow-xl border-r border-slate-700 dark:border-slate-700 transform transition-transform duration-300 ease-in-out lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+      <div className={`fixed inset-y-0 left-0 z-50 w-64 bg-[#dfe5ec] dark:bg-slate-800 shadow-xl border-r border-slate-300 dark:border-slate-700 transform transition-transform duration-300 ease-in-out lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="flex h-full flex-col">
           {/* Logo */}
-          <div className="flex flex-col items-center justify-center py-4 border-b border-slate-700 dark:border-slate-700">
+          <div className="flex flex-col items-center justify-center py-4 border-b border-slate-300 dark:border-slate-700">
             <div className="text-center">
               <h1 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
                 VentasPro
               </h1>
-              <p className="text-xs text-slate-400">
+              <p className="text-xs text-slate-600 dark:text-slate-400">
                 {userLabel} · {role.toUpperCase()}
               </p>
               <p className="text-xs font-bold text-green-400 mt-1">
@@ -178,16 +177,16 @@ export default function Layout({ children }: LayoutProps) {
           </div>
 
           {/* User Info */}
-          <div className="p-4 border-b border-slate-700 dark:border-slate-700">
+          <div className="p-4 border-b border-slate-300 dark:border-slate-700">
             <div className="flex items-center">
               <div className="w-10 h-10 rounded-full bg-blue-600/40 border border-blue-400/40 text-blue-100 flex items-center justify-center font-semibold mr-3 uppercase">
                 {userLabel.slice(0, 2)}
               </div>
               <div>
-                <p className="text-sm font-medium text-slate-100 dark:text-slate-100">
+                <p className="text-sm font-medium text-slate-900 dark:text-slate-100">
                   {userLabel}
                 </p>
-                <p className="text-xs text-slate-400 dark:text-slate-400">
+                <p className="text-xs text-slate-600 dark:text-slate-400">
                   {roleNormalized.toUpperCase()}
                 </p>
               </div>
@@ -204,7 +203,7 @@ export default function Layout({ children }: LayoutProps) {
                 group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200
                 ${isActive
                   ? "bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-lg"
-                  : "text-slate-300 dark:text-slate-300 hover:bg-slate-700 dark:hover:bg-slate-700 hover:text-slate-100 dark:hover:text-slate-100"
+                  : "text-slate-700 dark:text-slate-300 hover:bg-slate-300/70 dark:hover:bg-slate-700 hover:text-slate-950 dark:hover:text-slate-100"
                 }
               `;
 
@@ -212,7 +211,7 @@ export default function Layout({ children }: LayoutProps) {
                 <item.icon
                   className={`
                     mr-3 h-5 w-5 transition-colors duration-200
-                    ${isActive ? "text-white" : "text-slate-400 dark:text-slate-400 group-hover:text-slate-300 dark:group-hover:text-slate-300"}
+                    ${isActive ? "text-white" : "text-slate-600 dark:text-slate-400 group-hover:text-slate-900 dark:group-hover:text-slate-300"}
                   `}
                 />
               );
@@ -258,20 +257,20 @@ export default function Layout({ children }: LayoutProps) {
             })}
 
             {commercialSetupItems.length > 0 && (
-              <div className="pt-2 mt-2 border-t border-slate-700/70">
+              <div className="pt-2 mt-2 border-t border-slate-300/80 dark:border-slate-700/70">
                 <button
                   type="button"
                   onClick={() => setCommercialOpen((prev) => !prev)}
                   className={`group w-full flex items-center justify-between px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200 ${commercialSetupHrefs.has(location.pathname)
                     ? "bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-lg"
-                    : "text-slate-300 dark:text-slate-300 hover:bg-slate-700 dark:hover:bg-slate-700 hover:text-slate-100 dark:hover:text-slate-100"
+                    : "text-slate-700 dark:text-slate-300 hover:bg-slate-300/70 dark:hover:bg-slate-700 hover:text-slate-950 dark:hover:text-slate-100"
                     }`}
                 >
                   <span className="flex items-center">
                     <Building2
                       className={`mr-3 h-5 w-5 transition-colors duration-200 ${commercialSetupHrefs.has(location.pathname)
                         ? "text-white"
-                        : "text-slate-400 dark:text-slate-400 group-hover:text-slate-300 dark:group-hover:text-slate-300"
+                        : "text-slate-600 dark:text-slate-400 group-hover:text-slate-900 dark:group-hover:text-slate-300"
                         }`}
                     />
                     Gestion
@@ -287,7 +286,7 @@ export default function Layout({ children }: LayoutProps) {
                         group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200
                         ${isActive
                           ? "bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-lg"
-                          : "text-slate-300 dark:text-slate-300 hover:bg-slate-700 dark:hover:bg-slate-700 hover:text-slate-100 dark:hover:text-slate-100"
+                          : "text-slate-700 dark:text-slate-300 hover:bg-slate-300/70 dark:hover:bg-slate-700 hover:text-slate-950 dark:hover:text-slate-100"
                         }
                       `;
 
@@ -301,7 +300,7 @@ export default function Layout({ children }: LayoutProps) {
                           <item.icon
                             className={`
                               mr-3 h-4 w-4 transition-colors duration-200
-                              ${isActive ? "text-white" : "text-slate-400 dark:text-slate-400 group-hover:text-slate-300 dark:group-hover:text-slate-300"}
+                              ${isActive ? "text-white" : "text-slate-600 dark:text-slate-400 group-hover:text-slate-900 dark:group-hover:text-slate-300"}
                             `}
                           />
                           {item.name}
@@ -315,10 +314,10 @@ export default function Layout({ children }: LayoutProps) {
           </nav>
 
           {/* Theme Toggle */}
-          <div className="p-4 border-t border-slate-700 dark:border-slate-700 space-y-3">
+          <div className="p-4 border-t border-slate-300 dark:border-slate-700 space-y-3">
             <button
               onClick={toggleTheme}
-              className="w-full flex items-center justify-center px-3 py-2 text-sm font-medium text-slate-300 dark:text-slate-300 hover:bg-slate-700 dark:hover:bg-slate-700 hover:text-slate-100 dark:hover:text-slate-100 rounded-lg transition-all duration-200"
+              className="w-full flex items-center justify-center px-3 py-2 text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-300/70 dark:hover:bg-slate-700 hover:text-slate-950 dark:hover:text-slate-100 rounded-lg transition-all duration-200"
               title={isDark ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'}
             >
               {isDark ? (
