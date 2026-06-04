@@ -1,37 +1,25 @@
-import { useState, useEffect } from "react";
-import { Plus, Search, Edit, Trash2, Package, DollarSign, Layers } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Edit, Package, Plus, Search, Trash2 } from "lucide-react";
 import { useApi } from "../hooks/useApi";
 import { authFetch } from "@/react-app/utils/auth";
-import { useNavigate } from "react-router";
 
 interface Product {
-  id: string; // UUID
+  id: string;
   name: string;
-  category_id: string | null; // UUID
+  category_id: string | null;
   category_name: string | null;
   description: string | null;
   price: number | null;
-  commission_percentage: number;
   created_at: string;
 }
 
 interface Category {
-  id: string; // UUID
+  id: string;
   name: string;
   description: string | null;
-  created_at: string;
-}
-
-interface CommissionTier {
-  id: string;
-  product_id: string;
-  range_min: number;
-  range_max: number | null;
-  commission_amount: number;
 }
 
 export default function Products() {
-  const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState("");
   const [showModal, setShowModal] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -40,68 +28,46 @@ export default function Products() {
     category_id: "",
     description: "",
     price: "",
-    commission_percentage: "",
   });
 
   const { data: products, loading: productsLoading, refetch: refetchProducts } = useApi<Product[]>("/api/products");
   const { data: categories, refetch: refetchCategories } = useApi<Category[]>("/api/categories");
-  const { data: tiers, refetch: refetchTiers } = useApi<CommissionTier[]>("/api/products/tiers");
 
-  const [showTierModal, setShowTierModal] = useState(false);
-  const [editingTier, setEditingTier] = useState<CommissionTier | null>(null);
-  const [tierProductId, setTierProductId] = useState<string>("");
-  const [tierFormData, setTierFormData] = useState({
-    range_min: "",
-    range_max: "",
-    commission_amount: ""
-  });
-
-  console.log('🔍 PRODUCTS v2026-96 - Loading:', productsLoading, 'Data:', products?.length || 0, 'Products:', products);
-  
-  if (products && products.length > 0) {
-    console.log('✅ PRODUCTOS CARGADOS:', products);
-  } else if (!productsLoading && (!products || products.length === 0)) {
-    console.warn('⚠️ No hay productos o array vacío');
-  }
-
-  const filteredProducts = (products || []).filter(product =>
+  const filteredProducts = (products || []).filter((product) =>
     product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (product.description && product.description.toLowerCase().includes(searchTerm.toLowerCase())) ||
-    (product.category_name && product.category_name.toLowerCase().includes(searchTerm.toLowerCase()))
+    (product.description || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (product.category_name || "").toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const resetForm = () => {
+    setFormData({ name: "", category_id: "", description: "", price: "" });
+  };
 
-    try {
-      const payload = {
-        ...formData,
-        category_id: formData.category_id || null,
-        price: formData.price ? parseFloat(formData.price) : null,
-        commission_percentage: formData.commission_percentage ? parseFloat(formData.commission_percentage) : 10.00,
-      };
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const payload = {
+      name: formData.name.trim(),
+      category_id: formData.category_id || null,
+      description: formData.description.trim() || null,
+      price: formData.price ? Number(formData.price) : null,
+    };
+    if (!payload.name) return;
 
-      if (editingProduct) {
-        await authFetch(`/api/products/${editingProduct.id}`, {
-          method: "PUT",
-          json: payload,
-        });
-      } else {
-        await authFetch("/api/products", {
-          method: "POST",
-          json: payload,
-        });
-      }
+    const response = editingProduct
+      ? await authFetch(`/api/products/${editingProduct.id}`, { method: "PUT", json: payload })
+      : await authFetch("/api/products", { method: "POST", json: payload });
 
-      setShowModal(false);
-      setEditingProduct(null);
-      resetForm();
-      refetchProducts();
-      // Disparar evento para que otros componentes refresquen
-      window.dispatchEvent(new CustomEvent('products-updated'));
-    } catch (error) {
-      console.error("Error saving product:", error);
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      alert(body?.error || "No se pudo guardar el producto");
+      return;
     }
+
+    setShowModal(false);
+    setEditingProduct(null);
+    resetForm();
+    refetchProducts();
+    window.dispatchEvent(new CustomEvent("products-updated"));
   };
 
   const handleEdit = (product: Product) => {
@@ -110,323 +76,159 @@ export default function Products() {
       name: product.name,
       category_id: product.category_id || "",
       description: product.description || "",
-      price: product.price ? product.price.toString() : "",
-      commission_percentage: product.commission_percentage ? product.commission_percentage.toString() : "10.00",
+      price: product.price !== null && product.price !== undefined ? String(product.price) : "",
     });
     setShowModal(true);
   };
 
   const handleDelete = async (product: Product) => {
-    if (!confirm(`¿Está seguro de eliminar el producto "${product.name}"?`)) return;
-
-    try {
-      await authFetch(`/api/products/${product.id}`, {
-        method: "DELETE",
-      });
-      refetchProducts();
-      // Disparar evento para que otros componentes refresquen
-      window.dispatchEvent(new CustomEvent('products-updated'));
-    } catch (error) {
-      console.error("Error deleting product:", error);
+    if (!confirm(`Eliminar el producto "${product.name}"?`)) return;
+    const response = await authFetch(`/api/products/${product.id}`, { method: "DELETE" });
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      alert(body?.error || "No se pudo eliminar el producto");
+      return;
     }
+    refetchProducts();
+    window.dispatchEvent(new CustomEvent("products-updated"));
   };
 
-  const resetForm = () => {
-    setFormData({
-      name: "",
-      category_id: "",
-      description: "",
-      price: "",
-      commission_percentage: "",
-    });
-  };
-
-  // Funciones para gestionar tiers
-  const handleEditTier = (tier: CommissionTier, productId: string) => {
-    setEditingTier(tier);
-    setTierProductId(productId);
-    setTierFormData({
-      range_min: tier.range_min.toString(),
-      range_max: tier.range_max?.toString() || "",
-      commission_amount: tier.commission_amount.toString()
-    });
-    setShowTierModal(true);
-  };
-
-  const handleNewTier = (productId: string) => {
-    setEditingTier(null);
-    setTierProductId(productId);
-    setTierFormData({
-      range_min: "",
-      range_max: "",
-      commission_amount: ""
-    });
-    setShowTierModal(true);
-  };
-
-  const handleSubmitTier = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    try {
-      const payload = {
-        product_id: tierProductId,
-        range_min: parseFloat(tierFormData.range_min),
-        range_max: tierFormData.range_max ? parseFloat(tierFormData.range_max) : null,
-        commission_amount: parseFloat(tierFormData.commission_amount)
-      };
-
-      if (editingTier) {
-        await authFetch(`/api/products/tiers/${editingTier.id}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
-      } else {
-        await authFetch("/api/products/tiers", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
-      }
-
-      setShowTierModal(false);
-      setEditingTier(null);
-      setTierProductId("");
-      setTierFormData({ range_min: "", range_max: "", commission_amount: "" });
-      refetchTiers();
-    } catch (error) {
-      console.error("Error saving tier:", error);
-    }
-  };
-
-  const handleDeleteTier = async (tierId: string) => {
-    if (!confirm("¿Eliminar este tier de comisión?")) return;
-
-    try {
-      await authFetch(`/api/products/tiers/${tierId}`, {
-        method: "DELETE"
-      });
-      refetchTiers();
-    } catch (error) {
-      console.error("Error deleting tier:", error);
-    }
-  };
-
-  // Escuchar eventos de actualización de categorías
   useEffect(() => {
-    const handleCategoriesUpdate = () => {
-      console.log("🔄 Refrescando categorías desde evento...");
-      refetchCategories();
-    };
-
-    window.addEventListener('categories-updated', handleCategoriesUpdate);
-
-    return () => {
-      window.removeEventListener('categories-updated', handleCategoriesUpdate);
-    };
+    const refresh = () => refetchCategories();
+    window.addEventListener("categories-updated", refresh);
+    return () => window.removeEventListener("categories-updated", refresh);
   }, [refetchCategories]);
-
-  console.log('🔍 PRODUCTS - Loading:', productsLoading, 'Data:', products?.length || 0);
 
   if (productsLoading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-lg text-gray-600 dark:text-gray-300">Cargando productos...</div>
+      <div className="flex h-64 items-center justify-center bg-slate-950 text-slate-300">
+        Cargando productos...
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
+    <div className="min-h-screen space-y-6 bg-slate-950 text-slate-100">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Productos</h1>
-          <p className="text-gray-600 dark:text-gray-400 mt-1">Gestiona tu catálogo de productos</p>
+          <h1 className="text-3xl font-bold text-white">Productos</h1>
+          <p className="mt-1 text-slate-400">Gestiona tu catalogo de productos</p>
         </div>
         <button
+          type="button"
           onClick={() => {
             resetForm();
             setEditingProduct(null);
             setShowModal(true);
           }}
-          className="inline-flex items-center px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-600 text-white font-medium rounded-lg shadow-lg hover:shadow-xl transition-all duration-200 transform hover:scale-105"
+          className="inline-flex h-11 items-center gap-2 rounded-lg border border-blue-500/40 bg-blue-600 px-4 text-sm font-semibold text-white shadow-lg shadow-blue-950/30 transition hover:bg-blue-500"
         >
-          <Plus className="w-5 h-5 mr-2" />
+          <Plus className="h-5 w-5" />
           Nuevo Producto
         </button>
       </div>
 
-      {/* Search */}
       <div className="relative max-w-md">
-        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+        <Search className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-500" />
         <input
           type="text"
           placeholder="Buscar productos..."
           value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="w-full pl-10 pr-4 py-2 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-slate-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-300"
+          onChange={(event) => setSearchTerm(event.currentTarget.value)}
+          className="h-11 w-full rounded-lg border border-slate-700 bg-slate-900 pl-10 pr-4 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-blue-500"
         />
       </div>
 
-      {/* Products Grid */}
-      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
         {filteredProducts.map((product) => (
-          <div key={product.id} className="bg-white dark:bg-slate-800 rounded-xl shadow-lg border border-gray-200 dark:border-slate-700 hover:shadow-xl transition-shadow duration-200">
-            <div className="p-6">
-              <div className="flex items-start justify-between mb-4">
-                <div className="flex items-center">
-                  <div
-                    className="p-2 rounded-lg bg-blue-50 dark:bg-blue-900/20"
-                  >
-                    <Package
-                      className="w-5 h-5 text-blue-600 dark:text-blue-400"
-                    />
-                  </div>
-                  <div className="ml-3">
-                    <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{product.name}</h3>
-                    {product.category_name && (
-                      <span
-                        className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-600 text-white mt-1"
-                      >
-                        {product.category_name}
-                      </span>
-                    )}
-                  </div>
+          <article
+            key={product.id}
+            className="rounded-xl border border-slate-800 bg-slate-900/80 p-5 shadow-lg shadow-slate-950/30 transition hover:border-blue-500/40"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex min-w-0 gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-blue-500/30 bg-blue-500/10">
+                  <Package className="h-5 w-5 text-blue-300" />
                 </div>
-                <div className="flex space-x-1">
-                  <button
-                    onClick={() => handleEdit(product)}
-                    className="p-2 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
-                  >
-                    <Edit className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => handleDelete(product)}
-                    className="p-2 text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                <div className="min-w-0">
+                  <h2 className="truncate text-lg font-semibold text-white">{product.name}</h2>
+                  {product.category_name && (
+                    <span className="mt-1 inline-flex rounded-full border border-blue-500/40 bg-blue-600 px-2 py-0.5 text-xs font-semibold text-white">
+                      {product.category_name}
+                    </span>
+                  )}
                 </div>
               </div>
-
-              <div className="space-y-2">
-                {product.description && (
-                  <p className="text-sm text-gray-600 dark:text-gray-300">{product.description}</p>
-                )}
-
-                {product.price !== null && product.price !== undefined && (
-                  <div className="flex items-center text-sm text-gray-600 dark:text-gray-300">
-                    <DollarSign className="w-4 h-4 mr-1" />
-                    <span className="font-medium">Precio:</span>
-                    <span className="ml-1">${product.price.toLocaleString()}</span>
-                  </div>
-                )}
-
-                {product.commission_percentage > 0 && (
-                  <div className="text-sm text-gray-600 dark:text-gray-300">
-                    <span className="font-medium">Comisión:</span> {product.commission_percentage}%
-                  </div>
-                )}
-
-                {/* Mostrar tiers SOLO para productos móviles */}
-                {(product.name.toLowerCase().includes('movil') || product.name.toLowerCase().includes('móvil')) && (
-                  <div className="mt-4 border-t border-gray-200 dark:border-slate-700 pt-3">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm font-semibold text-gray-700 dark:text-gray-300">Tiers de Comisión</span>
-                      <button
-                        onClick={() => handleNewTier(product.id)}
-                        className="text-xs px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded transition-colors"
-                      >
-                        + Agregar
-                      </button>
-                    </div>
-                    <div className="space-y-1">
-                      {(tiers || [])
-                        .filter(t => t.product_id === product.id)
-                        .sort((a, b) => a.range_min - b.range_min)
-                        .map(tier => (
-                          <div key={tier.id} className="flex items-center justify-between text-xs bg-gray-50 dark:bg-slate-700 px-2 py-1.5 rounded">
-                            <span className="text-gray-700 dark:text-gray-300">
-                              ${tier.range_min} - {tier.range_max ? `$${tier.range_max}` : '∞'}: <span className="font-bold text-green-600 dark:text-green-400">${tier.commission_amount}</span>
-                            </span>
-                            <div className="flex gap-1">
-                              <button
-                                onClick={() => handleEditTier(tier, product.id)}
-                                className="p-1 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/20 rounded"
-                                title="Editar tier"
-                              >
-                                <Edit className="w-3 h-3" />
-                              </button>
-                              <button
-                                onClick={() => handleDeleteTier(tier.id)}
-                                className="p-1 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/20 rounded"
-                                title="Eliminar tier"
-                              >
-                                <Trash2 className="w-3 h-3" />
-                              </button>
-                            </div>
-                          </div>
-                        ))
-                      }
-                      {(tiers || []).filter(t => t.product_id === product.id).length === 0 && (
-                        <p className="text-xs text-gray-500 dark:text-gray-400 italic">Sin tiers configurados</p>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="mt-4 text-xs text-gray-500 dark:text-gray-400">
-                Creado: {new Date(product.created_at).toLocaleDateString('es-ES')}
+              <div className="flex shrink-0 gap-1">
+                <button
+                  type="button"
+                  onClick={() => handleEdit(product)}
+                  className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-800 hover:text-blue-300"
+                  title="Editar producto"
+                >
+                  <Edit className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDelete(product)}
+                  className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-800 hover:text-red-300"
+                  title="Eliminar producto"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
               </div>
             </div>
-          </div>
+
+            <div className="mt-4 space-y-2 text-sm text-slate-400">
+              {product.description && <p>{product.description}</p>}
+              {product.price !== null && product.price !== undefined && (
+                <p>
+                  <span className="font-medium text-slate-300">Precio:</span> ${Number(product.price).toLocaleString()}
+                </p>
+              )}
+              <p className="text-xs text-slate-500">
+                Creado: {new Date(product.created_at).toLocaleDateString("es-ES")}
+              </p>
+            </div>
+          </article>
         ))}
       </div>
 
       {filteredProducts.length === 0 && (
-        <div className="text-center py-12">
-          <Package className="mx-auto h-12 w-12 text-gray-400" />
-          <h3 className="mt-2 text-sm font-medium text-gray-900 dark:text-white">No hay productos</h3>
-          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            {searchTerm ? "No se encontraron productos con ese criterio" : "Comienza agregando un nuevo producto"}
+        <div className="rounded-xl border border-dashed border-slate-700 px-4 py-12 text-center">
+          <Package className="mx-auto h-10 w-10 text-slate-500" />
+          <h3 className="mt-3 text-sm font-semibold text-slate-200">No hay productos</h3>
+          <p className="mt-1 text-sm text-slate-500">
+            {searchTerm ? "No se encontraron productos con ese criterio." : "Crea el primer producto."}
           </p>
         </div>
       )}
 
-      {/* Modal */}
       {showModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl p-6 w-full max-w-md mx-4 max-h-[90vh] overflow-y-auto">
-            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4">
+          <div className="w-full max-w-md rounded-xl border border-slate-700 bg-slate-900 p-5 shadow-2xl">
+            <h2 className="mb-4 text-xl font-bold text-white">
               {editingProduct ? "Editar Producto" : "Nuevo Producto"}
             </h2>
-
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Nombre *
-                </label>
+                <label className="mb-1 block text-sm font-medium text-slate-300">Nombre *</label>
                 <input
                   type="text"
                   required
                   value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
+                  onChange={(event) => setFormData({ ...formData, name: event.currentTarget.value })}
+                  className="h-10 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm text-slate-100 outline-none transition focus:border-blue-500"
                 />
               </div>
-
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Categoría
-                </label>
+                <label className="mb-1 block text-sm font-medium text-slate-300">Categoria</label>
                 <select
                   value={formData.category_id}
-                  onChange={(e) => setFormData({ ...formData, category_id: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
+                  onChange={(event) => setFormData({ ...formData, category_id: event.currentTarget.value })}
+                  className="h-10 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm text-slate-100 outline-none transition focus:border-blue-500"
                 >
-                  <option value="">Seleccionar categoría</option>
+                  <option value="">Seleccionar categoria</option>
                   {(categories || []).map((category) => (
                     <option key={category.id} value={category.id}>
                       {category.name}
@@ -434,51 +236,28 @@ export default function Products() {
                   ))}
                 </select>
               </div>
-
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Descripción
-                </label>
+                <label className="mb-1 block text-sm font-medium text-slate-300">Descripcion</label>
                 <textarea
                   value={formData.description}
-                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                  onChange={(event) => setFormData({ ...formData, description: event.currentTarget.value })}
                   rows={3}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
+                  className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-blue-500"
                 />
               </div>
-
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Precio
-                </label>
+                <label className="mb-1 block text-sm font-medium text-slate-300">Precio</label>
                 <input
                   type="number"
-                  step="0.01"
                   min="0"
+                  step="0.01"
                   value={formData.price}
-                  onChange={(e) => setFormData({ ...formData, price: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
+                  onChange={(event) => setFormData({ ...formData, price: event.currentTarget.value })}
+                  className="h-10 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm text-slate-100 outline-none transition focus:border-blue-500"
                   placeholder="0.00"
                 />
               </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Comisión (%)
-                </label>
-                <input
-                  type="number"
-                  min="0"
-                  max="100"
-                  step="0.01"
-                  value={formData.commission_percentage}
-                  onChange={(e) => setFormData({ ...formData, commission_percentage: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
-                  placeholder="10.00"
-                />
-              </div>
-
-              <div className="flex justify-end space-x-3 mt-6">
+              <div className="flex justify-end gap-3 pt-2">
                 <button
                   type="button"
                   onClick={() => {
@@ -486,97 +265,15 @@ export default function Products() {
                     setEditingProduct(null);
                     resetForm();
                   }}
-                  className="px-4 py-2 text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-slate-700 rounded-lg hover:bg-gray-200 dark:hover:bg-slate-600 transition-colors"
+                  className="h-10 rounded-lg border border-slate-700 bg-slate-800 px-4 text-sm text-slate-200 transition hover:border-slate-500"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-lg hover:shadow-lg transition-all duration-200"
+                  className="h-10 rounded-lg border border-blue-500/50 bg-blue-600 px-4 text-sm font-semibold text-white transition hover:bg-blue-500"
                 >
                   {editingProduct ? "Actualizar" : "Crear"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Modal de Tier */}
-      {showTierModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl p-6 w-full max-w-md mx-4">
-            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">
-              {editingTier ? "Editar Tier de Comisión" : "Nuevo Tier de Comisión"}
-            </h2>
-
-            <form onSubmit={handleSubmitTier} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Rango Mínimo (cantidad) *
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  required
-                  min="0"
-                  value={tierFormData.range_min}
-                  onChange={(e) => setTierFormData({ ...tierFormData, range_min: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
-                  placeholder="0"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Rango Máximo (cantidad)
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={tierFormData.range_max}
-                  onChange={(e) => setTierFormData({ ...tierFormData, range_max: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
-                  placeholder="Dejar vacío para infinito"
-                />
-                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">Dejar vacío para sin límite (∞)</p>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Comisión ($) *
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  required
-                  min="0"
-                  value={tierFormData.commission_amount}
-                  onChange={(e) => setTierFormData({ ...tierFormData, commission_amount: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
-                  placeholder="25.00"
-                />
-              </div>
-
-              <div className="flex justify-end space-x-3 mt-6">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowTierModal(false);
-                    setEditingTier(null);
-                    setTierProductId("");
-                    setTierFormData({ range_min: "", range_max: "", commission_amount: "" });
-                  }}
-                  className="px-4 py-2 text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-slate-700 rounded-lg hover:bg-gray-200 dark:hover:bg-slate-600 transition-colors"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-gradient-to-r from-green-500 to-green-600 text-white rounded-lg hover:shadow-lg transition-all duration-200"
-                >
-                  {editingTier ? "Actualizar" : "Crear"}
                 </button>
               </div>
             </form>
