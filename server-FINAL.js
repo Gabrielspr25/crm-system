@@ -4383,6 +4383,10 @@ app.get('/api/seguimiento', authenticateRequest, async (req, res) => {
       conditions.push(`fp.completed_date IS NULL AND fp.is_active = true`);
     }
 
+    // Mantener /api/seguimiento alineado con la verdad visual de /api/clients?tab=following.
+    conditions.push(`COALESCE(NULLIF(TRIM(c.name), ''), NULLIF(TRIM(c.business_name), '')) IS NOT NULL`);
+    conditions.push(`EXISTS (SELECT 1 FROM bans b WHERE b.client_id = c.id)`);
+
     // Búsqueda libre
     if (search) {
       conditions.push(`(
