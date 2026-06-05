@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildTangoCommissionPendingSale,
   classifyTangoVentaTipo,
   mapTangoApiV2SaleToSyncRow,
   mergeTangoApiV2RowsWithLegacyRows,
@@ -233,5 +234,37 @@ describe('Tango V2 sync source', () => {
       expect(shouldIncludeTangoV2SaleForCommissions(sale, commission)).toBe(true);
       expect(classifyTangoVentaTipo(id, nombre)).toMatchObject({ family, lineType });
     }
+  });
+
+  it('construye pending sale needs_review cuando falta BAN CRM pero existe comision real', () => {
+    const sale = {
+      ventaid: 80099,
+      ban: '718772139',
+      numerocelularactivado: 7873275935,
+      ventatipo: { id: 26, nombre: 'Claro Update REN' },
+      fechaactivacion: '2026-06-05T00:00:00.000Z',
+      cliente: { nombre: 'SONIA', apellido: 'ARROYO' },
+    };
+    const commission = {
+      ventaid: 80099,
+      comisiones: {
+        comisionvendedor: 0,
+        total: 140.98,
+      },
+    };
+
+    expect(buildTangoCommissionPendingSale(sale, commission, 'ban_no_existe_en_crm')).toMatchObject({
+      ventaid: 80099,
+      ban_tango: '718772139',
+      cliente_tango: 'SONIA ARROYO',
+      telefono_tango: '7873275935',
+      ventatipo_id: 26,
+      ventatipo_nombre: 'Claro Update REN',
+      fecha_activacion: '2026-06-05',
+      company_earnings: 140.98,
+      vendor_commission: 0,
+      motivo: 'ban_no_existe_en_crm',
+      status: 'needs_review',
+    });
   });
 });

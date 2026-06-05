@@ -13,6 +13,7 @@ import {
     closeSyncLog,
 } from '../services/tangoSyncService.js';
 import {
+  buildTangoCommissionPendingSale,
   classifyTangoVentaTipo,
   mergeTangoApiV2RowsWithLegacyRows,
   shouldIncludeTangoV2SaleForCommissions,
@@ -201,6 +202,95 @@ async function fetchTangoApiV2Range(from, to) {
   }
 
   return result;
+}
+
+function pendingFallbackSaleFromExternal(externalSale) {
+  return {
+    ventaid: externalSale?.tango_ventaid,
+    ban: externalSale?.ban,
+    telefono: externalSale?.phone,
+    ventatipoid: externalSale?.ventatipoid,
+    fechaactivacion: externalSale?.fechaactivacion,
+    cliente: externalSale?.cliente,
+    vendedor: externalSale?.vendedor,
+    com_empresa: externalSale?.com_empresa,
+    com_vendedor: externalSale?.com_vendedor,
+  };
+}
+
+async function upsertTangoCommissionPendingSales(externalSales, apiV2) {
+  const stats = { attempted: 0, upserted: 0, skipped: 0 };
+  for (const externalSale of externalSales || []) {
+    const ventaid = Number(externalSale?.tango_ventaid);
+    if (!Number.isFinite(ventaid) || ventaid <= 0) {
+      stats.skipped++;
+      continue;
+    }
+
+    const sale = apiV2?.salesById?.get(ventaid) || pendingFallbackSaleFromExternal(externalSale);
+    const commission = apiV2?.commissionsById?.get(ventaid) || pendingFallbackSaleFromExternal(externalSale);
+    const pendingSale = buildTangoCommissionPendingSale(sale, commission, externalSale?.motivo || 'ban_no_existe_en_crm');
+    if (!(Number(pendingSale.company_earnings) > 0)) {
+      stats.skipped++;
+      continue;
+    }
+
+    stats.attempted++;
+    const result = await crmPool.query(
+      `
+        INSERT INTO tango_commission_pending_sales (
+          ventaid,
+          ban_tango,
+          cliente_tango,
+          telefono_tango,
+          ventatipo_id,
+          ventatipo_nombre,
+          fecha_activacion,
+          company_earnings,
+          vendor_commission,
+          raw_payload,
+          motivo,
+          status,
+          created_at,
+          updated_at
+        )
+        VALUES (
+          $1, $2, $3, $4, $5, $6, $7::date,
+          $8, $9, $10::jsonb, $11, 'needs_review',
+          NOW(), NOW()
+        )
+        ON CONFLICT (ventaid)
+        DO UPDATE SET
+          ban_tango = EXCLUDED.ban_tango,
+          cliente_tango = EXCLUDED.cliente_tango,
+          telefono_tango = EXCLUDED.telefono_tango,
+          ventatipo_id = EXCLUDED.ventatipo_id,
+          ventatipo_nombre = EXCLUDED.ventatipo_nombre,
+          fecha_activacion = EXCLUDED.fecha_activacion,
+          company_earnings = EXCLUDED.company_earnings,
+          vendor_commission = EXCLUDED.vendor_commission,
+          raw_payload = EXCLUDED.raw_payload,
+          motivo = EXCLUDED.motivo,
+          updated_at = NOW()
+        WHERE tango_commission_pending_sales.status = 'needs_review'
+      `,
+      [
+        pendingSale.ventaid,
+        pendingSale.ban_tango,
+        pendingSale.cliente_tango,
+        pendingSale.telefono_tango,
+        pendingSale.ventatipo_id,
+        pendingSale.ventatipo_nombre,
+        pendingSale.fecha_activacion,
+        pendingSale.company_earnings,
+        pendingSale.vendor_commission,
+        JSON.stringify(pendingSale.raw_payload),
+        pendingSale.motivo,
+      ]
+    );
+    stats.upserted += result.rowCount;
+  }
+  return stats;
 }
 
 async function resolveMonthlyValueForPlan(crmPool, legacyPool, planCode, legacyRate) {
@@ -679,6 +769,9 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
     subscribers_would_have_deactivated: 0,
     reports_upserted: 0,
     reports_rejected: 0,
+    pending_sales_attempted: 0,
+    pending_sales_upserted: 0,
+    pending_sales_skipped: 0,
     errors: 0,
   };
 
@@ -2091,6 +2184,11 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
     }
 
     // â”€â”€ 6. Summary â”€â”€
+    const pendingSalesStats = await upsertTangoCommissionPendingSales(externalSales, apiV2);
+    stats.pending_sales_attempted = pendingSalesStats.attempted;
+    stats.pending_sales_upserted = pendingSalesStats.upserted;
+    stats.pending_sales_skipped = pendingSalesStats.skipped;
+
     console.log(`[SYNC] Completado:`, JSON.stringify(stats));
 
     const externalMotivos = externalSales.reduce((acc, e) => {

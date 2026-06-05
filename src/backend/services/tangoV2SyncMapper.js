@@ -103,8 +103,28 @@ function readVentaTipoId(row) {
   ));
 }
 
+function readVentaTipoName(row) {
+  return firstValue(
+    row?.ventatipo_nombre,
+    row?.ventatipo?.nombre,
+    row?.tipo?.nombre,
+    row?.tipo_venta,
+    row?.nombre_tipo
+  );
+}
+
 function readVentaId(row) {
   return numberOrNull(firstValue(row?.ventaid, row?.id, row?.venta_id));
+}
+
+function toIsoDate(value) {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    const text = String(value).trim();
+    return /^\d{4}-\d{2}-\d{2}/.test(text) ? text.slice(0, 10) : null;
+  }
+  return date.toISOString().slice(0, 10);
 }
 
 export function getTangoCommissionAmount(sale = null, commission = null, legacyFallback = null) {
@@ -144,6 +164,28 @@ export function classifyTangoVentaTipo(ventatipoId, ventatipoNombre = '') {
   if (/fijo|2 play|3 play|banda|ba corp/.test(name)) return { family: 'fijo', lineType };
   if (/movil|móvil|update|pymes|claro/.test(name)) return { family: 'movil', lineType };
   return { family: 'otro', lineType };
+}
+
+export function buildTangoCommissionPendingSale(sale = null, commission = null, motivo = 'ban_no_existe_en_crm') {
+  const mapped = mapTangoApiV2SaleToSyncRow(sale, commission);
+  return {
+    ventaid: mapped.ventaid,
+    ban_tango: mapped.ban || null,
+    cliente_tango: mapped.cliente || null,
+    telefono_tango: mapped.phone || null,
+    ventatipo_id: mapped.ventatipoid,
+    ventatipo_nombre: readVentaTipoName(sale) || readVentaTipoName(commission) || null,
+    fecha_activacion: toIsoDate(mapped.fechaactivacion),
+    company_earnings: numberOrNull(mapped.com_empresa) || 0,
+    vendor_commission: numberOrNull(mapped.com_vendedor) || 0,
+    raw_payload: {
+      sale,
+      commission,
+      mapped,
+    },
+    motivo,
+    status: 'needs_review',
+  };
 }
 
 export function mapTangoApiV2SaleToSyncRow(sale, commission = null, legacyFallback = null) {
