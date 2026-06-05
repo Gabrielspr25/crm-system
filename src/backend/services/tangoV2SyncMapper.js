@@ -15,15 +15,51 @@ function firstValue(...values) {
   return null;
 }
 
+function sumPositiveNumbers(...values) {
+  return values.reduce((sum, value) => {
+    const number = numberOrNull(value);
+    return number !== null && number > 0 ? sum + number : sum;
+  }, 0);
+}
+
 function normalizeDigits(value) {
   const digits = String(value || '').replace(/\D/g, '');
   return digits || null;
 }
 
+function readCompanyCommission(row) {
+  const commission = row?.comisiones || row?.comision || {};
+  const explicitTotalValue = firstValue(row?.total, commission?.total);
+  const explicitTotal = explicitTotalValue === null ? null : numberOrNull(explicitTotalValue);
+  if (explicitTotal !== null) return explicitTotal;
+
+  const componentSum = sumPositiveNumbers(
+    row?.comisionclaro,
+    row?.com_empresa,
+    row?.company_earnings,
+    row?.features,
+    row?.bonoportabilidad,
+    row?.bonoretencion,
+    row?.bonovolumen,
+    row?.comisionextra,
+    row?.comisionpapper,
+    commission?.comisionclaro,
+    commission?.features,
+    commission?.bonoportabilidad,
+    commission?.bonoretencion,
+    commission?.bonovolumen,
+    commission?.comisionextra,
+    commission?.comisionpapper
+  );
+  if (componentSum > 0) return Math.round(componentSum * 100) / 100;
+
+  return numberOrNull(firstValue(row?.comisionclaro, row?.com_empresa, row?.company_earnings, commission?.comisionclaro));
+}
+
 function readCommission(row) {
   const commission = row?.comisiones || row?.comision || {};
   return {
-    company: numberOrNull(firstValue(row?.comisionclaro, row?.com_empresa, row?.company_earnings, commission?.comisionclaro)),
+    company: readCompanyCommission(row),
     vendor: numberOrNull(firstValue(row?.comisionvendedor, row?.com_vendedor, row?.vendor_commission, commission?.comisionvendedor)),
     portability: numberOrNull(firstValue(row?.bonoportabilidad, row?.portability_bonus, commission?.bonoportabilidad)),
   };
@@ -44,7 +80,12 @@ function firstCommissionValue(...values) {
 function readClientName(row) {
   const cliente = row?.cliente;
   if (typeof cliente === 'string') return cliente.trim();
-  return firstValue(cliente?.nombre, row?.cliente_nombre, row?.nombre_cliente, row?.nombre);
+  const fullName = [cliente?.nombre, cliente?.apellido]
+    .filter((value) => value && String(value).trim().toLowerCase() !== 'null')
+    .map((value) => String(value).trim())
+    .join(' ')
+    .trim();
+  return firstValue(fullName, row?.cliente_nombre, row?.nombre_cliente, row?.nombre);
 }
 
 function readVendorName(row) {
@@ -64,6 +105,45 @@ function readVentaTipoId(row) {
 
 function readVentaId(row) {
   return numberOrNull(firstValue(row?.ventaid, row?.id, row?.venta_id));
+}
+
+export function getTangoCommissionAmount(sale = null, commission = null, legacyFallback = null) {
+  return firstCommissionValue(
+    readCommission(commission).company,
+    readCommission(sale).company,
+    readCommission(legacyFallback).company
+  );
+}
+
+export function shouldIncludeTangoV2SaleForCommissions(sale = null, commission = null, config = null) {
+  if (config?.include_in_commissions === false) return false;
+  if (config?.include_in_commissions === true) return true;
+  return getTangoCommissionAmount(sale, commission) > 0;
+}
+
+export function classifyTangoVentaTipo(ventatipoId, ventatipoNombre = '') {
+  const id = Number(ventatipoId);
+  const name = String(ventatipoNombre || '').trim().toLowerCase();
+  const known = {
+    8: { family: 'fijo', lineType: 'NEW' },
+    25: { family: 'movil', lineType: 'NEW' },
+    26: { family: 'movil', lineType: 'REN' },
+    121: { family: 'fijo', lineType: 'NEW' },
+    138: { family: 'movil', lineType: 'REN' },
+    139: { family: 'movil', lineType: 'NEW' },
+    140: { family: 'fijo', lineType: 'REN' },
+    141: { family: 'fijo', lineType: 'NEW' },
+    142: { family: 'tv', lineType: 'NEW' },
+  };
+  if (known[id]) return known[id];
+
+  const lineType = /\bren\b|renov/i.test(name) ? 'REN' : 'NEW';
+  if (/tv|televisi/.test(name)) return { family: 'tv', lineType };
+  if (/cloud/.test(name)) return { family: 'cloud', lineType };
+  if (/mpls/.test(name)) return { family: 'mpls', lineType };
+  if (/fijo|2 play|3 play|banda|ba corp/.test(name)) return { family: 'fijo', lineType };
+  if (/movil|móvil|update|pymes|claro/.test(name)) return { family: 'movil', lineType };
+  return { family: 'otro', lineType };
 }
 
 export function mapTangoApiV2SaleToSyncRow(sale, commission = null, legacyFallback = null) {

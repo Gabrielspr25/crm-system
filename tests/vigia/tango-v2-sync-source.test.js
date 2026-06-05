@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { mapTangoApiV2SaleToSyncRow, mergeTangoApiV2RowsWithLegacyRows } from '../../src/backend/services/tangoV2SyncMapper.js';
+import {
+  classifyTangoVentaTipo,
+  mapTangoApiV2SaleToSyncRow,
+  mergeTangoApiV2RowsWithLegacyRows,
+  shouldIncludeTangoV2SaleForCommissions,
+} from '../../src/backend/services/tangoV2SyncMapper.js';
 
 describe('Tango V2 sync source', () => {
   it('convierte una venta V2-only al formato principal del sync', () => {
@@ -168,5 +173,65 @@ describe('Tango V2 sync source', () => {
       cliente: 'CARIBE TRACK',
       ban: '845452959',
     });
+  });
+
+  it('usa comisiones.total como ganancia oficial cuando Tango V2 trae desglose', () => {
+    const sale = {
+      ventaid: 80099,
+      ban: '718772139',
+      numerocelularactivado: 7873275935,
+      codigovoz: 'RED3535',
+      meses: 30,
+      fechaactivacion: '2026-06-05T00:00:00.000Z',
+      pagomensual: 35,
+      ventatipo: { id: 26, nombre: 'Claro Update REN' },
+      cliente: { nombre: 'SONIA ', apellido: 'ARROYO' },
+      vendedor: { id: 297, nombre: 'Mayda Salas' },
+    };
+    const commission = {
+      ventaid: 80099,
+      comisiones: {
+        comisionclaro: 109,
+        features: 31.98,
+        comisionvendedor: 0,
+        total: 140.98,
+      },
+      desglose: [
+        { tipo: 'comision_claro', monto: 109 },
+        { tipo: 'features', monto: 31.98 },
+      ],
+    };
+
+    expect(mapTangoApiV2SaleToSyncRow(sale, commission)).toMatchObject({
+      ventaid: 80099,
+      ventatipoid: 26,
+      com_empresa: 140.98,
+      cliente: 'SONIA ARROYO',
+      vendedor: 'Mayda Salas',
+    });
+  });
+
+  it('incluye tipos comisionables por comision real y no por allowlist fija', () => {
+    const confirmedTypes = [
+      [80087, 25, 'Claro Update NEW', 'movil', 'NEW'],
+      [80099, 26, 'Claro Update REN', 'movil', 'REN'],
+      [80090, 8, 'BA CORP NEW', 'fijo', 'NEW'],
+      [80047, 121, '2 Play', 'fijo', 'NEW'],
+      [80003, 142, 'Claro TV - Servicio', 'tv', 'NEW'],
+    ];
+
+    for (const [ventaid, id, nombre, family, lineType] of confirmedTypes) {
+      const sale = {
+        ventaid,
+        ventatipo: { id, nombre },
+      };
+      const commission = {
+        ventaid,
+        comisiones: { total: 100, comisionclaro: 80 },
+      };
+
+      expect(shouldIncludeTangoV2SaleForCommissions(sale, commission)).toBe(true);
+      expect(classifyTangoVentaTipo(id, nombre)).toMatchObject({ family, lineType });
+    }
   });
 });

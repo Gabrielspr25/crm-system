@@ -12,7 +12,11 @@ import {
     createSyncLog,
     closeSyncLog,
 } from '../services/tangoSyncService.js';
-import { mergeTangoApiV2RowsWithLegacyRows } from '../services/tangoV2SyncMapper.js';
+import {
+  classifyTangoVentaTipo,
+  mergeTangoApiV2RowsWithLegacyRows,
+  shouldIncludeTangoV2SaleForCommissions,
+} from '../services/tangoV2SyncMapper.js';
 
 const router = Router();
 
@@ -839,15 +843,11 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
       return null;
     }
 
-    // â”€â”€ 0b. Tipos permitidos (FASE FINAL â€” 2026-04-30) â”€â”€
-    // Solo PYMES Update (138/139) y PYMES Fijo (140/141) desde 2026-01-01.
-    // Quedan EXCLUIDOS: Claro Update (25/26), 2 Play (121), 3 Play (41-50)
-    // y todo lo anterior a 2026-01-01. Eso refleja la regla operativa real
-    // del CRM (decisiÃ³n de Gabriel, 2026-04-30).
-    const MOBILE_TIPOS = [138, 139];
-    const FIJO_TIPOS = [140, 141];
-    const REN_TIPOS = [138, 140];
-    // NEW por default: 139 y 141.
+    // 0b. Tipos Tango: no se usa allowlist local para decidir si una venta existe.
+    // Tango V2 decide existencia y comision; el CRM solo clasifica el tipo.
+    const getSaleTypeClassification = (sale) => classifyTangoVentaTipo(sale?.ventatipoid, sale?.ventatipo_nombre || sale?.tipo || sale?.nombre);
+    const isMobileSale = (sale) => getSaleTypeClassification(sale).family === 'movil';
+    const isFixedLikeSale = (sale) => !isMobileSale(sale);
 
     // â”€â”€ 1. Pre-load CRM bans + clients ANTES del fetch Tango â”€â”€
     // Necesario para aplicar el filtro 2 (BAN debe existir en CRM).
@@ -921,8 +921,7 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
       legacyRows,
       commissionsById: apiV2.commissionsById,
     });
-    const allowedTipoIds = new Set([...MOBILE_TIPOS, ...FIJO_TIPOS]);
-    const mergedRows = mergedRowsRaw.filter((row) => allowedTipoIds.has(Number(row.ventatipoid)));
+    const mergedRows = mergedRowsRaw.filter((row) => shouldIncludeTangoV2SaleForCommissions(row, row));
     stats.tango_v2_first_excluded_by_tipo = mergedRowsRaw.length - mergedRows.length;
     const legacyVentaIds = new Set(
       legacyRows
@@ -998,8 +997,8 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
           let hasFijo = false;
           for (const v of ventasDelBan) {
             const t = Number(v.ventatipoid);
-            if (MOBILE_TIPOS.includes(t)) hasMobile = true;
-            if (FIJO_TIPOS.includes(t)) hasFijo = true;
+            if (isMobileSale(v)) hasMobile = true;
+            if (isFixedLikeSale(v)) hasFijo = true;
           }
           const accountType = (hasFijo && hasMobile) ? 'CONVERGENTE'
                             : hasFijo ? 'FIJO'
@@ -1093,8 +1092,8 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
 
       const ventaTipo = Number(row.ventatipoid);
       const current = banTypeByBan.get(banNum) || { hasMobile: false, hasFijo: false };
-      if (MOBILE_TIPOS.includes(ventaTipo)) current.hasMobile = true;
-      if (FIJO_TIPOS.includes(ventaTipo)) current.hasFijo = true;
+      if (isMobileSale(row)) current.hasMobile = true;
+      if (isFixedLikeSale(row)) current.hasFijo = true;
       banTypeByBan.set(banNum, current);
 
       const normalizedPhone = String(row.phone || '').replace(/\D/g, '');
@@ -1114,12 +1113,12 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
     };
 
     const fixedBundleKeyFromSale = (sale) => {
-      const ventaTipo = Number(sale?.ventatipoid);
-      if (!FIJO_TIPOS.includes(ventaTipo)) return null;
+      const classification = getSaleTypeClassification(sale);
+      if (classification.family !== 'fijo') return null;
       const ban = String(sale?.ban || '').trim();
       const activationDate = toYmd(sale?.fechaactivacion);
       const vendor = String(sale?.tango_vendor_id || sale?.vendedor || '').trim().toUpperCase();
-      const saleType = REN_TIPOS.includes(ventaTipo) ? 'REN' : 'NEW';
+      const saleType = classification.lineType;
       if (!ban || !activationDate || !vendor) return null;
       return [ban, activationDate, vendor, saleType].join('|');
     };
@@ -1212,12 +1211,14 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
       try {
         const banNum = v.ban;
         const ventaTipo = Number(v.ventatipoid);
-        const isMobile = MOBILE_TIPOS.includes(ventaTipo);
-        const isFijo = FIJO_TIPOS.includes(ventaTipo);
-        const lineType = REN_TIPOS.includes(ventaTipo) ? 'REN' : 'NEW';
+        const classification = getSaleTypeClassification(v);
+        const isMobile = classification.family === 'movil';
+        const isFijo = classification.family === 'fijo';
+        const isFixedLike = classification.family !== 'movil';
+        const lineType = classification.lineType;
         // Tipo real de lÃ­nea segÃºn ventatipoid Tango (independiente del account_type
         // del BAN). Manda en comisiones/metas; CONVERGENTE solo es atributo del BAN.
-        const lineKind = isMobile ? 'movil' : (isFijo ? 'fijo' : null);
+        const lineKind = classification.family || null;
         const monthVal = v.fechaactivacion
           ? new Date(v.fechaactivacion).toISOString().slice(0, 7) + '-01'
           : null;
@@ -1560,7 +1561,7 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
             const canCreateSubscriberFromTango = Boolean(
               Number.isFinite(Number(v.ventaid)) &&
               Number(v.ventaid) > 0 &&
-              (phone || isFijo)
+              (phone || isFixedLike)
             );
             if (canCreateSubscriberFromTango) {
               const hasPhoneNumberColumn = subscriberColumns.has('phone_number');
