@@ -1706,7 +1706,7 @@ export default function SeguimientoOperativo() {
                   <td className="sticky right-0 z-10 border-l border-slate-800 bg-slate-950 px-3 py-2">
                     <button
                       type="button"
-                      onClick={() => navigate(`/clientes?id=${opportunity.client_id}`)}
+                      onClick={() => navigate(`/clientes?openClient=${opportunity.client_id}`)}
                       className="sov2-client-button inline-flex h-8 items-center gap-1.5 rounded-md border px-2 text-xs font-semibold"
                       title="Abrir ficha del cliente"
                     >
