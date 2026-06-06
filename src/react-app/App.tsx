@@ -25,6 +25,7 @@ import CampaignDetails from "@/react-app/pages/CampaignDetails";
 import SystemTestAgent from "@/react-app/components/SystemTestAgent";
 import SystemStatus from "@/react-app/pages/SystemStatus";
 import TangoComparePage from "@/react-app/pages/TangoCompare";
+import TangoPendingSalesPage from "@/react-app/pages/TangoPendingSales";
 import SubscriberBanSync from "@/react-app/pages/SubscriberBanSync";
 import VoiceClientPage from "@/react-app/pages/VoiceClient";
 import GestionPage from "@/react-app/pages/Gestion";
@@ -72,6 +73,7 @@ function ProtectedRoutes() {
         <Route path="/historial" element={<AuditLogPage />} />
         <Route path="/system-status" element={<SystemStatus />} />
         <Route path="/tango" element={<TangoComparePage />} />
+        <Route path="/comisiones/pendientes-tango" element={<TangoPendingSalesPage />} />
         <Route path="/suscriptores-ban" element={<SubscriberBanSync />} />
         <Route path="/voz-cliente" element={<VoiceClientPage />} />
         <Route path="/gestion" element={<GestionPage />} />

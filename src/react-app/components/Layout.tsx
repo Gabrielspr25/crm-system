@@ -58,6 +58,7 @@ const navigation: NavItem[] = [
   { name: "Panel de Metas", href: "/panel-metas", icon: BarChart3, permissionKey: "nav.dashboard_metas", roles: ["admin", "supervisor"] },
   { name: "Metas", href: "/gestion", icon: Settings2, roles: ["admin", "supervisor"] },
   { name: "Comisiones", href: "/reportes", icon: BarChart3, permissionKey: "nav.reports", roles: ["admin", "supervisor", "vendedor"] },
+  { name: "Pendientes Tango", href: "/comisiones/pendientes-tango", icon: Activity, roles: ["admin", "supervisor"] },
   { name: "Historial", href: "/historial", icon: FileText, permissionKey: "nav.audit", roles: ["admin"] },
   { name: "Import New", href: "/importador-nuevo", icon: Upload, permissionKey: "nav.import_new", roles: ["admin", "supervisor"] },
   { name: "Tango", href: "/tango", icon: Activity, permissionKey: "nav.tango", roles: ["admin"] },
