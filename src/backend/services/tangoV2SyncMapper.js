@@ -141,6 +141,26 @@ export function shouldIncludeTangoV2SaleForCommissions(sale = null, commission =
   return getTangoCommissionAmount(sale, commission) > 0;
 }
 
+const PYMES_AUTOCREATE_TIPOS = new Set([8, 25, 26, 138, 139, 140, 141]);
+
+export function isPymesAutocreateVentaTipo(ventatipoId) {
+  return PYMES_AUTOCREATE_TIPOS.has(Number(ventatipoId));
+}
+
+export function classifyPymesAutocreateVentaTipo(ventatipoId) {
+  const id = Number(ventatipoId);
+  const map = {
+    8: { negocio: 'PYMES', product: 'movil', movement: 'NEW' },
+    25: { negocio: 'PYMES', product: 'movil', movement: 'NEW' },
+    26: { negocio: 'PYMES', product: 'movil', movement: 'REN' },
+    138: { negocio: 'PYMES', product: 'movil', movement: 'REN' },
+    139: { negocio: 'PYMES', product: 'movil', movement: 'NEW' },
+    140: { negocio: 'PYMES', product: 'fijo', movement: 'REN' },
+    141: { negocio: 'PYMES', product: 'fijo', movement: 'NEW' },
+  };
+  return map[id] || null;
+}
+
 export function classifyTangoVentaTipo(ventatipoId, ventatipoNombre = '') {
   const id = Number(ventatipoId);
   const name = String(ventatipoNombre || '').trim().toLowerCase();

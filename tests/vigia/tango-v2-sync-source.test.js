@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   buildTangoCommissionPendingSale,
   classifyTangoVentaTipo,
+  classifyPymesAutocreateVentaTipo,
+  isPymesAutocreateVentaTipo,
   mapTangoApiV2SaleToSyncRow,
   mergeTangoApiV2RowsWithLegacyRows,
   shouldIncludeTangoV2SaleForCommissions,
@@ -266,5 +268,20 @@ describe('Tango V2 sync source', () => {
       motivo: 'ban_no_existe_en_crm',
       status: 'needs_review',
     });
+  });
+
+  it('limita autocreate PYMES a los IDs aprobados', () => {
+    const allowed = [8, 25, 26, 138, 139, 140, 141];
+    const blocked = [20, 60, 121, 142, 999];
+
+    for (const id of allowed) {
+      expect(isPymesAutocreateVentaTipo(id)).toBe(true);
+      expect(classifyPymesAutocreateVentaTipo(id)).toMatchObject({ negocio: 'PYMES' });
+    }
+
+    for (const id of blocked) {
+      expect(isPymesAutocreateVentaTipo(id)).toBe(false);
+      expect(classifyPymesAutocreateVentaTipo(id)).toBeNull();
+    }
   });
 });

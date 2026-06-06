@@ -15,6 +15,7 @@ import {
 import {
   buildTangoCommissionPendingSale,
   classifyTangoVentaTipo,
+  isPymesAutocreateVentaTipo,
   mergeTangoApiV2RowsWithLegacyRows,
   shouldIncludeTangoV2SaleForCommissions,
 } from '../services/tangoV2SyncMapper.js';
@@ -152,6 +153,30 @@ function readTangoApiCommission(row) {
     vendor: numberOrNull(row?.comisionvendedor ?? commission?.comisionvendedor),
     total: numberOrNull(row?.total ?? commission?.total),
   };
+}
+
+function normalizePendingStatus(value) {
+  const status = String(value || '').trim().toLowerCase();
+  return ['needs_review', 'linked', 'ignored'].includes(status) ? status : null;
+}
+
+function pendingSaleSelectSql() {
+  return `
+    SELECT
+      p.*,
+      lc.name AS linked_client_name,
+      lb.ban_number AS linked_ban_number,
+      ls.phone AS linked_subscriber_phone
+    FROM tango_commission_pending_sales p
+    LEFT JOIN clients lc ON lc.id = p.linked_client_id
+    LEFT JOIN bans lb ON lb.id = p.linked_ban_id
+    LEFT JOIN subscribers ls ON ls.id = p.linked_subscriber_id
+  `;
+}
+
+function monthStartFromDate(value) {
+  const iso = toIsoDate(value);
+  return iso ? `${iso.slice(0, 7)}-01` : null;
 }
 
 async function fetchTangoApiV2Range(from, to) {
@@ -474,6 +499,236 @@ async function ensureSyncLogsTable(client) {
 // ======================================================
 // GET /api/tango/compare â€” Comparativa completa Tango vs CRM
 // ======================================================
+router.get('/pending-sales', requireRole(['admin', 'supervisor']), async (req, res) => {
+  const { status, ban, cliente, tipo, ventatipo_id: ventaTipoId, from, to, limit = '100', offset = '0' } = req.query || {};
+  const filters = [];
+  const params = [];
+  const normalizedStatus = normalizePendingStatus(status);
+  if (status && !normalizedStatus) return res.status(400).json({ error: 'status invalido' });
+
+  if (normalizedStatus) {
+    params.push(normalizedStatus);
+    filters.push(`p.status = $${params.length}`);
+  }
+  if (ban) {
+    params.push(`%${String(ban).replace(/\D/g, '') || String(ban).trim()}%`);
+    filters.push(`regexp_replace(COALESCE(p.ban_tango, ''), '\\D', '', 'g') LIKE $${params.length}`);
+  }
+  if (cliente) {
+    params.push(`%${String(cliente).trim()}%`);
+    filters.push(`p.cliente_tango ILIKE $${params.length}`);
+  }
+  const tipoValue = ventaTipoId || tipo;
+  if (tipoValue) {
+    params.push(Number(tipoValue));
+    filters.push(`p.ventatipo_id = $${params.length}`);
+  }
+  if (from) {
+    params.push(String(from).slice(0, 10));
+    filters.push(`p.fecha_activacion >= $${params.length}::date`);
+  }
+  if (to) {
+    params.push(String(to).slice(0, 10));
+    filters.push(`p.fecha_activacion <= $${params.length}::date`);
+  }
+
+  const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 500);
+  const safeOffset = Math.max(Number(offset) || 0, 0);
+  const whereSql = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+
+  try {
+    const totalResult = await crmPool.query(`SELECT COUNT(*)::int AS total FROM tango_commission_pending_sales p ${whereSql}`, params);
+    const listParams = [...params, safeLimit, safeOffset];
+    const rowsResult = await crmPool.query(
+      `${pendingSaleSelectSql()}
+       ${whereSql}
+       ORDER BY p.fecha_activacion DESC NULLS LAST, p.ventaid DESC
+       LIMIT $${listParams.length - 1} OFFSET $${listParams.length}`,
+      listParams
+    );
+
+    return res.json({ rows: rowsResult.rows, total: Number(totalResult.rows[0]?.total || 0), limit: safeLimit, offset: safeOffset });
+  } catch (error) {
+    console.error('[TANGO PENDING] Error listando pendientes:', error);
+    return res.status(500).json({ error: 'Error listando pendientes Tango' });
+  }
+});
+
+router.get('/pending-sales/:ventaid', requireRole(['admin', 'supervisor']), async (req, res) => {
+  const ventaid = Number(req.params.ventaid);
+  if (!Number.isFinite(ventaid) || ventaid <= 0) return res.status(400).json({ error: 'ventaid invalido' });
+
+  try {
+    const result = await crmPool.query(`${pendingSaleSelectSql()} WHERE p.ventaid = $1 LIMIT 1`, [ventaid]);
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Venta pendiente no encontrada' });
+    return res.json(result.rows[0]);
+  } catch (error) {
+    console.error('[TANGO PENDING] Error obteniendo detalle:', error);
+    return res.status(500).json({ error: 'Error obteniendo venta pendiente' });
+  }
+});
+
+router.patch('/pending-sales/:ventaid/link', requireRole(['admin', 'supervisor']), async (req, res) => {
+  const ventaid = Number(req.params.ventaid);
+  const { client_id: clientId, ban_id: banId, subscriber_id: subscriberId } = req.body || {};
+  if (!Number.isFinite(ventaid) || ventaid <= 0) return res.status(400).json({ error: 'ventaid invalido' });
+  if (!clientId || !banId || !subscriberId) return res.status(400).json({ error: 'client_id, ban_id y subscriber_id son requeridos' });
+
+  const client = await crmPool.connect();
+  try {
+    await client.query('BEGIN');
+    const relation = await client.query(
+      `SELECT c.id AS client_id, c.name AS client_name, b.id AS ban_id, b.ban_number, s.id AS subscriber_id, s.phone AS subscriber_phone
+         FROM clients c
+         JOIN bans b ON b.client_id = c.id
+         JOIN subscribers s ON s.ban_id = b.id
+        WHERE c.id = $1 AND b.id = $2 AND s.id = $3
+        LIMIT 1`,
+      [clientId, banId, subscriberId]
+    );
+    if (relation.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'La relacion cliente/BAN/suscriptor no es valida' });
+    }
+
+    const pending = await client.query(
+      `UPDATE tango_commission_pending_sales
+          SET status = 'linked',
+              linked_client_id = $2,
+              linked_ban_id = $3,
+              linked_subscriber_id = $4,
+              updated_at = NOW()
+        WHERE ventaid = $1
+          AND status <> 'ignored'
+        RETURNING *`,
+      [ventaid, clientId, banId, subscriberId]
+    );
+    if (pending.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Venta pendiente no encontrada o ignorada' });
+    }
+
+    await client.query('COMMIT');
+    return res.json({ success: true, row: { ...pending.rows[0], ...relation.rows[0] } });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('[TANGO PENDING] Error vinculando venta:', error);
+    return res.status(500).json({ error: 'Error vinculando venta pendiente' });
+  } finally {
+    client.release();
+  }
+});
+
+router.patch('/pending-sales/:ventaid/ignore', requireRole(['admin', 'supervisor']), async (req, res) => {
+  const ventaid = Number(req.params.ventaid);
+  const motivo = String(req.body?.motivo_exclusion || req.body?.motivo || '').trim();
+  if (!Number.isFinite(ventaid) || ventaid <= 0) return res.status(400).json({ error: 'ventaid invalido' });
+  if (motivo.length < 3) return res.status(400).json({ error: 'motivo_exclusion requerido' });
+
+  try {
+    const result = await crmPool.query(
+      `UPDATE tango_commission_pending_sales
+          SET status = 'ignored',
+              motivo = $2,
+              updated_at = NOW()
+        WHERE ventaid = $1
+        RETURNING *`,
+      [ventaid, motivo]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Venta pendiente no encontrada' });
+    return res.json({ success: true, row: result.rows[0] });
+  } catch (error) {
+    console.error('[TANGO PENDING] Error ignorando venta:', error);
+    return res.status(500).json({ error: 'Error ignorando venta pendiente' });
+  }
+});
+
+router.post('/pending-sales/:ventaid/convert', requireRole(['admin', 'supervisor']), async (req, res) => {
+  const ventaid = Number(req.params.ventaid);
+  if (!Number.isFinite(ventaid) || ventaid <= 0) return res.status(400).json({ error: 'ventaid invalido' });
+
+  const client = await crmPool.connect();
+  try {
+    await client.query('BEGIN');
+    const pendingResult = await client.query(`SELECT * FROM tango_commission_pending_sales WHERE ventaid = $1 FOR UPDATE`, [ventaid]);
+    const pending = pendingResult.rows[0];
+    if (!pending) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Venta pendiente no encontrada' });
+    }
+    if (pending.status !== 'linked' || !pending.linked_subscriber_id) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'La venta debe estar linked y tener linked_subscriber_id' });
+    }
+
+    const existingBySale = await client.query(
+      `SELECT subscriber_id, report_month, external_sale_id
+         FROM subscriber_reports
+        WHERE external_sale_id = $1 OR tango_ventaid = $2
+        LIMIT 1`,
+      [String(ventaid), ventaid]
+    );
+    if (existingBySale.rows.length > 0) {
+      await client.query('COMMIT');
+      return res.json({ success: true, already_exists: true, report: existingBySale.rows[0] });
+    }
+
+    const reportMonth = monthStartFromDate(pending.fecha_activacion);
+    if (!reportMonth) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'fecha_activacion requerida para convertir' });
+    }
+
+    const rawPayload = { ...(pending.raw_payload || {}), pending_sale_id: pending.id, converted_from_pending: true };
+    const reportResult = await client.query(
+      `INSERT INTO subscriber_reports (
+         subscriber_id, report_month, source, external_sale_id,
+         source_activation_date, source_report_month, raw_payload,
+         validation_status, validation_notes,
+         company_earnings, vendor_commission, created_at, updated_at
+       )
+       VALUES (
+         $1, $2::date, 'tango-api-v2-pending', $3,
+         $4::date, $2::date, $5::jsonb,
+         'confirmed', 'convertida_desde_pending_sales',
+         $6, $7, NOW(), NOW()
+       )
+       ON CONFLICT (subscriber_id, report_month)
+       DO UPDATE SET
+         source = EXCLUDED.source,
+         external_sale_id = COALESCE(subscriber_reports.external_sale_id, EXCLUDED.external_sale_id),
+         source_activation_date = COALESCE(subscriber_reports.source_activation_date, EXCLUDED.source_activation_date),
+         source_report_month = COALESCE(subscriber_reports.source_report_month, EXCLUDED.source_report_month),
+         raw_payload = COALESCE(subscriber_reports.raw_payload, EXCLUDED.raw_payload),
+         validation_status = CASE WHEN subscriber_reports.validation_status = 'confirmed' THEN 'confirmed' ELSE EXCLUDED.validation_status END,
+         validation_notes = COALESCE(subscriber_reports.validation_notes, EXCLUDED.validation_notes),
+         company_earnings = CASE WHEN COALESCE(subscriber_reports.company_earnings, 0) = 0 THEN EXCLUDED.company_earnings ELSE subscriber_reports.company_earnings END,
+         vendor_commission = CASE WHEN COALESCE(subscriber_reports.vendor_commission, 0) = 0 THEN EXCLUDED.vendor_commission ELSE subscriber_reports.vendor_commission END,
+         updated_at = NOW()
+       RETURNING *`,
+      [
+        pending.linked_subscriber_id,
+        reportMonth,
+        String(ventaid),
+        pending.fecha_activacion,
+        JSON.stringify(rawPayload),
+        pending.company_earnings,
+        pending.vendor_commission,
+      ]
+    );
+
+    await client.query(`UPDATE tango_commission_pending_sales SET status = 'linked', updated_at = NOW() WHERE ventaid = $1`, [ventaid]);
+    await client.query('COMMIT');
+    return res.json({ success: true, already_exists: false, report: reportResult.rows[0] });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('[TANGO PENDING] Error convirtiendo venta:', error);
+    return res.status(500).json({ error: 'Error convirtiendo venta pendiente' });
+  } finally {
+    client.release();
+  }
+});
+
 router.get('/compare', async (req, res) => {
   try {
     const { search, month } = req.query;
@@ -1032,6 +1287,7 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
     const externalSales = [];
     const ventasValidas = [];
     const ventasBanNuevo = []; // candidatas a auto-create (agrupadas luego)
+    const pymesAutocreatedVentaIds = new Set();
 
     for (const v of tangoResult.rows) {
       const banNum = String(v.ban || '').trim();
@@ -1050,7 +1306,8 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
         continue;
       }
       if (!banByNumber.has(banNum)) {
-        if (AUTO_CREATE_FROM_TANGO) {
+        const isPymesAutocreate = isPymesAutocreateVentaTipo(v.ventatipoid) && Number(v.com_empresa || 0) > 0;
+        if (AUTO_CREATE_FROM_TANGO || isPymesAutocreate) {
           ventasBanNuevo.push(v);
         } else {
           externalSales.push({
@@ -1074,7 +1331,7 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
     // Agrupa ventasBanNuevo por banNum, decide nombre cliente y account_type,
     // y crea cliente + BAN. DespuÃ©s mueve las ventas a ventasValidas para que
     // el flujo normal genere subscriber + report.
-    if (AUTO_CREATE_FROM_TANGO && ventasBanNuevo.length > 0) {
+    if (ventasBanNuevo.length > 0) {
       const ventasPorBan = new Map();
       for (const v of ventasBanNuevo) {
         const banNum = String(v.ban || '').trim();
@@ -1085,6 +1342,9 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
 
       for (const [banNum, ventasDelBan] of ventasPorBan) {
         try {
+          const isPymesAutoCreateGroup = ventasDelBan.some((row) => isPymesAutocreateVentaTipo(row.ventatipoid));
+          const autoSource = isPymesAutoCreateGroup ? 'tango_v2_autocreate' : 'tango';
+
           // 1) Determinar account_type del BAN segÃºn ventatipoids del grupo
           let hasMobile = false;
           let hasFijo = false;
@@ -1124,9 +1384,9 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
             const notes = `auto-creado desde tango sync Â· ventaid=${ventaid} Â· ${fechaIso}`;
             const newClient = await crmPool.query(
               `INSERT INTO clients (name, owner_name, salesperson_id, source, pendiente_validacion, notes, created_at, updated_at)
-               VALUES ($1::text, $2::text, $3::uuid, 'tango', true, $4::text, NOW(), NOW())
+               VALUES ($1::text, $2::text, $3::uuid, $5::text, true, $4::text, NOW(), NOW())
                RETURNING id, name, salesperson_id`,
-              [clientName, clientName, spId || null, notes]
+              [clientName, clientName, spId || null, notes, autoSource]
             );
             clientId = newClient.rows[0].id;
             const created = newClient.rows[0];
@@ -1138,10 +1398,10 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
 
           // 6) Crear BAN
           const newBan = await crmPool.query(
-            `INSERT INTO bans (ban_number, number, client_id, account_type, status, source, created_at, updated_at)
-             VALUES ($1::text, $1::text, $2::uuid, $3::text, 'activo', 'tango', NOW(), NOW())
+            `INSERT INTO bans (ban_number, client_id, account_type, status, source, created_at, updated_at)
+             VALUES ($1::text, $2::uuid, $3::text, 'A', $4::text, NOW(), NOW())
              RETURNING id, ban_number, client_id, account_type`,
-            [banNum, clientId, accountType]
+            [banNum, clientId, accountType, autoSource]
           );
           const banRecord = newBan.rows[0];
           banByNumber.set(banNum, banRecord);
@@ -1149,7 +1409,10 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
           alert('info', banNum, `[AUTO] BAN creado tipo ${accountType} â†’ cliente ${clientName}`);
 
           // 7) Mover ventas del BAN al flujo normal
-          for (const v of ventasDelBan) ventasValidas.push(v);
+          for (const v of ventasDelBan) {
+            ventasValidas.push(v);
+            if (isPymesAutoCreateGroup) pymesAutocreatedVentaIds.add(Number(v.ventaid));
+          }
         } catch (autoErr) {
           // Falla en auto-create â†’ mandar TODAS las ventas del BAN a external_sales
           // con motivo distinto para diagnÃ³stico, no bloquea el resto del sync.
@@ -1765,6 +2028,7 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
         );
         const prevCompany = prevReport.rows[0]?.company_earnings != null ? Number(prevReport.rows[0].company_earnings) : null;
         const prevVendor = prevReport.rows[0]?.vendor_commission != null ? Number(prevReport.rows[0].vendor_commission) : null;
+        const reportSource = pymesAutocreatedVentaIds.has(Number(v.ventaid)) ? 'tango_v2_autocreate' : 'tango';
         const rawPayload = {
           ventaid: Number(v.ventaid),
           ban: banNum,
@@ -1781,7 +2045,7 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
           vendedorid: v.tango_vendor_id || null,
           cliente: v.cliente || null,
           vendedor: v.vendedor || null,
-          source: 'tango',
+          source: reportSource,
           sync_log_id: syncLogId,
           report_month: monthVal,
         };
@@ -1879,7 +2143,7 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
         `, [
           subscriberId,
           monthVal,
-          'tango',
+          reportSource,
           String(v.ventaid),
           syncLogId,
           sourceActivationDate,
@@ -1893,6 +2157,20 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
         ]);
 
         // Alertar si se actualizÃ³ algÃºn valor existente desde Tango.
+        if (reportSource === 'tango_v2_autocreate') {
+          await crmPool.query(
+            `UPDATE tango_commission_pending_sales
+                SET status = 'linked',
+                    linked_client_id = $2,
+                    linked_ban_id = $3,
+                    linked_subscriber_id = $4,
+                    updated_at = NOW()
+              WHERE ventaid = $1
+                AND status = 'needs_review'`,
+            [Number(v.ventaid), clientId, banRecord.id, subscriberId]
+          );
+        }
+
         if (prevCompany !== null && comEmpresa > 0 && Math.abs(prevCompany - comEmpresa) > 0.001) {
           alert('info', banNum, `Ganancia empresa actualizada desde Tango: ${prevCompany} â†’ ${comEmpresa} (ventaid ${v.ventaid})`);
           stats.reports_company_updated = (stats.reports_company_updated || 0) + 1;
