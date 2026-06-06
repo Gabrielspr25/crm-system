@@ -217,8 +217,10 @@ describe('Tango V2 sync source', () => {
 
   it('solo incluye tipos PyMES aunque otros tipos traigan comision real', () => {
     const confirmedTypes = [
-      [80087, 25, 'Claro Update NEW', 'movil', 'NEW', true],
-      [80099, 26, 'Claro Update REN', 'movil', 'REN', true],
+      [80087, 25, 'Claro Update NEW', 'movil', 'NEW', false],
+      [80099, 26, 'Claro Update REN', 'movil', 'REN', false],
+      [80087, 25, 'Corp Update New', 'movil', 'NEW', true],
+      [80099, 26, 'Corp Update Ren', 'movil', 'REN', true],
       [80090, 8, 'BA CORP NEW', 'fijo', 'NEW', true],
       [80047, 121, '2 Play', 'fijo', 'NEW', false],
       [80003, 142, 'Claro TV - Servicio', 'tv', 'NEW', false],
@@ -271,13 +273,30 @@ describe('Tango V2 sync source', () => {
     });
   });
 
-  it('limita autocreate PYMES a los IDs aprobados', () => {
-    const allowed = [8, 25, 26, 138, 139, 140, 141];
+  it('limita autocreate PYMES a los nombres oficiales aprobados', () => {
+    const allowed = [
+      [8, 'BA CORP NEW'],
+      [25, 'Corp Update New'],
+      [26, 'Corp Update Ren'],
+      [138, 'PYMES Update REN'],
+      [139, 'PYMES Update NEW'],
+      [140, 'PYMES Fijo REN'],
+      [141, 'PYMES Fijo NEW'],
+    ];
+    const blockedByName = [
+      [25, 'Claro Update NEW'],
+      [26, 'Claro Update REN'],
+    ];
     const blocked = [20, 60, 121, 142, 999];
 
-    for (const id of allowed) {
-      expect(isPymesAutocreateVentaTipo(id)).toBe(true);
-      expect(classifyPymesAutocreateVentaTipo(id)).toMatchObject({ negocio: 'PYMES' });
+    for (const [id, name] of allowed) {
+      expect(isPymesAutocreateVentaTipo(id, name)).toBe(true);
+      expect(classifyPymesAutocreateVentaTipo(id, name)).toMatchObject({ negocio: 'PYMES' });
+    }
+
+    for (const [id, name] of blockedByName) {
+      expect(isPymesAutocreateVentaTipo(id, name)).toBe(false);
+      expect(classifyPymesAutocreateVentaTipo(id, name)).toBeNull();
     }
 
     for (const id of blocked) {
@@ -326,5 +345,8 @@ describe('Tango V2 sync source', () => {
     for (const name of ['BYOP Prepaid', 'Accesorios', 'Claro TV - Servicio', '2 Play']) {
       expect(isAllowedPymesCommissionVentaTipo(null, name)).toBe(false);
     }
+
+    expect(isAllowedPymesCommissionVentaTipo(25, 'Claro Update NEW')).toBe(false);
+    expect(isAllowedPymesCommissionVentaTipo(26, 'Claro Update REN')).toBe(false);
   });
 });

@@ -135,7 +135,6 @@ export function getTangoCommissionAmount(sale = null, commission = null, legacyF
   );
 }
 
-const PYMES_AUTOCREATE_TIPOS = new Set([8, 25, 26, 138, 139, 140, 141]);
 const PYMES_ALLOWED_NAMES = new Set([
   'ba corp new',
   'ba corp ren',
@@ -161,7 +160,6 @@ function normalizeVentaTipoName(value) {
 }
 
 export function isAllowedPymesCommissionVentaTipo(ventatipoId, ventatipoNombre = '') {
-  if (PYMES_AUTOCREATE_TIPOS.has(Number(ventatipoId))) return true;
   return PYMES_ALLOWED_NAMES.has(normalizeVentaTipoName(ventatipoNombre));
 }
 
@@ -174,12 +172,18 @@ export function shouldIncludeTangoV2SaleForCommissions(sale = null, commission =
   return getTangoCommissionAmount(sale, commission) > 0;
 }
 
-export function isPymesAutocreateVentaTipo(ventatipoId) {
-  return PYMES_AUTOCREATE_TIPOS.has(Number(ventatipoId));
+export function isPymesAutocreateVentaTipo(ventatipoId, ventatipoNombre = '') {
+  return isAllowedPymesCommissionVentaTipo(ventatipoId, ventatipoNombre);
 }
 
-export function classifyPymesAutocreateVentaTipo(ventatipoId) {
+export function classifyPymesAutocreateVentaTipo(ventatipoId, ventatipoNombre = '') {
+  if (!isPymesAutocreateVentaTipo(ventatipoId, ventatipoNombre)) return null;
   const id = Number(ventatipoId);
+  const name = normalizeVentaTipoName(ventatipoNombre);
+  if (/cloud|office 365/.test(name)) return { negocio: 'PYMES', product: 'cloud', movement: 'NEW' };
+  if (/fijo/.test(name)) return { negocio: 'PYMES', product: 'fijo', movement: /ren/.test(name) ? 'REN' : 'NEW' };
+  if (/ren/.test(name)) return { negocio: 'PYMES', product: 'movil', movement: 'REN' };
+  if (/new/.test(name)) return { negocio: 'PYMES', product: 'movil', movement: 'NEW' };
   const map = {
     8: { negocio: 'PYMES', product: 'movil', movement: 'NEW' },
     25: { negocio: 'PYMES', product: 'movil', movement: 'NEW' },

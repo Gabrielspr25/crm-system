@@ -1311,7 +1311,7 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
         continue;
       }
       if (!banByNumber.has(banNum)) {
-        const isPymesAutocreate = isPymesAutocreateVentaTipo(v.ventatipoid) && Number(v.com_empresa || 0) > 0;
+        const isPymesAutocreate = isPymesAutocreateVentaTipo(v.ventatipoid, v.ventatipo_nombre || v.tipo || v.nombre) && Number(v.com_empresa || 0) > 0;
         if (AUTO_CREATE_FROM_TANGO || isPymesAutocreate) {
           ventasBanNuevo.push(v);
         } else {
@@ -1347,7 +1347,7 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
 
       for (const [banNum, ventasDelBan] of ventasPorBan) {
         try {
-          const isPymesAutoCreateGroup = ventasDelBan.some((row) => isPymesAutocreateVentaTipo(row.ventatipoid));
+          const isPymesAutoCreateGroup = ventasDelBan.some((row) => isPymesAutocreateVentaTipo(row.ventatipoid, row.ventatipo_nombre || row.tipo || row.nombre));
           const autoSource = isPymesAutoCreateGroup ? 'tango_v2_autocreate' : 'tango';
 
           // 1) Determinar account_type del BAN segÃºn ventatipoids del grupo
