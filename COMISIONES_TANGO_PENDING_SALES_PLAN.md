@@ -2,7 +2,7 @@
 
 ## Objetivo
 
-Crear una bandeja oficial para ventas Tango V2 con comision real que no pueden entrar todavia a `subscriber_reports` porque falta relacion CRM completa:
+Crear una bandeja oficial para ventas Tango V2 con comision real que no pueden entrar todavia a `subscriber_reports` porque no son PYMES confirmadas, son ambiguas o faltan datos minimos para crear relacion CRM completa:
 
 `client -> BAN -> subscriber`
 
@@ -10,7 +10,7 @@ La tabla propuesta es:
 
 `tango_commission_pending_sales`
 
-Esta tabla no reemplaza Comisiones. Retiene ventas pendientes para revision manual futura y evita perder ventas con comision real cuando el BAN o suscriptor no existe en CRM.
+Esta tabla no reemplaza Comisiones. Retiene ventas pendientes para revision manual futura y evita perder ventas con comision real cuando no corresponde auto-crear la relacion operativa CRM.
 
 ## Fuente Oficial
 
@@ -19,33 +19,38 @@ Esta tabla no reemplaza Comisiones. Retiene ventas pendientes para revision manu
 
 ## Regla Principal
 
-Si Tango V2 trae una venta con comision real mayor a cero, no debe perderse por falta de BAN en CRM.
+Si Tango V2 trae una venta con comision real mayor a cero, no debe perderse.
 
-Cuando el sync no puede resolver `subscriber_id`, la venta no entra a `subscriber_reports`; se guarda en `tango_commission_pending_sales` con estado `needs_review`.
+Regla actualizada:
+
+- Si la venta es PYMES confirmada, el sync debe crear Cliente -> BAN -> Suscriptor si faltan y luego crear `subscriber_reports`.
+- Si la venta no es PYMES, no entra a pending activo: se ignora por regla `tipo_no_pymes`.
+- Si la venta PYMES es ambigua o no tiene datos minimos para crear la relacion CRM, se guarda en `tango_commission_pending_sales` con estado `needs_review`.
 
 ## Reglas De Datos
 
-- No crear `clients` automaticamente.
-- No crear `bans` automaticamente.
-- No crear `subscribers` automaticamente.
+- No crear `clients` automaticamente para ventas no PYMES.
+- No crear `bans` automaticamente para ventas no PYMES.
+- No crear `subscribers` automaticamente para ventas no PYMES.
+- Para ventas PYMES confirmadas, la auto-creacion esta permitida y es la regla correcta de negocio.
 - No duplicar por `ventaid`.
 - Permitir revision manual futura.
 - `subscriber_reports` sigue siendo la tabla de comisiones vinculadas y listas para calculo.
 - `tango_commission_pending_sales` solo guarda ventas pendientes, vinculadas o ignoradas.
-- BYOP y Accesorios quedan `needs_review` o `ignored` segun regla posterior aprobada por negocio.
+- BYOP, Prepago, Accesorios y otros tipos fuera de PYMES quedan `ignored` con motivo `tipo_no_pymes` si ya existen en la tabla.
 
 ## Estados
 
 ### needs_review
 
-Venta Tango con comision real que no pudo vincularse a CRM.
+Venta Tango con comision real que no puede auto-crearse ni vincularse de forma segura.
 
 Casos esperados:
 
-- BAN no existe en CRM.
 - Venta sin BAN.
 - Cliente Tango no existe o no es confiable para match automatico.
-- Tipo de venta pendiente de regla de negocio.
+- Venta PYMES ambigua.
+- Venta PYMES sin datos minimos para crear cliente/BAN/suscriptor.
 
 ### linked
 
@@ -66,7 +71,7 @@ Ejemplos posibles:
 - Tipo no comisionable para SS-Group.
 - Venta duplicada confirmada por operacion.
 - Venta de prueba.
-- BYOP o Accesorios si negocio decide excluirlos.
+- BYOP, Prepago, Accesorios u otros tipos fuera de PYMES: motivo `tipo_no_pymes`.
 
 ## Campos Requeridos
 
@@ -136,21 +141,32 @@ CREATE INDEX IF NOT EXISTS idx_tango_pending_ventatipo
 
 ## Integracion Con El Sync
 
-Flujo actual:
+Flujo anterior:
 
 1. Tango V2 trae venta y comision.
 2. El mapper decide si existe comision real.
 3. Si el BAN existe en CRM, el sync resuelve BAN, suscriptor y crea/actualiza `subscriber_reports`.
 4. Si el BAN no existe y `AUTO_CREATE_FROM_TANGO=false`, la venta queda en `externalSales` con `motivo = ban_no_existe_en_crm`.
 
-Flujo propuesto:
+Flujo actualizado:
 
-1. Mantener `externalSales` para estadisticas y diagnostico.
-2. Para ventas con comision real que no tienen BAN/suscriptor en CRM, hacer upsert en `tango_commission_pending_sales`.
-3. Usar `ventaid` como llave unica.
-4. Si la venta ya existe y esta `needs_review`, refrescar datos Tango.
-5. Si la venta ya esta `linked` o `ignored`, no reabrir automaticamente.
-6. No insertar en `subscriber_reports` hasta que exista `linked_subscriber_id`.
+1. Clasificar la venta Tango V2.
+2. Si es PYMES confirmada y tiene comision real:
+   - crear cliente si no existe;
+   - crear BAN si no existe;
+   - crear suscriptor si no existe y Tango trae telefono/linea;
+   - crear `subscriber_reports`;
+   - marcar origen Tango V2.
+3. Si no es PYMES:
+   - no crear datos maestros;
+   - no crear `subscriber_reports`;
+   - no hacer upsert activo en pending.
+4. Si es PYMES ambigua o no tiene datos minimos:
+   - hacer upsert en `tango_commission_pending_sales`;
+   - usar `ventaid` como llave unica.
+5. Si la venta ya existe en pending y esta `needs_review`, refrescar datos Tango.
+6. Si la venta ya esta `linked` o `ignored`, no reabrir automaticamente.
+7. No insertar desde pending en `subscriber_reports` hasta que exista `linked_subscriber_id`.
 
 ## Upsert Propuesto
 
@@ -196,7 +212,7 @@ Diagnostico actual del rango:
 - 1 venta entra a `subscriber_reports`: `80090`.
 - 20 ventas quedan externas por `ban_no_existe_en_crm`.
 
-Resultado esperado despues de implementar tabla y sync controlado:
+Resultado obtenido con la fase pending anterior:
 
 - `subscriber_reports`: mantiene la venta confirmada `80090`.
 - `tango_commission_pending_sales`: recibe 20 filas.
@@ -206,6 +222,13 @@ Resultado esperado despues de implementar tabla y sync controlado:
 - Clientes creados automaticamente: 0.
 - BANs creados automaticamente: 0.
 - Suscriptores creados automaticamente por estas ventas: 0.
+
+Resultado esperado despues de implementar regla PYMES:
+
+- Las ventas PYMES confirmadas de este rango ya no deben quedar en pending por falta de BAN.
+- Deben crear cliente/BAN/suscriptor cuando aplique.
+- Deben crear `subscriber_reports`.
+- `tango_commission_pending_sales` debe conservar solo ventas PYMES ambiguas o vinculadas/ignoradas historicas.
 
 Ventas esperadas en pending para ese rango:
 
@@ -232,19 +255,20 @@ Ventas esperadas en pending para ese rango:
 
 ## Riesgos
 
-- BYOP y Accesorios tienen comisiones reales, pero falta regla final de negocio.
-- Si se ignoran automaticamente tipos no aprobados, se puede perder dinero.
+- BYOP, Prepago y Accesorios quedan fuera por regla final de negocio.
+- Si Tango cambia nombres/IDs PYMES, el contrato debe actualizarse antes de sincronizar rangos grandes.
 - Si una venta `linked` vuelve en otro sync, no debe duplicarse ni cambiar a `needs_review`.
 - Si se vincula una venta al suscriptor incorrecto, Comisiones puede sumar mal.
 - La pantalla de Comisiones no debe sumar pendientes hasta que esten vinculadas.
-- No debe activarse `AUTO_CREATE_FROM_TANGO` como solucion general, porque crea datos maestros sin control operativo.
+- No debe activarse `AUTO_CREATE_FROM_TANGO` como solucion general para todos los tipos.
+- La auto-creacion debe estar limitada a tipos PYMES confirmados.
 
 ## Proximo Paso
 
-Preparar migracion y cambio de backend para:
+Preparar cambio de backend para:
 
-1. Crear `tango_commission_pending_sales`.
-2. Hacer upsert de ventas externas con comision real.
-3. Mantener `AUTO_CREATE_FROM_TANGO=false`.
-4. Validar con sync corto `2026-06-01` a `2026-06-05`.
-5. Confirmar que las 20 ventas externas quedan retenidas sin crear clientes, BANs ni suscriptores automaticamente.
+1. Clasificar tipos PYMES confirmados.
+2. Auto-crear CRM solo para ventas PYMES con comision real.
+3. Mantener pending solo para PYMES ambiguas.
+4. Marcar pending no PYMES existente como `ignored` / `tipo_no_pymes`.
+5. Validar con sync corto `2026-06-01` a `2026-06-05`.

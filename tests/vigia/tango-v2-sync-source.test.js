@@ -3,6 +3,7 @@ import {
   buildTangoCommissionPendingSale,
   classifyTangoVentaTipo,
   classifyPymesAutocreateVentaTipo,
+  isAllowedPymesCommissionVentaTipo,
   isPymesAutocreateVentaTipo,
   mapTangoApiV2SaleToSyncRow,
   mergeTangoApiV2RowsWithLegacyRows,
@@ -214,16 +215,16 @@ describe('Tango V2 sync source', () => {
     });
   });
 
-  it('incluye tipos comisionables por comision real y no por allowlist fija', () => {
+  it('solo incluye tipos PyMES aunque otros tipos traigan comision real', () => {
     const confirmedTypes = [
-      [80087, 25, 'Claro Update NEW', 'movil', 'NEW'],
-      [80099, 26, 'Claro Update REN', 'movil', 'REN'],
-      [80090, 8, 'BA CORP NEW', 'fijo', 'NEW'],
-      [80047, 121, '2 Play', 'fijo', 'NEW'],
-      [80003, 142, 'Claro TV - Servicio', 'tv', 'NEW'],
+      [80087, 25, 'Claro Update NEW', 'movil', 'NEW', true],
+      [80099, 26, 'Claro Update REN', 'movil', 'REN', true],
+      [80090, 8, 'BA CORP NEW', 'fijo', 'NEW', true],
+      [80047, 121, '2 Play', 'fijo', 'NEW', false],
+      [80003, 142, 'Claro TV - Servicio', 'tv', 'NEW', false],
     ];
 
-    for (const [ventaid, id, nombre, family, lineType] of confirmedTypes) {
+    for (const [ventaid, id, nombre, family, lineType, shouldInclude] of confirmedTypes) {
       const sale = {
         ventaid,
         ventatipo: { id, nombre },
@@ -233,7 +234,7 @@ describe('Tango V2 sync source', () => {
         comisiones: { total: 100, comisionclaro: 80 },
       };
 
-      expect(shouldIncludeTangoV2SaleForCommissions(sale, commission)).toBe(true);
+      expect(shouldIncludeTangoV2SaleForCommissions(sale, commission)).toBe(shouldInclude);
       expect(classifyTangoVentaTipo(id, nombre)).toMatchObject({ family, lineType });
     }
   });
@@ -282,6 +283,48 @@ describe('Tango V2 sync source', () => {
     for (const id of blocked) {
       expect(isPymesAutocreateVentaTipo(id)).toBe(false);
       expect(classifyPymesAutocreateVentaTipo(id)).toBeNull();
+    }
+  });
+
+  it('excluye BYOP/Prepago aunque Tango traiga comision real', () => {
+    const sale = {
+      ventaid: 80100,
+      ban: '851113612',
+      ventatipo: { id: 20, nombre: 'BYOP Prepaid' },
+    };
+    const commission = {
+      ventaid: 80100,
+      comisiones: {
+        comisionclaro: 15.6,
+        comisionvendedor: 0,
+      },
+    };
+
+    expect(shouldIncludeTangoV2SaleForCommissions(sale, commission)).toBe(false);
+  });
+
+  it('acepta los 12 nombres oficiales PyMES y rechaza tipos fuera del negocio', () => {
+    const allowedNames = [
+      'BA CORP NEW',
+      'BA CORP REN',
+      'Cloud Negocios',
+      'Corp Update New',
+      'Corp Update Ren',
+      'Office 365 Negocios',
+      'PYMES Fijo NEW',
+      'PYMES Fijo REN',
+      'PYMES Update NEW',
+      'PYMES Update REN',
+      'Telemetria NEW',
+      'Telemetria REN',
+    ];
+
+    for (const name of allowedNames) {
+      expect(isAllowedPymesCommissionVentaTipo(null, name)).toBe(true);
+    }
+
+    for (const name of ['BYOP Prepaid', 'Accesorios', 'Claro TV - Servicio', '2 Play']) {
+      expect(isAllowedPymesCommissionVentaTipo(null, name)).toBe(false);
     }
   });
 });

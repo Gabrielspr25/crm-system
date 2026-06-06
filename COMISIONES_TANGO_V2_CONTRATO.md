@@ -83,23 +83,21 @@ company_earnings = suma de componentes positivos del desglose / comisiones
 
 ## 2. Regla De Entrada
 
-Regla oficial:
+Regla oficial vigente:
 
 ```text
-Si Tango V2 trae comision real > 0, la venta entra por defecto a Comisiones.
+Solo ventas Tango V2 de negocio PYMES entran a Comisiones.
+Ademas deben traer comision real > 0.
 ```
 
-Una venta no debe perderse por:
-- no estar en una allowlist local
-- no ser de un tipo conocido previamente
-- no existir en reglas viejas del CRM
-- no aparecer en legacy/POS
-- no tener categoria CRM configurada todavia
+Tipos fuera de PYMES no deben:
+- crear cliente
+- crear BAN
+- crear suscriptor
+- crear `subscriber_reports`
+- quedar activos en `tango_commission_pending_sales`
 
-Si el tipo de venta es nuevo:
-- entra como venta Tango detectada
-- queda marcado para clasificacion CRM
-- no se descarta silenciosamente
+Tipos fuera de PYMES se ignoran con motivo auditable `tipo_no_pymes` cuando ya existan como pendientes.
 
 ---
 
@@ -126,43 +124,122 @@ Reglas:
 
 ---
 
-## 4. Tipos Ya Confirmados
+## 4. Tipos PYMES Permitidos
 
-Estos tipos ya fueron confirmados como comisionables para SS-Group:
+Estos son los unicos tipos permitidos para Comisiones/Tango V2:
 
-| ventatipo_id | Nombre | Estado |
+| Nombre Tango | Clasificacion CRM | Negocio |
+|---|---|---|
+| BA CORP NEW | Movil Nueva | PYMES |
+| BA CORP REN | Movil Renovacion | PYMES |
+| Cloud Negocios | Cloud | PYMES |
+| Corp Update New | Movil Nueva | PYMES |
+| Corp Update Ren | Movil Renovacion | PYMES |
+| Office 365 Negocios | Cloud | PYMES |
+| PYMES Fijo NEW | Fijo Nueva | PYMES |
+| PYMES Fijo REN | Fijo Renovacion | PYMES |
+| PYMES Update NEW | Movil Nueva | PYMES |
+| PYMES Update REN | Movil Renovacion | PYMES |
+| Telemetria NEW | Movil Nueva | PYMES |
+| Telemetria REN | Movil Renovacion | PYMES |
+
+IDs reales confirmados hasta junio 2026:
+
+| ventatipo_id | Nombre Tango | Regla |
 |---:|---|---|
-| 8 | BA CORP NEW | Incluir |
-| 25 | Claro Update NEW | Incluir |
-| 26 | Claro Update REN | Incluir |
-| 121 | 2 Play | Incluir |
-| 138 | PYMES Update REN | Incluir |
-| 139 | PYMES Update NEW | Incluir |
-| 140 | PYMES Fijo REN | Incluir |
-| 141 | PYMES Fijo NEW | Incluir |
-| 142 | Claro TV | Incluir |
+| 8 | BA CORP NEW | Permitir |
+| 25 | Corp/Claro Update New | Permitir |
+| 26 | Corp/Claro Update Ren | Permitir |
+| 138 | PYMES Update REN | Permitir |
+| 139 | PYMES Update NEW | Permitir |
+| 140 | PYMES Fijo REN | Permitir |
+| 141 | PYMES Fijo NEW | Permitir |
 
 ---
 
-## 5. Tipos Pendientes
+## 5. Contrato PYMES Tango V2
 
-Estos tipos requieren decision de negocio antes de entrar automaticamente como confirmados:
+Regla definitiva de negocio:
+
+```text
+Las ventas Tango V2 de negocio PYMES con comision real crean automaticamente la relacion operativa CRM si no existe:
+
+Cliente -> BAN -> Suscriptor -> subscriber_reports
+```
+
+Esta regla reemplaza la regla anterior de enviar todo BAN inexistente a pendientes.
+
+### Tipos Tango PYMES
+
+Los siguientes tipos son negocio PYMES y deben entrar al flujo automatico si Tango V2 trae comision real:
+
+| Nombre Tango | Clasificacion CRM | Negocio |
+|---|---|---|
+| BA CORP NEW | Movil Nueva | PYMES |
+| BA CORP REN | Movil Renovacion | PYMES |
+| Corp Update New | Movil Nueva | PYMES |
+| Corp Update Ren | Movil Renovacion | PYMES |
+| PYMES Update NEW | Movil Nueva | PYMES |
+| PYMES Update REN | Movil Renovacion | PYMES |
+| Telemetria NEW | Movil Nueva | PYMES |
+| Telemetria REN | Movil Renovacion | PYMES |
+| PYMES Fijo NEW | Fijo Nueva | PYMES |
+| PYMES Fijo REN | Fijo Renovacion | PYMES |
+| Cloud Negocios | Cloud | PYMES |
+| Office 365 Negocios | Cloud | PYMES |
+
+### Regla De Auto-Creacion PYMES
+
+Si una venta Tango V2 cumple:
+
+- es tipo PYMES confirmado;
+- trae comision real mayor a cero;
+- no existe cliente/BAN/suscriptor en CRM;
+
+entonces el sync debe:
+
+1. Crear cliente con datos de Tango.
+2. Crear BAN con el BAN de Tango.
+3. Crear suscriptor con telefono/linea de Tango si existe.
+4. Guardar fecha de venta/activacion.
+5. Crear `subscriber_reports`.
+6. Marcar origen como Tango V2.
+7. Dejar campos faltantes para completar luego en el modal del cliente.
+
+### Pendientes
+
+`tango_commission_pending_sales` queda solo para:
+
+- ventas ambiguas;
+- ventas sin datos minimos para crear relacion CRM;
+- excepciones que requieran revision manual.
+
+Una venta PYMES no debe ir a pendientes solo porque el BAN no existe.
+Una venta no PYMES no debe quedar activa en pendientes.
+
+---
+
+## 6. Tipos Fuera De PYMES
+
+Estos tipos no entran a Comisiones/Tango V2 y no deben quedar activos en pending:
 
 | Tipo | Estado |
 |---|---|
-| BYOP | Pendiente de clasificacion |
-| Accesorios | Pendiente de clasificacion |
-| Futuros tipos Tango | Pendiente de clasificacion si no tienen configuracion CRM |
+| BYOP / Prepago | Ignorar, motivo `tipo_no_pymes` |
+| Accesorios | Ignorar, motivo `tipo_no_pymes` |
+| 2 Play | Ignorar, motivo `tipo_no_pymes` |
+| Claro TV - Servicio | Ignorar, motivo `tipo_no_pymes` |
+| Futuros tipos Tango fuera de PYMES | Ignorar, motivo `tipo_no_pymes` |
 
-Regla para pendientes:
-- Si Tango trae comision real > 0, no se pierde.
-- Puede entrar como `needs_review_tipo` o equivalente.
-- Debe aparecer en auditoria para decision de negocio.
-- No debe descartarse sin trazabilidad.
+Regla:
+- No crear datos maestros.
+- No crear `subscriber_reports`.
+- No mantener `needs_review`.
+- Si ya existen en `tango_commission_pending_sales`, marcar `ignored` con motivo `tipo_no_pymes`.
 
 ---
 
-## 6. Casos Centinela
+## 7. Casos Centinela
 
 Estos ventaid deben usarse para validar el contrato:
 
@@ -189,12 +266,12 @@ Validaciones minimas:
 
 ---
 
-## 7. Regla Prohibida
+## 8. Regla Prohibida
 
 Queda prohibido:
 
 ```text
-Usar allowlists hardcodeadas para decidir que ventas existen o entran al flujo.
+Usar tipos no PYMES para crear comisiones, clientes, BANs, suscriptores o pendientes activos.
 ```
 
 No se permite decidir entrada con reglas como:
@@ -204,7 +281,7 @@ const MOBILE_TIPOS = [138, 139];
 const FIJO_TIPOS = [140, 141];
 ```
 
-El codigo puede usar mapeos tecnicos para clasificar visualmente, pero no para excluir ventas reales de Tango.
+El codigo puede usar el contrato PYMES oficial para excluir tipos fuera del negocio.
 
 Permitido:
 - configuracion CRM auditable
@@ -220,12 +297,14 @@ No permitido:
 
 ---
 
-## 8. Contrato Final
+## 9. Contrato Final
 
 ```text
 Tango V2 decide que ventas existen.
 Tango V2 decide si hay comision real.
 CRM decide como clasificar y si excluir, pero solo mediante configuracion auditable.
+Si la venta es PYMES confirmada, el CRM crea la relacion operativa faltante desde Tango V2.
+Si la venta no es PYMES o es ambigua, queda en pendientes para revision.
 El sync no debe perder ventas comisionables por allowlists hardcodeadas.
 Comisiones debe mostrar lo que Tango V2 confirma, con revision solo cuando falten datos operativos.
 ```

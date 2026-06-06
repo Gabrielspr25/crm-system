@@ -135,13 +135,44 @@ export function getTangoCommissionAmount(sale = null, commission = null, legacyF
   );
 }
 
+const PYMES_AUTOCREATE_TIPOS = new Set([8, 25, 26, 138, 139, 140, 141]);
+const PYMES_ALLOWED_NAMES = new Set([
+  'ba corp new',
+  'ba corp ren',
+  'cloud negocios',
+  'corp update new',
+  'corp update ren',
+  'office 365 negocios',
+  'pymes fijo new',
+  'pymes fijo ren',
+  'pymes update new',
+  'pymes update ren',
+  'telemetria new',
+  'telemetria ren',
+]);
+
+function normalizeVentaTipoName(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ');
+}
+
+export function isAllowedPymesCommissionVentaTipo(ventatipoId, ventatipoNombre = '') {
+  if (PYMES_AUTOCREATE_TIPOS.has(Number(ventatipoId))) return true;
+  return PYMES_ALLOWED_NAMES.has(normalizeVentaTipoName(ventatipoNombre));
+}
+
 export function shouldIncludeTangoV2SaleForCommissions(sale = null, commission = null, config = null) {
   if (config?.include_in_commissions === false) return false;
+  const ventaTipoId = readVentaTipoId(sale) ?? readVentaTipoId(commission);
+  const ventaTipoName = readVentaTipoName(sale) ?? readVentaTipoName(commission);
+  if (!isAllowedPymesCommissionVentaTipo(ventaTipoId, ventaTipoName)) return false;
   if (config?.include_in_commissions === true) return true;
   return getTangoCommissionAmount(sale, commission) > 0;
 }
-
-const PYMES_AUTOCREATE_TIPOS = new Set([8, 25, 26, 138, 139, 140, 141]);
 
 export function isPymesAutocreateVentaTipo(ventatipoId) {
   return PYMES_AUTOCREATE_TIPOS.has(Number(ventatipoId));

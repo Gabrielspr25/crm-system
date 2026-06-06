@@ -15,6 +15,7 @@ import {
 import {
   buildTangoCommissionPendingSale,
   classifyTangoVentaTipo,
+  isAllowedPymesCommissionVentaTipo,
   isPymesAutocreateVentaTipo,
   mergeTangoApiV2RowsWithLegacyRows,
   shouldIncludeTangoV2SaleForCommissions,
@@ -255,6 +256,10 @@ async function upsertTangoCommissionPendingSales(externalSales, apiV2) {
     const sale = apiV2?.salesById?.get(ventaid) || pendingFallbackSaleFromExternal(externalSale);
     const commission = apiV2?.commissionsById?.get(ventaid) || pendingFallbackSaleFromExternal(externalSale);
     const pendingSale = buildTangoCommissionPendingSale(sale, commission, externalSale?.motivo || 'ban_no_existe_en_crm');
+    if (!isAllowedPymesCommissionVentaTipo(pendingSale.ventatipo_id, pendingSale.ventatipo_nombre)) {
+      stats.skipped++;
+      continue;
+    }
     if (!(Number(pendingSale.company_earnings) > 0)) {
       stats.skipped++;
       continue;
