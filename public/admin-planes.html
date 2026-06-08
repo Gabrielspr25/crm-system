@@ -37,6 +37,8 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:linear-gradient(135d
 .btn-success:hover{background:rgba(74,222,128,0.35)}
 .btn-danger{background:rgba(248,113,113,0.2);color:#f87171;border:1px solid rgba(248,113,113,0.4)}
 .btn-danger:hover{background:rgba(248,113,113,0.35)}
+.btn-info{background:rgba(56,189,248,0.15);color:#38bdf8;border:1px solid rgba(56,189,248,0.35)}
+.btn-info:hover{background:rgba(56,189,248,0.28)}
 .btn-ghost{background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.6);border:1px solid rgba(255,255,255,0.12)}
 .btn-ghost:hover{background:rgba(255,255,255,0.1);color:#fff}
 .btn:disabled{opacity:0.4;cursor:not-allowed}
@@ -406,6 +408,15 @@ function buildModuleCard(m) {
         <textarea class="form-input" id="contenido-${m.id}" rows="14">${escHtml(JSON.stringify(m.contenido, null, 2))}</textarea>
         <div class="json-error" id="jerr-${m.id}">JSON inválido — verifica la sintaxis</div>
       </div>
+      ${m.tipo === 'equipos_precios' ? `
+      <div class="form-row" style="margin-top:4px">
+        <label class="form-label">📄 Actualizar desde PDF (reemplaza el contenido)</label>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <input type="file" id="pdf-${m.id}" accept=".pdf" style="color:rgba(255,255,255,0.7);font-size:13px;flex:1;min-width:0">
+          <button class="btn btn-info" onclick="uploadPdf(${m.id})">⬆️ Subir PDF</button>
+          <span id="pdf-status-${m.id}" style="font-size:12px;color:rgba(255,255,255,0.45)"></span>
+        </div>
+      </div>` : ''}
       <div class="editor-footer">
         <button class="btn btn-success" onclick="saveModulo(${m.id})">💾 Guardar</button>
         <button class="btn btn-danger" onclick="deactivateModulo(${m.id},${m.activo})">
@@ -454,6 +465,36 @@ async function saveModulo(id) {
     toast('Módulo guardado ✓', 'ok');
     loadModulos();
   } catch(e) { toast(e.message, 'err'); }
+}
+
+// ── Upload PDF ────────────────────────────────────────────────────────────
+async function uploadPdf(id) {
+  const fileInput = document.getElementById(`pdf-${id}`);
+  const statusEl  = document.getElementById(`pdf-status-${id}`);
+  if (!fileInput.files.length) { toast('Selecciona un PDF primero', 'err'); return; }
+
+  const file = fileInput.files[0];
+  if (!file.name.toLowerCase().endsWith('.pdf')) { toast('Solo se aceptan archivos PDF', 'err'); return; }
+
+  statusEl.textContent = '⏳ Procesando...';
+  const fd = new FormData();
+  fd.append('pdf', file);
+
+  try {
+    const r = await fetch(`${API}/api/planes-modulos/${id}/upload-pdf`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: fd
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
+    statusEl.textContent = `✅ ${d.secciones || '?'} secciones importadas`;
+    toast('PDF importado — contenido actualizado ✓', 'ok');
+    loadModulos();
+  } catch(e) {
+    statusEl.textContent = '❌ Error';
+    toast(`Error al procesar PDF: ${e.message}`, 'err');
+  }
 }
 
 // ── Toggle active ─────────────────────────────────────────────────────────

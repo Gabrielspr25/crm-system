@@ -4,6 +4,12 @@
  */
 
 import pool from '../database/db.js';
+import { spawn } from 'child_process';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const PAGINAS_VALIDAS = ['fijos', 'moviles', 'inalambrico'];
 
@@ -162,6 +168,60 @@ export async function updateModulo(req, res) {
   } catch (err) {
     console.error('[planesModulos] updateModulo error:', err.message);
     return res.status(500).json({ ok: false, error: 'Error al actualizar módulo' });
+  }
+}
+
+// ─── POST /api/planes-modulos/:id/upload-pdf ─────────────────────────────────
+// Admin — recibe PDF, parsea con pdfplumber Python y actualiza contenido del módulo
+export async function uploadPdfModulo(req, res) {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ ok: false, error: 'ID inválido' });
+
+  if (!req.file) return res.status(400).json({ ok: false, error: 'No se recibió ningún archivo PDF' });
+
+  const pdfPath = req.file.path;
+  const scriptPath = path.resolve(__dirname, '../../../scripts/parse_equipos_pdf.py');
+
+  if (!fs.existsSync(scriptPath)) {
+    fs.unlinkSync(pdfPath);
+    return res.status(500).json({ ok: false, error: 'Parser no encontrado en servidor' });
+  }
+
+  try {
+    const contenidoJson = await new Promise((resolve, reject) => {
+      let stdout = '';
+      let stderr = '';
+      const proc = spawn('python3', [scriptPath, pdfPath]);
+      proc.stdout.on('data', d => { stdout += d.toString(); });
+      proc.stderr.on('data', d => { stderr += d.toString(); });
+      proc.on('close', code => {
+        try { fs.unlinkSync(pdfPath); } catch (_) {}
+        if (code !== 0) return reject(new Error(`Parser falló (exit ${code}): ${stderr}`));
+        try {
+          const parsed = JSON.parse(stdout);
+          if (parsed.error) return reject(new Error(parsed.error));
+          resolve(parsed);
+        } catch {
+          reject(new Error('Respuesta del parser no es JSON válido'));
+        }
+      });
+    });
+
+    const { rows } = await pool.query(
+      `UPDATE planes_modulos
+       SET contenido = $1, updated_by = $2
+       WHERE id = $3
+       RETURNING id, seccion_key, pagina`,
+      [contenidoJson, req.user?.username || 'admin', id]
+    );
+
+    if (!rows.length) return res.status(404).json({ ok: false, error: 'Módulo no encontrado' });
+    return res.json({ ok: true, modulo: rows[0], secciones: contenidoJson.secciones?.length || 0 });
+
+  } catch (err) {
+    try { fs.unlinkSync(pdfPath); } catch (_) {}
+    console.error('[planesModulos] uploadPdfModulo error:', err.message);
+    return res.status(500).json({ ok: false, error: err.message });
   }
 }
 
