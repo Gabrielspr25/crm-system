@@ -21,10 +21,10 @@ Leer al inicio de cada sesion. Este archivo resume las reglas vigentes del proye
 
 ### Comisiones
 
-- Fuente oficial de Comisiones: Tango API V2.
-- Legacy/POS queda solo como fallback/comparacion historica.
-- El sync V2-first fue corregido en el commit `4703d1e7cf6dc255c575d9712d0bbf719d88f707`.
-- No usar legacy/POS como puerta de entrada si la venta existe en Tango V2.
+- Fuente única: Tango API V2 (`TANGO_API_BASE_URL` + `TANGO_API_KEY`).
+- La conexión directa a la BD de Tango (legacy/POS) está desactivada. `externalPools.js` lanza error si se invoca.
+- No reintroducir `getTangoPool()`, `legacyPool`, ni queries a `venta`, `tipoplan`, `comision`, `ventatipo`.
+- Todos los sync y endpoints de comisiones usan exclusivamente `/api/external/ventas` y `/api/external/comisiones` de Tango V2.
 
 ### Metas
 
@@ -56,4 +56,4 @@ Leer al inicio de cada sesion. Este archivo resume las reglas vigentes del proye
 - Para contratos: `npm run test:vigia`.
 - Para SOV2: `npm run qa:no-legacy-sov2`.
 
-Actualizado: 2026-06-03.
+Actualizado: 2026-06-06.

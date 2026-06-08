@@ -115,7 +115,7 @@ $ServerHost = Resolve-Setting -ExplicitValue $ServerHost -EnvName "CRMP_DEPLOY_H
 $ServerUser = Resolve-Setting -ExplicitValue $ServerUser -EnvName "CRMP_DEPLOY_USER" -DefaultValue "root"
 $RemoteRoot = Resolve-Setting -ExplicitValue $RemoteRoot -EnvName "CRMP_REMOTE_ROOT" -DefaultValue "/opt/crmp"
 $RemoteClient = Resolve-Setting -ExplicitValue $RemoteClient -EnvName "CRMP_REMOTE_CLIENT" -DefaultValue "/opt/crmp/dist/client"
-$Pm2App = Resolve-Setting -ExplicitValue $Pm2App -EnvName "CRMP_PM2_APP" -DefaultValue "crmp-api"
+$Pm2App = Resolve-Setting -ExplicitValue $Pm2App -EnvName "CRMP_PM2_APP" -DefaultValue "ventaspro-backend"
 
 $resolvedKeyPath = Resolve-KeyPath -ExplicitPath $KeyPath
 $sshOptions = Get-SshOptions -ResolvedKeyPath $resolvedKeyPath
@@ -183,7 +183,7 @@ Invoke-RemoteCommand -Server $server -SshOptions $sshOptions -Command "pm2 resta
 Start-Sleep -Seconds 3
 
 Write-Host "[deploy] Verificando version backend..." -ForegroundColor Cyan
-Invoke-RemoteCommand -Server $server -SshOptions $sshOptions -Command "curl -s http://localhost:3001/api/version"
+Invoke-RemoteCommand -Server $server -SshOptions $sshOptions -Command "for i in 1 2 3 4 5; do curl -fsS http://localhost:3001/api/version && exit 0; sleep 2; done; exit 1"
 
 Write-Host "[deploy] Verificando version publica..." -ForegroundColor Cyan
 curl.exe -s https://crmp.ss-group.cloud/api/version

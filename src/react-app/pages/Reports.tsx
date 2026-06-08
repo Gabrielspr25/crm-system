@@ -445,20 +445,16 @@ export default function Reports() {
 
   const handleSyncTango = async () => {
     if (syncing) return;
-    if (!confirm(`¿Re-sincronizar Tango para ${selectedMonth}?\nTango es la fuente de verdad.`)) return;
+    const today = new Date().toISOString().slice(0, 10);
+    const from = '2026-01-01';
+    if (!confirm(`¿Sincronizar comisiones Tango V2?\nRango: ${from} → ${today}\nTango API V2 es la fuente de verdad.`)) return;
     setSyncing(true);
     setSyncResult(null);
-    // El sync puede procesar miles de filas y tardar >1 min. Usamos fetch directo
-    // con AbortController y timeout amplio. authFetch redirigía a login ante
-    // cualquier TypeError, lo que rompía la UX cuando el endpoint tardaba.
     const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), 240_000);
+    const timeoutId = window.setTimeout(() => controller.abort(), 300_000); // 5 min
     try {
       const token = (typeof localStorage !== 'undefined' ? localStorage.getItem('crm_token') : null) || '';
       const apiBase = (import.meta.env.VITE_API_BASE_URL && String(import.meta.env.VITE_API_BASE_URL).trim()) || window.location.origin;
-      const [year, month] = selectedMonth.split('-').map(Number);
-      const from = `${selectedMonth}-01`;
-      const to = new Date(year, month, 0).toISOString().slice(0, 10);
       const resp = await fetch(`${apiBase}/api/tango/sync-range`, {
         method: 'POST',
         headers: {
@@ -468,8 +464,8 @@ export default function Reports() {
         },
         body: JSON.stringify({
           from,
-          to,
-          reason: `Resync comisiones ${selectedMonth}`,
+          to: today,
+          reason: 'Sync comisiones 2026 completo',
           cleanup: false,
         }),
         signal: controller.signal,
@@ -1314,7 +1310,7 @@ export default function Reports() {
             title="Sincronizar ventas Tango â†’ CRM"
           >
             <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
-            {syncing ? 'Sincronizando...' : 'Sync Tango'}
+            {syncing ? 'Sincronizando...' : 'Sync Tango V2'}
           </button>
           )}
         </div>
@@ -1333,7 +1329,7 @@ export default function Reports() {
           {/* Stats row */}
           <div className="flex flex-wrap gap-3 text-xs">
             <span className="bg-purple-900/40 text-purple-200 px-3 py-1.5 rounded-lg border border-purple-500/20 font-bold">
-              Tango: {syncResult.stats.tango_ventas} ventas
+              V2: {syncResult.stats.tango_ventas ?? syncResult.stats.tango_api_v2_sales ?? 0} ventas (2026-01-01 → hoy)
             </span>
             {syncResult.stats.clients_created > 0 && <span className="bg-green-900/40 text-green-200 px-3 py-1.5 rounded-lg border border-green-500/20">+{syncResult.stats.clients_created} clientes</span>}
             {syncResult.stats.bans_created > 0 && <span className="bg-green-900/40 text-green-200 px-3 py-1.5 rounded-lg border border-green-500/20">+{syncResult.stats.bans_created} BANs</span>}
@@ -1342,9 +1338,9 @@ export default function Reports() {
             <span className="bg-blue-900/40 text-blue-200 px-3 py-1.5 rounded-lg border border-blue-500/20">ðŸ“Š {syncResult.stats.reports_upserted} reportes</span>
             {syncResult.stats.errors > 0 && <span className="bg-red-900/40 text-red-200 px-3 py-1.5 rounded-lg border border-red-500/20 font-bold">âŒ {syncResult.stats.errors} errores</span>}
           </div>
-          {syncResult.alerts.length > 0 && (
+          {(syncResult.alerts?.length ?? 0) > 0 && (
             <div className="rounded-xl border border-slate-700 bg-slate-900/40 px-4 py-3 text-xs text-slate-300">
-              El detalle del sync esta oculto en esta vista. Abre <span className="font-semibold text-white">Informe Tango vs CRM</span> para ver las lineas afectadas.
+              {syncResult.alerts.length} alerta{syncResult.alerts.length === 1 ? '' : 's'}. Abrí <span className="font-semibold text-white">Informe Tango vs CRM</span> para el detalle.
             </div>
           )}
         </div>
@@ -1374,7 +1370,7 @@ export default function Reports() {
           <div className="px-6 py-4 border-b border-slate-700 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <BarChart3 className="w-5 h-5 text-cyan-400" />
-              <h2 className="text-lg font-bold text-white">Informe Tango PYMES vs CRM por Mes</h2>
+              <h2 className="text-lg font-bold text-white">Informe Tango V2 vs CRM — 2026</h2>
             </div>
             <button onClick={() => setShowComparison(false)} className="text-slate-400 hover:text-white p-1 rounded">
               <X className="w-4 h-4" />
@@ -1402,22 +1398,24 @@ export default function Reports() {
               <tbody className="divide-y divide-slate-800/40">
                 {comparisonData.map((row: any) => {
                   const monthLabel = new Date(row.month + '-15').toLocaleDateString('es-ES', { year: 'numeric', month: 'short' });
-                  const ventasMatch = row.tango.ventas === row.crm.ventas;
-                  const empresaMatch = Math.abs(row.tango.empresa - row.crm.empresa) < 0.02;
+                  const tango = row.tango || { ventas: 0, empresa: 0, vendedor: 0 };
+                  const crm = row.crm || { ventas: 0, empresa: 0, comision: 0, pagado: 0 };
+                  const ventasMatch = tango.ventas === crm.ventas;
+                  const empresaMatch = Math.abs(tango.empresa - crm.empresa) < 0.02;
                   return (
                     <tr key={row.month} className="hover:bg-slate-800/30">
                       <td className="px-5 py-3 font-bold text-white capitalize">{monthLabel}</td>
-                      <td className="px-4 py-3 text-right font-bold text-purple-300">{row.tango.ventas}</td>
-                      <td className="px-4 py-3 text-right font-mono text-purple-300">${Number(row.tango.empresa).toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
-                      <td className={`px-4 py-3 text-right font-bold ${ventasMatch ? 'text-emerald-400' : 'text-red-400'}`}>{row.crm.ventas}</td>
-                      <td className={`px-4 py-3 text-right font-mono ${empresaMatch ? 'text-emerald-400' : 'text-red-400'}`}>${Number(row.crm.empresa).toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
-                      <td className="px-4 py-3 text-right font-mono text-blue-400">${Number(row.crm.comision).toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
+                      <td className="px-4 py-3 text-right font-bold text-purple-300">{tango.ventas}</td>
+                      <td className="px-4 py-3 text-right font-mono text-purple-300">${Number(tango.empresa).toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
+                      <td className={`px-4 py-3 text-right font-bold ${ventasMatch ? 'text-emerald-400' : 'text-red-400'}`}>{crm.ventas}</td>
+                      <td className={`px-4 py-3 text-right font-mono ${empresaMatch ? 'text-emerald-400' : 'text-red-400'}`}>${Number(crm.empresa).toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
+                      <td className="px-4 py-3 text-right font-mono text-blue-400">${Number(crm.comision).toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
                       <td className="px-4 py-3 text-center">
                         {ventasMatch && empresaMatch ? (
                           <span className="text-[10px] bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full font-bold">✓ OK</span>
                         ) : (
                           <span className="text-[10px] bg-red-500/20 text-red-400 px-2 py-0.5 rounded-full font-bold">
-                            {!ventasMatch ? `Î” ${row.tango.ventas - row.crm.ventas} ventas` : 'Î” $'}
+                            {!ventasMatch ? `Δ ${tango.ventas - crm.ventas} ventas` : 'Δ $'}
                           </span>
                         )}
                       </td>
@@ -1428,11 +1426,11 @@ export default function Reports() {
               <tfoot>
                 <tr className="border-t-2 border-slate-600 bg-slate-900/50">
                   <td className="px-5 py-3 font-bold text-white">TOTAL</td>
-                  <td className="px-4 py-3 text-right font-black text-purple-300">{comparisonData.reduce((s: number, r: any) => s + r.tango.ventas, 0)}</td>
-                  <td className="px-4 py-3 text-right font-black text-purple-300">${comparisonData.reduce((s: number, r: any) => s + r.tango.empresa, 0).toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
-                  <td className="px-4 py-3 text-right font-black text-emerald-400">{comparisonData.reduce((s: number, r: any) => s + r.crm.ventas, 0)}</td>
-                  <td className="px-4 py-3 text-right font-black text-emerald-400">${comparisonData.reduce((s: number, r: any) => s + r.crm.empresa, 0).toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
-                  <td className="px-4 py-3 text-right font-black text-blue-400">${comparisonData.reduce((s: number, r: any) => s + r.crm.comision, 0).toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
+                  <td className="px-4 py-3 text-right font-black text-purple-300">{comparisonData.reduce((s: number, r: any) => s + (r.tango?.ventas ?? 0), 0)}</td>
+                  <td className="px-4 py-3 text-right font-black text-purple-300">${comparisonData.reduce((s: number, r: any) => s + (r.tango?.empresa ?? 0), 0).toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
+                  <td className="px-4 py-3 text-right font-black text-emerald-400">{comparisonData.reduce((s: number, r: any) => s + (r.crm?.ventas ?? 0), 0)}</td>
+                  <td className="px-4 py-3 text-right font-black text-emerald-400">${comparisonData.reduce((s: number, r: any) => s + (r.crm?.empresa ?? 0), 0).toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
+                  <td className="px-4 py-3 text-right font-black text-blue-400">${comparisonData.reduce((s: number, r: any) => s + (r.crm?.comision ?? 0), 0).toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
                   <td className="px-4 py-3"></td>
                 </tr>
               </tfoot>

@@ -1,4 +1,4 @@
-import { query } from '../database/db.js';
+import { getClient, query } from '../database/db.js';
 import { serverError, badRequest, notFound } from '../middlewares/errorHandler.js';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -640,6 +640,82 @@ export const updateClient = async (req, res) => {
         res.json(result[0]);
     } catch (error) {
         serverError(res, error, 'Error actualizando cliente');
+    }
+};
+
+export const deleteClient = async (req, res) => {
+    const { id } = req.params;
+    const client = await getClient();
+
+    try {
+        await client.query('BEGIN');
+
+        const existing = await client.query(
+            'SELECT id, name, business_name FROM clients WHERE id = $1 LIMIT 1',
+            [id]
+        );
+
+        if (existing.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return notFound(res, 'Cliente');
+        }
+
+        const banCountResult = await client.query(
+            'SELECT COUNT(*)::int AS total FROM bans WHERE client_id = $1',
+            [id]
+        );
+        const banCount = Number(banCountResult.rows[0]?.total || 0);
+
+        if (banCount > 0) {
+            await client.query('ROLLBACK');
+            return badRequest(res, 'No se puede eliminar un cliente con BANs. Elimina los BANs primero.');
+        }
+
+        const followUpsResult = await client.query(
+            'SELECT id FROM follow_up_prospects WHERE client_id = $1',
+            [id]
+        );
+        const followUpIds = followUpsResult.rows.map((row) => row.id);
+
+        let deletedFollowUpNotes = 0;
+        let deletedFollowUps = 0;
+
+        if (followUpIds.length > 0) {
+            const notesResult = await client.query(
+                'DELETE FROM follow_up_notes WHERE follow_up_id = ANY($1::int[])',
+                [followUpIds]
+            );
+            deletedFollowUpNotes = notesResult.rowCount || 0;
+
+            const prospectsResult = await client.query(
+                'DELETE FROM follow_up_prospects WHERE id = ANY($1::int[])',
+                [followUpIds]
+            );
+            deletedFollowUps = prospectsResult.rowCount || 0;
+        }
+
+        const deleteResult = await client.query(
+            'DELETE FROM clients WHERE id = $1 RETURNING id, name, business_name',
+            [id]
+        );
+
+        await client.query('COMMIT');
+
+        return res.json({
+            success: true,
+            client: deleteResult.rows[0],
+            deleted_follow_ups: deletedFollowUps,
+            deleted_follow_up_notes: deletedFollowUpNotes
+        });
+    } catch (error) {
+        try {
+            await client.query('ROLLBACK');
+        } catch (_rollbackError) {
+            // ignore rollback error
+        }
+        return serverError(res, error, 'Error eliminando cliente');
+    } finally {
+        client.release();
     }
 };
 

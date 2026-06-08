@@ -1,5 +1,5 @@
 import { getClient, query } from '../database/db.js';
-import { getTangoPool } from '../database/externalPools.js';
+// getTangoPool eliminado — el sistema usa Tango API V2 exclusivamente.
 import jwt from 'jsonwebtoken';
 import { config } from '../config/env.js';
 
@@ -1780,17 +1780,23 @@ export const runFullSystemTest = async (req, res) => {
             'Modulo retirado 2026-04-29 (frontend + endpoint /api/referidos desmontado). Tabla referidos preservada.');
 
         try {
-            const tangoPool = getTangoPool();
-            const tangoHealth = await tangoPool.query(`
-                SELECT
-                  (SELECT COUNT(*)::int FROM venta WHERE activo = true AND ventatipoid IN (138,139,140,141)) AS ventas_activas,
-                  (SELECT COUNT(*)::int FROM tipoplan) AS planes_tango
-            `);
-            addTest('TANGO', 'Conectividad y lectura base', 'pass',
-                'La base Tango responde correctamente',
-                tangoHealth.rows[0] || null);
+            const v2BaseUrl = String(process.env.TANGO_API_BASE_URL || '').trim().replace(/\/+$/, '');
+            const v2ApiKey = String(process.env.TANGO_API_KEY || '').trim();
+            if (!v2BaseUrl || !v2ApiKey) {
+                addTest('TANGO', 'Conectividad API V2', 'skip', 'TANGO_API_BASE_URL o TANGO_API_KEY no configurados');
+            } else {
+                const v2Headers = { Authorization: `Bearer ${v2ApiKey}`, 'x-api-key': v2ApiKey, Accept: 'application/json' };
+                const today = new Date().toISOString().slice(0, 10);
+                const probeUrl = `${v2BaseUrl}/api/external/ventas?desde=${today}&hasta=${today}&limit=1&offset=0`;
+                const v2Resp = await fetch(probeUrl, { headers: v2Headers });
+                if (v2Resp.ok) {
+                    addTest('TANGO', 'Conectividad API V2', 'pass', `Tango API V2 responde (HTTP ${v2Resp.status})`, { url: probeUrl });
+                } else {
+                    addTest('TANGO', 'Conectividad API V2', 'fail', `HTTP ${v2Resp.status} desde ${probeUrl}`);
+                }
+            }
         } catch (err) {
-            addTest('TANGO', 'Conectividad y lectura base', 'fail', err.message);
+            addTest('TANGO', 'Conectividad API V2', 'fail', err.message);
         }
 
         try {

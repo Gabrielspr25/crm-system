@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { randomUUID } from 'node:crypto';
 import crmPool from '../database/db.js';
-import { getTangoPool } from '../database/externalPools.js';
+// getTangoPool eliminado — el sistema usa Tango API V2 exclusivamente.
 import { authenticateToken, requireRole } from '../middlewares/auth.js';
 import {
     detectStaleLock,
@@ -17,7 +17,7 @@ import {
   classifyTangoVentaTipo,
   isAllowedPymesCommissionVentaTipo,
   isPymesAutocreateVentaTipo,
-  mergeTangoApiV2RowsWithLegacyRows,
+  mapTangoApiV2SaleToSyncRow,
   shouldIncludeTangoV2SaleForCommissions,
 } from '../services/tangoV2SyncMapper.js';
 
@@ -323,16 +323,19 @@ async function upsertTangoCommissionPendingSales(externalSales, apiV2) {
   return stats;
 }
 
-async function resolveMonthlyValueForPlan(crmPool, legacyPool, planCode, legacyRate) {
-  const legacyRateValue = normalizePositiveRate(legacyRate);
-  if (legacyRateValue != null) return { value: legacyRateValue, source: 'legacy-tipoplan' };
+async function resolveMonthlyValueForPlan(crmPool, planCode, mensualidadV2) {
+  // 1. Si la venta V2 ya trae mensualidad, usarla directamente.
+  const directRate = normalizePositiveRate(mensualidadV2);
+  if (directRate != null) return { value: directRate, source: 'v2-mensualidad' };
 
   const terms = planLookupTerms(planCode);
   if (terms.length === 0) return { value: null, source: null };
 
+  // 2. Tango API V2 /api/external/planes
   const apiRate = await resolveRateFromTangoApi(planCode);
   if (apiRate?.value != null) return apiRate;
 
+  // 3. Tabla local plans del CRM
   try {
     const localResult = await crmPool.query(
       `SELECT COALESCE(price, price_autopay) AS rate
@@ -351,21 +354,7 @@ async function resolveMonthlyValueForPlan(crmPool, legacyPool, planCode, legacyR
     console.warn('[TANGO SYNC] No se pudo consultar plans local:', error?.message || error);
   }
 
-  try {
-    const legacyResult = await legacyPool.query(
-      `SELECT rate
-         FROM tipoplan
-        WHERE UPPER(TRIM(COALESCE(codigovoz, ''))) = ANY($1::text[])
-        ORDER BY tipoplanid ASC
-        LIMIT 1`,
-      [terms]
-    );
-    const exactLegacyRate = normalizePositiveRate(legacyResult.rows[0]?.rate);
-    if (exactLegacyRate != null) return { value: exactLegacyRate, source: 'legacy-tipoplan-variant' };
-  } catch (error) {
-    console.warn('[TANGO SYNC] No se pudo consultar tipoplan:', error?.message || error);
-  }
-
+  // 4. Extraer rate del código de plan (ej: "PLAN100.00")
   const trailingRate = extractTrailingRate(planCode);
   if (trailingRate != null) return { value: trailingRate, source: 'plan-code-trailing-rate' };
 
@@ -737,41 +726,53 @@ router.post('/pending-sales/:ventaid/convert', requireRole(['admin', 'supervisor
 router.get('/compare', async (req, res) => {
   try {
     const { search, month } = req.query;
-    const legacyPool = getTangoPool();
 
-    // 1. Ventas PYMES de Tango
-    let tangoQuery = `
-      SELECT v.ventaid, v.ban, v.status as linea,
-             v.ventatipoid, v.meses, v.fechaactivacion,
-             COALESCE(v.comisionclaro, 0) as comisionclaro,
-             COALESCE(v.comisionvendedor, 0) as comisionvendedor,
-             v.codigovoz, v.activo, v.nota,
-             COALESCE(cc.nombre, 'SIN NOMBRE') as cliente,
-             vt.nombre as tipo, vd.nombre as vendedor
-      FROM venta v
-      JOIN ventatipo vt ON vt.ventatipoid = v.ventatipoid
-      LEFT JOIN clientecredito cc ON cc.clientecreditoid = v.clientecreditoid
-      LEFT JOIN vendedor vd ON vd.vendedorid = v.vendedorid
-      WHERE v.ventatipoid IN (138, 139, 140, 141)
-        AND v.activo = true
-        AND (v.ventatipoid IN (138, 139) OR v.fechaactivacion >= '2026-01-01')
-    `;
-    const params = [];
+    // 1. Ventas PYMES desde Tango API V2
+    const desde = month ? `${month}-01` : '2020-01-01';
+    const hasta = month ? `${month}-31` : new Date().toISOString().slice(0, 10);
+    const apiV2 = await fetchTangoApiV2Range(desde, hasta);
+    const allV2Rows = apiV2.salesRows.filter((r) => isAllowedPymesCommissionVentaTipo(
+      r?.ventatipoid ?? r?.ventatipo?.id,
+      r?.ventatipo?.nombre ?? r?.ventatipo_nombre ?? ''
+    ));
+
+    // Normalizar para comparación
+    let tangoRows = allV2Rows.map((r) => {
+      const ventaId = r?.ventaid ?? r?.id;
+      const ban = String(r?.ban || '').trim();
+      const cliente = (() => {
+        const c = r?.cliente;
+        if (typeof c === 'string') return c.trim();
+        return [c?.nombre, c?.apellido].filter(Boolean).join(' ').trim() || r?.cliente_nombre || 'SIN NOMBRE';
+      })();
+      const vendedor = (() => {
+        const v = r?.vendedor;
+        if (typeof v === 'string') return v.trim();
+        return v?.nombre ?? r?.vendedor_nombre ?? '';
+      })();
+      return {
+        ventaid: ventaId,
+        ban,
+        cliente,
+        vendedor,
+        ventatipoid: r?.ventatipoid ?? r?.ventatipo?.id,
+        fechaactivacion: r?.fechaactivacion,
+        comisionclaro: Number(r?.comisionclaro ?? r?.comision?.comisionclaro ?? 0),
+        comisionvendedor: Number(r?.comisionvendedor ?? r?.comision?.comisionvendedor ?? 0),
+      };
+    });
 
     if (search) {
-      params.push(`%${search}%`);
-      tangoQuery += ` AND (cc.nombre ILIKE $${params.length} OR v.ban ILIKE $${params.length} OR v.status ILIKE $${params.length})`;
+      const s = String(search).toLowerCase();
+      tangoRows = tangoRows.filter((r) =>
+        (r.cliente || '').toLowerCase().includes(s) ||
+        (r.ban || '').toLowerCase().includes(s) ||
+        (r.vendedor || '').toLowerCase().includes(s)
+      );
     }
-    if (month) {
-      params.push(month);
-      tangoQuery += ` AND TO_CHAR(v.fechaactivacion, 'YYYY-MM') = $${params.length}`;
-    }
-    tangoQuery += ` ORDER BY cc.nombre, v.ban, v.ventaid`;
-
-    const tangoResult = await legacyPool.query(tangoQuery, params);
 
     // 2. CRM subscribers + reports para esos BANs
-    const allBANs = [...new Set(tangoResult.rows.map(v => (v.ban || '').trim()).filter(Boolean))];
+    const allBANs = [...new Set(tangoRows.map(v => v.ban).filter(Boolean))];
 
     let crmSubs = [];
     if (allBANs.length > 0) {
@@ -790,7 +791,6 @@ router.get('/compare', async (req, res) => {
       crmSubs = crmResult.rows;
     }
 
-    // Also get CRM data for search that may not be in Tango
     let extraCrm = [];
     if (search) {
       const extraResult = await crmPool.query(`
@@ -809,12 +809,11 @@ router.get('/compare', async (req, res) => {
       extraCrm = extraResult.rows;
     }
 
-    // 3. Build comparison by BAN+Month
-    const comparison = buildComparison(tangoResult.rows, crmSubs, extraCrm);
+    const comparison = buildComparison(tangoRows, crmSubs, extraCrm);
 
     res.json({
       success: true,
-      tango_total: tangoResult.rows.length,
+      tango_total: tangoRows.length,
       crm_total: crmSubs.length,
       comparison
     });
@@ -831,59 +830,27 @@ router.get('/compare', async (req, res) => {
 router.get('/detail/:ban', async (req, res) => {
   try {
     const { ban } = req.params;
-    const legacyPool = getTangoPool();
-
-    // Tango ventas para este BAN (incluye inactivas)
-    const tangoResult = await legacyPool.query(`
-      SELECT v.ventaid, v.ban, v.status as linea,
-             v.ventatipoid, v.meses, v.fechaactivacion,
-             COALESCE(v.comisionclaro, 0) as comisionclaro,
-             COALESCE(v.comisionvendedor, 0) as comisionvendedor,
-             v.codigovoz, v.activo, v.nota, v.renovacion, v.fijo,
-             COALESCE(cc.nombre, 'SIN NOMBRE') as cliente,
-             vt.nombre as tipo, vd.nombre as vendedor
-      FROM venta v
-      JOIN ventatipo vt ON vt.ventatipoid = v.ventatipoid
-      LEFT JOIN clientecredito cc ON cc.clientecreditoid = v.clientecreditoid
-      LEFT JOIN vendedor vd ON vd.vendedorid = v.vendedorid
-      WHERE v.ban = $1
-        AND v.ventatipoid IN (138, 139, 140, 141)
-        AND (v.ventatipoid IN (138, 139) OR v.fechaactivacion >= '2026-01-01')
-      ORDER BY v.fechaactivacion, v.ventaid
-    `, [ban]);
-
-    // Buscar comision de tabla comision para cada venta
-    const ventasConComision = [];
-    for (const v of tangoResult.rows) {
-      // Buscar rate del plan
-      const tpResult = await legacyPool.query(
-        `SELECT rate FROM tipoplan WHERE codigovoz = $1 LIMIT 1`, [v.codigovoz]
-      );
-      let comisionTabla = null;
-      if (tpResult.rows.length > 0) {
-        const rate = parseFloat(tpResult.rows[0].rate);
-        const comResult = await legacyPool.query(`
-          SELECT comisionclaro, meses as com_meses, ratemin, ratemax, fechadesde, fechahasta
-          FROM comision
-          WHERE ventatipoid = $1
-            AND ratemin <= $2 AND ratemax >= $2
-            AND ($3::int = meses OR meses = 0)
-            AND fechadesde <= $4 AND fechahasta >= $4
-          ORDER BY meses DESC LIMIT 1
-        `, [v.ventatipoid, rate, v.meses, v.fechaactivacion]);
-        if (comResult.rows.length > 0) {
-          comisionTabla = parseFloat(comResult.rows[0].comisionclaro);
-        }
-      }
-
-      ventasConComision.push({
-        ...v,
-        plan_rate: tpResult.rows.length > 0 ? parseFloat(tpResult.rows[0].rate) : null,
-        comision_calculada: comisionTabla
+    // 1. Ventas de este BAN desde Tango API V2
+    const apiV2 = await fetchTangoApiV2Range('2020-01-01', new Date().toISOString().slice(0, 10));
+    const tangoRows = apiV2.salesRows
+      .filter((r) => String(r?.ban || '').trim() === String(ban).trim())
+      .filter((r) => isAllowedPymesCommissionVentaTipo(r?.ventatipoid ?? r?.ventatipo?.id, r?.ventatipo?.nombre ?? ''))
+      .map((r) => {
+        const ventaId = r?.ventaid ?? r?.id;
+        const commission = apiV2.commissionsById.get(Number(ventaId)) || {};
+        return {
+          ventaid: ventaId,
+          ban: String(r?.ban || '').trim(),
+          ventatipoid: r?.ventatipoid ?? r?.ventatipo?.id,
+          fechaactivacion: r?.fechaactivacion,
+          comisionclaro: Number(r?.comisionclaro ?? commission?.comisionclaro ?? 0),
+          comisionvendedor: Number(r?.comisionvendedor ?? commission?.comisionvendedor ?? 0),
+          plan_rate: Number(r?.pagomensual ?? r?.monthly_value ?? r?.plan?.rate ?? 0) || null,
+          source: 'tango-api-v2',
+        };
       });
-    }
 
-    // CRM data for this BAN
+    // 2. CRM data para este BAN
     const crmResult = await crmPool.query(`
       SELECT s.id as sub_id, s.phone, s.line_type, s.created_at,
              b.ban_number, b.account_type,
@@ -900,7 +867,7 @@ router.get('/detail/:ban', async (req, res) => {
     res.json({
       success: true,
       ban,
-      tango: ventasConComision,
+      tango: tangoRows,
       crm: crmResult.rows
     });
 
@@ -915,20 +882,28 @@ router.get('/detail/:ban', async (req, res) => {
 // ======================================================
 router.get('/summary', async (req, res) => {
   try {
-    const legacyPool = getTangoPool();
+    // Ventas PYMES desde Tango API V2, agrupadas por mes y tipo
+    const apiV2 = await fetchTangoApiV2Range('2020-01-01', new Date().toISOString().slice(0, 10));
+    const pymesRows = apiV2.salesRows.filter((r) =>
+      isAllowedPymesCommissionVentaTipo(r?.ventatipoid ?? r?.ventatipo?.id, r?.ventatipo?.nombre ?? '')
+    );
 
-    const tangoResult = await legacyPool.query(`
-      SELECT TO_CHAR(v.fechaactivacion, 'YYYY-MM') as month,
-             vt.nombre as tipo, v.ventatipoid,
-             COUNT(*) as count
-      FROM venta v
-      JOIN ventatipo vt ON vt.ventatipoid = v.ventatipoid
-      WHERE v.ventatipoid IN (138, 139, 140, 141) AND v.activo = true
-        AND (v.ventatipoid IN (138, 139) OR v.fechaactivacion >= '2026-01-01')
-      GROUP BY TO_CHAR(v.fechaactivacion, 'YYYY-MM'), vt.nombre, v.ventatipoid
-      ORDER BY month, v.ventatipoid
-    `);
+    // Resumen V2 por mes
+    const tangoMonths = {};
+    for (const r of pymesRows) {
+      const fecha = r?.fechaactivacion;
+      if (!fecha) continue;
+      const month = toIsoDate(fecha)?.slice(0, 7);
+      if (!month) continue;
+      const tipoId = r?.ventatipoid ?? r?.ventatipo?.id;
+      const tipoNombre = r?.ventatipo?.nombre ?? r?.ventatipo_nombre ?? String(tipoId ?? '');
+      const key = `${tipoNombre} (${tipoId})`;
+      if (!tangoMonths[month]) tangoMonths[month] = { tango: {}, tango_total: 0 };
+      tangoMonths[month].tango[key] = (tangoMonths[month].tango[key] || 0) + 1;
+      tangoMonths[month].tango_total++;
+    }
 
+    // Resumen CRM por mes
     const crmResult = await crmPool.query(`
       SELECT TO_CHAR(sr.report_month, 'YYYY-MM') as month,
              s.line_type,
@@ -941,18 +916,11 @@ router.get('/summary', async (req, res) => {
       ORDER BY month
     `);
 
-    // Group by month
-    const months = {};
-
-    for (const r of tangoResult.rows) {
-      if (!months[r.month]) months[r.month] = { tango: {}, crm: {}, tango_total: 0, crm_total: 0 };
-      const key = `${r.tipo} (${r.ventatipoid})`;
-      months[r.month].tango[key] = parseInt(r.count);
-      months[r.month].tango_total += parseInt(r.count);
-    }
-
+    const months = { ...tangoMonths };
     for (const r of crmResult.rows) {
-      if (!months[r.month]) months[r.month] = { tango: {}, crm: {}, tango_total: 0, crm_total: 0 };
+      if (!months[r.month]) months[r.month] = { tango: {}, tango_total: 0 };
+      if (!months[r.month].crm) months[r.month].crm = {};
+      if (months[r.month].crm_total === undefined) months[r.month].crm_total = 0;
       const key = `${r.account_type || 'N/A'} ${r.line_type || 'N/A'}`;
       months[r.month].crm[key] = (months[r.month].crm[key] || 0) + parseInt(r.count);
       months[r.month].crm_total += parseInt(r.count);
@@ -1069,7 +1037,6 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
   let lockHeld = false;
 
   try {
-    const legacyPool = getTangoPool();
     await ensureSubscriberReportsTraceabilityColumns(crmPool);
     await ensureTangoSyncCrmColumns(crmPool);
     await ensureSyncLogsTable(crmPool);
@@ -1220,71 +1187,24 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
       clientById.set(c.id, c);
     }
 
-    // â”€â”€ 2. Fetch ventas Tango con filtro 1 â”€â”€
-    // Fuente oficial: Tango API V2. Legacy/POS queda como fallback/comparacion
-    // historica y para completar campos cuando V2 no trae algun dato.
-    // Rango dinamico (Fase 2A):
-    //   incremental: max(sync_from_date, last_successful_sync) -> hoy
-    //   resync_range: rango manual del admin
-    const tangoResult = await legacyPool.query(`
-      SELECT DISTINCT
-        v.ventaid,
-        TRIM(v.ban::text) AS ban,
-        CASE
-          WHEN v.ventatipoid IN (138, 139)
-            THEN COALESCE(NULLIF(TRIM(v.numerocelularactivado::text), ''), NULLIF(TRIM(v.status), ''))
-          ELSE COALESCE(NULLIF(TRIM(v.status), ''), NULLIF(TRIM(v.numerocelularactivado::text), ''))
-        END AS phone,
-        v.codigovoz AS plan_code,
-        v.meses,
-        v.ventatipoid,
-        tp.rate AS mensualidad,
-        COALESCE(v.comisionclaro, 0)::numeric(12,2) AS com_empresa,
-        COALESCE(v.comisionvendedor, 0)::numeric(12,2) AS com_vendedor,
-        COALESCE(v.bonoportabilidad, 0)::numeric(10,2) AS portability_bonus,
-        v.fechaactivacion,
-        v.vendedorid AS tango_vendor_id,
-        COALESCE(TRIM(cc.nombre), 'SIN NOMBRE') AS cliente,
-        COALESCE(TRIM(vd.nombre), '') AS vendedor
-      FROM venta v
-      LEFT JOIN clientecredito cc ON v.clientecreditoid = cc.clientecreditoid
-      LEFT JOIN tipoplan tp ON v.codigovoz = tp.codigovoz
-      LEFT JOIN vendedor vd ON v.vendedorid = vd.vendedorid
-      WHERE v.ventatipoid IN (138, 139, 140, 141)
-        AND v.activo = true
-        AND v.fechaactivacion >= $1::date
-        AND v.fechaactivacion <  ($2::date + INTERVAL '1 day')
-      ORDER BY COALESCE(TRIM(cc.nombre), 'SIN NOMBRE'), TRIM(v.ban::text), v.ventaid
-    `, [syncRange.from, syncRange.to]);
-    const legacyRows = tangoResult.rows;
-    console.log(`[SYNC] ${legacyRows.length} ventas legacy/POS pasaron filtro 1 (ventatipoid)`);
-
+    // ── 2. Fetch ventas desde Tango API V2 (única fuente) ──
     const apiV2 = await fetchTangoApiV2Range(syncRange.from, syncRange.to);
     stats.tango_api_v2_sales = apiV2.salesById.size;
     stats.tango_api_v2_commissions = apiV2.commissionsById.size;
-    stats.tango_ventas_legacy = legacyRows.length;
-    stats.tango_api_v2_only = 0;
-    stats.tango_legacy_fallback_only = 0;
     if (apiV2.warnings.length > 0) {
       for (const warning of apiV2.warnings) alert('warn', '', `API V2 Tango: ${warning}`);
     }
 
-    const mergedRowsRaw = mergeTangoApiV2RowsWithLegacyRows({
-      apiRows: apiV2.salesRows,
-      legacyRows,
-      commissionsById: apiV2.commissionsById,
-    });
-    const mergedRows = mergedRowsRaw.filter((row) => shouldIncludeTangoV2SaleForCommissions(row, row));
-    stats.tango_v2_first_excluded_by_tipo = mergedRowsRaw.length - mergedRows.length;
-    const legacyVentaIds = new Set(
-      legacyRows
-        .map((row) => Number(row.ventaid))
-        .filter((ventaid) => Number.isFinite(ventaid) && ventaid > 0)
+    // Mapear cada row V2 al formato normalizado del sync
+    const v2RowsRaw = apiV2.salesRows.map((sale) =>
+      mapTangoApiV2SaleToSyncRow(sale, apiV2.commissionsById.get(Number(sale?.ventaid ?? sale?.id)))
     );
-    stats.tango_api_v2_only = mergedRows.filter((row) => row.source_priority === 'api_v2' && !legacyVentaIds.has(Number(row.ventaid))).length;
-    stats.tango_legacy_fallback_only = mergedRows.filter((row) => row.source_priority === 'legacy_fallback').length;
-    tangoResult.rows = mergedRows;
-    console.log(`[SYNC] ${tangoResult.rows.length} ventas Tango V2-first para procesar (${stats.tango_api_v2_only} solo V2, ${stats.tango_legacy_fallback_only} solo legacy)`);
+    const v2Rows = v2RowsRaw.filter((row) => shouldIncludeTangoV2SaleForCommissions(row, row));
+    stats.tango_v2_excluded_by_tipo = v2RowsRaw.length - v2Rows.length;
+
+    // Alias para mantener compatibilidad con el resto del flujo
+    const tangoResult = { rows: v2Rows };
+    console.log(`[SYNC] ${v2Rows.length} ventas Tango V2 para procesar`);
 
     // â”€â”€ 3. Filtro 2 en JS: BAN debe existir en CRM. Las que no, van a external_sales. â”€â”€
     // Si AUTO_CREATE_FROM_TANGO=true, antes de descartarlas se intenta crear
@@ -1509,19 +1429,11 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
     `);
     const subscriberColumns = new Set(subscriberColumnRows.rows.map((row) => row.column_name));
 
-    // â”€â”€ 3a. Pre-cargar fechaactivacion de Tango para los tango_ventaid existentes en CRM. â”€â”€
-    // Usado por PASO 1.5 (resoluciÃ³n de conflictos por phone_norm: la fecha mÃ¡s reciente gana).
+    // ── 3a. fechaactivacion se toma del payload V2 ya cargado en apiV2.salesById ──
     const fechaByVentaid = new Map();
-    const existingVentaids = [...subByVentaId.keys()].filter((vid) => Number.isFinite(vid));
-    if (existingVentaids.length > 0) {
-      const fechaResult = await legacyPool.query(
-        `SELECT ventaid, fechaactivacion FROM venta WHERE ventaid = ANY($1::bigint[])`,
-        [existingVentaids]
-      );
-      for (const r of fechaResult.rows) {
-        const f = toIsoDate(r.fechaactivacion);
-        if (f) fechaByVentaid.set(Number(r.ventaid), f);
-      }
+    for (const [ventaid, sale] of apiV2.salesById) {
+      const f = toIsoDate(sale?.fechaactivacion ?? sale?.fecha_activacion);
+      if (f) fechaByVentaid.set(Number(ventaid), f);
     }
 
     // â”€â”€ 3a.bis: Pre-cargar commission_percentage por salesperson â”€â”€
@@ -1583,7 +1495,7 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
         const monthVal = v.fechaactivacion
           ? new Date(v.fechaactivacion).toISOString().slice(0, 7) + '-01'
           : null;
-        const monthlyValueResolution = await resolveMonthlyValueForPlan(crmPool, legacyPool, v.plan_code, v.mensualidad);
+        const monthlyValueResolution = await resolveMonthlyValueForPlan(crmPool, v.plan_code, v.mensualidad);
         const monthlyValue = monthlyValueResolution.value;
         const contractTerm = Number.isFinite(Number(v.meses)) ? Number(v.meses) : null;
         const contractEndDate = contractTerm && contractTerm > 0 ? addMonthsYmd(v.fechaactivacion, contractTerm) : null;

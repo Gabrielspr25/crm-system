@@ -33,6 +33,7 @@ import MetasDashboard from "@/react-app/pages/MetasDashboard";
 import MetasAdmin from "@/react-app/pages/MetasAdmin";
 import OcrImportPreview from "@/react-app/pages/OcrImportPreview";
 import SeguimientoOperativo from "@/react-app/pages/SeguimientoOperativo";
+import EquiposLista from "@/react-app/pages/EquiposLista";
 
 
 // Inicializar MSAL fuera del componente
@@ -80,6 +81,7 @@ function ProtectedRoutes() {
         <Route path="/panel-metas" element={<MetasDashboard />} />
         <Route path="/admin/metas" element={<MetasAdmin />} />
         <Route path="/ocr-preview" element={<OcrImportPreview />} />
+        <Route path="/lista-precios" element={<EquiposLista />} />
 
       </Routes>
     </ProtectedLayout>

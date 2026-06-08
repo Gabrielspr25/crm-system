@@ -42,7 +42,8 @@ import agentRoutes from './src/backend/routes/agentRoutes.js';
 import directorRoutes from './src/backend/routes/directorRoutes.js';
 import tangoSyncRoutes from './src/backend/routes/tangoSyncRoutes.js';
 import sov2Routes from './src/backend/routes/sov2Routes.js';
-import { getTangoPool } from './src/backend/database/externalPools.js';
+import equiposListaRoutes from './src/backend/routes/equiposListaRoutes.js';
+// getTangoPool eliminado — el sistema usa Tango API V2 exclusivamente.
 import { getPermissionCatalogResponse, ensurePermissionSchema, resolvePermissionsForUser, saveUserPermissionOverrides } from './src/backend/utils/permissionService.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'development-only-jwt-secret';
@@ -108,6 +109,9 @@ const uploadMemory = multer({
 // ======================================================
 const isPublicRoute = (req) => {
   if (req.path === '/api/login' || req.path === '/api/token/refresh' || req.path === '/api/health' || req.path === '/api/version') {
+    return true;
+  }
+  if (req.method === 'GET' && req.path === '/api/equipos-lista') {
     return true;
   }
   return false;
@@ -430,10 +434,16 @@ app.use('/api/agents', agentRoutes);
 app.use('/api/director', directorRoutes);
 app.use('/api/tango-sync', tangoSyncRoutes);
 app.use('/api/sov2', sov2Routes);
+app.use('/api/equipos-lista', equiposListaRoutes);
 
 // Reglas y Procesos - Servir HTML estático
 app.get('/reglas-procesos', (req, res) => {
   res.sendFile(path.join(__dirname, 'reglas-procesos.html'));
+});
+
+// Admin Lista de Equipos
+app.get('/admin-equipos', (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin-equipos.html'));
 });
 
 // System Routes - PROTECTED EXTRA
@@ -3967,7 +3977,6 @@ app.get('/api/follow-up-prospects', authenticateRequest, async (req, res) => {
     const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
 
     const sql = `
-      WITH ranked AS (
       SELECT
         p.*,
         c.name as client_name,
@@ -4924,10 +4933,9 @@ app.get('/api/completed-prospects', authenticateRequest, async (req, res) => {
 });
 
 // ======================================================
-// Sincronizar PYMES desde Tango Legacy (auto-crea clientes/BANs/subscribers faltantes)
+// Sincronizar PYMES desde Tango API V2 (auto-crea clientes/BANs/subscribers faltantes)
 // ======================================================
 app.post('/api/subscriber-reports/sync-pymes', authenticateRequest, requireRole(['admin', 'supervisor']), async (req, res) => {
-  const legacyPool = getTangoPool();
   const crmClient = await pool.connect();
   try {
     await ensureSubscriberReportsWorkflowColumns(crmClient);
@@ -4954,24 +4962,42 @@ app.post('/api/subscriber-reports/sync-pymes', authenticateRequest, requireRole(
       console.warn('[SYNC-PYMES] No se pudo crear sync_log:', syncLogErr.message);
     }
 
-    // 1. Traer TODAS las ventas PYMES de Tango (fuente de verdad)
-    const legacyResult = await legacyPool.query(`
-      SELECT v.ventaid, v.ban, v.status as linea,
-             COALESCE(v.comisionclaro, 0) as com_empresa,
-             COALESCE(v.comisionvendedor, 0) as com_vendedor,
-             v.fechaactivacion, v.ventatipoid,
-             COALESCE(cc.nombre, 'SIN NOMBRE') as cliente,
-             vt.nombre as tipo, vd.nombre as vendedor
-      FROM venta v
-      JOIN ventatipo vt ON vt.ventatipoid = v.ventatipoid
-      LEFT JOIN clientecredito cc ON cc.clientecreditoid = v.clientecreditoid
-      LEFT JOIN vendedor vd ON vd.vendedorid = v.vendedorid
-      WHERE v.ventatipoid IN (138, 139, 140, 141)
-        AND v.activo = true
-      ORDER BY cc.nombre, v.ban, v.ventaid
-    `);
-    const ventas = legacyResult.rows;
-    console.log(`[SYNC-PYMES] Tango: ${ventas.length} ventas PYMES`);
+    // 1. Fetch ventas PYMES desde Tango API V2
+    const _v2BaseUrl = String(process.env.TANGO_API_BASE_URL || '').trim().replace(/\/+$/, '');
+    const _v2ApiKey = String(process.env.TANGO_API_KEY || '').trim();
+    if (!_v2BaseUrl || !_v2ApiKey) {
+      crmClient.release();
+      return res.status(503).json({ error: 'Tango API V2 no configurada (TANGO_API_BASE_URL / TANGO_API_KEY)' });
+    }
+    const _v2Headers = { Authorization: `Bearer ${_v2ApiKey}`, 'x-api-key': _v2ApiKey, Accept: 'application/json' };
+    const PYMES_TIPO_IDS = new Set([138, 139, 140, 141]);
+    function _isPymesTipo(id) { return PYMES_TIPO_IDS.has(Number(id)); }
+    function _readVentaV2(v, ...keys) {
+      for (const k of keys) { const val = v?.[k]; if (val !== undefined && val !== null && String(val).trim() !== '') return val; }
+      return null;
+    }
+
+    let _apiVentas = [];
+    {
+      const desde = '2020-01-01';
+      const hasta = new Date().toISOString().slice(0, 10);
+      let offset = 0; const limit = 200; let guard = 0;
+      do {
+        const url = `${_v2BaseUrl}/api/external/ventas?desde=${desde}&hasta=${hasta}&limit=${limit}&offset=${offset}`;
+        const resp = await fetch(url, { headers: _v2Headers });
+        if (!resp.ok) break;
+        const payload = await resp.json().catch(() => null);
+        const rows = Array.isArray(payload) ? payload : Array.isArray(payload?.data) ? payload.data : Array.isArray(payload?.ventas) ? payload.ventas : [];
+        _apiVentas.push(...rows.filter(r => _isPymesTipo(_readVentaV2(r, 'ventatipoid', 'ventatipo_id') ?? r?.ventatipo?.id)));
+        const pg = payload?.pagination || {};
+        const hasMore = Boolean(pg.hasMore);
+        const nextOffset = Number(pg.offset ?? offset) + Number(pg.limit ?? limit);
+        if (!hasMore || !rows.length || nextOffset <= offset) break;
+        offset = nextOffset; guard++;
+      } while (guard < 50);
+    }
+    const ventas = _apiVentas;
+    console.log(`[SYNC-PYMES] Tango API V2: ${ventas.length} ventas PYMES`);
 
     await crmClient.query('BEGIN');
 
@@ -5010,7 +5036,7 @@ app.post('/api/subscriber-reports/sync-pymes', authenticateRequest, requireRole(
     // 6. Group ventas by BAN
     const ventasByBan = {};
     for (const v of ventas) {
-      const ban = (v.ban || '').trim();
+      const ban = String(_readVentaV2(v, 'ban') || '').trim();
       if (!ban) continue;
       if (!ventasByBan[ban]) ventasByBan[ban] = [];
       ventasByBan[ban].push(v);
@@ -5035,15 +5061,17 @@ app.post('/api/subscriber-reports/sync-pymes', authenticateRequest, requireRole(
       let banId = banSubs.length > 0 ? banSubs[0].ban_id : null;
       let clientId = banSubs.length > 0 ? banSubs[0].client_id : null;
 
-      // Determine account_type from first venta
-      const firstTypeInfo = ventaTypeInfo(banVentas[0].ventatipoid);
+      const firstVentaTipoId = _readVentaV2(banVentas[0], 'ventatipoid', 'ventatipo_id') ?? banVentas[0]?.ventatipo?.id;
+      const firstTypeInfo = ventaTypeInfo(firstVentaTipoId);
 
       // AUTO-CREATE: if BAN doesn't exist in CRM, create client + BAN
       if (banSubs.length === 0) {
         try {
           const firstVenta = banVentas[0];
-          const clienteName = (firstVenta.cliente || 'SIN NOMBRE').trim();
-          const vendedorName = (firstVenta.vendedor || '').trim().toUpperCase();
+          const clienteRaw = _readVentaV2(firstVenta, 'cliente', 'cliente_nombre', 'nombre') ?? firstVenta?.cliente?.nombre ?? 'SIN NOMBRE';
+          const clienteName = String(clienteRaw).trim();
+          const vendedorRaw = _readVentaV2(firstVenta, 'vendedor', 'vendedor_nombre') ?? firstVenta?.vendedor?.nombre ?? '';
+          const vendedorName = String(vendedorRaw).trim().toUpperCase();
 
           // Find salesperson in CRM
           let spId = null;
@@ -5083,7 +5111,7 @@ app.post('/api/subscriber-reports/sync-pymes', authenticateRequest, requireRole(
           // Create follow_up as completed
           await crmClient.query(`
             INSERT INTO follow_up_prospects (client_id, company_name, is_active, completed_date, is_completed, notes)
-            VALUES ($1, $2, false, NOW(), true, 'PYMES - Auto-creado por Sync Tango')
+            VALUES ($1, $2, false, NOW(), true, 'PYMES - Auto-creado por Sync Tango V2')
             ON CONFLICT DO NOTHING
           `, [clientId, clienteName]);
 
@@ -5107,9 +5135,12 @@ app.post('/api/subscriber-reports/sync-pymes', authenticateRequest, requireRole(
       const usedSubIds = new Set();
 
       for (const v of banVentas) {
-        const { lineType, accountType } = ventaTypeInfo(v.ventatipoid);
-        const linea = (v.linea || '').replace(/[^0-9]/g, '');
-        const month = v.fechaactivacion ? new Date(v.fechaactivacion) : new Date();
+        const vTipoId = _readVentaV2(v, 'ventatipoid', 'ventatipo_id') ?? v?.ventatipo?.id;
+        const { lineType } = ventaTypeInfo(vTipoId);
+        const lineaRaw = _readVentaV2(v, 'status', 'numerocelularactivado', 'telefono', 'linea') ?? '';
+        const linea = String(lineaRaw).replace(/[^0-9]/g, '');
+        const fechaRaw = _readVentaV2(v, 'fechaactivacion', 'fecha_activacion');
+        const month = fechaRaw ? new Date(fechaRaw) : new Date();
         const monthStr = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, '0')}-01`;
 
         let targetSub = null;
@@ -5156,8 +5187,11 @@ app.post('/api/subscriber-reports/sync-pymes', authenticateRequest, requireRole(
           [lineType, targetSub.sub_id]
         );
 
-        // 9. Insert report (comisiones en 0 para entrada manual)
+        // 9. Insert report con datos de V2
         try {
+          const ventaId = _readVentaV2(v, 'ventaid', 'id', 'venta_id');
+          const comEmpresa = parseFloat(_readVentaV2(v, 'comisionclaro', 'com_empresa', 'company_earnings') ?? 0) || 0;
+          const comVendedor = parseFloat(_readVentaV2(v, 'comisionvendedor', 'com_vendedor', 'vendor_commission') ?? 0) || 0;
           await crmClient.query(`
             INSERT INTO subscriber_reports (
               subscriber_id, report_month,
@@ -5166,28 +5200,21 @@ app.post('/api/subscriber-reports/sync-pymes', authenticateRequest, requireRole(
               validation_status, validation_notes,
               company_earnings, vendor_commission
             )
-            VALUES ($1, $2, $3, $4, $5, $6::date, $7::date, $8::jsonb, $9, $10, 0, 0)
+            VALUES ($1, $2, $3, $4, $5, $6::date, $7::date, $8::jsonb, $9, $10, $11, $12)
             ON CONFLICT (subscriber_id, report_month) DO NOTHING
           `, [
             targetSub.sub_id,
             monthStr,
-            'tango',
-            String(v.ventaid || ''),
+            'tango-api-v2',
+            ventaId ? String(ventaId) : null,
             syncLogId,
-            v.fechaactivacion ? String(v.fechaactivacion).slice(0, 10) : null,
+            fechaRaw ? String(fechaRaw).slice(0, 10) : null,
             monthStr,
-            {
-              ventaid: v.ventaid || null,
-              ban: ban,
-              linea: v.linea || null,
-              tipo: v.tipo || null,
-              vendedor: v.vendedor || null,
-              cliente: v.cliente || null,
-              fechaactivacion: v.fechaactivacion ? String(v.fechaactivacion).slice(0, 10) : null,
-              source: 'tango_pymes',
-            },
+            { ventaid: ventaId, ban, source: 'tango_pymes_v2', raw: v },
             'confirmed',
-            null
+            null,
+            comEmpresa,
+            comVendedor,
           ]);
           inserted++;
         } catch (insErr) {
@@ -5200,7 +5227,7 @@ app.post('/api/subscriber-reports/sync-pymes', authenticateRequest, requireRole(
     // 10. MIRROR LOGIC — Remove CRM reports/subs that no longer exist in Tango
     // Collect all Tango BANs from active ventas (already in allBANs)
     // Also find BANs that exist in CRM (PYMES type) but NOT in Tango anymore
-    let cancelled_reports = 0, cancelled_subs = 0;
+    let cancelled_reports = 0;
     try {
       // Find ALL CRM subscriber_reports for PYMES BANs (those in allBANs)
       const allCrmReports = await crmClient.query(`
@@ -5213,11 +5240,12 @@ app.post('/api/subscriber-reports/sync-pymes', authenticateRequest, requireRole(
         WHERE b.ban_number = ANY($1)
       `, [allBANs]);
 
-      // Build a set of valid (ban|month|count) from Tango
+      // Build a set of valid (ban|month|count) from Tango V2
       const tangoReportKeys = new Map(); // ban|month -> count
       for (const v of ventas) {
-        const ban = (v.ban || '').trim();
-        const month = v.fechaactivacion ? new Date(v.fechaactivacion) : new Date();
+        const ban = String(_readVentaV2(v, 'ban') || '').trim();
+        const fechaR = _readVentaV2(v, 'fechaactivacion', 'fecha_activacion');
+        const month = fechaR ? new Date(fechaR) : new Date();
         const monthStr = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, '0')}-01`;
         const key = `${ban}|${monthStr}`;
         tangoReportKeys.set(key, (tangoReportKeys.get(key) || 0) + 1);
@@ -5291,7 +5319,7 @@ app.post('/api/subscriber-reports/sync-pymes', authenticateRequest, requireRole(
       details.push({ status: 'mirror_error', error: mirrorErr.message });
     }
 
-    // 11. Final verification — compare COUNTS (ventas must match exactly)
+    // 11. Verificación final — comparar CRM vs V2
     const crmTotal = await crmClient.query(`
       SELECT COUNT(*) as reports
       FROM subscriber_reports WHERE subscriber_id IN (
@@ -5299,59 +5327,17 @@ app.post('/api/subscriber-reports/sync-pymes', authenticateRequest, requireRole(
       )
     `, [allBANs]);
 
-    const tangoTotal = await legacyPool.query(
-      "SELECT COUNT(*) as ventas FROM venta WHERE ventatipoid IN (138,139,140,141) AND activo = true"
-    );
-
     const crmCount = Number(crmTotal.rows[0].reports);
-    const tangoCount = Number(tangoTotal.rows[0].ventas);
-    const match = crmCount === tangoCount;
+    const v2Count = ventas.length;
+    const match = crmCount === v2Count;
 
-    console.log(`[SYNC-PYMES] Tango: ${tangoCount} ventas | CRM: ${crmCount} reports | ${match ? '✓ MATCH PERFECTO' : `⚠ DIFF (${tangoCount - crmCount})`}`);
-
-    if (syncLogId) {
-      await crmClient.query(
-        `UPDATE sync_logs
-            SET status = $1,
-                details = $2::jsonb,
-                stats = $3::jsonb,
-                finished_at = NOW(),
-                updated_at = NOW()
-          WHERE id = $4`,
-        [
-          'finished',
-          {
-            report,
-            details,
-            finished_at: new Date().toISOString(),
-          },
-          {
-            total_legacy: ventas.length,
-            reports_created: inserted,
-            reports_cancelled: cancelled_reports,
-            clients_created: created_clients,
-            bans_created: created_bans,
-            subscribers_created: created_subs,
-            errors,
-            tango_ventas: tangoCount,
-            crm_reports: crmCount,
-            totals_match: match
-          },
-          syncLogId
-        ]
-      ).catch((err) => {
-        console.warn('[SYNC-PYMES] No se pudo actualizar sync_log:', err.message);
-      });
-    }
-
-    await crmClient.query('COMMIT');
-    console.log(`[SYNC-PYMES] COMMIT OK — ${inserted} reports, ${created_clients} clientes, ${created_bans} BANs, ${created_subs} subs creados, ${cancelled_reports} cancelados`);
+    console.log(`[SYNC-PYMES] Tango V2: ${v2Count} ventas | CRM: ${crmCount} reports | ${match ? '✓ MATCH PERFECTO' : `⚠ DIFF (${v2Count - crmCount})`}`);
 
     // Build comprehensive report
     const report = {
       resumen: match
-        ? `✅ SYNC PERFECTO — Tango ${tangoCount} = CRM ${crmCount}`
-        : `⚠️ DIFERENCIA — Tango ${tangoCount} vs CRM ${crmCount} (diff: ${tangoCount - crmCount})`,
+        ? `✅ SYNC PERFECTO — Tango V2 ${v2Count} = CRM ${crmCount}`
+        : `⚠️ DIFERENCIA — Tango V2 ${v2Count} vs CRM ${crmCount} (diff: ${v2Count - crmCount})`,
       acciones: [],
     };
     if (created_clients > 0) report.acciones.push(`${created_clients} cliente(s) creados`);
@@ -5366,14 +5352,13 @@ app.post('/api/subscriber-reports/sync-pymes', authenticateRequest, requireRole(
       success: true,
       report,
       stats: {
-        total_legacy: ventas.length,
+        v2_ventas: v2Count,
         reports_created: inserted,
         reports_cancelled: cancelled_reports,
         clients_created: created_clients,
         bans_created: created_bans,
         subscribers_created: created_subs,
         errors,
-        tango_ventas: tangoCount,
         crm_reports: crmCount,
         totals_match: match
       },
@@ -5390,24 +5375,13 @@ app.post('/api/subscriber-reports/sync-pymes', authenticateRequest, requireRole(
 });
 
 // ======================================================
-// Comparación Tango PYMES vs CRM por mes
+// Comparación Tango V2 vs CRM por mes (desde 2026-01-01 hasta hoy)
 app.get('/api/subscriber-reports/comparison', authenticateRequest, requireRole(['admin', 'supervisor']), async (req, res) => {
   try {
-    // 1. Datos de Tango
-    const legacyPool = getTangoPool();
-    const tangoResult = await legacyPool.query(`
-      SELECT
-        TO_CHAR(fechaactivacion, 'YYYY-MM') as month,
-        COUNT(*) as ventas,
-        COALESCE(SUM(comisionclaro), 0) as empresa,
-        COALESCE(SUM(comisionvendedor), 0) as vendedor
-      FROM venta
-      WHERE ventatipoid IN (138, 139, 140, 141) AND activo = true
-      GROUP BY TO_CHAR(fechaactivacion, 'YYYY-MM')
-      ORDER BY month
-    `);
+    const desde = '2026-01-01';
+    const hasta = new Date().toISOString().slice(0, 10);
 
-    // 2. Datos del CRM
+    // 1. Datos del CRM
     const crmResult = await pool.query(`
       SELECT
         TO_CHAR(report_month, 'YYYY-MM') as month,
@@ -5417,20 +5391,67 @@ app.get('/api/subscriber-reports/comparison', authenticateRequest, requireRole([
         COALESCE(SUM(paid_amount), 0) as pagado
       FROM subscriber_reports sr
       WHERE ${TRACE_VALIDATION_SQL} = 'confirmed'
+        AND report_month >= '2026-01-01'
       GROUP BY TO_CHAR(report_month, 'YYYY-MM')
       ORDER BY month
     `);
 
-    // 3. Merge
-    const tangoMap = {};
-    for (const r of tangoResult.rows) {
-      tangoMap[r.month] = { ventas: parseInt(r.ventas), empresa: parseFloat(r.empresa), vendedor: parseFloat(r.vendedor) };
-    }
     const crmMap = {};
     for (const r of crmResult.rows) {
       crmMap[r.month] = { ventas: parseInt(r.ventas), empresa: parseFloat(r.empresa), comision: parseFloat(r.comision), pagado: parseFloat(r.pagado) };
     }
 
+    // 2. Datos de Tango V2 — agrupados por mes
+    const tangoMap = {};
+    const tangoDetail = [];
+    try {
+      const v2BaseUrl = String(process.env.TANGO_API_BASE_URL || '').trim().replace(/\/+$/, '');
+      const v2ApiKey = String(process.env.TANGO_API_KEY || '').trim();
+      if (v2BaseUrl && v2ApiKey) {
+        const v2Headers = { Authorization: `Bearer ${v2ApiKey}`, 'x-api-key': v2ApiKey, Accept: 'application/json' };
+        const PYMES_IDS = new Set([138, 139, 140, 141]);
+        let offset = 0; const limit = 200; let guard = 0;
+        do {
+          const url = `${v2BaseUrl}/api/external/ventas?desde=${desde}&hasta=${hasta}&limit=${limit}&offset=${offset}`;
+          const resp = await fetch(url, { headers: v2Headers });
+          if (!resp.ok) break;
+          const payload = await resp.json().catch(() => null);
+          const rows = Array.isArray(payload) ? payload : Array.isArray(payload?.data) ? payload.data : Array.isArray(payload?.ventas) ? payload.ventas : [];
+          for (const r of rows) {
+            const tipoId = Number(r?.ventatipoid ?? r?.ventatipo?.id ?? 0);
+            if (!PYMES_IDS.has(tipoId)) continue;
+            const fecha = r?.fechaactivacion ?? r?.fecha_activacion;
+            if (!fecha) continue;
+            const month = String(fecha).slice(0, 7);
+            const comEmpresa = parseFloat(r?.comisionclaro ?? r?.com_empresa ?? 0) || 0;
+            const comVendedor = parseFloat(r?.comisionvendedor ?? r?.com_vendedor ?? 0) || 0;
+            if (!tangoMap[month]) tangoMap[month] = { ventas: 0, empresa: 0, vendedor: 0 };
+            tangoMap[month].ventas++;
+            tangoMap[month].empresa += comEmpresa;
+            tangoMap[month].vendedor += comVendedor;
+            tangoDetail.push({
+              ventaid: r?.ventaid ?? r?.id,
+              ban: String(r?.ban || '').trim(),
+              cliente: (() => { const c = r?.cliente; return typeof c === 'string' ? c.trim() : [c?.nombre, c?.apellido].filter(Boolean).join(' ').trim() || 'SIN NOMBRE'; })(),
+              fecha: String(fecha).slice(0, 10),
+              ventatipoid: tipoId,
+              comision_empresa: comEmpresa,
+              comision_vendedor: comVendedor,
+              vendedor: (() => { const v = r?.vendedor; return typeof v === 'string' ? v.trim() : v?.nombre ?? ''; })(),
+            });
+          }
+          const pg = payload?.pagination || {};
+          const hasMore = Boolean(pg.hasMore);
+          const nextOffset = Number(pg.offset ?? offset) + Number(pg.limit ?? limit);
+          if (!hasMore || !rows.length || nextOffset <= offset) break;
+          offset = nextOffset; guard++;
+        } while (guard < 50);
+      }
+    } catch (v2Err) {
+      console.warn('[COMPARISON] No se pudo obtener datos Tango V2:', v2Err.message);
+    }
+
+    // 3. Merge por mes
     const allMonths = [...new Set([...Object.keys(tangoMap), ...Object.keys(crmMap)])].sort();
     const comparison = allMonths.map(month => ({
       month,
@@ -5439,26 +5460,7 @@ app.get('/api/subscriber-reports/comparison', authenticateRequest, requireRole([
       match: (tangoMap[month]?.ventas || 0) === (crmMap[month]?.ventas || 0),
     }));
 
-    // 4. Detail: all Tango ventas with BAN, client, date, type
-    const tangoDetailResult = await legacyPool.query(`
-      SELECT v.ventaid, v.ban,
-             COALESCE(cc.nombre, 'SIN NOMBRE') as cliente,
-             v.fechaactivacion as fecha,
-             v.status as linea,
-             vt.nombre as tipo,
-             v.ventatipoid,
-             COALESCE(v.comisionclaro, 0) as comision_empresa,
-             COALESCE(v.comisionvendedor, 0) as comision_vendedor,
-             vd.nombre as vendedor
-      FROM venta v
-      JOIN ventatipo vt ON vt.ventatipoid = v.ventatipoid
-      LEFT JOIN clientecredito cc ON cc.clientecreditoid = v.clientecreditoid
-      LEFT JOIN vendedor vd ON vd.vendedorid = v.vendedorid
-      WHERE v.ventatipoid IN (138, 139, 140, 141) AND v.activo = true
-      ORDER BY v.fechaactivacion DESC, cc.nombre, v.ban
-    `);
-
-    res.json({ comparison, detail: tangoDetailResult.rows });
+    res.json({ comparison, detail: tangoDetail });
   } catch (error) {
     console.error('[COMPARISON] Error:', error);
     res.status(500).json({ error: 'Error al comparar datos', details: error.message });
@@ -6114,13 +6116,8 @@ app.get('/api/subscriber-reports', authenticateRequest, async (req, res) => {
       return !dedupKey || !canonicalTangoKeys.has(dedupKey);
     });
 
-    const tangoVentaIds = [...new Set(
-      visibleRows
-        .map((row) => Number(row.tango_ventaid))
-        .filter((value) => Number.isFinite(value) && value > 0)
-    )];
-
-    const saleTypeByVentaId = new Map();
+    // sale_type se resuelve desde el raw_payload almacenado en el sync V2 — sin consulta live a BD externa.
+    const saleTypeByVentaId = new Map(); // vacío — se usa raw_payload.ventatipoid abajo
     const saleTypeFromVentaTipo = (ventaTipo) => {
       if (ventaTipo === 138) return 'MOVIL_RENOVACION';
       if (ventaTipo === 139) return 'MOVIL_NUEVA';
@@ -6128,27 +6125,6 @@ app.get('/api/subscriber-reports', authenticateRequest, async (req, res) => {
       if (ventaTipo === 141) return 'FIJO_NEW';
       return null;
     };
-    if (tangoVentaIds.length > 0) {
-      try {
-        const tangoPool = getTangoPool();
-        const tangoResult = await tangoPool.query(`
-          SELECT ventaid, ventatipoid
-          FROM venta
-          WHERE ventaid = ANY($1::int[])
-        `, [tangoVentaIds]);
-
-        for (const row of tangoResult.rows) {
-          const ventaId = Number(row.ventaid);
-          const ventaTipo = Number(row.ventatipoid);
-          const saleType = saleTypeFromVentaTipo(ventaTipo);
-          if (saleType) {
-            saleTypeByVentaId.set(ventaId, saleType);
-          }
-        }
-      } catch (tangoError) {
-        console.warn('[subscriber-reports] No se pudo resolver sale_type desde Tango:', tangoError.message);
-      }
-    }
 
     const mapped = visibleRows.map((row) => {
       const profileCommissionPercentage = vendorCommissionByName.get(normalizeVendorNameKey(row.salesperson_name));
@@ -7386,49 +7362,8 @@ async function loadPlanCatalog(client) {
     // plans table is optional for this sync, keep monthly_value unresolved when unavailable
   }
 
-  // Fallback Tango: tipoplan.codigovoz -> rate/precio/price
-  try {
-    const legacyDB = getTangoPool(); // Usar la BD externa que sí tiene tipoplan
-    const tipoplanColsResult = await legacyDB.query(`
-      SELECT column_name
-      FROM information_schema.columns
-      WHERE table_schema = 'public' AND table_name = 'tipoplan'
-    `);
-    const tipoplanCols = new Set(tipoplanColsResult.rows.map((r) => String(r.column_name || '').toLowerCase()));
-
-    if (tipoplanCols.has('codigovoz')) {
-      const candidatePriceCols = ['rate', 'precio', 'price', 'renta', 'monthly_value'];
-      const priceCol = candidatePriceCols.find((col) => tipoplanCols.has(col));
-
-      if (priceCol) {
-        const result = await legacyDB.query(`
-          SELECT codigovoz, ${quoteIdent(priceCol)} AS price
-          FROM tipoplan
-          WHERE codigovoz IS NOT NULL
-        `);
-
-        for (const row of result.rows) {
-          const key = normalizePlanCodeKey(row.codigovoz);
-          if (!key) continue;
-
-          const rawPrice = row.price;
-          if (rawPrice === null || rawPrice === undefined || rawPrice === '') continue;
-          const parsedPrice = Number(String(rawPrice).replace(/[^0-9.-]/g, ''));
-          if (Number.isNaN(parsedPrice)) continue;
-
-          // Preferir catalogo local plans. tipoplan solo fallback.
-          if (!catalog.exact.has(key)) {
-            catalog.exact.set(key, parsedPrice);
-          }
-          catalog.similar.push({ key, price: parsedPrice });
-        }
-      }
-    }
-  } catch (_err) {
-    // tipoplan is optional
-    console.warn("[WARNING] Fail to load tipoplan from tango pool:", _err.message);
-  }
-
+  // Nota: el fallback a tipoplan (BD legacy) fue eliminado.
+  // Los rates de plan se resuelven desde la tabla local `plans` y Tango API V2.
   return catalog;
 }
 

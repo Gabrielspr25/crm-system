@@ -243,75 +243,46 @@ export function buildTangoCommissionPendingSale(sale = null, commission = null, 
   };
 }
 
-export function mapTangoApiV2SaleToSyncRow(sale, commission = null, legacyFallback = null) {
+export function mapTangoApiV2SaleToSyncRow(sale, commission = null) {
   const saleCommission = readCommission(sale);
   const explicitCommission = readCommission(commission);
-  const fallbackCommission = readCommission(legacyFallback);
-  const ventaid = readVentaId(sale) ?? readVentaId(commission) ?? readVentaId(legacyFallback);
+  const ventaid = readVentaId(sale) ?? readVentaId(commission);
   const mensualidad = firstValue(
     positiveOrNull(sale?.pagomensual),
     positiveOrNull(sale?.monthly_value),
     positiveOrNull(sale?.monthlyValue),
     positiveOrNull(sale?.plan?.rate),
-    positiveOrNull(sale?.tipoplan?.rate),
-    positiveOrNull(legacyFallback?.mensualidad)
+    positiveOrNull(sale?.tipoplan?.rate)
   );
 
   return {
     ventaid,
-    ban: String(firstValue(sale?.ban, commission?.ban, legacyFallback?.ban) || '').trim(),
+    ban: String(firstValue(sale?.ban, commission?.ban) || '').trim(),
     phone: normalizeDigits(firstValue(
       sale?.telefono,
       sale?.phone,
       sale?.numerocelularactivado,
       sale?.status,
-      sale?.numero,
-      legacyFallback?.phone
+      sale?.numero
     )),
     plan_code: firstValue(
       sale?.codigovoz,
       sale?.plan?.codigovoz,
       sale?.plan?.codigo,
-      sale?.plan?.code,
-      legacyFallback?.plan_code
+      sale?.plan?.code
     ),
-    meses: firstValue(sale?.meses, legacyFallback?.meses),
-    ventatipoid: readVentaTipoId(sale) ?? readVentaTipoId(commission) ?? readVentaTipoId(legacyFallback),
+    meses: sale?.meses ?? null,
+    ventatipoid: readVentaTipoId(sale) ?? readVentaTipoId(commission),
     mensualidad,
-    com_empresa: firstCommissionValue(explicitCommission.company, saleCommission.company, fallbackCommission.company),
-    com_vendedor: firstCommissionValue(explicitCommission.vendor, saleCommission.vendor, fallbackCommission.vendor),
-    portability_bonus: firstCommissionValue(explicitCommission.portability, saleCommission.portability, fallbackCommission.portability),
-    fechaactivacion: firstValue(sale?.fechaactivacion, commission?.fechaactivacion, legacyFallback?.fechaactivacion),
-    tango_vendor_id: firstValue(sale?.vendedorid, sale?.vendedor?.id, commission?.vendedorid, legacyFallback?.tango_vendor_id),
-    cliente: readClientName(sale) || readClientName(commission) || readClientName(legacyFallback) || 'SIN NOMBRE',
-    vendedor: readVendorName(sale) || readVendorName(commission) || readVendorName(legacyFallback) || '',
+    com_empresa: firstCommissionValue(explicitCommission.company, saleCommission.company),
+    com_vendedor: firstCommissionValue(explicitCommission.vendor, saleCommission.vendor),
+    portability_bonus: firstCommissionValue(explicitCommission.portability, saleCommission.portability),
+    fechaactivacion: firstValue(sale?.fechaactivacion, commission?.fechaactivacion),
+    tango_vendor_id: firstValue(sale?.vendedorid, sale?.vendedor?.id, commission?.vendedorid),
+    cliente: readClientName(sale) || readClientName(commission) || 'SIN NOMBRE',
+    vendedor: readVendorName(sale) || readVendorName(commission) || '',
     source_priority: 'api_v2',
   };
 }
 
-export function mergeTangoApiV2RowsWithLegacyRows({ apiRows = [], legacyRows = [], commissionsById = new Map() }) {
-  const legacyByVentaId = new Map();
-  for (const row of legacyRows) {
-    const ventaid = readVentaId(row);
-    if (ventaid !== null && ventaid > 0) legacyByVentaId.set(ventaid, row);
-  }
-
-  const merged = [];
-  const seen = new Set();
-  for (const row of apiRows) {
-    const ventaid = readVentaId(row);
-    if (ventaid === null || ventaid <= 0 || seen.has(ventaid)) continue;
-    const mapped = mapTangoApiV2SaleToSyncRow(row, commissionsById.get(ventaid), legacyByVentaId.get(ventaid));
-    merged.push(mapped);
-    seen.add(ventaid);
-  }
-
-  for (const row of legacyRows) {
-    const ventaid = readVentaId(row);
-    if (ventaid === null || ventaid <= 0 || seen.has(ventaid)) continue;
-    merged.push({ ...row, source_priority: 'legacy_fallback' });
-    seen.add(ventaid);
-  }
-
-  return merged;
-}
+// mergeTangoApiV2RowsWithLegacyRows eliminado — el sistema usa Tango API V2 exclusivamente.

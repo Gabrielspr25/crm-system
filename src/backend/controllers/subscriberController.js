@@ -1,5 +1,5 @@
 import { getClient, query } from '../database/db.js';
-import { getTangoPool } from '../database/externalPools.js';
+// getTangoPool eliminado — el sistema usa Tango API V2 exclusivamente.
 import { serverError, badRequest, notFound } from '../middlewares/errorHandler.js';
 import { execFile } from 'child_process';
 import fs from 'fs/promises';
@@ -666,27 +666,7 @@ async function resolveMonthlyValue(planCode) {
         return { value: Number(localSimilar[0].monthly_value), source: 'plans-similar' };
     }
 
-    try {
-        const tangoPool = getTangoPool();
-        const tangoExact = await tangoPool.query(
-            `SELECT rate FROM tipoplan WHERE UPPER(TRIM(COALESCE(codigovoz, ''))) = $1 LIMIT 1`,
-            [normalized]
-        );
-        if (tangoExact.rows[0]?.rate != null) {
-            return { value: Number(tangoExact.rows[0].rate), source: 'tipoplan-exact' };
-        }
-
-        const tangoSimilar = await tangoPool.query(
-            `SELECT rate FROM tipoplan WHERE UPPER(TRIM(COALESCE(codigovoz, ''))) LIKE $1 ORDER BY codigovoz ASC LIMIT 5`,
-            [`%${normalized}%`]
-        );
-        if (tangoSimilar.rows[0]?.rate != null) {
-            return { value: Number(tangoSimilar.rows[0].rate), source: 'tipoplan-similar' };
-        }
-    } catch (error) {
-        console.warn('[paste-sync] No se pudo consultar Tango tipoplan:', error?.message || error);
-    }
-
+    // El fallback a tipoplan (BD legacy) fue eliminado. Rate resuelto solo desde tabla local plans.
     return { value: null, source: null };
 }
 

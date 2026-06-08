@@ -8,6 +8,7 @@ import {
   Building2,
   Folder,
   Package,
+  FileSpreadsheet,
   FileText,
   UserCircle2,
   Sun,
@@ -54,6 +55,7 @@ const navigation: NavItem[] = [
   { name: "Campañas", href: "/campanas", icon: SendHorizontal, roles: ["admin"] },
   { name: "Vendedores", href: "/vendedores", icon: Building2, permissionKey: "nav.vendors", roles: ["admin", "supervisor"] },
   { name: "Productos", href: "/productos", icon: Package, permissionKey: "nav.products", roles: ["admin", "supervisor"] },
+  { name: "Admin Ofertas", href: "/lista-precios", icon: FileSpreadsheet, roles: ["admin"] },
   { name: "Categorías", href: "/categorias", icon: Folder, roles: ["admin"] },
   { name: "Panel de Metas", href: "/panel-metas", icon: BarChart3, permissionKey: "nav.dashboard_metas", roles: ["admin", "supervisor"] },
   { name: "Metas", href: "/gestion", icon: Settings2, roles: ["admin", "supervisor"] },
@@ -66,7 +68,8 @@ const navigation: NavItem[] = [
   { name: "Permisos", href: "/usuarios-permisos", icon: KeyRound, roles: ["admin"] },
   { name: "Reglas y Procesos", href: "/reglas-procesos", icon: FileText, permissionKey: "nav.rules_processes", roles: ["admin", "supervisor"], external: true },
   { name: "Perfil", href: "/perfil", icon: UserCircle2, permissionKey: "nav.profile", roles: ["admin", "supervisor", "vendedor"] },
-  { name: "Ofertas Web", href: "https://ofertas.ss-group.cloud", icon: Layers, external: true },
+  { name: "Admin Lista Equipos", href: "/admin-equipos.html", icon: FileSpreadsheet, roles: ["admin"], external: true },
+  { name: "Ofertas Web", href: "https://ofertas.ss-group.cloud/movil.html", icon: Layers, external: true },
 ];
 
 const commercialSetupHrefs = new Set(["/vendedores", "/productos", "/categorias", "/gestion", "/panel-metas"]);

@@ -1,5 +1,5 @@
 import express from 'express';
-import { getClients, getClientById, createClient, updateClient, mergeClients, searchClients, checkDuplicateClient, markClientChecked } from '../controllers/clientController.js';
+import { getClients, getClientById, createClient, updateClient, deleteClient, mergeClients, searchClients, checkDuplicateClient, markClientChecked } from '../controllers/clientController.js';
 import { authenticateToken } from '../middlewares/auth.js';
 
 const router = express.Router();
@@ -14,5 +14,6 @@ router.get('/:id', getClientById);
 router.patch('/:id/mark-checked', markClientChecked);
 router.post('/', createClient);
 router.put('/:id', updateClient);
+router.delete('/:id', deleteClient);
 
 export default router;
