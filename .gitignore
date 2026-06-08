@@ -79,8 +79,16 @@ PLANES-EXISTENTES-CRM-INPUT.md
 REEMPLAZO-PLANES-BD-CRM.md
 00-CORE/
 08-UX/
-# Planes para web/ — versionadas (portal Claro Ofertas)
-# Planes para web/
+# Planes para web/ — se versiona solo lo esencial del portal
+Planes para web/node_modules/
+Planes para web/package-lock.json
+Planes para web/*.csv
+Planes para web/*.mjs
+Planes para web/Ofertas con fecha/
+Planes para web/generate.js
+Planes para web/parse.js
+Planes para web/parse.mjs
+Planes para web/script.js
 
 # Scripts Python legacy (el motor real vive en src/backend/services/ocrEngineService.js)
 ocr_engine.py
