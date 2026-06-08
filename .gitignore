@@ -89,6 +89,8 @@ Planes para web/generate.js
 Planes para web/parse.js
 Planes para web/parse.mjs
 Planes para web/script.js
+Planes para web/admin-equipos.html
+Planes para web/package.json
 
 # Scripts Python legacy (el motor real vive en src/backend/services/ocrEngineService.js)
 ocr_engine.py
