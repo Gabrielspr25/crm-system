@@ -69,6 +69,7 @@ const navigation: NavItem[] = [
   { name: "Reglas y Procesos", href: "/reglas-procesos", icon: FileText, permissionKey: "nav.rules_processes", roles: ["admin", "supervisor"], external: true },
   { name: "Perfil", href: "/perfil", icon: UserCircle2, permissionKey: "nav.profile", roles: ["admin", "supervisor", "vendedor"] },
   { name: "Admin Lista Equipos", href: "/admin-equipos.html", icon: FileSpreadsheet, roles: ["admin"], external: true },
+  { name: "Admin Planes", href: "/admin-planes.html", icon: FileSpreadsheet, roles: ["admin"], external: true },
   { name: "Ofertas Web", href: "https://ofertas.ss-group.cloud/movil.html", icon: Layers, external: true },
 ];
 

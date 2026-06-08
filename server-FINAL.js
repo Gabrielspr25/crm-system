@@ -43,6 +43,7 @@ import directorRoutes from './src/backend/routes/directorRoutes.js';
 import tangoSyncRoutes from './src/backend/routes/tangoSyncRoutes.js';
 import sov2Routes from './src/backend/routes/sov2Routes.js';
 import equiposListaRoutes from './src/backend/routes/equiposListaRoutes.js';
+import planesModulosRoutes from './src/backend/routes/planesModulosRoutes.js';
 // getTangoPool eliminado — el sistema usa Tango API V2 exclusivamente.
 import { getPermissionCatalogResponse, ensurePermissionSchema, resolvePermissionsForUser, saveUserPermissionOverrides } from './src/backend/utils/permissionService.js';
 
@@ -112,6 +113,10 @@ const isPublicRoute = (req) => {
     return true;
   }
   if (req.method === 'GET' && req.path === '/api/equipos-lista') {
+    return true;
+  }
+  // Planes públicos — GET por página (fijos, moviles, inalambrico)
+  if (req.method === 'GET' && /^\/api\/planes-modulos\/(fijos|moviles|inalambrico)$/.test(req.path)) {
     return true;
   }
   return false;
@@ -435,6 +440,7 @@ app.use('/api/director', directorRoutes);
 app.use('/api/tango-sync', tangoSyncRoutes);
 app.use('/api/sov2', sov2Routes);
 app.use('/api/equipos-lista', equiposListaRoutes);
+app.use('/api/planes-modulos', planesModulosRoutes);
 
 // Reglas y Procesos - Servir HTML estático
 app.get('/reglas-procesos', (req, res) => {
@@ -444,6 +450,11 @@ app.get('/reglas-procesos', (req, res) => {
 // Admin Lista de Equipos
 app.get('/admin-equipos', (req, res) => {
   res.sendFile(path.join(__dirname, 'admin-equipos.html'));
+});
+
+// Admin Planes Módulos
+app.get('/admin-planes', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin-planes.html'));
 });
 
 // System Routes - PROTECTED EXTRA

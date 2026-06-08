@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin — Módulos de Planes</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:linear-gradient(135deg,#0f172a 0%,#1e1b4b 100%);min-height:100vh;color:#e2e8f0}
+
+.header{background:rgba(220,38,38,0.9);padding:14px 24px;display:flex;align-items:center;gap:16px;border-bottom:1px solid rgba(255,255,255,0.1)}
+.header .logo{font-size:22px;font-weight:900;letter-spacing:-1px;color:#fff}
+.header .subtitle{color:rgba(255,255,255,0.8);font-size:13px}
+.header-right{margin-left:auto;display:flex;align-items:center;gap:10px}
+.user-info{font-size:12px;color:rgba(255,255,255,0.7)}
+
+.container{max-width:1000px;margin:32px auto;padding:0 20px}
+
+.page-tabs{display:flex;gap:6px;margin-bottom:24px}
+.tab-btn{
+  padding:8px 18px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);
+  background:rgba(255,255,255,0.05);color:rgba(255,255,255,0.6);
+  font-size:13px;font-weight:500;cursor:pointer;transition:all .2s;
+}
+.tab-btn:hover{background:rgba(255,255,255,0.1);color:#fff}
+.tab-btn.active{background:rgba(56,189,248,0.2);border-color:rgba(56,189,248,0.5);color:#38bdf8}
+
+.toolbar{display:flex;align-items:center;gap:10px;margin-bottom:16px}
+.btn{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:8px 16px;border-radius:8px;font-size:13px;font-weight:500;
+  cursor:pointer;border:none;transition:all .2s;
+}
+.btn-primary{background:rgba(56,189,248,0.2);color:#38bdf8;border:1px solid rgba(56,189,248,0.4)}
+.btn-primary:hover{background:rgba(56,189,248,0.35)}
+.btn-success{background:rgba(74,222,128,0.2);color:#4ade80;border:1px solid rgba(74,222,128,0.4)}
+.btn-success:hover{background:rgba(74,222,128,0.35)}
+.btn-danger{background:rgba(248,113,113,0.2);color:#f87171;border:1px solid rgba(248,113,113,0.4)}
+.btn-danger:hover{background:rgba(248,113,113,0.35)}
+.btn-ghost{background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.6);border:1px solid rgba(255,255,255,0.12)}
+.btn-ghost:hover{background:rgba(255,255,255,0.1);color:#fff}
+.btn:disabled{opacity:0.4;cursor:not-allowed}
+
+/* Module card */
+.module-card{
+  background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);
+  border-radius:14px;margin-bottom:12px;overflow:hidden;
+}
+.module-card.inactive{opacity:0.5}
+.module-header{
+  display:flex;align-items:center;padding:14px 18px;gap:12px;
+  cursor:pointer;
+}
+.module-header:hover{background:rgba(255,255,255,0.03)}
+.drag-handle{color:rgba(255,255,255,0.25);font-size:16px;cursor:grab;user-select:none}
+.module-order{
+  width:28px;height:28px;border-radius:6px;background:rgba(255,255,255,0.07);
+  display:flex;align-items:center;justify-content:center;
+  font-size:11px;font-weight:700;color:rgba(255,255,255,0.5);flex-shrink:0;
+}
+.module-info{flex:1}
+.module-title{font-size:14px;font-weight:700;color:#f1f5f9}
+.module-meta{font-size:11px;color:rgba(255,255,255,0.4);margin-top:2px}
+.module-actions{display:flex;align-items:center;gap:6px;flex-shrink:0}
+.icon-btn{
+  width:32px;height:32px;border-radius:8px;border:none;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;font-size:14px;
+  transition:background .2s;background:rgba(255,255,255,0.06);
+}
+.icon-btn:hover{background:rgba(255,255,255,0.12)}
+.toggle-active{font-size:20px;cursor:pointer;padding:0 4px;background:none;border:none}
+.expand-icon{font-size:12px;color:rgba(255,255,255,0.4);transition:transform .2s}
+.module-card.expanded .expand-icon{transform:rotate(180deg)}
+
+/* Editor panel */
+.editor-panel{
+  border-top:1px solid rgba(255,255,255,0.07);
+  padding:18px;
+  display:none;
+}
+.module-card.expanded .editor-panel{display:block}
+
+.form-row{margin-bottom:14px}
+.form-label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:rgba(255,255,255,0.5);margin-bottom:6px;display:block}
+.form-input{
+  width:100%;padding:9px 12px;border-radius:8px;font-size:13px;
+  background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);
+  color:#f1f5f9;outline:none;transition:border-color .2s;
+}
+.form-input:focus{border-color:rgba(56,189,248,0.5)}
+.form-select{
+  width:auto;padding:7px 10px;border-radius:8px;font-size:12px;
+  background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);
+  color:#f1f5f9;outline:none;cursor:pointer;
+}
+textarea.form-input{font-family:monospace;font-size:12px;resize:vertical;min-height:200px}
+.form-two-col{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.json-error{color:#f87171;font-size:11px;margin-top:4px;display:none}
+.editor-footer{display:flex;align-items:center;gap:8px;margin-top:16px}
+
+/* New module form */
+.new-module-form{
+  background:rgba(56,189,248,0.04);
+  border:1px solid rgba(56,189,248,0.2);
+  border-radius:14px;padding:20px;margin-bottom:24px;
+  display:none;
+}
+.new-module-form.open{display:block}
+.new-module-form h3{font-size:14px;font-weight:700;color:#38bdf8;margin-bottom:16px}
+
+/* Login overlay */
+#loginSection{
+  background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);
+  border-radius:16px;padding:40px;max-width:400px;margin:80px auto;
+}
+#loginSection h2{font-size:20px;margin-bottom:24px;color:#f1f5f9}
+.login-row{margin-bottom:14px}
+
+/* Toast */
+#toast{
+  position:fixed;bottom:24px;right:24px;
+  background:#1e293b;border:1px solid rgba(255,255,255,0.15);
+  border-radius:10px;padding:12px 18px;font-size:13px;
+  max-width:320px;z-index:1000;opacity:0;
+  transform:translateY(10px);
+  transition:opacity .25s,transform .25s;
+  pointer-events:none;
+}
+#toast.show{opacity:1;transform:translateY(0)}
+#toast.ok{border-left:3px solid #4ade80;color:#e2e8f0}
+#toast.err{border-left:3px solid #f87171;color:#e2e8f0}
+
+/* State card */
+.state-card{text-align:center;padding:60px 20px;color:rgba(255,255,255,0.4)}
+.state-icon{font-size:48px;margin-bottom:12px}
+.state-title{font-size:16px;font-weight:600;margin-bottom:6px;color:rgba(255,255,255,0.6)}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <span class="logo">CLARO</span>
+  <span class="subtitle">Admin — Módulos de Planes</span>
+  <div class="header-right">
+    <span class="user-info" id="userLabel"></span>
+    <button class="btn btn-ghost" onclick="logout()">Cerrar sesión</button>
+  </div>
+</div>
+
+<div class="container">
+
+  <!-- LOGIN -->
+  <div id="loginSection">
+    <h2>🔐 Iniciar sesión</h2>
+    <div class="login-row">
+      <label class="form-label">Usuario o Email</label>
+      <input type="text" id="loginUser" class="form-input" placeholder="usuario@claro.pr" autocomplete="username">
+    </div>
+    <div class="login-row">
+      <label class="form-label">Contraseña</label>
+      <input type="password" id="loginPass" class="form-input" placeholder="••••••••" autocomplete="current-password">
+    </div>
+    <div id="loginError" style="color:#f87171;font-size:12px;margin-bottom:10px;display:none"></div>
+    <button class="btn btn-primary" onclick="doLogin()" style="width:100%;justify-content:center">Entrar</button>
+  </div>
+
+  <!-- PANEL ADMIN -->
+  <div id="adminPanel" style="display:none">
+
+    <!-- Page tabs -->
+    <div class="page-tabs">
+      <button class="tab-btn active" data-page="fijos" onclick="switchPage('fijos',this)">📞 Planes Fijos</button>
+      <button class="tab-btn" data-page="moviles" onclick="switchPage('moviles',this)">📱 Planes Móviles</button>
+      <button class="tab-btn" data-page="inalambrico" onclick="switchPage('inalambrico',this)">📡 Inalámbrico / IoT</button>
+    </div>
+
+    <!-- Toolbar -->
+    <div class="toolbar">
+      <button class="btn btn-primary" onclick="toggleNewForm()">+ Nuevo módulo</button>
+      <button class="btn btn-ghost" onclick="loadModulos()">↻ Recargar</button>
+      <span style="margin-left:auto;font-size:12px;color:rgba(255,255,255,0.35)" id="pageInfo"></span>
+    </div>
+
+    <!-- New module form -->
+    <div class="new-module-form" id="newModuleForm">
+      <h3>Nuevo módulo</h3>
+      <div class="form-two-col">
+        <div class="form-row">
+          <label class="form-label">Clave única (seccion_key)</label>
+          <input type="text" id="nfKey" class="form-input" placeholder="ej: nuevo_plan_x">
+        </div>
+        <div class="form-row">
+          <label class="form-label">Tipo</label>
+          <select id="nfTipo" class="form-input form-select">
+            <option value="tabla">tabla</option>
+            <option value="multilinea">multilinea</option>
+            <option value="inalambrico">inalambrico</option>
+            <option value="iot">iot</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <label class="form-label">Título</label>
+        <input type="text" id="nfTitulo" class="form-input" placeholder="Nombre del módulo">
+      </div>
+      <div class="form-two-col">
+        <div class="form-row">
+          <label class="form-label">Subtítulo</label>
+          <input type="text" id="nfSub" class="form-input" placeholder="Descripción corta">
+        </div>
+        <div class="form-row">
+          <label class="form-label">Orden</label>
+          <input type="number" id="nfOrden" class="form-input" value="99">
+        </div>
+      </div>
+      <div class="form-row">
+        <label class="form-label">Contenido (JSON)</label>
+        <textarea id="nfContenido" class="form-input" placeholder='{"columnas":["Código","Precio"],"filas":[]}' rows="6"></textarea>
+        <div class="json-error" id="nfJsonError">JSON inválido</div>
+      </div>
+      <div class="form-two-col">
+        <div class="form-row">
+          <label class="form-label">Boletín ref.</label>
+          <input type="text" id="nfBoletin" class="form-input" placeholder="Nombre del boletín PDF">
+        </div>
+        <div class="form-row">
+          <label class="form-label">Descripción</label>
+          <input type="text" id="nfDesc" class="form-input" placeholder="Descripción larga">
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:4px">
+        <button class="btn btn-success" onclick="createModulo()">✓ Crear</button>
+        <button class="btn btn-ghost" onclick="toggleNewForm()">Cancelar</button>
+      </div>
+    </div>
+
+    <!-- Module list -->
+    <div id="modulosList">
+      <div class="state-card"><div class="state-icon">⏳</div><div class="state-title">Cargando...</div></div>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const API = '';
+let token = localStorage.getItem('planes_admin_token') || '';
+let currentPage = 'fijos';
+let modulos = [];
+
+// ── Auth ──────────────────────────────────────────────────────────────────
+async function doLogin() {
+  const username = document.getElementById('loginUser').value.trim();
+  const password = document.getElementById('loginPass').value;
+  const errEl = document.getElementById('loginError');
+  errEl.style.display = 'none';
+  try {
+    const r = await fetch(`${API}/api/login`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ username, password })
+    });
+    const d = await r.json();
+    if (!r.ok || !d.token) throw new Error(d.error || 'Credenciales inválidas');
+    if (!['admin','supervisor'].includes(d.user?.role)) throw new Error('No tienes permisos de administrador.');
+    token = d.token;
+    localStorage.setItem('planes_admin_token', token);
+    document.getElementById('userLabel').textContent = `${d.user.name || username} (${d.user.role})`;
+    showPanel();
+  } catch(e) {
+    errEl.textContent = e.message;
+    errEl.style.display = 'block';
+  }
+}
+document.getElementById('loginPass').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+
+function logout() {
+  localStorage.removeItem('planes_admin_token');
+  token = '';
+  document.getElementById('loginSection').style.display = 'block';
+  document.getElementById('adminPanel').style.display = 'none';
+}
+
+function showPanel() {
+  document.getElementById('loginSection').style.display = 'none';
+  document.getElementById('adminPanel').style.display = 'block';
+  loadModulos();
+}
+
+// ── Check token on load ───────────────────────────────────────────────────
+if (token) {
+  // Verify token validity with a quick call
+  fetch(`${API}/api/planes-modulos/admin/all`, { headers: { Authorization: `Bearer ${token}` } })
+    .then(r => {
+      if (r.ok) { showPanel(); }
+      else { localStorage.removeItem('planes_admin_token'); token = ''; }
+    }).catch(() => {});
+}
+
+// ── Page switch ───────────────────────────────────────────────────────────
+function switchPage(page, btn) {
+  currentPage = page;
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  loadModulos();
+}
+
+// ── Load modules ──────────────────────────────────────────────────────────
+async function loadModulos() {
+  const list = document.getElementById('modulosList');
+  list.innerHTML = '<div class="state-card"><div class="state-icon">⏳</div><div class="state-title">Cargando...</div></div>';
+  try {
+    const r = await fetch(`${API}/api/planes-modulos/admin/all`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (r.status === 401) { logout(); return; }
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+    modulos = (d.modulos || []).filter(m => m.pagina === currentPage);
+    document.getElementById('pageInfo').textContent = `${modulos.length} módulos — página "${currentPage}"`;
+    renderList();
+  } catch(e) {
+    list.innerHTML = `<div class="state-card"><div class="state-icon">⚠️</div><div class="state-title">${e.message}</div></div>`;
+  }
+}
+
+// ── Render list ───────────────────────────────────────────────────────────
+function renderList() {
+  const list = document.getElementById('modulosList');
+  if (!modulos.length) {
+    list.innerHTML = '<div class="state-card"><div class="state-icon">📭</div><div class="state-title">No hay módulos en esta página</div></div>';
+    return;
+  }
+  list.innerHTML = '';
+  modulos.forEach(m => list.appendChild(buildModuleCard(m)));
+}
+
+function buildModuleCard(m) {
+  const card = document.createElement('div');
+  card.className = `module-card${m.activo ? '' : ' inactive'}`;
+  card.id = `mc-${m.id}`;
+
+  const updated = m.updated_at ? new Date(m.updated_at).toLocaleDateString('es-PR') : '—';
+
+  card.innerHTML = `
+    <div class="module-header" onclick="toggleExpand(${m.id})">
+      <span class="drag-handle">⠿</span>
+      <div class="module-order">${m.orden}</div>
+      <div class="module-info">
+        <div class="module-title">${m.titulo}${!m.activo ? ' <span style="color:#f87171;font-size:10px">[INACTIVO]</span>' : ''}</div>
+        <div class="module-meta">${m.seccion_key} · ${m.tipo} · actualizado ${updated}${m.boletin_ref ? ' · 📄 '+m.boletin_ref.slice(0,50) : ''}</div>
+      </div>
+      <div class="module-actions">
+        <button class="toggle-active" title="${m.activo ? 'Desactivar' : 'Activar'}"
+          onclick="event.stopPropagation();toggleActive(${m.id},${!m.activo})">${m.activo ? '🟢' : '⚫'}</button>
+        <span class="expand-icon">▼</span>
+      </div>
+    </div>
+    <div class="editor-panel">
+      <div class="form-two-col">
+        <div class="form-row">
+          <label class="form-label">Título</label>
+          <input type="text" class="form-input" id="titulo-${m.id}" value="${escHtml(m.titulo)}">
+        </div>
+        <div class="form-row">
+          <label class="form-label">Subtítulo</label>
+          <input type="text" class="form-input" id="sub-${m.id}" value="${escHtml(m.subtitulo||'')}">
+        </div>
+      </div>
+      <div class="form-two-col">
+        <div class="form-row">
+          <label class="form-label">Descripción</label>
+          <input type="text" class="form-input" id="desc-${m.id}" value="${escHtml(m.descripcion||'')}">
+        </div>
+        <div class="form-row">
+          <label class="form-label">Orden</label>
+          <input type="number" class="form-input" id="orden-${m.id}" value="${m.orden}">
+        </div>
+      </div>
+      <div class="form-two-col">
+        <div class="form-row">
+          <label class="form-label">Tipo</label>
+          <select class="form-input form-select" id="tipo-${m.id}">
+            ${['tabla','multilinea','inalambrico','iot'].map(t =>
+              `<option value="${t}"${m.tipo===t?' selected':''}>${t}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-row">
+          <label class="form-label">Boletín referencia</label>
+          <input type="text" class="form-input" id="boletin-${m.id}" value="${escHtml(m.boletin_ref||'')}">
+        </div>
+      </div>
+      <div class="form-two-col">
+        <div class="form-row">
+          <label class="form-label">Vigencia desde</label>
+          <input type="date" class="form-input" id="vdesde-${m.id}" value="${m.vigencia_desde ? m.vigencia_desde.slice(0,10) : ''}">
+        </div>
+        <div class="form-row">
+          <label class="form-label">Vigencia hasta</label>
+          <input type="date" class="form-input" id="vhasta-${m.id}" value="${m.vigencia_hasta ? m.vigencia_hasta.slice(0,10) : ''}">
+        </div>
+      </div>
+      <div class="form-row">
+        <label class="form-label">Contenido (JSON)</label>
+        <textarea class="form-input" id="contenido-${m.id}" rows="14">${escHtml(JSON.stringify(m.contenido, null, 2))}</textarea>
+        <div class="json-error" id="jerr-${m.id}">JSON inválido — verifica la sintaxis</div>
+      </div>
+      <div class="editor-footer">
+        <button class="btn btn-success" onclick="saveModulo(${m.id})">💾 Guardar</button>
+        <button class="btn btn-danger" onclick="deactivateModulo(${m.id},${m.activo})">
+          ${m.activo ? '🚫 Desactivar' : '♻️ Activar'}
+        </button>
+        <span style="margin-left:auto;font-size:11px;color:rgba(255,255,255,0.3)">ID: ${m.id}</span>
+      </div>
+    </div>`;
+  return card;
+}
+
+function toggleExpand(id) {
+  const card = document.getElementById(`mc-${id}`);
+  card.classList.toggle('expanded');
+}
+
+// ── Save module ───────────────────────────────────────────────────────────
+async function saveModulo(id) {
+  const contenidoRaw = document.getElementById(`contenido-${id}`).value;
+  const jerrEl = document.getElementById(`jerr-${id}`);
+
+  let contenido;
+  try { contenido = JSON.parse(contenidoRaw); jerrEl.style.display = 'none'; }
+  catch { jerrEl.style.display = 'block'; return; }
+
+  const body = {
+    titulo:         document.getElementById(`titulo-${id}`).value,
+    subtitulo:      document.getElementById(`sub-${id}`).value,
+    descripcion:    document.getElementById(`desc-${id}`).value,
+    orden:          parseInt(document.getElementById(`orden-${id}`).value)||0,
+    tipo:           document.getElementById(`tipo-${id}`).value,
+    boletin_ref:    document.getElementById(`boletin-${id}`).value,
+    vigencia_desde: document.getElementById(`vdesde-${id}`).value || null,
+    vigencia_hasta: document.getElementById(`vhasta-${id}`).value || null,
+    contenido
+  };
+
+  try {
+    const r = await fetch(`${API}/api/planes-modulos/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body)
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
+    toast('Módulo guardado ✓', 'ok');
+    loadModulos();
+  } catch(e) { toast(e.message, 'err'); }
+}
+
+// ── Toggle active ─────────────────────────────────────────────────────────
+async function toggleActive(id, newState) {
+  try {
+    const r = await fetch(`${API}/api/planes-modulos/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ activo: newState })
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Error');
+    toast(`Módulo ${newState ? 'activado' : 'desactivado'}`, 'ok');
+    loadModulos();
+  } catch(e) { toast(e.message, 'err'); }
+}
+
+async function deactivateModulo(id, currentActive) {
+  return toggleActive(id, !currentActive);
+}
+
+// ── Create module ─────────────────────────────────────────────────────────
+async function createModulo() {
+  const contenidoRaw = document.getElementById('nfContenido').value;
+  const jerrEl = document.getElementById('nfJsonError');
+
+  let contenido;
+  try { contenido = JSON.parse(contenidoRaw || '{}'); jerrEl.style.display = 'none'; }
+  catch { jerrEl.style.display = 'block'; return; }
+
+  const body = {
+    pagina:      currentPage,
+    seccion_key: document.getElementById('nfKey').value.trim(),
+    titulo:      document.getElementById('nfTitulo').value.trim(),
+    subtitulo:   document.getElementById('nfSub').value,
+    descripcion: document.getElementById('nfDesc').value,
+    orden:       parseInt(document.getElementById('nfOrden').value)||99,
+    tipo:        document.getElementById('nfTipo').value,
+    boletin_ref: document.getElementById('nfBoletin').value,
+    activo:      true,
+    contenido
+  };
+
+  if (!body.seccion_key || !body.titulo) { toast('seccion_key y título son requeridos', 'err'); return; }
+
+  try {
+    const r = await fetch(`${API}/api/planes-modulos`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body)
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
+    toast('Módulo creado ✓', 'ok');
+    toggleNewForm();
+    loadModulos();
+  } catch(e) { toast(e.message, 'err'); }
+}
+
+// ── UI helpers ────────────────────────────────────────────────────────────
+function toggleNewForm() {
+  document.getElementById('newModuleForm').classList.toggle('open');
+}
+
+function escHtml(str) {
+  return String(str)
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;');
+}
+
+let toastTimer;
+function toast(msg, type='ok') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = `show ${type}`;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 3200);
+}
+</script>
+</body>
+</html>
