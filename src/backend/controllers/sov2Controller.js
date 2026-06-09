@@ -1395,6 +1395,67 @@ export async function createSov2OpportunityFromClient(req, res) {
   }
 }
 
+// ─── Cerrar oportunidad + devolver cliente al pool ──────────────────────────
+// POST /api/sov2/opportunities/:id/close
+// Archiva la oportunidad y desasigna el vendedor del cliente (salesperson_id = NULL).
+// El cliente queda en el pool sin vendedor asignado.
+export async function closeSov2Opportunity(req, res) {
+  const dbClient = await getClient();
+  try {
+    if (!isUuidLike(req.params.id)) {
+      return res.status(400).json({ error: 'ID de oportunidad invalido' });
+    }
+
+    await dbClient.query('BEGIN');
+
+    // Obtener la oportunidad y el client_id asociado
+    const oppRows = await dbClient.query(
+      `SELECT id, client_id FROM sales_opportunities
+        WHERE id = $1 AND archived_at IS NULL LIMIT 1`,
+      [req.params.id]
+    );
+    if (oppRows.rows.length === 0) {
+      await dbClient.query('ROLLBACK');
+      return res.status(404).json({ error: 'Oportunidad no encontrada o ya cerrada' });
+    }
+    const { client_id: clientId } = oppRows.rows[0];
+
+    // Archivar la oportunidad
+    await dbClient.query(
+      `UPDATE sales_opportunities
+          SET archived_at = NOW(),
+              status      = COALESCE(NULLIF(TRIM($1), ''), 'cerrada'),
+              updated_at  = NOW()
+        WHERE id = $2`,
+      [cleanText(req.body?.status) || 'cerrada', req.params.id]
+    );
+
+    // Devolver el cliente al pool: quitar vendedor asignado
+    await dbClient.query(
+      `UPDATE clients
+          SET salesperson_id = NULL,
+              updated_at     = NOW()
+        WHERE id = $1`,
+      [clientId]
+    );
+
+    await dbClient.query('COMMIT');
+
+    return res.json({
+      ok: true,
+      opportunity_id: req.params.id,
+      client_id: clientId,
+      message: 'Oportunidad cerrada. Cliente devuelto al pool sin vendedor asignado.',
+    });
+  } catch (error) {
+    await dbClient.query('ROLLBACK').catch(() => null);
+    console.error('[SOV2] close opportunity error:', error);
+    return res.status(500).json({ error: 'Error cerrando oportunidad' });
+  } finally {
+    dbClient.release();
+  }
+}
+
 export async function getSov2Metrics(req, res) {
   try {
     const goalMetrics = await fetchSov2GoalMetrics(req);
