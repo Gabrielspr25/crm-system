@@ -207,6 +207,22 @@ export async function uploadPdfModulo(req, res) {
       });
     });
 
+    // Anti-clobber: no sobreescribir si el parser no extrajo tablas de precios
+    const seccionesCount = Array.isArray(contenidoJson.secciones) ? contenidoJson.secciones.length : 0;
+    if (seccionesCount === 0) {
+      return res.status(422).json({
+        ok: false,
+        warning: true,
+        error: 'El parser no encontró tablas de precios en este PDF. El contenido del módulo no fue modificado.',
+        parse_result: {
+          secciones: 0,
+          ofertas_especiales: Array.isArray(contenidoJson.ofertas_especiales) ? contenidoJson.ofertas_especiales.length : 0,
+          financiamiento_of: Array.isArray(contenidoJson.financiamiento_of) ? contenidoJson.financiamiento_of.length : 0,
+          financiamiento_gu: Array.isArray(contenidoJson.financiamiento_gu) ? contenidoJson.financiamiento_gu.length : 0,
+        },
+      });
+    }
+
     const { rows } = await pool.query(
       `UPDATE planes_modulos
        SET contenido = $1, updated_by = $2
@@ -216,7 +232,12 @@ export async function uploadPdfModulo(req, res) {
     );
 
     if (!rows.length) return res.status(404).json({ ok: false, error: 'Módulo no encontrado' });
-    return res.json({ ok: true, modulo: rows[0], secciones: contenidoJson.secciones?.length || 0 });
+    return res.json({
+      ok: true,
+      modulo: rows[0],
+      secciones: seccionesCount,
+      ofertas_especiales: Array.isArray(contenidoJson.ofertas_especiales) ? contenidoJson.ofertas_especiales.length : 0,
+    });
 
   } catch (err) {
     try { fs.unlinkSync(pdfPath); } catch (_) {}
