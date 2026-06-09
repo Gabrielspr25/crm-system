@@ -283,10 +283,13 @@ function isNeedsReviewStrictRow(row: { validation_status?: string | null; source
 export default function Reports() {
   const currentUser = getCurrentUser();
   const role = String(currentUser?.role || '').toLowerCase();
+  const isVendedor = role === 'vendedor';
   const canViewCompanyFinancials = role === 'admin';
   const isAdmin = canViewCompanyFinancials || role === 'supervisor';
   const [searchTerm, setSearchTerm] = useState("");
-  const [selectedVendor, setSelectedVendor] = useState<string | null>(null);
+  const [selectedVendor, setSelectedVendor] = useState<string | null>(() =>
+    isVendedor && currentUser?.salespersonId ? String(currentUser.salespersonId) : null
+  );
   const [selectedMonth, setSelectedMonth] = useState<string>(getDefaultReportsMonth);
   const [viewMode, setViewMode] = useState<'empresa' | 'vendedor'>('empresa');
   const effectiveView = canViewCompanyFinancials ? viewMode : 'vendedor';
@@ -1709,9 +1712,9 @@ export default function Reports() {
                       <th className="px-3 py-2 text-right">Ventas</th>
                       <th className="px-3 py-2 text-right">Clientes</th>
                       <th className="px-3 py-2 text-right">Mensualidad</th>
-                      <th className="px-3 py-2 text-right text-emerald-400">Ganancia</th>
-                      <th className="px-3 py-2 text-right">% del total</th>
-                      <th className="px-3 py-2 text-right">Ticket prom.</th>
+                      {canViewCompanyFinancials && <th className="px-3 py-2 text-right text-emerald-400">Ganancia</th>}
+                      {canViewCompanyFinancials && <th className="px-3 py-2 text-right">% del total</th>}
+                      {canViewCompanyFinancials && <th className="px-3 py-2 text-right">Ticket prom.</th>}
                       <th className="px-3 py-2 text-right text-blue-400">Comisión</th>
                       <th className="px-3 py-2 text-right text-amber-400">Pagado</th>
                       <th className="px-3 py-2 text-right text-red-400">Balance</th>
@@ -1725,9 +1728,9 @@ export default function Reports() {
                         <td className="px-3 py-2 text-right text-slate-200 font-mono">{r.ventas}</td>
                         <td className="px-3 py-2 text-right text-slate-300 font-mono">{r.clientes}</td>
                         <td className="px-3 py-2 text-right text-slate-300 font-mono">${r.mensualidad.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
-                        <td className="px-3 py-2 text-right text-emerald-300 font-mono">${r.ganancia.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
-                        <td className="px-3 py-2 text-right text-slate-400 font-mono">{r.pctTotal.toFixed(1)}%</td>
-                        <td className="px-3 py-2 text-right text-slate-300 font-mono">${r.ticketPromedio.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
+                        {canViewCompanyFinancials && <td className="px-3 py-2 text-right text-emerald-300 font-mono">${r.ganancia.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>}
+                        {canViewCompanyFinancials && <td className="px-3 py-2 text-right text-slate-400 font-mono">{r.pctTotal.toFixed(1)}%</td>}
+                        {canViewCompanyFinancials && <td className="px-3 py-2 text-right text-slate-300 font-mono">${r.ticketPromedio.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>}
                         <td className="px-3 py-2 text-right text-blue-300 font-mono">${r.comision.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
                         <td className="px-3 py-2 text-right text-amber-300 font-mono">${r.pagado.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
                         <td className="px-3 py-2 text-right text-red-300 font-mono">${r.balance.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
@@ -1745,9 +1748,9 @@ export default function Reports() {
                         <td className="px-3 py-2 text-right text-white font-mono">{informeResumenTotales.ventas}</td>
                         <td className="px-3 py-2 text-right text-white font-mono">{informeClientesUnicos}</td>
                         <td className="px-3 py-2 text-right text-white font-mono">${informeResumenTotales.mensualidad.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
-                        <td className="px-3 py-2 text-right text-emerald-300 font-mono">${informeResumenTotales.ganancia.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
-                        <td className="px-3 py-2 text-right text-slate-400 font-mono">100.0%</td>
-                        <td className="px-3 py-2 text-right text-slate-300 font-mono">${(informeResumenTotales.ventas > 0 ? informeResumenTotales.ganancia / informeResumenTotales.ventas : 0).toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
+                        {canViewCompanyFinancials && <td className="px-3 py-2 text-right text-emerald-300 font-mono">${informeResumenTotales.ganancia.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>}
+                        {canViewCompanyFinancials && <td className="px-3 py-2 text-right text-slate-400 font-mono">100.0%</td>}
+                        {canViewCompanyFinancials && <td className="px-3 py-2 text-right text-slate-300 font-mono">${(informeResumenTotales.ventas > 0 ? informeResumenTotales.ganancia / informeResumenTotales.ventas : 0).toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>}
                         <td className="px-3 py-2 text-right text-blue-300 font-mono">${informeResumenTotales.comision.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
                         <td className="px-3 py-2 text-right text-amber-300 font-mono">${informeResumenTotales.pagado.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
                         <td className="px-3 py-2 text-right text-red-300 font-mono">${informeResumenTotales.balance.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
@@ -1774,7 +1777,7 @@ export default function Reports() {
                       <th className="px-3 py-2 text-left">Vendedor</th>
                       <th className="px-3 py-2 text-left">Tipo</th>
                       <th className="px-3 py-2 text-left">Plan</th>
-                      <th className="px-3 py-2 text-right text-emerald-400">Ganancia</th>
+                      {canViewCompanyFinancials && <th className="px-3 py-2 text-right text-emerald-400">Ganancia</th>}
                       <th className="px-3 py-2 text-right text-blue-400">Comisión</th>
                       <th className="px-3 py-2 text-right text-cyan-400" title="Bono pagado por Claro por portabilidad">Bono Port.</th>
                       <th className="px-3 py-2 text-right text-amber-400">Pagado</th>
@@ -1840,7 +1843,7 @@ export default function Reports() {
                         <td className="px-3 py-2 text-slate-300">{r.vendedor}</td>
                         <td className="px-3 py-2 text-slate-200">{r.tipo}</td>
                         <td className="px-3 py-2 text-slate-400 font-mono">{r.plan}</td>
-                        <td className="px-3 py-2 text-right text-emerald-300 font-mono">${r.ganancia.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
+                        {canViewCompanyFinancials && <td className="px-3 py-2 text-right text-emerald-300 font-mono">${r.ganancia.toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>}
                         <td className="px-2 py-1 text-right">
                           <EditableCommissionCell
                             rowId={r.id}

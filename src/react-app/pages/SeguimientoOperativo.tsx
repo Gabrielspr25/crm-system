@@ -22,7 +22,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { authFetch } from "@/react-app/utils/auth";
+import { authFetch, getCurrentUser } from "@/react-app/utils/auth";
 
 type ProductType = "money" | "quantity";
 
@@ -1087,12 +1087,17 @@ function NotesModal({
 
 export default function SeguimientoOperativo() {
   const navigate = useNavigate();
+  const currentUser = getCurrentUser();
+  const isVendedor = String(currentUser?.role || "").toLowerCase() === "vendedor";
+  const myVendorId = isVendedor && currentUser?.salespersonId
+    ? String(currentUser.salespersonId)
+    : "";
   const [opportunities, setOpportunities] = useState<Sov2Opportunity[]>([]);
   const [products, setProducts] = useState<Sov2Product[]>([]);
   const [salespeople, setSalespeople] = useState<VendorOption[]>([]);
   const [stepsByProduct, setStepsByProduct] = useState<Partial<Record<ProductKey, Sov2Step[]>>>({});
   const [search, setSearch] = useState("");
-  const [vendorFilter, setVendorFilter] = useState("");
+  const [vendorFilter, setVendorFilter] = useState(myVendorId);
   const [productFilter, setProductFilter] = useState("");
   const [stepFilters, setStepFilters] = useState<StepFilters>({});
   const [loading, setLoading] = useState(true);
@@ -1625,14 +1630,20 @@ export default function SeguimientoOperativo() {
           <SlidersHorizontal className="h-4 w-4" />
           Filtros
         </div>
-        <select
-          value={vendorFilter}
-          onChange={(event) => setVendorFilter(event.currentTarget.value)}
-          className="h-10 w-full rounded-xl border border-emerald-400/30 bg-slate-950 px-3 text-sm font-medium text-slate-100 outline-none focus:border-emerald-300"
-        >
-          <option value="">Todos vendedores</option>
-          {vendorOptions.map((vendor) => <option key={vendor.id} value={vendor.id}>{vendor.name}</option>)}
-        </select>
+        {isVendedor ? (
+          <div className="flex h-10 w-full items-center rounded-xl border border-emerald-400/20 bg-emerald-500/10 px-3 text-sm font-semibold text-emerald-200">
+            {currentUser?.salespersonName || "Mi seguimiento"}
+          </div>
+        ) : (
+          <select
+            value={vendorFilter}
+            onChange={(event) => setVendorFilter(event.currentTarget.value)}
+            className="h-10 w-full rounded-xl border border-emerald-400/30 bg-slate-950 px-3 text-sm font-medium text-slate-100 outline-none focus:border-emerald-300"
+          >
+            <option value="">Todos vendedores</option>
+            {vendorOptions.map((vendor) => <option key={vendor.id} value={vendor.id}>{vendor.name}</option>)}
+          </select>
+        )}
         <div className="relative min-w-0 flex-1">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-slate-500" />
           <input
