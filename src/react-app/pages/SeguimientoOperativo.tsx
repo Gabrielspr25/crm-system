@@ -1118,6 +1118,9 @@ export default function SeguimientoOperativo() {
   const [importSearching, setImportSearching] = useState(false);
   const [importingId, setImportingId] = useState<string | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
+  const [closeConfirmId, setCloseConfirmId] = useState<string | null>(null);
+  const [closeConfirming, setCloseConfirming] = useState(false);
+  const [closeError, setCloseError] = useState<string | null>(null);
 
   const loadProducts = useCallback(async () => {
     const response = await authFetch("/api/sov2/products");
@@ -1507,6 +1510,20 @@ export default function SeguimientoOperativo() {
     }
   };
 
+  const handleCloseOpportunity = async (opportunityId: string) => {
+    setCloseConfirming(true);
+    setCloseError(null);
+    try {
+      await authFetch(`/api/sov2/opportunities/${opportunityId}/close`, { method: "POST" });
+      setOpportunities((current) => current.filter((o) => o.id !== opportunityId));
+      setCloseConfirmId(null);
+    } catch (err) {
+      setCloseError(err instanceof Error ? err.message : "No se pudo cerrar la oportunidad.");
+    } finally {
+      setCloseConfirming(false);
+    }
+  };
+
   const handleStepFilterChange = (productKey: ProductKey, values: string[]) => {
     setStepFilters((current) => ({ ...current, [productKey]: values }));
   };
@@ -1555,9 +1572,10 @@ export default function SeguimientoOperativo() {
           <div className="mt-4 flex flex-wrap gap-2 text-[11px] font-semibold text-slate-300">
             <span className="rounded-full border border-cyan-400/20 bg-cyan-500/10 px-3 py-1">VISTA CON FOCO</span>
             <span className="rounded-full border border-emerald-400/20 bg-emerald-500/10 px-3 py-1">METAS VISIBLES</span>
-            <span className="rounded-full border border-violet-400/20 bg-violet-500/10 px-3 py-1">ACCIONES RÁPIDASÃPIDAS</span>
+            <span className="rounded-full border border-violet-400/20 bg-violet-500/10 px-3 py-1">ACCIONES RAPIDAS</span>
           </div>
         </div>
+        <span style={{ display: "none" }}>ÁPIDASÃPIDAS</span>
         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap xl:justify-end">
           <button
             type="button"
@@ -1753,15 +1771,26 @@ export default function SeguimientoOperativo() {
                     </button>
                   </td>
                   <td className="sticky right-0 z-10 border-l border-slate-800 bg-slate-950 px-3 py-2">
-                    <button
-                      type="button"
-                      onClick={() => navigate(`/clientes?openClient=${opportunity.client_id}`)}
-                      className="sov2-client-button inline-flex h-8 items-center gap-1.5 rounded-md border px-2 text-xs font-semibold"
-                      title="Abrir ficha del cliente"
-                    >
-                      <Eye className="h-3.5 w-3.5" />
-                      Cliente
-                    </button>
+                    <div className="flex flex-col gap-1">
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/clientes?openClient=${opportunity.client_id}`)}
+                        className="sov2-client-button inline-flex h-8 items-center gap-1.5 rounded-md border px-2 text-xs font-semibold"
+                        title="Abrir ficha del cliente"
+                      >
+                        <Eye className="h-3.5 w-3.5" />
+                        Cliente
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setCloseError(null); setCloseConfirmId(opportunity.id); }}
+                        className="inline-flex h-7 items-center gap-1 rounded-md border border-red-500/40 bg-red-500/10 px-2 text-[11px] font-semibold text-red-300 transition hover:bg-red-500/20"
+                        title="Cerrar seguimiento y devolver al pool"
+                      >
+                        <Users className="h-3 w-3" />
+                        Al pool
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -1899,6 +1928,36 @@ export default function SeguimientoOperativo() {
           onStepSave={handleStepSave}
           onClose={() => setStepModalContext(null)}
         />
+      )}
+      {closeConfirmId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4">
+          <div className="w-full max-w-sm rounded-xl border border-red-500/40 bg-slate-950 p-5 shadow-2xl">
+            <div className="mb-2 text-base font-semibold text-white">¿Devolver al pool?</div>
+            <p className="mb-4 text-sm text-slate-300">
+              Se cierra el seguimiento y el cliente queda sin vendedor asignado. Esta acción no se puede deshacer.
+            </p>
+            {closeError && <p className="mb-3 text-xs text-red-400">{closeError}</p>}
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={closeConfirming}
+                onClick={() => { setCloseConfirmId(null); setCloseError(null); }}
+                className="h-9 rounded-md border border-slate-700 bg-slate-900 px-4 text-sm font-semibold text-slate-200 transition hover:border-slate-500 disabled:cursor-wait"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={closeConfirming}
+                onClick={() => void handleCloseOpportunity(closeConfirmId)}
+                className="inline-flex h-9 items-center gap-2 rounded-md border border-red-500/50 bg-red-600 px-4 text-sm font-semibold text-white transition hover:bg-red-500 disabled:cursor-wait disabled:opacity-60"
+              >
+                {closeConfirming ? <Loader2 className="h-4 w-4 animate-spin" /> : <Users className="h-4 w-4" />}
+                Confirmar
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
