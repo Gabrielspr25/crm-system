@@ -50,7 +50,7 @@ type NavItem = {
 const navigation: NavItem[] = [
   { name: "Panel General", href: "/panel", icon: LayoutDashboard, permissionKey: "nav.dashboard", roles: ["admin", "supervisor"] },
   { name: "Clientes", href: "/clientes", icon: Users, permissionKey: "nav.clients", roles: ["admin", "supervisor", "vendedor"] },
-  { name: "Seguimiento", href: "/seguimiento", icon: Columns3, roles: ["admin", "supervisor", "vendedor"] },
+  { name: "Asana Seg.", href: "/seguimiento", icon: Columns3, roles: ["admin", "supervisor", "vendedor"] },
   { name: "Correos", href: "/correos", icon: Mail, permissionKey: "nav.emails", roles: ["admin", "supervisor", "vendedor"] },
   { name: "Campañas", href: "/campanas", icon: SendHorizontal, roles: ["admin"] },
   { name: "Vendedores", href: "/vendedores", icon: Building2, permissionKey: "nav.vendors", roles: ["admin", "supervisor"] },

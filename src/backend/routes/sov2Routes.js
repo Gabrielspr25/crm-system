@@ -13,6 +13,7 @@ import {
   getSov2Products,
   getSov2ProductSteps,
   createSov2Opportunity,
+  createSov2OpportunityFromClient,
 } from '../controllers/sov2Controller.js';
 
 const router = express.Router();
@@ -21,6 +22,7 @@ router.use(authenticateToken);
 
 router.get('/opportunities', getSov2Opportunities);
 router.post('/opportunities', createSov2Opportunity);
+router.post('/opportunities/from-client', createSov2OpportunityFromClient);
 router.get('/metrics', getSov2Metrics);
 router.get('/opportunities/:id', getSov2OpportunityById);
 router.get('/opportunities/:id/notes', getSov2OpportunityNotes);

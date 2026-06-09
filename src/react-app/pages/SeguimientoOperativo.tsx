@@ -105,6 +105,7 @@ type MetricCard = {
   label: string;
   value: string;
   sub: string;
+  sub2?: string;
   progress?: number;
 };
 
@@ -283,6 +284,7 @@ function MetricCardView({ card }: { card: MetricCard }) {
         <div className="text-[10px] font-bold uppercase tracking-[0.1em] text-slate-200">{card.label}</div>
         <div className={`mt-1 break-words text-[26px] font-bold leading-none ${valueTone}`}>{card.value}</div>
         <div className="mt-1 text-[11px] leading-4 text-slate-300">{card.sub}</div>
+        {card.sub2 && <div className="mt-0.5 text-[10px] leading-4 text-slate-400">{card.sub2}</div>}
         {typeof card.progress === "number" && (
           <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-800/80">
             <div
@@ -1110,6 +1112,12 @@ export default function SeguimientoOperativo() {
   const [newOpportunityOpen, setNewOpportunityOpen] = useState(false);
   const [newOpportunitySaving, setNewOpportunitySaving] = useState(false);
   const [newOpportunityError, setNewOpportunityError] = useState<string | null>(null);
+  const [importClientOpen, setImportClientOpen] = useState(false);
+  const [importQuery, setImportQuery] = useState("");
+  const [importResults, setImportResults] = useState<Array<{ id: string; name: string; business_name: string | null; phone: string | null; salesperson_name: string | null }>>([]);
+  const [importSearching, setImportSearching] = useState(false);
+  const [importingId, setImportingId] = useState<string | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
 
   const loadProducts = useCallback(async () => {
     const response = await authFetch("/api/sov2/products");
@@ -1294,17 +1302,17 @@ export default function SeguimientoOperativo() {
 
     return [
       { label: "Clientes visibles", value: numberFormatter.format(filtered.length), sub: `${numberFormatter.format(opportunities.length)} cargados`, progress: visibleProgress },
-      { label: "Total lÃ­neas", value: metricsLoading ? "..." : numberFormatter.format(realSoldQuantity), sub: "Vendido real en Comisiones", progress: null },
-      { label: "Total $", value: metricsLoading ? "..." : formatMoney(realSoldMoney), sub: `${Math.round(moneyProgress)}% de meta dinero`, progress: moneyProgress },
-      { label: "ProyecciÃ³n $", value: metricsLoading ? "..." : formatMoney(projectionMoney), sub: "Oportunidades abiertas SOV2", progress: null },
-      { label: "ProyecciÃ³n lÃ­neas", value: metricsLoading ? "..." : numberFormatter.format(projectionQuantity), sub: "Lineas abiertas SOV2", progress: null },
-      { label: "Meta Dinero", value: metricsLoading ? "..." : formatMoney(metaMoney), sub: "MPLS + Fijo Ren + Fijo New", progress: 100 },
-      { label: "Falta Dinero", value: metricsLoading ? "..." : formatMoney(faltaMoney), sub: `${remainingDays} dias habiles restantes`, progress: metaMoney > 0 ? (faltaMoney / metaMoney) * 100 : 0 },
-      { label: "Diario Dinero", value: metricsLoading ? "..." : formatMoney(dailyMoney), sub: "Ritmo requerido por dia", progress: remainingDays > 0 ? 100 / remainingDays : 0 },
-      { label: "Cantidad vendida", value: metricsLoading ? "..." : numberFormatter.format(realSoldQuantity), sub: `${Math.round(quantityProgress)}% de meta cantidad`, progress: quantityProgress },
-      { label: "Meta Cantidad", value: metricsLoading ? "..." : numberFormatter.format(metaQuantity), sub: "Movil + TV + Cloud", progress: 100 },
-      { label: "Falta Cantidad", value: metricsLoading ? "..." : numberFormatter.format(faltaQuantity), sub: `${remainingDays} dias habiles restantes`, progress: metaQuantity > 0 ? (faltaQuantity / metaQuantity) * 100 : 0 },
-      { label: "Diario Cantidad", value: metricsLoading ? "..." : numberFormatter.format(Math.ceil(dailyQuantity)), sub: "Ritmo requerido por dia", progress: remainingDays > 0 ? 100 / remainingDays : 0 },
+      { label: "Total líneas", value: metricsLoading ? "..." : numberFormatter.format(realSoldQuantity), sub: "Vendido real en Comisiones", sub2: metricsLoading ? undefined : `${formatMoney(realSoldMoney)} en dinero`, progress: null },
+      { label: "Total $", value: metricsLoading ? "..." : formatMoney(realSoldMoney), sub: `${Math.round(moneyProgress)}% de meta dinero`, sub2: metricsLoading ? undefined : `${numberFormatter.format(realSoldQuantity)} líneas vendidas`, progress: moneyProgress },
+      { label: "Proyección $", value: metricsLoading ? "..." : formatMoney(projectionMoney), sub: "Oportunidades abiertas SOV2", sub2: metricsLoading ? undefined : `${numberFormatter.format(projectionQuantity)} líneas en seguimiento`, progress: null },
+      { label: "Proyección líneas", value: metricsLoading ? "..." : numberFormatter.format(projectionQuantity), sub: "Líneas abiertas SOV2", sub2: metricsLoading ? undefined : `${formatMoney(projectionMoney)} en seguimiento`, progress: null },
+      { label: "Meta Dinero", value: metricsLoading ? "..." : formatMoney(metaMoney), sub: "MPLS + Fijo Ren + Fijo New", sub2: metricsLoading ? undefined : `Meta cantidad: ${numberFormatter.format(metaQuantity)} líneas`, progress: 100 },
+      { label: "Falta Dinero", value: metricsLoading ? "..." : formatMoney(faltaMoney), sub: `${remainingDays} días hábiles restantes`, sub2: metricsLoading ? undefined : `Falta cantidad: ${numberFormatter.format(faltaQuantity)} líneas`, progress: metaMoney > 0 ? (faltaMoney / metaMoney) * 100 : 0 },
+      { label: "Diario Dinero", value: metricsLoading ? "..." : formatMoney(dailyMoney), sub: "Ritmo requerido por día", sub2: metricsLoading ? undefined : `Diario cantidad: ${numberFormatter.format(Math.ceil(dailyQuantity))} líneas`, progress: remainingDays > 0 ? 100 / remainingDays : 0 },
+      { label: "Cantidad vendida", value: metricsLoading ? "..." : numberFormatter.format(realSoldQuantity), sub: `${Math.round(quantityProgress)}% de meta cantidad`, sub2: metricsLoading ? undefined : `${formatMoney(realSoldMoney)} en dinero`, progress: quantityProgress },
+      { label: "Meta Cantidad", value: metricsLoading ? "..." : numberFormatter.format(metaQuantity), sub: "Movil + TV + Cloud", sub2: metricsLoading ? undefined : `Meta dinero: ${formatMoney(metaMoney)}`, progress: 100 },
+      { label: "Falta Cantidad", value: metricsLoading ? "..." : numberFormatter.format(faltaQuantity), sub: `${remainingDays} días hábiles restantes`, sub2: metricsLoading ? undefined : `Falta dinero: ${formatMoney(faltaMoney)}`, progress: metaQuantity > 0 ? (faltaQuantity / metaQuantity) * 100 : 0 },
+      { label: "Diario Cantidad", value: metricsLoading ? "..." : numberFormatter.format(Math.ceil(dailyQuantity)), sub: "Ritmo requerido por día", sub2: metricsLoading ? undefined : `Diario dinero: ${formatMoney(dailyMoney)}`, progress: remainingDays > 0 ? 100 / remainingDays : 0 },
     ];
   }, [filtered, metrics, metricsLoading, opportunities.length]);
 
@@ -1466,6 +1474,39 @@ export default function SeguimientoOperativo() {
     }
   };
 
+  const handleImportSearch = useCallback(async (q: string) => {
+    setImportQuery(q);
+    if (!q.trim()) { setImportResults([]); return; }
+    setImportSearching(true);
+    try {
+      const res = await authFetch(`/api/clients/search?q=${encodeURIComponent(q)}`);
+      const data = await readJson<Array<{ id: string; name: string; business_name: string | null; phone: string | null; salesperson_name: string | null }>>(res);
+      setImportResults(Array.isArray(data) ? data.slice(0, 8) : []);
+    } catch { setImportResults([]); }
+    finally { setImportSearching(false); }
+  }, []);
+
+  const handleImportClient = async (clientId: string) => {
+    setImportingId(clientId);
+    setImportError(null);
+    try {
+      const res = await authFetch("/api/sov2/opportunities/from-client", {
+        method: "POST",
+        json: { client_id: clientId, product_key: "fijo_new" },
+      });
+      const created = await readJson<Sov2Opportunity>(res);
+      setOpportunities((cur) => [created, ...cur.filter((o) => o.id !== created.id)]);
+      setImportClientOpen(false);
+      setImportQuery("");
+      setImportResults([]);
+      setSearch(created.client_name);
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : "No se pudo importar el cliente.");
+    } finally {
+      setImportingId(null);
+    }
+  };
+
   const handleStepFilterChange = (productKey: ProductKey, values: string[]) => {
     setStepFilters((current) => ({ ...current, [productKey]: values }));
   };
@@ -1505,16 +1546,16 @@ export default function SeguimientoOperativo() {
             </div>
             <div>
               <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-indigo-300">Asana + CRM Comercial</div>
-              <h1 className="text-2xl font-semibold tracking-normal text-white sm:text-[2rem]">Asana Comercial</h1>
+              <h1 className="text-2xl font-semibold tracking-normal text-white sm:text-[2rem]">Asana Seg.</h1>
             </div>
           </div>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300 sm:text-[15px]">
-            Una vista limpia, directa y profesional para que el vendedor entienda rÃ¡pido quÃ© trabajar, quÃ© empujar y dÃ³nde estÃ¡ el dinero.
+            Una vista limpia, directa y profesional para que el vendedor entienda rápido qué trabajar, qué empujar y dónde está el dinero.
           </p>
           <div className="mt-4 flex flex-wrap gap-2 text-[11px] font-semibold text-slate-300">
             <span className="rounded-full border border-cyan-400/20 bg-cyan-500/10 px-3 py-1">VISTA CON FOCO</span>
             <span className="rounded-full border border-emerald-400/20 bg-emerald-500/10 px-3 py-1">METAS VISIBLES</span>
-            <span className="rounded-full border border-violet-400/20 bg-violet-500/10 px-3 py-1">ACCIONES RÃPIDAS</span>
+            <span className="rounded-full border border-violet-400/20 bg-violet-500/10 px-3 py-1">ACCIONES RÁPIDASÃPIDAS</span>
           </div>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap xl:justify-end">
@@ -1528,6 +1569,14 @@ export default function SeguimientoOperativo() {
           >
             <Plus className="h-4 w-4" />
             Cliente nuevo
+          </button>
+          <button
+            type="button"
+            onClick={() => { setImportError(null); setImportQuery(""); setImportResults([]); setImportClientOpen(true); }}
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-sky-400/40 bg-sky-500/15 px-4 text-sm font-semibold text-sky-100 transition hover:bg-sky-500/25"
+          >
+            <Search className="h-4 w-4" />
+            Importar cliente
           </button>
           <button
             type="button"
@@ -1763,6 +1812,60 @@ export default function SeguimientoOperativo() {
             if (!newOpportunitySaving) setNewOpportunityOpen(false);
           }}
         />
+      )}
+      {importClientOpen && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 pt-24 backdrop-blur-sm" onClick={(e) => { if (e.target === e.currentTarget) { setImportClientOpen(false); } }}>
+          <div className="w-full max-w-lg rounded-2xl border border-sky-400/20 bg-slate-950 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 px-5 py-4">
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-sky-400">Flow 3</div>
+                <h2 className="text-lg font-semibold text-white">Importar cliente existente</h2>
+              </div>
+              <button type="button" onClick={() => setImportClientOpen(false)} className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-700 bg-slate-900 text-slate-300 transition hover:border-slate-500">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="p-5">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <input
+                  autoFocus
+                  type="text"
+                  placeholder="Buscar por nombre, empresa o teléfono..."
+                  value={importQuery}
+                  onChange={(e) => handleImportSearch(e.target.value)}
+                  className="h-10 w-full rounded-xl border border-slate-700 bg-slate-900 pl-9 pr-4 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-sky-500"
+                />
+                {importSearching && <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-sky-400" />}
+              </div>
+              {importError && <p className="mt-2 text-xs text-red-400">{importError}</p>}
+              <div className="mt-3 max-h-72 overflow-y-auto space-y-1">
+                {importResults.length === 0 && importQuery.trim() && !importSearching && (
+                  <p className="py-6 text-center text-sm text-slate-500">No se encontraron clientes.</p>
+                )}
+                {importResults.map((c) => (
+                  <div key={c.id} className="flex items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-3 transition hover:border-slate-700">
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-semibold text-white">{c.business_name || c.name}</div>
+                      {c.business_name && c.name && <div className="truncate text-[11px] text-slate-400">{c.name}</div>}
+                      {c.phone && <div className="text-[11px] text-slate-500">{c.phone}</div>}
+                      {c.salesperson_name && <div className="text-[11px] text-slate-500">{c.salesperson_name}</div>}
+                    </div>
+                    <button
+                      type="button"
+                      disabled={importingId === c.id}
+                      onClick={() => handleImportClient(c.id)}
+                      className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-sky-500/40 bg-sky-500/15 px-3 text-xs font-semibold text-sky-200 transition hover:bg-sky-500/25 disabled:opacity-50"
+                    >
+                      {importingId === c.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
+                      Importar
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
       )}
       {notesModalOpportunity && (
         <NotesModal

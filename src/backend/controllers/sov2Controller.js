@@ -1251,6 +1251,150 @@ export async function createSov2Opportunity(req, res) {
   }
 }
 
+// ─── Flow 3: importar cliente existente a Seguimiento ──────────────────────
+export async function createSov2OpportunityFromClient(req, res) {
+  const client = await getClient();
+  try {
+    const clientId = cleanText(req.body?.client_id);
+    const productKey = cleanText(req.body?.product_key || 'fijo_new');
+    const note = cleanText(req.body?.note);
+    const rawSalespersonId = cleanText(req.body?.salesperson_id);
+    const role = normalizeRole(req.user?.role);
+    const authSalespersonId = cleanText(req.user?.salespersonId);
+    const salespersonId = role === 'vendedor' ? authSalespersonId : rawSalespersonId || authSalespersonId || null;
+
+    if (!clientId || !isUuidLike(clientId)) {
+      return res.status(400).json({ error: 'client_id invalido' });
+    }
+    if (!PRODUCT_KEYS.has(productKey)) {
+      return res.status(400).json({ error: 'Producto invalido' });
+    }
+
+    // Verificar que el cliente existe
+    const clientRows = await client.query(
+      `SELECT id, COALESCE(NULLIF(TRIM(name),''), NULLIF(TRIM(business_name),''), 'Sin nombre') AS display_name,
+              phone, salesperson_id
+         FROM clients WHERE id = $1 LIMIT 1`,
+      [clientId]
+    );
+    if (clientRows.rows.length === 0) {
+      return res.status(404).json({ error: 'Cliente no encontrado' });
+    }
+    const existingClient = clientRows.rows[0];
+    const clientName = existingClient.display_name;
+
+    // Verificar que no tiene ya una oportunidad activa en SOV2
+    const existingOpp = await client.query(
+      `SELECT id FROM sales_opportunities
+        WHERE client_id = $1 AND archived_at IS NULL LIMIT 1`,
+      [clientId]
+    );
+    if (existingOpp.rows.length > 0) {
+      return res.status(409).json({ error: 'Este cliente ya está en Seguimiento.' });
+    }
+
+    const resolvedSalespersonId = salespersonId || existingClient.salesperson_id || null;
+    const parts = productKeyParts(productKey);
+    const product = SOV2_PRODUCTS.find((item) => item.product_key === productKey);
+    const title = cleanText(req.body?.title) || `${product?.label || productKey} - ${clientName}`;
+    const opportunityType = parts.sale_type === 'ren' ? 'renovacion' : (parts.product_type === 'fijo' ? 'internet' : 'nueva_linea');
+    const lineValue = numericOrNull(req.body?.value);
+    const safeValue = Number.isFinite(lineValue) ? Number(lineValue) : 0;
+    const lineQuantity = numericOrNull(req.body?.quantity);
+    const safeQuantity = Number.isFinite(lineQuantity)
+      ? Math.max(1, Math.round(Number(lineQuantity)))
+      : (MONEY_KEYS.has(productKey) ? 2 : Math.max(1, Math.round(safeValue || 1)));
+
+    await client.query('BEGIN');
+
+    const opportunityRows = await client.query(
+      `INSERT INTO sales_opportunities (
+         client_id, salesperson_id, title, description, opportunity_type, status, priority,
+         expected_monthly_value, source, created_by, product_type, sale_type, created_at, updated_at
+       )
+       VALUES ($1, $2, $3, $4, $5, 'activa', 'media', $6, 'opportunity_manual', $2, $7, $8, NOW(), NOW())
+       RETURNING id`,
+      [
+        clientId,
+        resolvedSalespersonId,
+        title,
+        note || 'Importado desde cliente existente.',
+        opportunityType,
+        MONEY_KEYS.has(productKey) ? safeValue : 0,
+        parts.product_type,
+        parts.sale_type,
+      ]
+    );
+    const opportunityId = opportunityRows.rows[0].id;
+
+    const lineRows = await client.query(
+      `INSERT INTO opportunity_lines (
+         opportunity_id, client_id, line_mode, product_key, product_type, sale_type,
+         temp_label, money_value, quantity_value, status, notes, created_at, updated_at
+       )
+       VALUES ($1, $2, 'nueva_sin_numero', $3, $4, $5, $6, $7, $8, 'incluida', $9, NOW(), NOW())
+       RETURNING id`,
+      [
+        opportunityId,
+        clientId,
+        productKey,
+        parts.product_type,
+        parts.sale_type,
+        'Importado desde cliente existente',
+        MONEY_KEYS.has(productKey) ? safeValue : 0,
+        safeQuantity,
+        note || 'Linea creada al importar cliente existente a Seguimiento.',
+      ]
+    );
+    const lineId = lineRows.rows[0].id;
+
+    const templateSteps = await fetchActiveProductTemplateSteps(productKey);
+    for (const [index, step] of templateSteps.entries()) {
+      await client.query(
+        `INSERT INTO opportunity_steps (
+           opportunity_id, line_id, product_key, step_order, name, description,
+           status, assigned_to, source, created_at, updated_at
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'auto', NOW(), NOW())`,
+        [
+          opportunityId,
+          lineId,
+          productKey,
+          step.step_order || index + 1,
+          step.name,
+          step.description || null,
+          index === 0 ? 'en_progreso' : 'pendiente',
+          resolvedSalespersonId,
+        ]
+      );
+    }
+
+    await client.query('COMMIT');
+
+    const opportunityRowsForResponse = await fetchOpportunityRows(req, opportunityId);
+    const [lineRowsForResponse, stepRowsForResponse, noteSummaries, subscriberSummaries] = await Promise.all([
+      fetchLines([opportunityId]),
+      fetchSteps([opportunityId]),
+      fetchNoteSummaries([opportunityId]),
+      fetchSubscriberProductSummaries(opportunityRowsForResponse),
+    ]);
+
+    return res.status(201).json(mapOpportunities(
+      opportunityRowsForResponse,
+      lineRowsForResponse,
+      stepRowsForResponse,
+      noteSummaries,
+      subscriberSummaries
+    )[0]);
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => null);
+    console.error('[SOV2] import from client error:', error);
+    return res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Error importando cliente a Seguimiento' });
+  } finally {
+    client.release();
+  }
+}
+
 export async function getSov2Metrics(req, res) {
   try {
     const goalMetrics = await fetchSov2GoalMetrics(req);
