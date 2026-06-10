@@ -1029,48 +1029,28 @@ export default function Reports() {
   const getEffectiveVendorCommission = useCallback((row: {
     id: string;
     vendor_commission?: number | null;
-    company_earnings?: number | null;
-    salesperson_commission_percentage?: number | null;
-    suggested_vendor_commission?: number | null;
-    effective_vendor_commission?: number | null;
   }) => {
     if (editingVendorComm[row.id] !== undefined) {
       const parsed = parseFloat(editingVendorComm[row.id]);
       return Number.isFinite(parsed) ? parsed : 0;
     }
-    if (row.vendor_commission != null && Number(row.vendor_commission) > 0) {
-      return Number(row.vendor_commission);
-    }
-    const currentCompanyEarn = getCurrentCompanyEarnings(row);
-    return Number(
-      row.effective_vendor_commission
-      ?? calculateSuggestedVendorCommission(currentCompanyEarn, row.salesperson_commission_percentage)
-      ?? row.suggested_vendor_commission
-      ?? 0
-    );
-  }, [editingVendorComm, getCurrentCompanyEarnings]);
+    // Solo lo que Tango mandó. Sin fallback a % calculado.
+    return row.vendor_commission != null && Number(row.vendor_commission) > 0
+      ? Number(row.vendor_commission)
+      : 0;
+  }, [editingVendorComm]);
 
   const getVendorCommissionInputValue = useCallback((row: {
     id: string;
     vendor_commission?: number | null;
-    company_earnings?: number | null;
-    salesperson_commission_percentage?: number | null;
-    suggested_vendor_commission?: number | null;
-    effective_vendor_commission?: number | null;
   }) => {
     if (editingVendorComm[row.id] !== undefined) {
       return editingVendorComm[row.id];
     }
-    const currentCompanyEarn = getCurrentCompanyEarnings(row);
-    const effectiveValue = row.vendor_commission != null && Number(row.vendor_commission) > 0
-      ? Number(row.vendor_commission)
-      : (
-          row.effective_vendor_commission
-          ?? calculateSuggestedVendorCommission(currentCompanyEarn, row.salesperson_commission_percentage)
-          ?? row.suggested_vendor_commission
-        );
-    return effectiveValue != null ? String(effectiveValue) : '';
-  }, [editingVendorComm, getCurrentCompanyEarnings]);
+    // Si Tango mandó 0/null → campo vacío (editable). Sin sugerencias calculadas.
+    const stored = row.vendor_commission;
+    return (stored != null && Number(stored) > 0) ? String(Number(stored)) : '';
+  }, [editingVendorComm]);
 
   const totals = useMemo(() => {
     return confirmedRows.reduce((acc, row) => {
