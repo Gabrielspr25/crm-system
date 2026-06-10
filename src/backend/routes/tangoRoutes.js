@@ -1436,27 +1436,8 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
       if (f) fechaByVentaid.set(Number(ventaid), f);
     }
 
-    // â”€â”€ 3a.bis: Pre-cargar commission_percentage por salesperson â”€â”€
-    // Usado para calcular vendor_commission cuando Tango trae com_vendedor=NULL/0.
-    // La regla: si Tango omite comision pero hay company_earnings > 0, completar
-    // con vendor.commission_percentage del salesperson asignado al cliente.
-    // No cambia categoria (line_kind/account_type sigue intacto).
-    const vendorPctBySpId = new Map();
-    try {
-      const pctRows = await crmPool.query(`
-        SELECT vsm.salesperson_id::text AS sp_id, v.commission_percentage::numeric AS pct
-          FROM vendors v
-          JOIN vendor_salesperson_mapping vsm ON vsm.vendor_id = v.id
-         WHERE v.commission_percentage IS NOT NULL
-           AND v.commission_percentage > 0
-      `);
-      for (const r of pctRows.rows) {
-        vendorPctBySpId.set(String(r.sp_id), Number(r.pct));
-      }
-    } catch (err) {
-      // tabla puede no existir en alguna instalaciÃ³n â€” sigue sin map (regla = no calcula)
-      console.warn('[SYNC] No se pudo pre-cargar vendor commission_percentage:', err.message);
-    }
+    // vendor_commission viene exclusivamente de Tango (com_vendedor).
+    // No se calcula desde commission_percentage local — vendorPctBySpId eliminado.
 
     // â”€â”€ 3b. Cleanup DESACTIVADO TEMPORALMENTE â”€â”€
     // Solo loguea lo que hubiera borrado. NO ejecuta DELETE.
@@ -1917,24 +1898,11 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
         // â”€â”€ PASO 3: Upsert subscriber_report â”€â”€
         // Protege company_earnings cargado manualmente: solo se actualiza si es NULL o = 0.
         //
-        // vendor_commission: si Tango trae comVendedor > 0, se usa tal cual.
-        // Si Tango trae 0/NULL Y hay company_earnings > 0 Y conocemos el % del
-        // vendor asignado al cliente, calculamos: company * (pct/100). No cambia
-        // categoria (line_kind/account_type intactos), solo completa el monto.
-        let effectiveVendorCommission = comVendedor;
-        let pctUsed = null;
-        if ((!comVendedor || comVendedor <= 0) && comEmpresa > 0) {
-          const spIdForVendor = clientRecord?.salesperson_id || spId || null;
-          if (spIdForVendor) {
-            const pct = vendorPctBySpId.get(String(spIdForVendor));
-            if (pct && pct > 0) {
-              pctUsed = pct;
-              effectiveVendorCommission = Math.round(comEmpresa * (pct / 100) * 100) / 100;
-              alert('info', banNum,
-                `Venta ${v.ventaid}: vendor_commission calculado ${effectiveVendorCommission} (${pct}% de ${comEmpresa})`);
-            }
-          }
-        }
+        // vendor_commission: se usa exactamente lo que Tango manda (com_vendedor).
+        // Si Tango trae 0/NULL, se guarda 0 y el campo queda editable en el front.
+        // NO se calcula desde porcentaje local — Tango es la fuente de verdad.
+        const effectiveVendorCommission = comVendedor;
+        const pctUsed = null;
         // Pre-leer valores actuales en CRM para detectar cambios desde Tango.
         // Tango es fuente de verdad: cuando trae un valor > 0, sobreescribe.
         // Si Tango trae 0/NULL, se preserva el valor existente en CRM (ediciones).
@@ -1983,7 +1951,6 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
         const validationIssues = [];
         if (!isIncludedFixedBundle) {
           if (!(comEmpresa > 0)) validationIssues.push('com_empresa<=0');
-          if (!(effectiveVendorCommission > 0)) validationIssues.push('com_vendedor<=0');
           if (!(monthlyValue > 0)) validationIssues.push('mensualidad_sin_rate');
         }
         if (!spId && !String(v.vendedor || '').trim()) validationIssues.push('vendedor_no_mapeado');
@@ -2097,9 +2064,6 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
           stats.reports_vendor_updated = (stats.reports_vendor_updated || 0) + 1;
         }
         stats.reports_upserted++;
-        if (pctUsed !== null) {
-          stats.vendor_commission_calculated = (stats.vendor_commission_calculated || 0) + 1;
-        }
 
       } catch (ventaErr) {
         alert('error', v.ban || '', `Venta ${v.ventaid}: ${ventaErr.message}`);
