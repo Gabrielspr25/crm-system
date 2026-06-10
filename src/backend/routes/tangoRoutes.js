@@ -1481,7 +1481,15 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
         const contractTerm = Number.isFinite(Number(v.meses)) ? Number(v.meses) : null;
         const contractEndDate = contractTerm && contractTerm > 0 ? addMonthsYmd(v.fechaactivacion, contractTerm) : null;
         const comEmpresa = parseFloat(v.com_empresa);
-        const comVendedor = parseFloat(v.com_vendedor);
+        // Guard: si Tango manda com_vendedor == com_empresa, es un dato anómalo
+        // (el vendedor no puede ganar lo mismo que la empresa). Se trata como 0.
+        const rawComVendedor = parseFloat(v.com_vendedor);
+        const comVendedor = (rawComVendedor > 0 && Math.abs(rawComVendedor - comEmpresa) < 0.01)
+          ? 0
+          : rawComVendedor;
+        if (comVendedor === 0 && rawComVendedor > 0) {
+          alert('warn', banNum, `Venta ${v.ventaid}: com_vendedor=${rawComVendedor} == com_empresa, tratado como 0`);
+        }
         const portabilityBonus = parseFloat(v.portability_bonus) || 0;
         const sourceActivationDate = toYmd(v.fechaactivacion);
         // Para Fijo (140,141) phone puede ser vacÃ­o, para MÃ³vil (138,139) es obligatorio
