@@ -65,6 +65,9 @@ notas-*
 *.pdf
 *.traineddata
 
+# Excepción: PDFs oficiales de ofertas SÍ se versionan
+!documentos-ofertas/**/*.pdf
+
 # Scripts standalone con secretos potenciales (NUNCA commitear)
 # (versionada solo la variante sin password hardcoded — la actual lee de env)
 
