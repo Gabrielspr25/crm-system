@@ -8,6 +8,7 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import * as ctrl from '../controllers/planesModulosController.js';
+import * as previewCtrl from '../controllers/planesPreviewController.js';
 
 const router = express.Router();
 
@@ -32,6 +33,23 @@ const requireAdmin = (req, res, next) => {
   if (role === 'admin' || role === 'supervisor') return next();
   return res.status(403).json({ ok: false, error: 'Se requiere rol admin o supervisor.' });
 };
+
+// Multer para el constructor: acepta PDF y Excel
+const uploadDoc = multer({
+  dest: PDF_UPLOAD_DIR,
+  limits: { fileSize: 20 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (['.pdf', '.xlsx', '.xls'].includes(ext)) cb(null, true);
+    else cb(new Error('Solo se aceptan archivos PDF o Excel'));
+  }
+});
+
+// ── Constructor de Ofertas (preview + apply) ──
+// POST /api/planes-modulos/preview            — sube doc, detecta tipo, devuelve diff (NO aplica)
+router.post('/preview', requireAdmin, uploadDoc.single('documento'), previewCtrl.previewDocumento);
+// POST /api/planes-modulos/apply/:previewId   — aplica cambios de un preview aprobado
+router.post('/apply/:previewId', requireAdmin, previewCtrl.applyPreview);
 
 // GET  /api/planes-modulos/admin/all     — todos los módulos (admin)
 router.get('/admin/all', requireAdmin, ctrl.getAllModulosAdmin);

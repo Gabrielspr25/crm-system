@@ -34,7 +34,7 @@ Uploads se guardan en `/opt/crmp/uploads/pdf-planes` (máx. 20MB, solo PDF).
 
 | # | Documento | Formato | Página destino | Parser | Estado |
 |---|---|---|---|---|---|
-| 1 | Listado Estructura Planes PYMES/Negocios (fijos) | PDF (3 págs, 13 categorías) | `fijos` | `parse_planes_fijos_pdf.py` | **POR CREAR** |
+| 1 | Listado Estructura Planes PYMES/Negocios (fijos) | PDF (3 págs, 13 categorías) | `fijos` | `parse_planes_fijos_pdf.py` | ✅ v1 (96 filas validadas con v15) |
 | 2 | Lista de Precios Móviles (4 tabs/pestañas) | Excel | `moviles` | `parse_precios_moviles_xlsx.py` | **POR CREAR** |
 | 3 | Boletín Internet On The Go / Inalámbrico | PDF | `inalambrico` | `parse_equipos_pdf.py` | ✅ Existe (v2) |
 | 4 | Ofertas futuras | PDF/Excel | según corresponda | extensible | Pendiente definir |
@@ -119,9 +119,19 @@ categoría definida; `Planes para web/` NO guarda documentos fuente (es el front
 
 ## Orden de trabajo propuesto
 
-1. `parse_planes_fijos_pdf.py` (parser listado fijos, salida compatible con `contenido` de módulos).
-2. Endpoint `preview` con detección de tipo + diff (sin tocar lo existente).
-3. Pantalla de revisión/aprobación en admin-planes.
-4. Endpoint `apply` + migración `planes_documentos` (historial/rollback).
-5. `parse_precios_moviles_xlsx.py` (cuando llegue el Excel de móviles con sus 4 tabs).
-6. Soporte Excel en multer (hoy solo PDF).
+1. ✅ `parse_planes_fijos_pdf.py` (parser listado fijos). 2026-06-10.
+2. ✅ Endpoint `preview` con detección de tipo + diff — `planesPreviewController.js`. 2026-06-10.
+3. Pantalla de revisión/aprobación en admin-planes. ← SIGUIENTE
+4. ✅ Endpoint `apply` (transacción + snapshot a disco en `/opt/crmp/uploads/pdf-planes/snapshots/`).
+   Pendiente: migración `planes_documentos` para historial consultable + rollback por API.
+5. `parse_precios_moviles_xlsx.py` (Excel "Lista de Precios 28may-31jul 2026", 4 tabs).
+6. ✅ Soporte Excel en multer (ruta `/preview` acepta .pdf/.xlsx; Excel responde 422 hasta tener parser).
+
+## Notas de implementación (preview/apply)
+
+- Previews en memoria del proceso (Map, TTL 30 min) — válido con PM2 en proceso único.
+- Detección de tipo: intenta parser fijos → parser equipos → 422 sin tocar nada.
+- Match documento↔módulo: por `seccion_key` o título normalizado.
+- Diff por clave `codigo|alfa_code`: nuevos / ausentes / modificados (precio, descripcion, tecnologia).
+- Apply NO desactiva filas ausentes automáticamente: reemplaza filas del módulo con las del
+  documento aprobado (las ausentes desaparecen del portal pero quedan en el snapshot).
