@@ -145,15 +145,21 @@ Estos son los unicos tipos permitidos para Comisiones/Tango V2:
 
 IDs reales confirmados hasta junio 2026:
 
+La decision se toma por NOMBRE del tipo, no por id. Un mismo id (25/26) puede
+llegar como "Corp Update" (entra) o como "Claro Update" (NO entra).
+
 | ventatipo_id | Nombre Tango | Regla |
 |---:|---|---|
 | 8 | BA CORP NEW | Permitir |
-| 25 | Corp/Claro Update New | Permitir |
-| 26 | Corp/Claro Update Ren | Permitir |
+| 25 | Corp Update New | Permitir (NO "Claro Update New") |
+| 26 | Corp Update Ren | Permitir (NO "Claro Update Ren") |
 | 138 | PYMES Update REN | Permitir |
 | 139 | PYMES Update NEW | Permitir |
 | 140 | PYMES Fijo REN | Permitir |
 | 141 | PYMES Fijo NEW | Permitir |
+
+IMPORTANTE: "Claro Update New" / "Claro Update Ren" NO entran a Comisiones,
+aunque traigan comision real. Solo los 12 nombres oficiales de la seccion 4.
 
 ---
 
@@ -245,8 +251,9 @@ Estos ventaid deben usarse para validar el contrato:
 
 | ventaid | Tipo esperado | Regla |
 |---:|---|---|
-| 80099 | 26 Claro Update REN | Debe entrar, usar `comisiones.total` |
-| 80087 | 25 Claro Update NEW | Debe entrar |
+| 80099 | 26 Claro Update REN | NO debe entrar (nombre "Claro Update") |
+| 80087 | 25 Claro Update NEW | NO debe entrar (nombre "Claro Update") |
+| 80124 | 140 PYMES Fijo REN | Debe entrar, usar `comisiones.total` |
 | 80071 | 138 PYMES Update REN | Debe seguir entrando |
 | 80093 | 139 PYMES Update NEW | Debe seguir entrando |
 | 80096 | 140 PYMES Fijo REN | Debe seguir entrando |
@@ -308,3 +315,34 @@ Si la venta no es PYMES o es ambigua, queda en pendientes para revision.
 El sync no debe perder ventas comisionables por allowlists hardcodeadas.
 Comisiones debe mostrar lo que Tango V2 confirma, con revision solo cuando falten datos operativos.
 ```
+
+---
+
+## 10. Fix Sync Filtro PYMES (2026-06-16)
+
+### Sintoma
+El dashboard de Comisiones mostraba el badge "V2: 0 ventas", "0 reportes" y ~229
+alertas tras correr el sync, aunque el API V2 si tenia ventas reales. La tabla
+mostraba datos viejos (de syncs previos), no las ventas actuales de Tango.
+
+### Causa raiz
+`runTangoSync` mapeaba cada venta con `mapTangoApiV2SaleToSyncRow` y luego filtraba
+con `shouldIncludeTangoV2SaleForCommissions(row, row)`. El row mapeado NO incluia
+`ventatipo_nombre`, y el filtro PyMES (`isAllowedPymesCommissionVentaTipo`) decide
+la inclusion EXCLUSIVAMENTE por nombre. Nombre vacio -> ninguna venta pasaba el
+filtro -> 0 ventas / 0 reportes. Las 229 alertas eran el cleanup-desactivado
+marcando como obsoletos a los 229 subscribers existentes (no borro nada porque el
+cleanup estaba apagado).
+
+### Fix
+1. `mapTangoApiV2SaleToSyncRow` ahora incluye `ventatipo_nombre` en el row mapeado,
+   para que el filtro reciba el nombre del tipo. (`src/backend/services/tangoV2SyncMapper.js`)
+2. Rango del sync cambiado de `2026-01-01` a `2026-05-01`: Comisiones solo trae
+   ventas desde mayo 2026. (`src/react-app/pages/Reports.tsx`)
+3. Tests de regresion en `tests/vigia/tango-v2-sync-source.test.js` que verifican
+   que el row mapeado conserva el nombre y que una tanda de ventas PyMES no se
+   vacia al pasar por map + filter.
+
+### Regla de rango
+Comisiones se alimenta solo del API Tango V2, desde `2026-05-01` en adelante.
+El historico anterior a mayo vive en Tango, no se sincroniza al CRM.

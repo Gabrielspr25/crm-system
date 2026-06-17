@@ -449,7 +449,7 @@ export default function Reports() {
   const handleSyncTango = async () => {
     if (syncing) return;
     const today = new Date().toISOString().slice(0, 10);
-    const from = '2026-01-01';
+    const from = '2026-05-01';
     if (!confirm(`¿Sincronizar comisiones Tango V2?\nRango: ${from} → ${today}\nTango API V2 es la fuente de verdad.`)) return;
     setSyncing(true);
     setSyncResult(null);
@@ -1312,7 +1312,7 @@ export default function Reports() {
           {/* Stats row */}
           <div className="flex flex-wrap gap-3 text-xs">
             <span className="bg-purple-900/40 text-purple-200 px-3 py-1.5 rounded-lg border border-purple-500/20 font-bold">
-              V2: {syncResult.stats.tango_ventas ?? syncResult.stats.tango_api_v2_sales ?? 0} ventas (2026-01-01 → hoy)
+              V2: {syncResult.stats.tango_ventas ?? syncResult.stats.tango_api_v2_sales ?? 0} ventas (2026-05-01 → hoy)
             </span>
             {syncResult.stats.clients_created > 0 && <span className="bg-green-900/40 text-green-200 px-3 py-1.5 rounded-lg border border-green-500/20">+{syncResult.stats.clients_created} clientes</span>}
             {syncResult.stats.bans_created > 0 && <span className="bg-green-900/40 text-green-200 px-3 py-1.5 rounded-lg border border-green-500/20">+{syncResult.stats.bans_created} BANs</span>}

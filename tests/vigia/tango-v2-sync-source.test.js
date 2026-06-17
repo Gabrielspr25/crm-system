@@ -6,7 +6,6 @@ import {
   isAllowedPymesCommissionVentaTipo,
   isPymesAutocreateVentaTipo,
   mapTangoApiV2SaleToSyncRow,
-  mergeTangoApiV2RowsWithLegacyRows,
   shouldIncludeTangoV2SaleForCommissions,
 } from '../../src/backend/services/tangoV2SyncMapper.js';
 
@@ -53,130 +52,48 @@ describe('Tango V2 sync source', () => {
     });
   });
 
-  it('mantiene V2 como fuente principal y solo completa con legacy cuando falta', () => {
-    const legacyRows = [
-      {
-        ventaid: '79989',
-        ban: '845452959',
-        phone: '9392454780',
-        plan_code: 'BREDP4',
-        ventatipoid: '139',
-        mensualidad: '30.00',
-        com_empresa: '148.50',
-        com_vendedor: '0.00',
-        fechaactivacion: '2026-05-05T00:00:00.000Z',
-        cliente: 'CARIBE TRACK',
-        vendedor: 'Gabriel Sanchez',
-      },
-    ];
-    const apiRows = [
-      {
-        ventaid: 79989,
-        ban: '845452959',
-        numerocelularactivado: 9392454780,
-        codigovoz: 'BREDP4',
-        ventatipo: { id: 139, nombre: 'PYMES Update NEW' },
-        fechaactivacion: '2026-05-05T00:00:00.000Z',
-        pagomensual: 30,
-        cliente: { nombre: 'CARIBE TRACK' },
-        vendedor: { id: 66, nombre: 'Gabriel' },
-      },
-      {
-        ventaid: 80036,
-        ban: '809070837',
-        numerocelularactivado: 7873798351,
-        codigovoz: 'BREDP1',
-        ventatipo: { id: 138, nombre: 'PYMES Update REN' },
-        fechaactivacion: '2026-05-22T00:00:00.000Z',
-        pagomensual: 65,
-        cliente: { nombre: 'GRUPO CLINICO DEL NOR' },
-        vendedor: { id: 66, nombre: 'Gabriel' },
-      },
-    ];
+  // Regresion: el sync (runTangoSync) mapea cada venta y luego filtra con
+  // shouldIncludeTangoV2SaleForCommissions(row, row). El row mapeado DEBE
+  // conservar ventatipo_nombre, porque el filtro decide la inclusion por el
+  // nombre del tipo. Si el row pierde el nombre, TODAS las ventas se excluyen
+  // y el sync trae 0 ventas / 0 reportes (bug del badge "V2: 0 ventas").
+  it('el row mapeado conserva ventatipo_nombre para que el filtro PyMES funcione', () => {
+    const sale = {
+      ventaid: 80124,
+      ban: '836838649',
+      ventatipo: { id: 140, nombre: 'PYMES Fijo REN' },
+      fechaactivacion: '2026-06-15T00:00:00.000Z',
+      pagomensual: 64.99,
+      cliente: { nombre: 'TOMAS JAVARIZ' },
+      vendedor: { id: 300, nombre: 'Dayana' },
+    };
+    const commission = { ventaid: 80124, comisiones: { comisionclaro: 577.47, total: 577.47 } };
 
-    const merged = mergeTangoApiV2RowsWithLegacyRows({ apiRows, legacyRows, commissionsById: new Map() });
+    const mapped = mapTangoApiV2SaleToSyncRow(sale, commission);
 
-    expect(merged.map((row) => Number(row.ventaid))).toEqual([79989, 80036]);
-    expect(merged.find((row) => Number(row.ventaid) === 79989)).toMatchObject({
-      source_priority: 'api_v2',
-      com_empresa: 148.5,
-    });
-    expect(merged.find((row) => Number(row.ventaid) === 80036)).toMatchObject({
-      source_priority: 'api_v2',
-      ban: '809070837',
-    });
+    // El nombre del tipo debe sobrevivir al mapeo.
+    expect(mapped.ventatipoid).toBe(140);
+    expect(mapped.ventatipo_nombre).toBe('PYMES Fijo REN');
+
+    // Exactamente como lo invoca runTangoSync: filter(row => shouldInclude(row, row)).
+    expect(shouldIncludeTangoV2SaleForCommissions(mapped, mapped)).toBe(true);
   });
 
-  it('incluye ventas V2-only de GRUPO CLINICO y conserva CARIBE TRACK de mayo 2026', () => {
-    const legacyRows = [
-      {
-        ventaid: '79989',
-        ban: '845452959',
-        phone: '9392454780',
-        plan_code: 'BREDP4',
-        ventatipoid: '139',
-        mensualidad: '30.00',
-        com_empresa: '148.50',
-        com_vendedor: '0.00',
-        fechaactivacion: '2026-05-05T00:00:00.000Z',
-        cliente: 'CARIBE TRACK',
-        vendedor: 'Gabriel Sanchez',
-      },
+  it('una tanda de ventas PyMES reales no se vacia al pasar por map + filter del sync', () => {
+    const sales = [
+      { ventaid: 1, ventatipo: { id: 139, nombre: 'PYMES Update NEW' }, ban: '1', comisiones: { total: 170 } },
+      { ventaid: 2, ventatipo: { id: 140, nombre: 'PYMES Fijo REN' }, ban: '2', comisiones: { total: 577.47 } },
+      { ventaid: 3, ventatipo: { id: 8, nombre: 'BA CORP NEW' }, ban: '3', comisiones: { total: 59.99 } },
+      // Estas NO deben entrar:
+      { ventaid: 4, ventatipo: { id: 26, nombre: 'Claro Update REN' }, ban: '4', comisiones: { total: 109 } },
+      { ventaid: 5, ventatipo: { id: 20, nombre: 'BYOP Prepaid' }, ban: '5', comisiones: { total: 15.6 } },
     ];
-    const apiRows = [
-      {
-        ventaid: 79989,
-        ban: '845452959',
-        numerocelularactivado: 9392454780,
-        codigovoz: 'BREDP4',
-        ventatipoid: 139,
-        fechaactivacion: '2026-05-05T00:00:00.000Z',
-        pagomensual: 30,
-        cliente: { nombre: 'CARIBE TRACK' },
-        vendedor: { id: 66, nombre: 'Gabriel' },
-      },
-      ...[80036, 80037, 80038, 80041].map((ventaid, index) => ({
-        ventaid,
-        ban: '809070837',
-        numerocelularactivado: `78737983${51 + index}`,
-        codigovoz: 'BREDP1',
-        ventatipoid: 138,
-        fechaactivacion: '2026-05-22T00:00:00.000Z',
-        pagomensual: 65,
-        cliente: { nombre: 'GRUPO CLINICO DEL NOR' },
-        vendedor: { id: 66, nombre: 'Gabriel' },
-      })),
-    ];
-    const commissionsById = new Map(
-      [80036, 80037, 80038, 80041].map((ventaid) => [
-        ventaid,
-        {
-          ventaid,
-          comisiones: {
-            comisionclaro: 156.2,
-            comisionvendedor: 0,
-            bonoportabilidad: 0,
-          },
-        },
-      ])
-    );
 
-    const merged = mergeTangoApiV2RowsWithLegacyRows({ apiRows, legacyRows, commissionsById });
-    const ventaIds = merged.map((row) => Number(row.ventaid));
+    const v2Rows = sales
+      .map((sale) => mapTangoApiV2SaleToSyncRow(sale, sale))
+      .filter((row) => shouldIncludeTangoV2SaleForCommissions(row, row));
 
-    expect(ventaIds).toEqual([79989, 80036, 80037, 80038, 80041]);
-    expect(merged.filter((row) => row.ban === '809070837')).toHaveLength(4);
-    expect(merged.filter((row) => row.cliente === 'GRUPO CLINICO DEL NOR').map((row) => Number(row.ventaid))).toEqual([
-      80036,
-      80037,
-      80038,
-      80041,
-    ]);
-    expect(merged.find((row) => Number(row.ventaid) === 79989)).toMatchObject({
-      source_priority: 'api_v2',
-      cliente: 'CARIBE TRACK',
-      ban: '845452959',
-    });
+    expect(v2Rows.map((r) => r.ventaid)).toEqual([1, 2, 3]);
   });
 
   it('usa comisiones.total como ganancia oficial cuando Tango V2 trae desglose', () => {

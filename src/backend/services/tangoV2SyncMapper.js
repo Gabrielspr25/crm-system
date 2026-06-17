@@ -273,6 +273,10 @@ export function mapTangoApiV2SaleToSyncRow(sale, commission = null) {
     ),
     meses: sale?.meses ?? null,
     ventatipoid: readVentaTipoId(sale) ?? readVentaTipoId(commission),
+    // El nombre del tipo DEBE viajar en el row mapeado: el filtro de comisiones
+    // (shouldIncludeTangoV2SaleForCommissions) decide la inclusion PyMES por
+    // nombre. Sin esto, runTangoSync filtra todas las ventas a 0.
+    ventatipo_nombre: readVentaTipoName(sale) ?? readVentaTipoName(commission),
     mensualidad,
     com_empresa: firstCommissionValue(explicitCommission.company, saleCommission.company),
     com_vendedor: firstCommissionValue(explicitCommission.vendor, saleCommission.vendor),
