@@ -236,6 +236,7 @@ function pendingFallbackSaleFromExternal(externalSale) {
     ban: externalSale?.ban,
     telefono: externalSale?.phone,
     ventatipoid: externalSale?.ventatipoid,
+    ventatipo_nombre: externalSale?.ventatipo_nombre,
     fechaactivacion: externalSale?.fechaactivacion,
     cliente: externalSale?.cliente,
     vendedor: externalSale?.vendedor,
@@ -1165,7 +1166,14 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
 
     // 0b. Tipos Tango: no se usa allowlist local para decidir si una venta existe.
     // Tango V2 decide existencia y comision; el CRM solo clasifica el tipo.
-    const getSaleTypeClassification = (sale) => classifyTangoVentaTipo(sale?.ventatipoid, sale?.ventatipo_nombre || sale?.tipo || sale?.nombre);
+    const getSaleTypeClassification = (sale) => {
+      const base = classifyTangoVentaTipo(sale?.ventatipoid, sale?.ventatipo_nombre || sale?.tipo || sale?.nombre);
+      const planCode = String(sale?.plan_code || sale?.codigovoz || '').trim().toUpperCase();
+      if (/^BA/.test(planCode)) {
+        return { ...base, family: 'movil' };
+      }
+      return base;
+    };
     const isMobileSale = (sale) => getSaleTypeClassification(sale).family === 'movil';
     const isFixedLikeSale = (sale) => !isMobileSale(sale);
 
@@ -1286,20 +1294,41 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
           // 2) Determinar nombre de cliente (priorizar cc.nombre Tango si existe y != 'SIN NOMBRE')
           const sampleVenta = ventasDelBan[0];
           const tangoClientName = String(sampleVenta.cliente || '').trim();
-          const usePlaceholder = !tangoClientName || tangoClientName.toUpperCase() === 'SIN NOMBRE';
-          const clientName = usePlaceholder ? `TANGO BAN ${banNum}` : tangoClientName;
+          const normalizedTangoClientName = tangoClientName.toUpperCase();
+          const missingClientName =
+            !tangoClientName ||
+            normalizedTangoClientName === 'SIN NOMBRE' ||
+            normalizedTangoClientName === 'NULL' ||
+            normalizedTangoClientName === 'N/A';
+          if (missingClientName) {
+            alert('error', banNum, `[AUTO] Revisar Tango: BAN ${banNum} no trae nombre de cliente. No se crea cliente placeholder.`);
+            for (const v of ventasDelBan) {
+              externalSales.push({
+                tango_ventaid: Number(v.ventaid),
+                ban: banNum,
+                ventatipoid: Number(v.ventatipoid),
+                ventatipo_nombre: v.ventatipo_nombre || v.tipo || v.nombre || null,
+                fechaactivacion: v.fechaactivacion ? String(v.fechaactivacion).slice(0, 10) : null,
+                vendedor: v.vendedor || null,
+                cliente: null,
+                com_empresa: Number(v.com_empresa || 0),
+                com_vendedor: Number(v.com_vendedor || 0),
+                motivo: 'cliente_tango_sin_nombre',
+              });
+            }
+            continue;
+          }
+          const clientName = tangoClientName;
 
           // 3) Resolver salesperson_id desde mapping del vendedor Tango
           const spId = findSalesperson(sampleVenta.vendedor, sampleVenta.tango_vendor_id, banNum);
 
-          // 4) Dedupe: si nombre real (no placeholder), buscar cliente existente
+          // 4) Dedupe por nombre real de Tango.
           let clientId = null;
-          if (!usePlaceholder) {
-            const existing = clientByName.get(clientName.toUpperCase());
-            if (existing) {
-              clientId = existing.id;
-              alert('info', banNum, `[AUTO] Cliente existente reutilizado por nombre: ${clientName}`);
-            }
+          const existing = clientByName.get(clientName.toUpperCase());
+          if (existing) {
+            clientId = existing.id;
+            alert('info', banNum, `[AUTO] Cliente existente reutilizado por nombre: ${clientName}`);
           }
 
           // 5) Crear cliente si no hubo match
@@ -1318,7 +1347,7 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
             clientByName.set(clientName.toUpperCase(), { id: clientId, name: created.name, salesperson_id: created.salesperson_id });
             clientById.set(clientId, { id: clientId, name: created.name, salesperson_id: created.salesperson_id });
             stats.clients_auto_created++;
-            alert('info', banNum, `[AUTO] Cliente creado: ${clientName}${usePlaceholder ? ' (placeholder, requiere validaciÃ³n)' : ''}`);
+            alert('info', banNum, `[AUTO] Cliente creado: ${clientName}`);
           }
 
           // 6) Crear BAN
@@ -1929,6 +1958,7 @@ async function runTangoSync({ req, res, mode, allowCleanup, customRange, reason 
           plan_code: planCode,
           months: v.meses,
           ventatipoid: ventaTipo,
+          ventatipo_nombre: v.ventatipo_nombre || v.tipo || v.nombre || null,
           mensualidad: monthlyValue,
           mensualidad_source: monthlyValueResolution.source,
           com_empresa: comEmpresa,

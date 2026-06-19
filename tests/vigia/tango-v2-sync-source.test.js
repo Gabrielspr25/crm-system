@@ -138,7 +138,7 @@ describe('Tango V2 sync source', () => {
       [80099, 26, 'Claro Update REN', 'movil', 'REN', false],
       [80087, 25, 'Corp Update New', 'movil', 'NEW', true],
       [80099, 26, 'Corp Update Ren', 'movil', 'REN', true],
-      [80090, 8, 'BA CORP NEW', 'fijo', 'NEW', true],
+      [80090, 8, 'BA CORP NEW', 'movil', 'NEW', true],
       [80047, 121, '2 Play', 'fijo', 'NEW', false],
       [80003, 142, 'Claro TV - Servicio', 'tv', 'NEW', false],
     ];

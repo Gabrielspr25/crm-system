@@ -4982,7 +4982,22 @@ app.post('/api/subscriber-reports/sync-pymes', authenticateRequest, requireRole(
     }
     const _v2Headers = { Authorization: `Bearer ${_v2ApiKey}`, 'x-api-key': _v2ApiKey, Accept: 'application/json' };
     const PYMES_TIPO_IDS = new Set([138, 139, 140, 141]);
-    function _isPymesTipo(id) { return PYMES_TIPO_IDS.has(Number(id)); }
+    function _normalizePymesTipoName(value) {
+      return String(value || '')
+        .trim()
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/\s+/g, ' ');
+    }
+    function _isPymesTipoRow(row) {
+      const id = Number(_readVentaV2(row, 'ventatipoid', 'ventatipo_id') ?? row?.ventatipo?.id);
+      const name = _normalizePymesTipoName(
+        _readVentaV2(row, 'ventatipo_nombre', 'tipo', 'nombre_tipo') ?? row?.ventatipo?.nombre
+      );
+      const planCode = String(_readVentaV2(row, 'plan_code', 'codigovoz') ?? '').trim().toUpperCase();
+      return PYMES_TIPO_IDS.has(id) || /^BA/.test(planCode) || /ba corp|banda/.test(name);
+    }
     function _readVentaV2(v, ...keys) {
       for (const k of keys) { const val = v?.[k]; if (val !== undefined && val !== null && String(val).trim() !== '') return val; }
       return null;
@@ -4999,7 +5014,7 @@ app.post('/api/subscriber-reports/sync-pymes', authenticateRequest, requireRole(
         if (!resp.ok) break;
         const payload = await resp.json().catch(() => null);
         const rows = Array.isArray(payload) ? payload : Array.isArray(payload?.data) ? payload.data : Array.isArray(payload?.ventas) ? payload.ventas : [];
-        _apiVentas.push(...rows.filter(r => _isPymesTipo(_readVentaV2(r, 'ventatipoid', 'ventatipo_id') ?? r?.ventatipo?.id)));
+        _apiVentas.push(...rows.filter(r => _isPymesTipoRow(r)));
         const pg = payload?.pagination || {};
         const hasMore = Boolean(pg.hasMore);
         const nextOffset = Number(pg.offset ?? offset) + Number(pg.limit ?? limit);
@@ -5056,9 +5071,18 @@ app.post('/api/subscriber-reports/sync-pymes', authenticateRequest, requireRole(
     let inserted = 0, created_clients = 0, created_bans = 0, created_subs = 0, errors = 0;
     const details = [];
 
-    // Helper: determine line_type and account_type from ventatipoid
-    function ventaTypeInfo(ventatipoid) {
+    // Helper legacy para auto-create. BA CORP/Banda Ancha en PYMES se trata
+    // como movil, no como fijo.
+    function ventaTypeInfo(ventatipoid, ventatipoNombre = '', planCode = '') {
       const id = Number(ventatipoid);
+      const name = String(ventatipoNombre || '').trim().toLowerCase();
+      const normalizedPlanCode = String(planCode || '').trim().toUpperCase();
+      if (/^BA/.test(normalizedPlanCode) || /ba corp|banda/.test(name)) {
+        return {
+          lineType: /\bren\b|renov/i.test(name) ? 'REN' : 'NEW',
+          accountType: 'UPDATE'
+        };
+      }
       // 138=Update REN, 139=Update NEW, 140=Fijo REN, 141=Fijo NEW
       const lineType = (id === 138 || id === 140) ? 'REN' : 'NEW';
       const accountType = (id === 138 || id === 139) ? 'UPDATE' : 'FIJO';
@@ -5073,7 +5097,9 @@ app.post('/api/subscriber-reports/sync-pymes', authenticateRequest, requireRole(
       let clientId = banSubs.length > 0 ? banSubs[0].client_id : null;
 
       const firstVentaTipoId = _readVentaV2(banVentas[0], 'ventatipoid', 'ventatipo_id') ?? banVentas[0]?.ventatipo?.id;
-      const firstTypeInfo = ventaTypeInfo(firstVentaTipoId);
+      const firstVentaTipoName = _readVentaV2(banVentas[0], 'ventatipo_nombre', 'tipo', 'nombre_tipo') ?? banVentas[0]?.ventatipo?.nombre ?? '';
+      const firstPlanCode = _readVentaV2(banVentas[0], 'plan_code', 'codigovoz') ?? '';
+      const firstTypeInfo = ventaTypeInfo(firstVentaTipoId, firstVentaTipoName, firstPlanCode);
 
       // AUTO-CREATE: if BAN doesn't exist in CRM, create client + BAN
       if (banSubs.length === 0) {
@@ -5081,6 +5107,18 @@ app.post('/api/subscriber-reports/sync-pymes', authenticateRequest, requireRole(
           const firstVenta = banVentas[0];
           const clienteRaw = _readVentaV2(firstVenta, 'cliente', 'cliente_nombre', 'nombre') ?? firstVenta?.cliente?.nombre ?? 'SIN NOMBRE';
           const clienteName = String(clienteRaw).trim();
+          const normalizedClienteName = clienteName.toUpperCase();
+          if (!clienteName || normalizedClienteName === 'SIN NOMBRE' || normalizedClienteName === 'NULL' || normalizedClienteName === 'N/A') {
+            console.error(`[SYNC-PYMES] BAN ${ban}: Tango V2 no trae nombre de cliente. No se crea cliente placeholder.`);
+            errors++;
+            details.push({
+              ban,
+              status: 'needs_review',
+              reason: 'cliente_tango_sin_nombre',
+              message: 'Revisar Tango: falta nombre de cliente',
+            });
+            continue;
+          }
           const vendedorRaw = _readVentaV2(firstVenta, 'vendedor', 'vendedor_nombre') ?? firstVenta?.vendedor?.nombre ?? '';
           const vendedorName = String(vendedorRaw).trim().toUpperCase();
 
@@ -5147,7 +5185,9 @@ app.post('/api/subscriber-reports/sync-pymes', authenticateRequest, requireRole(
 
       for (const v of banVentas) {
         const vTipoId = _readVentaV2(v, 'ventatipoid', 'ventatipo_id') ?? v?.ventatipo?.id;
-        const { lineType } = ventaTypeInfo(vTipoId);
+        const vTipoName = _readVentaV2(v, 'ventatipo_nombre', 'tipo', 'nombre_tipo') ?? v?.ventatipo?.nombre ?? '';
+        const vPlanCode = _readVentaV2(v, 'plan_code', 'codigovoz') ?? '';
+        const { lineType } = ventaTypeInfo(vTipoId, vTipoName, vPlanCode);
         const lineaRaw = _readVentaV2(v, 'status', 'numerocelularactivado', 'telefono', 'linea') ?? '';
         const linea = String(lineaRaw).replace(/[^0-9]/g, '');
         const fechaRaw = _readVentaV2(v, 'fechaactivacion', 'fecha_activacion');
@@ -5421,6 +5461,16 @@ app.get('/api/subscriber-reports/comparison', authenticateRequest, requireRole([
       if (v2BaseUrl && v2ApiKey) {
         const v2Headers = { Authorization: `Bearer ${v2ApiKey}`, 'x-api-key': v2ApiKey, Accept: 'application/json' };
         const PYMES_IDS = new Set([138, 139, 140, 141]);
+        const isPymesDetailRow = (row) => {
+          const tipoId = Number(row?.ventatipoid ?? row?.ventatipo?.id ?? 0);
+          const tipoName = String(row?.ventatipo_nombre ?? row?.tipo ?? row?.nombre_tipo ?? row?.ventatipo?.nombre ?? '')
+            .trim()
+            .toLowerCase()
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '');
+          const planCode = String(row?.plan_code ?? row?.codigovoz ?? '').trim().toUpperCase();
+          return PYMES_IDS.has(tipoId) || /^BA/.test(planCode) || /ba corp|banda/.test(tipoName);
+        };
         let offset = 0; const limit = 200; let guard = 0;
         do {
           const url = `${v2BaseUrl}/api/external/ventas?desde=${desde}&hasta=${hasta}&limit=${limit}&offset=${offset}`;
@@ -5430,7 +5480,7 @@ app.get('/api/subscriber-reports/comparison', authenticateRequest, requireRole([
           const rows = Array.isArray(payload) ? payload : Array.isArray(payload?.data) ? payload.data : Array.isArray(payload?.ventas) ? payload.ventas : [];
           for (const r of rows) {
             const tipoId = Number(r?.ventatipoid ?? r?.ventatipo?.id ?? 0);
-            if (!PYMES_IDS.has(tipoId)) continue;
+            if (!isPymesDetailRow(r)) continue;
             const fecha = r?.fechaactivacion ?? r?.fecha_activacion;
             if (!fecha) continue;
             const month = String(fecha).slice(0, 7);
@@ -5988,6 +6038,7 @@ app.get('/api/subscriber-reports', authenticateRequest, async (req, res) => {
       SELECT
         s.id as subscriber_id,
         s.${quoteIdent(schema.phoneColumn)} as phone,
+        s.line_kind,
         ${schema.hasLineType ? 's.line_type,' : 'NULL AS line_type,'}
         ${schema.hasTangoVentaId ? 's.tango_ventaid,' : 'NULL AS tango_ventaid,'}
         ${schema.hasStatus ? 's.status as subscriber_status,' : "'activo' AS subscriber_status,"}
@@ -6128,7 +6179,25 @@ app.get('/api/subscriber-reports', authenticateRequest, async (req, res) => {
     });
 
     // sale_type se resuelve desde el raw_payload almacenado en el sync V2 — sin consulta live a BD externa.
-    const saleTypeByVentaId = new Map(); // vacío — se usa raw_payload.ventatipoid abajo
+    const saleTypeByVentaId = new Map(); // vacío — se usa raw_payload abajo
+    const lineKindFromVentaTipo = (ventaTipo, ventaTipoNombre = '', planCode = '') => {
+      const text = String(ventaTipoNombre || '').trim().toLowerCase();
+      const normalizedPlanCode = String(planCode || '').trim().toUpperCase();
+      if (/^BA/.test(normalizedPlanCode)) return 'movil';
+      if (/ba corp|banda/.test(text)) return 'movil';
+      if (/fijo|2 play|3 play/.test(text)) return 'fijo';
+      if (/movil|móvil|update|pymes|claro/.test(text)) return 'movil';
+      if (ventaTipo === 138 || ventaTipo === 139) return 'movil';
+      if (ventaTipo === 140 || ventaTipo === 141) return 'fijo';
+      return null;
+    };
+    const saleTypeFromLineKind = (lineKind, lineType) => {
+      const kind = String(lineKind || '').trim().toLowerCase();
+      const type = String(lineType || '').trim().toUpperCase();
+      if (kind === 'movil') return type === 'REN' ? 'MOVIL_RENOVACION' : 'MOVIL_NUEVA';
+      if (kind === 'fijo') return type === 'REN' ? 'FIJO_REN' : 'FIJO_NEW';
+      return null;
+    };
     const saleTypeFromVentaTipo = (ventaTipo) => {
       if (ventaTipo === 138) return 'MOVIL_RENOVACION';
       if (ventaTipo === 139) return 'MOVIL_NUEVA';
@@ -6156,12 +6225,32 @@ app.get('/api/subscriber-reports', authenticateRequest, async (req, res) => {
         storedVendorCommission !== null && storedVendorCommission > 0
           ? storedVendorCommission
           : suggestedVendorCommission;
+      const rawVentaTipoId = Number(row.raw_payload?.ventatipoid);
+      const rawVentaTipoName =
+        row.raw_payload?.ventatipo_nombre ||
+        row.raw_payload?.tipo ||
+        row.raw_payload?.nombre_tipo ||
+        '';
+      const rawPlanCode =
+        row.raw_payload?.plan_code ||
+        row.raw_payload?.codigovoz ||
+        '';
+      const effectiveLineKind =
+        lineKindFromVentaTipo(rawVentaTipoId, rawVentaTipoName, rawPlanCode) ||
+        row.line_kind ||
+        null;
+      const effectiveSaleType =
+        saleTypeFromLineKind(effectiveLineKind, row.line_type) ||
+        saleTypeByVentaId.get(Number(row.tango_ventaid)) ||
+        saleTypeFromVentaTipo(rawVentaTipoId) ||
+        null;
 
       return {
       subscriber_id: row.subscriber_id,
       phone: row.phone,
+      line_kind: effectiveLineKind || null,
       line_type: row.line_type || null,
-      sale_type: saleTypeByVentaId.get(Number(row.tango_ventaid)) || saleTypeFromVentaTipo(Number(row.raw_payload?.ventatipoid)) || null,
+      sale_type: effectiveSaleType,
       activation_date: row.activation_date,
       ban_number: row.ban_number,
       account_type: row.account_type || null,

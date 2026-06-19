@@ -181,6 +181,7 @@ export function classifyPymesAutocreateVentaTipo(ventatipoId, ventatipoNombre = 
   const id = Number(ventatipoId);
   const name = normalizeVentaTipoName(ventatipoNombre);
   if (/cloud|office 365/.test(name)) return { negocio: 'PYMES', product: 'cloud', movement: 'NEW' };
+  if (/ba corp|banda/.test(name)) return { negocio: 'PYMES', product: 'movil', movement: /ren/.test(name) ? 'REN' : 'NEW' };
   if (/fijo/.test(name)) return { negocio: 'PYMES', product: 'fijo', movement: /ren/.test(name) ? 'REN' : 'NEW' };
   if (/ren/.test(name)) return { negocio: 'PYMES', product: 'movil', movement: 'REN' };
   if (/new/.test(name)) return { negocio: 'PYMES', product: 'movil', movement: 'NEW' };
@@ -198,7 +199,9 @@ export function classifyPymesAutocreateVentaTipo(ventatipoId, ventatipoNombre = 
 
 export function classifyTangoVentaTipo(ventatipoId, ventatipoNombre = '') {
   const id = Number(ventatipoId);
-  const name = String(ventatipoNombre || '').trim().toLowerCase();
+  const name = normalizeVentaTipoName(ventatipoNombre);
+  const lineType = /\bren\b|renov/i.test(name) ? 'REN' : 'NEW';
+  if (/ba corp|banda/.test(name)) return { family: 'movil', lineType };
   const known = {
     8: { family: 'fijo', lineType: 'NEW' },
     25: { family: 'movil', lineType: 'NEW' },
@@ -212,11 +215,10 @@ export function classifyTangoVentaTipo(ventatipoId, ventatipoNombre = '') {
   };
   if (known[id]) return known[id];
 
-  const lineType = /\bren\b|renov/i.test(name) ? 'REN' : 'NEW';
   if (/tv|televisi/.test(name)) return { family: 'tv', lineType };
   if (/cloud/.test(name)) return { family: 'cloud', lineType };
   if (/mpls/.test(name)) return { family: 'mpls', lineType };
-  if (/fijo|2 play|3 play|banda|ba corp/.test(name)) return { family: 'fijo', lineType };
+  if (/fijo|2 play|3 play/.test(name)) return { family: 'fijo', lineType };
   if (/movil|móvil|update|pymes|claro/.test(name)) return { family: 'movil', lineType };
   return { family: 'otro', lineType };
 }

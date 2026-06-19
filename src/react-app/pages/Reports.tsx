@@ -50,20 +50,20 @@ interface SubscriberReport {
 }
 
 function formatSaleTypeLabel(accountType?: string | null, lineType?: string | null, saleType?: string | null, lineKind?: string | null): string {
+  const line = String(lineType || '').trim().toUpperCase();
+  const isRen = line === 'REN';
+
+  // line_kind manda: viene de Tango ventatipoid y refleja el tipo real de la
+  // línea independiente del account_type del BAN y de sale_type historico.
+  const kind = String(lineKind || '').trim().toLowerCase();
+  if (kind === 'fijo') return isRen ? 'Fijo REN' : 'Fijo NEW';
+  if (kind === 'movil') return isRen ? 'Móvil REN' : 'Móvil NEW';
+
   const exact = String(saleType || '').trim().toUpperCase();
   if (exact === 'FIJO_REN') return 'Fijo REN';
   if (exact === 'FIJO_NEW') return 'Fijo NEW';
   if (exact === 'MOVIL_RENOVACION') return 'Móvil REN';
   if (exact === 'MOVIL_NUEVA') return 'Móvil NEW';
-
-  const line = String(lineType || '').trim().toUpperCase();
-  const isRen = line === 'REN';
-
-  // line_kind manda: viene de Tango ventatipoid y refleja el tipo real de la
-  // línea independiente del account_type del BAN (CONVERGENTE no implica móvil).
-  const kind = String(lineKind || '').trim().toLowerCase();
-  if (kind === 'fijo') return isRen ? 'Fijo REN' : 'Fijo NEW';
-  if (kind === 'movil') return isRen ? 'Móvil REN' : 'Móvil NEW';
 
   // Fallback heurístico (subscribers viejos sin line_kind clasificado)
   const account = String(accountType || '').trim().toUpperCase().replace(/^CONVERGENTE$/, 'MOVIL');
@@ -87,6 +87,20 @@ function resolveLineProducts(rows: SubscriberReport[]) {
   };
 
   rows.forEach((row) => {
+    const lineType = String(row.line_type || '').trim().toUpperCase();
+    const isRen = lineType === 'REN';
+
+    // line_kind manda: tipo real de la línea desde Tango.
+    const kind = String(row.line_kind || '').trim().toLowerCase();
+    if (kind === 'fijo') {
+      if (isRen) counts.fijo_ren += 1; else counts.fijo_new += 1;
+      return;
+    }
+    if (kind === 'movil') {
+      if (isRen) counts.movil_renovacion += 1; else counts.movil_nueva += 1;
+      return;
+    }
+
     const saleType = String(row.sale_type || '').trim().toUpperCase();
     if (saleType === 'FIJO_REN') {
       counts.fijo_ren += 1;
@@ -102,20 +116,6 @@ function resolveLineProducts(rows: SubscriberReport[]) {
     }
     if (saleType === 'MOVIL_NUEVA') {
       counts.movil_nueva += 1;
-      return;
-    }
-
-    const lineType = String(row.line_type || '').trim().toUpperCase();
-    const isRen = lineType === 'REN';
-
-    // line_kind manda: tipo real de la línea desde Tango.
-    const kind = String(row.line_kind || '').trim().toLowerCase();
-    if (kind === 'fijo') {
-      if (isRen) counts.fijo_ren += 1; else counts.fijo_new += 1;
-      return;
-    }
-    if (kind === 'movil') {
-      if (isRen) counts.movil_renovacion += 1; else counts.movil_nueva += 1;
       return;
     }
 
@@ -293,6 +293,7 @@ export default function Reports() {
   const [selectedMonth, setSelectedMonth] = useState<string>(getDefaultReportsMonth);
   const [viewMode, setViewMode] = useState<'empresa' | 'vendedor'>('empresa');
   const effectiveView = canViewCompanyFinancials ? viewMode : 'vendedor';
+  const requiresVendorSelection = effectiveView === 'vendedor' && isAdmin;
 
   // Estados para edicion manual
   const [editingVendorComm, setEditingVendorComm] = useState<Record<string, string>>({});
@@ -475,7 +476,20 @@ export default function Reports() {
       });
       const data = await resp.json();
       if (resp.ok && data.success) {
-        setSyncResult({ stats: data.stats, alerts: data.alerts || [] });
+        const alerts = data.alerts || [];
+        setSyncResult({ stats: data.stats, alerts });
+        const tangoDataAlerts = alerts.filter((a: any) =>
+          String(a?.msg || '').includes('Revisar Tango') ||
+          String(a?.msg || '').includes('cliente_tango_sin_nombre')
+        );
+        if (tangoDataAlerts.length > 0 || Number(data.external_sales?.motivos?.cliente_tango_sin_nombre || 0) > 0) {
+          const banList = tangoDataAlerts
+            .map((a: any) => String(a?.ban || '').trim())
+            .filter(Boolean)
+            .slice(0, 5)
+            .join(', ');
+          window.alert(`Revisar Tango: hay ventas sin nombre de cliente. No se crearon clientes placeholder.${banList ? ` BAN: ${banList}` : ''}`);
+        }
         await refetchProspects();
       } else {
         alert('Error en sync: ' + (data.error || `HTTP ${resp.status}`));
@@ -518,6 +532,7 @@ export default function Reports() {
 
     return reportRows
       .filter((row) => {
+        if (requiresVendorSelection && !selectedVendor) return false;
         const matchesVendor = !selectedVendor || String(row.vendor_id || "") === selectedVendor;
         const clientName = (row.client_business_name || row.client_name || '').toLowerCase();
         const term = searchTerm.toLowerCase();
@@ -573,7 +588,7 @@ export default function Reports() {
         report_month: row.report_month,
         products: row.products || null
       }));
-  }, [reportRows, selectedVendor, searchTerm, viewFilter]);
+  }, [reportRows, requiresVendorSelection, selectedVendor, searchTerm, viewFilter]);
 
   const confirmedRows = useMemo(() => filteredRows.filter((row) => isConfirmedEconomicRow(row)), [filteredRows]);
   const reviewRows = useMemo(() => filteredRows.filter((row) => !isConfirmedEconomicRow(row)), [filteredRows]);
@@ -1887,7 +1902,7 @@ export default function Reports() {
             onChange={(e) => setSelectedVendor(e.target.value ? String(e.target.value) : null)}
             className="bg-slate-800 border border-slate-700 text-white rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-emerald-500 transition-all min-w-[150px]"
           >
-            <option value="">Todos</option>
+            <option value="">{requiresVendorSelection ? 'Seleccionar vendedor' : 'Todos'}</option>
             {reportVendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
           </select>
           ) : (
@@ -1910,6 +1925,12 @@ export default function Reports() {
           </div>
         </div>
       </div>
+
+      {requiresVendorSelection && !selectedVendor && (
+        <div className="rounded-2xl border border-blue-500/30 bg-blue-500/10 px-4 py-3 text-sm font-semibold text-blue-100">
+          Selecciona un vendedor para ver su reporte.
+        </div>
+      )}
 
       {/* Resumen ejecutivo de needs_review + pending_sync (Tanda B + C) */}
       {reviewSummary && (reviewSummary.count > 0 || reviewSummary.pending_sync.count > 0) && (
