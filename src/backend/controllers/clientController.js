@@ -269,9 +269,36 @@ export const searchClients = async (req, res) => {
 
 export const getClients = async (req, res) => {
     try {
-        const { tab } = req.query;
+        const { tab, expiration_year, expiration_month } = req.query;
         const conditions = [];
         const params = [];
+
+        if (expiration_year || expiration_month) {
+            const y = parseInt(expiration_year, 10);
+            const m = parseInt(expiration_month, 10);
+            if (!Number.isFinite(y) || !Number.isFinite(m) || m < 1 || m > 12) {
+                return res.status(400).json({ error: 'expiration_year y expiration_month invalidos' });
+            }
+
+            const monthStart = new Date(Date.UTC(y, m - 1, 1));
+            const nextMonthStart = new Date(Date.UTC(y, m, 1));
+            const monthStartParam = monthStart.toISOString().slice(0, 10);
+            const nextMonthStartParam = nextMonthStart.toISOString().slice(0, 10);
+            params.push(monthStartParam, nextMonthStartParam);
+            const startParam = `$${params.length - 1}`;
+            const endParam = `$${params.length}`;
+
+            conditions.push(`EXISTS (
+                SELECT 1
+                FROM subscribers s_exp
+                JOIN bans b_exp ON b_exp.id = s_exp.ban_id
+                WHERE b_exp.client_id = c.id
+                  AND s_exp.contract_end_date >= ${startParam}
+                  AND s_exp.contract_end_date < ${endParam}
+                  AND COALESCE(LOWER(s_exp.status::text), 'activo')
+                      NOT IN ('cancelado','cancelled','c','inactivo','inactive','no_renueva_ahora')
+            )`);
+        }
 
         // FILTROS POR TAB - CON FILTRO DE STATUS CORREGIDO
         if (tab === 'cancelled') {

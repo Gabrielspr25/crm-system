@@ -1,4 +1,4 @@
-// Panel Director — vista ejecutiva del equipo.
+// Panel General - vista ejecutiva del equipo.
 // Solo admin/supervisor. Lee /api/director/overview en una sola llamada.
 // Tabla con acordeón: click en vendedor → breakdown por producto asignado.
 import { useEffect, useMemo, useState, useCallback } from "react";
@@ -87,6 +87,16 @@ interface Overview {
   alerts: Alert[];
 }
 
+interface ActiveLinesExpirationResponse {
+  summary?: {
+    active_lines?: number | string | null;
+    mobile_active_lines?: number | string | null;
+    fixed_active_lines?: number | string | null;
+    monthly_revenue?: number | string | null;
+    fixed_monthly_revenue?: number | string | null;
+  };
+}
+
 const fmtMoney = (n: number) => {
   if (!Number.isFinite(n) || n <= 0) return "$0";
   return `$${Math.round(n).toLocaleString("en-US")}`;
@@ -94,6 +104,25 @@ const fmtMoney = (n: number) => {
 const fmtUnits = (n: number) => {
   if (!Number.isFinite(n) || n <= 0) return "0";
   return String(Math.round(n));
+};
+const toNumber = (value: unknown) => {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+};
+const toYearMonthValue = (period?: { year: number; month: number } | null) => {
+  const now = new Date();
+  const year = period?.year || now.getFullYear();
+  const month = period?.month || now.getMonth() + 1;
+  return `${year}-${String(month).padStart(2, "0")}`;
+};
+const parseYearMonthValue = (value: string) => {
+  const [yearRaw, monthRaw] = value.split("-");
+  const year = Number(yearRaw);
+  const month = Number(monthRaw);
+  return {
+    year: Number.isFinite(year) ? year : new Date().getFullYear(),
+    month: Number.isFinite(month) ? month : new Date().getMonth() + 1,
+  };
 };
 const MONTH_NAMES = [
   "enero", "febrero", "marzo", "abril", "mayo", "junio",
@@ -134,6 +163,9 @@ export default function Director() {
   const isAdmin = role === "admin" || role === "supervisor";
 
   const [data, setData] = useState<Overview | null>(null);
+  const [expirationMonth, setExpirationMonth] = useState(toYearMonthValue);
+  const [activeLinesData, setActiveLinesData] = useState<ActiveLinesExpirationResponse | null>(null);
+  const [activeLinesLoading, setActiveLinesLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [openRows, setOpenRows] = useState<Set<string>>(new Set());
@@ -159,6 +191,29 @@ export default function Director() {
     if (isAdmin) void load();
   }, [isAdmin, load]);
 
+  const loadActiveLines = useCallback(async (year: number, month: number) => {
+    setActiveLinesLoading(true);
+    try {
+      const r = await authFetch(`/api/dashboard/active-lines-expiration?year=${year}&month=${month}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      setActiveLinesData(await r.json());
+    } catch {
+      setActiveLinesData({ summary: { active_lines: 0, mobile_active_lines: 0, fixed_active_lines: 0, monthly_revenue: 0, fixed_monthly_revenue: 0 } });
+    } finally {
+      setActiveLinesLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isAdmin && data?.period) setExpirationMonth(toYearMonthValue(data.period));
+  }, [isAdmin, data?.period?.year, data?.period?.month]);
+
+  useEffect(() => {
+    if (!isAdmin || !expirationMonth) return;
+    const selected = parseYearMonthValue(expirationMonth);
+    void loadActiveLines(selected.year, selected.month);
+  }, [isAdmin, expirationMonth, loadActiveLines]);
+
   const toggleRow = (id: string) => {
     setOpenRows((prev) => {
       const next = new Set(prev);
@@ -181,6 +236,9 @@ export default function Director() {
   const periodLabel = data
     ? `${MONTH_NAMES[(data.period.month - 1) % 12]} ${data.period.year}`
     : "";
+  const expirationPeriod = parseYearMonthValue(expirationMonth);
+  const expirationPeriodLabel = `${MONTH_NAMES[(expirationPeriod.month - 1) % 12]} ${expirationPeriod.year}`;
+  const activeLinesSummary = activeLinesData?.summary || {};
 
   return (
     <div className="min-h-screen bg-[#0B1220] text-slate-200">
@@ -193,7 +251,7 @@ export default function Director() {
               <BarChart3 className="w-5 h-5" />
             </div>
             <div>
-              <h1 className="text-[22px] font-semibold text-white leading-tight">Panel Director</h1>
+              <h1 className="text-[22px] font-semibold text-white leading-tight">Panel General</h1>
               <p className="text-[13px] text-slate-400">Visión completa del equipo</p>
             </div>
           </div>
@@ -224,6 +282,53 @@ export default function Director() {
         )}
 
         {data && <>
+          {/* ====== KPIs lineas activas ====== */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
+            <KpiCard
+              icon={<Users className="w-5 h-5" />}
+              iconBg="rgba(56,189,248,0.18)" iconFg="#38BDF8"
+              label="LINEAS ACTIVAS"
+              value={activeLinesLoading ? "..." : fmtUnits(toNumber(activeLinesSummary.active_lines))}
+              sub={`vencen en ${expirationPeriodLabel}`}
+            />
+            <KpiCard
+              icon={<TrendingUp className="w-5 h-5" />}
+              iconBg="rgba(14,165,233,0.18)" iconFg="#38BDF8"
+              label="MOVIL ACTIVO" valueColor="#38BDF8"
+              value={activeLinesLoading ? "..." : fmtUnits(toNumber(activeLinesSummary.mobile_active_lines))}
+              sub="lineas activas"
+            />
+            <KpiCard
+              icon={<Settings className="w-5 h-5" />}
+              iconBg="rgba(52,211,153,0.18)" iconFg="#34D399"
+              label="FIJO ACTIVO" valueColor="#34D399"
+              value={activeLinesLoading ? "..." : fmtUnits(toNumber(activeLinesSummary.fixed_active_lines))}
+              sub="lineas activas"
+            />
+            <KpiCard
+              icon={<DollarSign className="w-5 h-5" />}
+              iconBg="rgba(245,158,11,0.18)" iconFg="#FBBF24"
+              label="TOTAL MENSUAL" valueColor="#FBBF24"
+              value={activeLinesLoading ? "..." : fmtMoney(toNumber(activeLinesSummary.monthly_revenue))}
+              sub="ingresos de esas lineas"
+            />
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 mb-5 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="text-[10px] font-semibold tracking-[0.16em] text-slate-400">FILTRO VENCIMIENTO</div>
+              <div className="text-[11px] text-slate-500">Mes y año de vencimiento de contrato</div>
+            </div>
+            <label className="inline-flex items-center gap-2 rounded-xl bg-white/5 border border-white/10 px-3.5 py-2 text-[13px] text-slate-300">
+              <Calendar className="w-4 h-4 text-slate-500" />
+              <input
+                type="month"
+                value={expirationMonth}
+                onChange={(event) => setExpirationMonth(event.currentTarget.value || toYearMonthValue(data.period))}
+                className="bg-transparent text-white font-semibold outline-none [color-scheme:dark]"
+              />
+            </label>
+          </div>
+
           {/* ====== KPIs equipo (6 cards: meta / vendido / faltan / a pagar / atrasadas / tango) ====== */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-5">
             <KpiCard

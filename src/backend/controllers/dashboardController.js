@@ -41,6 +41,38 @@ function matchProductByName(name) {
     return name; // fallback: usar nombre original
 }
 
+const MONEY_PRODUCT_NAMES = new Set(['Fijo New', 'Fijo Ren', 'MPLS']);
+const QUANTITY_PRODUCT_NAMES = new Set(['Movil New', 'Movil Ren', 'Claro TV', 'Cloud']);
+
+function getProductUnit(productName) {
+    return MONEY_PRODUCT_NAMES.has(productName) ? 'money' : 'quantity';
+}
+
+function emptyProductStat(name, target = 0) {
+    const unit = getProductUnit(name);
+    const numericTarget = parseFloat(target) || 0;
+    return {
+        product_name: name,
+        unit,
+        target: numericTarget,
+        target_money: unit === 'money' ? numericTarget : 0,
+        target_lines: unit === 'quantity' ? numericTarget : 0,
+        actual: 0,
+        actual_money: 0,
+        actual_lines: 0,
+        revenue: 0,
+        pct: 0,
+    };
+}
+
+function applyDisplayActual(product) {
+    product.actual = product.unit === 'money' ? product.actual_money : product.actual_lines;
+    product.target = product.unit === 'money' ? product.target_money : product.target_lines;
+    product.pct = product.target > 0
+        ? Math.min(Math.round((product.actual / product.target) * 100), 999)
+        : 0;
+}
+
 // ---------------------------------------------------------------------------
 // GET /api/dashboard/resumen?year=YYYY&month=MM
 // ---------------------------------------------------------------------------
@@ -117,19 +149,22 @@ export async function getDashboardResumen(req, res) {
         const byProduct = {};
         // Inicializar con metas
         Object.entries(businessGoalByProduct).forEach(([name, target]) => {
-            byProduct[name] = { product_name: name, target, actual: 0, revenue: 0 };
+            byProduct[name] = emptyProductStat(name, target);
         });
         // Sumar ventas reales
         salesRows.forEach(r => {
             const cat = getProductCategory(r.line_kind, r.account_type, r.line_type);
             if (!cat) return;
-            if (!byProduct[cat]) byProduct[cat] = { product_name: cat, target: 0, actual: 0, revenue: 0 };
-            byProduct[cat].actual += parseInt(r.sale_count, 10);
-            byProduct[cat].revenue += parseFloat(r.total_revenue);
+            if (!byProduct[cat]) byProduct[cat] = emptyProductStat(cat, 0);
+            const count = parseInt(r.sale_count, 10) || 0;
+            const revenue = parseFloat(r.total_revenue) || 0;
+            byProduct[cat].actual_lines += count;
+            byProduct[cat].actual_money += revenue;
+            byProduct[cat].revenue += revenue;
         });
         // Calcular % cumplimiento
         Object.values(byProduct).forEach(p => {
-            p.pct = p.target > 0 ? Math.min(Math.round((p.actual / p.target) * 100), 999) : 0;
+            applyDisplayActual(p);
         });
 
         // 6. Armar resumen por vendedor
@@ -147,12 +182,19 @@ export async function getDashboardResumen(req, res) {
                     ren_count:     0,
                     by_product:    {},
                     total_target:  0,
+                    total_target_money: 0,
+                    total_target_lines: 0,
+                    total_actual_money: 0,
+                    total_actual_lines: 0,
                 };
             }
             const cat   = getProductCategory(r.line_kind, r.account_type, r.line_type);
             const count = parseInt(r.sale_count, 10);
+            const revenue = parseFloat(r.total_revenue) || 0;
             byVendor[vid].total_sales   += count;
-            byVendor[vid].total_revenue += parseFloat(r.total_revenue);
+            byVendor[vid].total_revenue += revenue;
+            byVendor[vid].total_actual_lines += count;
+            byVendor[vid].total_actual_money += revenue;
 
             const lt = String(r.line_type || '').toUpperCase().trim();
             if (lt === 'REN' || lt === 'RENOVACION') byVendor[vid].ren_count += count;
@@ -160,9 +202,11 @@ export async function getDashboardResumen(req, res) {
 
             if (cat) {
                 if (!byVendor[vid].by_product[cat]) {
-                    byVendor[vid].by_product[cat] = { actual: 0, target: 0 };
+                    byVendor[vid].by_product[cat] = emptyProductStat(cat, 0);
                 }
-                byVendor[vid].by_product[cat].actual += count;
+                byVendor[vid].by_product[cat].actual_lines += count;
+                byVendor[vid].by_product[cat].actual_money += revenue;
+                byVendor[vid].by_product[cat].revenue += revenue;
             }
         });
 
@@ -178,30 +222,52 @@ export async function getDashboardResumen(req, res) {
                     ren_count:     0,
                     by_product:    {},
                     total_target:  0,
+                    total_target_money: 0,
+                    total_target_lines: 0,
+                    total_actual_money: 0,
+                    total_actual_lines: 0,
                 };
             }
             Object.entries(vg.goals).forEach(([pname, tgt]) => {
                 if (!byVendor[vid].by_product[pname]) {
-                    byVendor[vid].by_product[pname] = { actual: 0, target: 0 };
+                    byVendor[vid].by_product[pname] = emptyProductStat(pname, 0);
                 }
-                byVendor[vid].by_product[pname].target = tgt;
+                const product = byVendor[vid].by_product[pname];
+                if (product.unit === 'money') product.target_money = parseFloat(tgt) || 0;
+                else product.target_lines = parseFloat(tgt) || 0;
+                applyDisplayActual(product);
             });
-            byVendor[vid].total_target = Object.values(vg.goals).reduce((s, v) => s + v, 0);
+            const products = Object.values(byVendor[vid].by_product);
+            byVendor[vid].total_target_money = products.reduce((s, p) => s + (p.target_money || 0), 0);
+            byVendor[vid].total_target_lines = products.reduce((s, p) => s + (p.target_lines || 0), 0);
+            byVendor[vid].total_target = byVendor[vid].total_target_money + byVendor[vid].total_target_lines;
         });
 
         // % cumplimiento por vendedor
         Object.values(byVendor).forEach(v => {
-            v.pct_total = v.total_target > 0
-                ? Math.min(Math.round((v.total_sales / v.total_target) * 100), 999)
-                : 0;
             Object.values(v.by_product).forEach(p => {
-                p.pct = p.target > 0 ? Math.min(Math.round((p.actual / p.target) * 100), 999) : 0;
+                applyDisplayActual(p);
             });
+            v.total_target_money = Object.values(v.by_product).reduce((s, p) => s + (p.target_money || 0), 0);
+            v.total_target_lines = Object.values(v.by_product).reduce((s, p) => s + (p.target_lines || 0), 0);
+            v.total_actual_money = Object.values(v.by_product).reduce((s, p) => s + (p.actual_money || 0), 0);
+            v.total_actual_lines = Object.values(v.by_product).reduce((s, p) => s + (p.actual_lines || 0), 0);
+            v.total_target = v.total_target_money + v.total_target_lines;
+            const productPcts = Object.values(v.by_product)
+                .filter(p => p.target > 0)
+                .map(p => p.pct);
+            v.pct_total = productPcts.length > 0
+                ? Math.min(Math.round(productPcts.reduce((s, pct) => s + pct, 0) / productPcts.length), 999)
+                : 0;
         });
 
         // 7. KPIs globales
         const totalActual  = Object.values(byProduct).reduce((s, p) => s + p.actual,  0);
         const totalTarget  = Object.values(byProduct).reduce((s, p) => s + p.target,  0);
+        const totalMoneyActual = Object.values(byProduct).reduce((s, p) => s + (p.unit === 'money' ? (p.actual_money || 0) : 0), 0);
+        const totalMoneyGoal = Object.values(byProduct).reduce((s, p) => s + (p.target_money || 0), 0);
+        const totalQuantityActual = Object.values(byProduct).reduce((s, p) => s + (p.actual_lines || 0), 0);
+        const totalQuantityGoal = Object.values(byProduct).reduce((s, p) => s + (p.target_lines || 0), 0);
         const totalRevenue = Object.values(byProduct).reduce((s, p) => s + p.revenue, 0);
 
         const newClientsRes = await query(
@@ -221,6 +287,10 @@ export async function getDashboardResumen(req, res) {
                 total_vendors: Object.keys(byVendor).length,
                 new_clients:   newClients,
                 total_revenue: Math.round(totalRevenue * 100) / 100,
+                total_money_goal: Math.round(totalMoneyGoal * 100) / 100,
+                total_money_actual: Math.round(totalMoneyActual * 100) / 100,
+                total_quantity_goal: totalQuantityGoal,
+                total_quantity_actual: totalQuantityActual,
             },
             by_product: Object.values(byProduct)
                 .sort((a, b) => a.product_name.localeCompare(b.product_name)),
@@ -229,5 +299,92 @@ export async function getDashboardResumen(req, res) {
         });
     } catch (err) {
         serverError(res, err, 'Error generando resumen del dashboard');
+    }
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/dashboard/active-lines-expiration?year=YYYY&month=MM
+// Lineas activas por mes/anio de vencimiento de contrato.
+// ---------------------------------------------------------------------------
+export async function getActiveLinesExpiration(req, res) {
+    try {
+        const { year, month } = req.query;
+        const y = parseInt(year, 10);
+        const m = parseInt(month, 10);
+        if (!Number.isFinite(y) || !Number.isFinite(m) || m < 1 || m > 12) {
+            return res.status(400).json({ error: 'year y month requeridos' });
+        }
+
+        const monthStart = new Date(Date.UTC(y, m - 1, 1)).toISOString().slice(0, 10);
+        const nextMonthStart = new Date(Date.UTC(y, m, 1)).toISOString().slice(0, 10);
+
+        const rows = await query(`
+            SELECT
+                c.id::text AS client_id,
+                COALESCE(NULLIF(TRIM(c.business_name), ''), NULLIF(TRIM(c.name), ''), 'Sin nombre') AS client_name,
+                b.ban_number,
+                COALESCE(sp.name, v.name, 'Sin vendedor') AS vendor_name,
+                MIN(s.contract_end_date)::date AS contract_end_date,
+                COUNT(s.id)::int AS active_lines,
+                COUNT(*) FILTER (
+                    WHERE COALESCE(LOWER(s.line_kind::text), '') = 'fijo'
+                       OR UPPER(COALESCE(b.account_type::text, '')) IN ('FIJO', 'FIXED')
+                )::int AS fixed_active_lines,
+                COUNT(*) FILTER (
+                    WHERE COALESCE(LOWER(s.line_kind::text), '') = 'movil'
+                       OR UPPER(COALESCE(b.account_type::text, '')) IN ('MOVIL', 'MÓVIL', 'MOBILE', 'UPDATE', 'CONVERGENTE')
+                )::int AS mobile_active_lines,
+                COALESCE(SUM(COALESCE(s.monthly_value, 0)), 0)::numeric AS monthly_revenue,
+                COALESCE(SUM(CASE
+                    WHEN COALESCE(LOWER(s.line_kind::text), '') = 'fijo'
+                      OR UPPER(COALESCE(b.account_type::text, '')) IN ('FIJO', 'FIXED')
+                    THEN COALESCE(s.monthly_value, 0)
+                    ELSE 0
+                END), 0)::numeric AS fixed_monthly_revenue
+            FROM subscribers s
+            JOIN bans b ON b.id = s.ban_id
+            JOIN clients c ON c.id = b.client_id
+            LEFT JOIN salespeople sp ON sp.id = c.salesperson_id
+            LEFT JOIN vendors v ON UPPER(TRIM(v.name)) = UPPER(TRIM(sp.name))
+            WHERE s.contract_end_date IS NOT NULL
+              AND s.contract_end_date >= $1
+              AND s.contract_end_date < $2
+              AND COALESCE(LOWER(s.status::text), 'activo')
+                  NOT IN ('cancelado','cancelled','c','inactivo','inactive','no_renueva_ahora')
+            GROUP BY c.id, client_name, b.ban_number, vendor_name
+            ORDER BY monthly_revenue DESC, active_lines DESC, client_name ASC
+        `, [monthStart, nextMonthStart]);
+
+        const normalizedRows = rows.map((row) => ({
+            ...row,
+            active_lines: Number(row.active_lines || 0),
+            fixed_active_lines: Number(row.fixed_active_lines || 0),
+            mobile_active_lines: Number(row.mobile_active_lines || 0),
+            monthly_revenue: Number(row.monthly_revenue || 0),
+            fixed_monthly_revenue: Number(row.fixed_monthly_revenue || 0),
+        }));
+
+        const summary = normalizedRows.reduce((acc, row) => {
+            acc.active_lines += row.active_lines;
+            acc.fixed_active_lines += row.fixed_active_lines;
+            acc.mobile_active_lines += row.mobile_active_lines;
+            acc.monthly_revenue += row.monthly_revenue;
+            acc.fixed_monthly_revenue += row.fixed_monthly_revenue;
+            return acc;
+        }, { active_lines: 0, fixed_active_lines: 0, mobile_active_lines: 0, monthly_revenue: 0, fixed_monthly_revenue: 0 });
+
+        res.json({
+            period: { year: y, month: m },
+            summary: {
+                active_lines: summary.active_lines,
+                fixed_active_lines: summary.fixed_active_lines,
+                mobile_active_lines: summary.mobile_active_lines,
+                monthly_revenue: Math.round(summary.monthly_revenue * 100) / 100,
+                fixed_monthly_revenue: Math.round(summary.fixed_monthly_revenue * 100) / 100,
+            },
+            rows: normalizedRows,
+        });
+    } catch (err) {
+        serverError(res, err, 'Error generando lineas activas por vencimiento');
     }
 }

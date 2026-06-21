@@ -379,7 +379,19 @@ export default function Clients() {
   const [globalSearchClients, setGlobalSearchClients] = useState<Client[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
 
-  const { data: clientsResponse, loading: clientsLoading, error: clientsError, refetch: refetchClients } = useApi<{ clients: Client[], stats: { active_count: number, cancelled_count: number, following_count: number, completed_count: number, incomplete_count: number } }>(`/api/clients?tab=${activeTab}`);
+  const clientsUrl = useMemo(() => {
+    const params = new URLSearchParams({ tab: activeTab });
+    if (selectedMonth) {
+      const [year, month] = selectedMonth.split("-");
+      if (year && month) {
+        params.set("expiration_year", year);
+        params.set("expiration_month", String(Number(month)));
+      }
+    }
+    return `/api/clients?${params.toString()}`;
+  }, [activeTab, selectedMonth]);
+
+  const { data: clientsResponse, loading: clientsLoading, error: clientsError, refetch: refetchClients } = useApi<{ clients: Client[], stats: { active_count: number, cancelled_count: number, following_count: number, completed_count: number, incomplete_count: number } }>(clientsUrl);
   const clients = clientsResponse?.clients || [];
   const clientStats = clientsResponse?.stats;
   const isGlobalSearchMode = searchTerm.trim().length > 0;
@@ -979,14 +991,6 @@ export default function Clients() {
       if (!matchesSearch) return false;
     }
 
-    // Filtrar por mes
-    if (selectedMonth) {
-      const dateToCheck = item.primaryContractEndDate || item.primarySubscriberCreatedAt || item.lastActivity;
-      if (!dateToCheck) return false;
-      const itemMonth = new Date(dateToCheck).toISOString().slice(0, 7); // YYYY-MM
-      if (itemMonth !== selectedMonth) return false;
-    }
-
     // Filtrar por Tipo de BAN
     if (selectedBanType) {
       if (!item.banType || !item.banType.toLowerCase().includes(selectedBanType.toLowerCase())) {
@@ -1062,7 +1066,7 @@ export default function Clients() {
   console.log('ðŸ” ===== FIN ESTADÍSTICAS =====');
 
   const getClientPriorityDate = (item: ClientRowSummary) => {
-    const dateValue = item.primaryContractEndDate || item.primarySubscriberCreatedAt || item.lastActivity || null;
+    const dateValue = item.primaryContractEndDate || null;
     if (!dateValue) return Number.POSITIVE_INFINITY;
     const timestamp = new Date(dateValue).getTime();
     return Number.isFinite(timestamp) ? timestamp : Number.POSITIVE_INFINITY;
@@ -1143,7 +1147,7 @@ export default function Clients() {
   // Reset página cuando cambien filtros o pestanas
   useEffect(() => {
     setCurrentPage(1);
-  }, [activeTab, searchTerm, selectedMonth]);
+  }, [activeTab, searchTerm, selectedMonth, selectedBanType, expirationFilter, sortOrder]);
 
   const handleSendToFollowUp = async (clientId: number) => {
     console.log('ðŸ”µ handleSendToFollowUp EJECUTADO - clientId:', clientId);
@@ -2291,37 +2295,13 @@ export default function Clients() {
         </div>
 
         <div className="w-full sm:w-auto min-w-[180px]">
-          <select
+          <input
+            type="month"
             value={selectedMonth}
             onChange={(e) => setSelectedMonth(e.target.value)}
+            title="Mes de vencimiento real"
             className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-white"
-          >
-            <option value="">Todos los meses</option>
-            <option value="2025-01">Enero 2025</option>
-            <option value="2025-02">Febrero 2025</option>
-            <option value="2025-03">Marzo 2025</option>
-            <option value="2025-04">Abril 2025</option>
-            <option value="2025-05">Mayo 2025</option>
-            <option value="2025-06">Junio 2025</option>
-            <option value="2025-07">Julio 2025</option>
-            <option value="2025-08">Agosto 2025</option>
-            <option value="2025-09">Septiembre 2025</option>
-            <option value="2025-10">Octubre 2025</option>
-            <option value="2025-11">Noviembre 2025</option>
-            <option value="2025-12">Diciembre 2025</option>
-            <option value="2024-01">Enero 2024</option>
-            <option value="2024-02">Febrero 2024</option>
-            <option value="2024-03">Marzo 2024</option>
-            <option value="2024-04">Abril 2024</option>
-            <option value="2024-05">Mayo 2024</option>
-            <option value="2024-06">Junio 2024</option>
-            <option value="2024-07">Julio 2024</option>
-            <option value="2024-08">Agosto 2024</option>
-            <option value="2024-09">Septiembre 2024</option>
-            <option value="2024-10">Octubre 2024</option>
-            <option value="2024-11">Noviembre 2024</option>
-            <option value="2024-12">Diciembre 2024</option>
-          </select>
+          />
         </div>
       </div>
 
@@ -5107,7 +5087,7 @@ export function ClientManagementModal({
 
           {/* ====== TAB VENTAS ====== */}
           {activeTab === 'ventas' && (
-            <ClientSalesReportsTab clientId={client.id} />
+            <ClientSalesReportsTab client={client} />
           )}
 
           {activeTab === 'notas' && (
@@ -5571,7 +5551,416 @@ function FollowUpNotesPanel({ clientId }: { clientId: number | string }) {
   );
 }
 
-function ClientSalesReportsTab({ clientId }: { clientId: number | string }) {
+type ProposalEquipmentDraft = {
+  modelo: string;
+  cantidad: number;
+  pago_unidad: string;
+  precio_regular: string;
+  oferta: string;
+  seguro: boolean;
+  prima_seguro: string;
+  deducible: string;
+};
+
+type ClientProposalRecord = {
+  proposal_id: string;
+  status: string;
+  ban_number: string;
+  fecha: string;
+  tipo_linea: string;
+  plan_familia: string;
+  cantidad_lineas: number;
+  cargo_mensual: number;
+  equipos: ProposalEquipmentDraft[];
+  total_precio_regular_equipos: number;
+  ivu_equipos: number;
+  pdf_url: string;
+  audit?: { created_at?: string; username?: string; salespersonName?: string };
+};
+
+const emptyProposalEquipment = (): ProposalEquipmentDraft => ({
+  modelo: '',
+  cantidad: 1,
+  pago_unidad: '0',
+  precio_regular: '0',
+  oferta: 'Equipo Gratis',
+  seguro: false,
+  prima_seguro: '0',
+  deducible: '0',
+});
+
+function ClientProposalsPanel({ client }: { client: ClientDetail }) {
+  const currentUser = getCurrentUser();
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [proposals, setProposals] = useState<ClientProposalRecord[]>([]);
+  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [form, setForm] = useState({
+    ban_id: client.bans[0]?.id ? String(client.bans[0].id) : '',
+    tipo_linea: 'multilinea',
+    plan_familia: 'Business Red Plus',
+    termino_meses: '36',
+    cantidad_lineas: '1',
+    cargo_mensual: '',
+    descripcion_plan: '',
+    notas: '',
+    firma_nombre: currentUser?.salespersonName || currentUser?.username || '',
+    firma_cargo: 'Agente de ventas',
+  });
+  const [equipos, setEquipos] = useState<ProposalEquipmentDraft[]>([emptyProposalEquipment()]);
+
+  const formatMoney = (value: any) => {
+    const n = Number(value || 0);
+    return new Intl.NumberFormat('es-PR', { style: 'currency', currency: 'USD' }).format(Number.isFinite(n) ? n : 0);
+  };
+
+  const selectedBan = useMemo(() => {
+    return client.bans.find((ban) => String(ban.id) === String(form.ban_id)) || client.bans[0] || null;
+  }, [client.bans, form.ban_id]);
+
+  const loadProposals = useCallback(async () => {
+    setLoading(true);
+    setMessage(null);
+    try {
+      const response = await authFetch(`/api/propuestas-clientes/client/${client.id}`);
+      if (!response.ok) throw new Error('No se pudieron cargar propuestas.');
+      const data = await response.json();
+      setProposals(Array.isArray(data?.proposals) ? data.proposals : []);
+    } catch (error) {
+      setProposals([]);
+      setMessage({ type: 'error', text: error instanceof Error ? error.message : 'Error cargando propuestas.' });
+    } finally {
+      setLoading(false);
+    }
+  }, [client.id]);
+
+  useEffect(() => {
+    void loadProposals();
+  }, [loadProposals]);
+
+  const updateEquipment = (index: number, patch: Partial<ProposalEquipmentDraft>) => {
+    setEquipos((prev) => prev.map((item, i) => (i === index ? { ...item, ...patch } : item)));
+  };
+
+  const saveProposal = async () => {
+    const cleanEquipos = equipos.filter((item) => item.modelo.trim());
+    if (!selectedBan) {
+      setMessage({ type: 'error', text: 'Selecciona un BAN para la propuesta.' });
+      return;
+    }
+    if (cleanEquipos.length === 0) {
+      setMessage({ type: 'error', text: 'Agrega al menos un equipo.' });
+      return;
+    }
+
+    setSaving(true);
+    setMessage(null);
+    try {
+      const response = await authFetch('/api/propuestas-clientes', {
+        method: 'POST',
+        json: {
+          client_id: client.id,
+          client_name: client.business_name || client.name,
+          ban_id: selectedBan.id,
+          ban_number: selectedBan.ban_number,
+          tipo_linea: form.tipo_linea,
+          plan_familia: form.plan_familia,
+          termino_meses: form.termino_meses,
+          cantidad_lineas: form.cantidad_lineas,
+          cargo_mensual: form.cargo_mensual,
+          descripcion_plan: form.descripcion_plan,
+          notas: form.notas,
+          firma_nombre: form.firma_nombre,
+          firma_cargo: form.firma_cargo,
+          equipos: cleanEquipos,
+        },
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.error || 'No se pudo guardar la propuesta.');
+      setMessage({ type: 'success', text: 'Propuesta guardada como borrador.' });
+      setShowForm(false);
+      setEquipos([emptyProposalEquipment()]);
+      await loadProposals();
+    } catch (error) {
+      setMessage({ type: 'error', text: error instanceof Error ? error.message : 'Error guardando propuesta.' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const downloadPdf = async (proposal: ClientProposalRecord) => {
+    try {
+      const response = await authFetch(proposal.pdf_url);
+      if (!response.ok) throw new Error('No se pudo descargar el PDF.');
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${proposal.proposal_id}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setMessage({ type: 'error', text: error instanceof Error ? error.message : 'Error descargando PDF.' });
+    }
+  };
+
+  return (
+    <div className="rounded-lg border border-gray-700 bg-gray-900/70 p-4 space-y-4">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h3 className="text-sm font-semibold text-gray-100 flex items-center gap-2">
+            <FileText className="w-4 h-4 text-cyan-300" />
+            Propuestas
+          </h3>
+          <p className="text-xs text-gray-500">Las propuestas se crean desde el módulo de ofertas y se guardan aquí.</p>
+        </div>
+      </div>
+
+      {message && (
+        <div className={`rounded-md border px-3 py-2 text-xs ${
+          message.type === 'success'
+            ? 'border-emerald-700/50 bg-emerald-900/20 text-emerald-200'
+            : 'border-red-700/50 bg-red-900/20 text-red-200'
+        }`}>
+          {message.text}
+        </div>
+      )}
+
+      {showForm && (
+        <div className="rounded-lg border border-gray-700 bg-gray-800/60 p-4 space-y-4">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+            <label className="space-y-1 text-xs text-gray-400">
+              BAN
+              <select
+                value={form.ban_id}
+                onChange={(e) => setForm((prev) => ({ ...prev, ban_id: e.target.value }))}
+                className="w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-white"
+              >
+                {client.bans.map((ban) => (
+                  <option key={ban.id} value={ban.id}>{ban.ban_number}</option>
+                ))}
+              </select>
+            </label>
+            <label className="space-y-1 text-xs text-gray-400">
+              Tipo
+              <select
+                value={form.tipo_linea}
+                onChange={(e) => setForm((prev) => ({ ...prev, tipo_linea: e.target.value }))}
+                className="w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-white"
+              >
+                <option value="multilinea">Multilinea</option>
+                <option value="individual">Individual</option>
+              </select>
+            </label>
+            <label className="space-y-1 text-xs text-gray-400">
+              Plan / familia
+              <input
+                value={form.plan_familia}
+                onChange={(e) => setForm((prev) => ({ ...prev, plan_familia: e.target.value }))}
+                className="w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-white"
+              />
+            </label>
+            <label className="space-y-1 text-xs text-gray-400">
+              Cargo mensual
+              <input
+                value={form.cargo_mensual}
+                onChange={(e) => setForm((prev) => ({ ...prev, cargo_mensual: e.target.value }))}
+                placeholder="65"
+                className="w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-white"
+              />
+            </label>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            <label className="space-y-1 text-xs text-gray-400">
+              Termino
+              <input
+                value={form.termino_meses}
+                onChange={(e) => setForm((prev) => ({ ...prev, termino_meses: e.target.value }))}
+                className="w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-white"
+              />
+            </label>
+            <label className="space-y-1 text-xs text-gray-400">
+              Cantidad lineas
+              <input
+                value={form.cantidad_lineas}
+                onChange={(e) => setForm((prev) => ({ ...prev, cantidad_lineas: e.target.value }))}
+                className="w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-white"
+              />
+            </label>
+            <label className="space-y-1 text-xs text-gray-400">
+              Firma / usuario
+              <input
+                value={form.firma_nombre}
+                onChange={(e) => setForm((prev) => ({ ...prev, firma_nombre: e.target.value }))}
+                className="w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-white"
+              />
+            </label>
+          </div>
+
+          <label className="block space-y-1 text-xs text-gray-400">
+            Descripcion del plan
+            <textarea
+              value={form.descripcion_plan}
+              onChange={(e) => setForm((prev) => ({ ...prev, descripcion_plan: e.target.value }))}
+              rows={3}
+              className="w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-white"
+              placeholder="Luego lo conectamos directo a Planes Moviles vigentes."
+            />
+          </label>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Equipos</h4>
+              <button
+                type="button"
+                onClick={() => setEquipos((prev) => [...prev, emptyProposalEquipment()])}
+                className="rounded-md border border-gray-600 px-2 py-1 text-xs text-gray-200 hover:bg-gray-700"
+              >
+                Agregar equipo
+              </button>
+            </div>
+            <div className="space-y-2">
+              {equipos.map((item, index) => (
+                <div key={index} className="grid grid-cols-1 gap-2 rounded-lg border border-gray-700 bg-gray-900 p-3 md:grid-cols-12">
+                  <input
+                    value={item.modelo}
+                    onChange={(e) => updateEquipment(index, { modelo: e.target.value })}
+                    placeholder="Modelo"
+                    className="md:col-span-3 rounded border border-gray-700 bg-gray-950 px-2 py-2 text-sm text-white"
+                  />
+                  <input
+                    type="number"
+                    min="1"
+                    value={item.cantidad}
+                    onChange={(e) => updateEquipment(index, { cantidad: Number(e.target.value) || 1 })}
+                    className="md:col-span-1 rounded border border-gray-700 bg-gray-950 px-2 py-2 text-sm text-white"
+                  />
+                  <input
+                    value={item.pago_unidad}
+                    onChange={(e) => updateEquipment(index, { pago_unidad: e.target.value })}
+                    placeholder="Pago"
+                    className="md:col-span-2 rounded border border-gray-700 bg-gray-950 px-2 py-2 text-sm text-white"
+                  />
+                  <input
+                    value={item.precio_regular}
+                    onChange={(e) => updateEquipment(index, { precio_regular: e.target.value })}
+                    placeholder="Precio regular"
+                    className="md:col-span-2 rounded border border-gray-700 bg-gray-950 px-2 py-2 text-sm text-white"
+                  />
+                  <input
+                    value={item.oferta}
+                    onChange={(e) => updateEquipment(index, { oferta: e.target.value })}
+                    placeholder="Oferta"
+                    className="md:col-span-2 rounded border border-gray-700 bg-gray-950 px-2 py-2 text-sm text-white"
+                  />
+                  <label className="md:col-span-1 flex items-center gap-2 rounded border border-gray-700 bg-gray-950 px-2 py-2 text-xs text-gray-300">
+                    <input
+                      type="checkbox"
+                      checked={item.seguro}
+                      onChange={(e) => updateEquipment(index, { seguro: e.target.checked })}
+                    />
+                    Seguro
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setEquipos((prev) => prev.filter((_, i) => i !== index))}
+                    disabled={equipos.length === 1}
+                    className="md:col-span-1 rounded border border-red-700/50 px-2 py-2 text-xs text-red-200 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Quitar
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <label className="block space-y-1 text-xs text-gray-400">
+            Notas y terminos
+            <textarea
+              value={form.notas}
+              onChange={(e) => setForm((prev) => ({ ...prev, notas: e.target.value }))}
+              rows={3}
+              className="w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-white"
+              placeholder="Taxes, credito en factura, streaming, limites por BAN..."
+            />
+          </label>
+
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setShowForm(false)}
+              className="rounded-lg border border-gray-600 px-4 py-2 text-sm text-gray-200 hover:bg-gray-700"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              onClick={() => void saveProposal()}
+              disabled={saving}
+              className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <Save className="h-4 w-4" />
+              {saving ? 'Guardando...' : 'Guardar borrador'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {loading ? (
+        <p className="text-xs text-gray-500">Cargando propuestas...</p>
+      ) : proposals.length === 0 ? (
+        <p className="rounded-lg border border-dashed border-gray-700 bg-gray-950/40 px-3 py-4 text-center text-sm text-gray-500">
+          Sin propuestas guardadas. Primero arma la oferta y guárdala desde el módulo de ofertas.
+        </p>
+      ) : (
+        <div className="overflow-x-auto rounded-lg border border-gray-700">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-800">
+              <tr>
+                <th className="px-3 py-2 text-left text-gray-300">ID</th>
+                <th className="px-3 py-2 text-left text-gray-300">BAN</th>
+                <th className="px-3 py-2 text-left text-gray-300">Plan</th>
+                <th className="px-3 py-2 text-right text-gray-300">Equipos</th>
+                <th className="px-3 py-2 text-right text-gray-300">IVU</th>
+                <th className="px-3 py-2 text-left text-gray-300">Estado</th>
+                <th className="px-3 py-2 text-right text-gray-300">PDF</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-700 bg-gray-900">
+              {proposals.map((proposal) => (
+                <tr key={proposal.proposal_id}>
+                  <td className="px-3 py-2 font-mono text-xs text-gray-200">{proposal.proposal_id}</td>
+                  <td className="px-3 py-2 text-gray-200">{proposal.ban_number || '-'}</td>
+                  <td className="px-3 py-2 text-gray-200">{proposal.plan_familia || proposal.tipo_linea}</td>
+                  <td className="px-3 py-2 text-right text-gray-200">{proposal.equipos?.length || 0}</td>
+                  <td className="px-3 py-2 text-right text-emerald-300">{formatMoney(proposal.ivu_equipos)}</td>
+                  <td className="px-3 py-2 text-cyan-200">{proposal.status}</td>
+                  <td className="px-3 py-2 text-right">
+                    <button
+                      type="button"
+                      onClick={() => void downloadPdf(proposal)}
+                      className="inline-flex items-center gap-1 rounded-md border border-gray-600 px-2 py-1 text-xs text-gray-100 hover:bg-gray-800"
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                      Descargar
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ClientSalesReportsTab({ client }: { client: ClientDetail }) {
+  const clientId = client.id;
   const currentUser = getCurrentUser();
   const canViewCompanyFinancials = String(currentUser?.role || "").toLowerCase() === "admin";
   const [loading, setLoading] = useState(true);
@@ -5702,6 +6091,7 @@ function ClientSalesReportsTab({ clientId }: { clientId: number | string }) {
   if (rows.length === 0 && pendingRows.length === 0) {
     return (
       <div className="space-y-4">
+        <ClientProposalsPanel client={client} />
         <div className="text-center py-12">
           <ShoppingCart className="mx-auto h-12 w-12 text-gray-600" />
           <h3 className="mt-2 text-lg font-medium text-gray-300">Ventas del Cliente</h3>
@@ -5735,6 +6125,7 @@ function ClientSalesReportsTab({ clientId }: { clientId: number | string }) {
 
   return (
     <div className="space-y-4">
+      <ClientProposalsPanel client={client} />
       <div className="flex items-center justify-between">
         <h3 className="text-sm text-gray-300 font-medium">Ventas y sincronización</h3>
         <button
