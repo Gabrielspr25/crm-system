@@ -1,0 +1,294 @@
+// Asana Seg. con DATA REAL de crm_pro (SOV2): sales_opportunities + opportunity_lines + opportunity_steps.
+// Lee del schema public (real). Usa BEGIN + SET LOCAL search_path para NO contaminar el pool.
+import { randomUUID } from 'node:crypto';
+import { Router } from 'express';
+import { pool } from '../db.js';
+import { requireAuth } from '../auth.js';
+
+export const asanaRealRouter = Router();
+
+async function withPublic(fn) {
+  const c = await pool.connect();
+  try {
+    await c.query('BEGIN');
+    await c.query('SET LOCAL search_path TO public');
+    const r = await fn(c);
+    await c.query('COMMIT');
+    return r;
+  } catch (e) {
+    try { await c.query('ROLLBACK'); } catch {}
+    throw e;
+  } finally {
+    c.release();
+  }
+}
+
+const CLIENT_NAME = `COALESCE(NULLIF(TRIM(c.name),''), NULLIF(TRIM(c.business_name),''), '—')`;
+const QTY_KEYS = `('movil_ren','movil_new','claro_tv','cloud')`;   // columnas por cantidad de líneas
+const MONEY_KEYS = `('fijo_ren','fijo_new','mpls')`;               // columnas por dinero
+const VALID_LOG_TYPES = new Set(['llamada', 'nota']);
+
+function productKeyParts(productKey) {
+  const parts = {
+    fijo_ren: { product_type: 'FIJO', sale_type: 'REN' },
+    fijo_new: { product_type: 'FIJO', sale_type: 'NEW' },
+    movil_ren: { product_type: 'MOVIL', sale_type: 'REN' },
+    movil_new: { product_type: 'MOVIL', sale_type: 'NEW' },
+    claro_tv: { product_type: 'CLARO_TV', sale_type: 'NEW' },
+    cloud: { product_type: 'CLOUD', sale_type: 'NEW' },
+    mpls: { product_type: 'MPLS', sale_type: 'NEW' },
+  };
+  return parts[productKey] || null;
+}
+
+function cleanText(value) {
+  return String(value || '').trim();
+}
+
+function logPrefix(type) {
+  if (type === 'llamada') return '[LLAMADA]';
+  if (type === 'paso') return '[PASO]';
+  return '[NOTA]';
+}
+
+function logTypeSql(noteExpr = 'n.note') {
+  return `CASE
+    WHEN ${noteExpr} ILIKE '[LLAMADA]%' THEN 'llamada'
+    WHEN ${noteExpr} ILIKE '[PASO]%' THEN 'paso'
+    ELSE 'nota'
+  END`;
+}
+
+async function ensureOpportunityNotes(c) {
+  await c.query(`
+    CREATE TABLE IF NOT EXISTS opportunity_notes (
+      id UUID PRIMARY KEY,
+      opportunity_id UUID NOT NULL REFERENCES sales_opportunities(id) ON DELETE CASCADE,
+      product_key TEXT NULL,
+      step_id UUID NULL REFERENCES opportunity_steps(id) ON DELETE SET NULL,
+      step_name TEXT NULL,
+      note TEXT NOT NULL,
+      created_by_username TEXT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT now()
+    )`);
+  await c.query(`CREATE INDEX IF NOT EXISTS idx_opportunity_notes_opportunity_created ON opportunity_notes(opportunity_id, created_at DESC)`);
+}
+
+async function fetchWorkflowTemplateSteps(c, productKey) {
+  const parts = productKeyParts(productKey);
+  if (!parts) return [];
+  const r = await c.query(
+    `SELECT s.step_name AS name, s.step_order
+       FROM crm_workflow_templates t
+       JOIN crm_workflow_template_steps s ON s.template_id = t.id
+      WHERE t.is_active = true
+        AND UPPER(t.product_type) = $1
+        AND UPPER(t.sale_type) = $2
+      ORDER BY s.step_order`,
+    [parts.product_type, parts.sale_type]
+  );
+  return r.rows;
+}
+
+async function ensureOpportunityWorkflowSteps(c, opportunityId) {
+  const products = await c.query(
+    `SELECT DISTINCT product_key
+       FROM opportunity_lines
+      WHERE opportunity_id = $1
+        AND product_key IS NOT NULL
+      ORDER BY product_key`,
+    [opportunityId]
+  );
+
+  for (const row of products.rows) {
+    const productKey = row.product_key;
+    const templateSteps = await fetchWorkflowTemplateSteps(c, productKey);
+    if (!templateSteps.length) continue;
+
+    const existing = await c.query(
+      `SELECT LOWER(TRIM(name)) AS name_key
+         FROM opportunity_steps
+        WHERE opportunity_id = $1
+          AND product_key = $2`,
+      [opportunityId, productKey]
+    );
+    const existingNames = new Set(existing.rows.map((step) => step.name_key).filter(Boolean));
+
+    for (const [index, step] of templateSteps.entries()) {
+      const nameKey = cleanText(step.name).toLowerCase();
+      if (!nameKey || existingNames.has(nameKey)) continue;
+      const order = await c.query(
+        `SELECT COALESCE(MAX(step_order), 0) + 1 AS next_order
+           FROM opportunity_steps
+          WHERE opportunity_id = $1`,
+        [opportunityId]
+      );
+      await c.query(
+        `INSERT INTO opportunity_steps (
+           id, opportunity_id, product_key, step_order, name, status, source, created_at, updated_at
+         ) VALUES ($1,$2,$3,$4,$5,$6,'crm_workflow_templates',now(),now())`,
+        [
+          randomUUID(),
+          opportunityId,
+          productKey,
+          Number(order.rows[0]?.next_order || step.step_order || index + 1),
+          step.name,
+          existingNames.size === 0 && index === 0 ? 'en_progreso' : 'pendiente',
+        ]
+      );
+      existingNames.add(nameKey);
+    }
+  }
+}
+
+// LISTA: oportunidades activas con la MISMA estructura de tu Asana real (SOV2):
+// por producto -> { quantity_value, money_value, subscriber_count, current_step }
+asanaRealRouter.get('/asana-real', requireAuth, async (req, res) => {
+  try {
+    const r = await withPublic(c => c.query(`
+      SELECT o.id, o.client_id, o.status, o.title,
+        ${CLIENT_NAME} AS client_name,
+        c.pendiente_validacion AS client_pending_validation,
+        COALESCE(c.phone, c.mobile, c.cellular) AS client_phone,
+        (SELECT count(*) FROM bans b WHERE b.client_id = o.client_id)::int AS ban_count,
+        (SELECT count(*) FROM subscribers s JOIN bans b ON b.id = s.ban_id WHERE b.client_id = o.client_id)::int AS subscriber_count,
+        COALESCE(sp.name,'Sin asignar') AS vendor_name,
+        COALESCE((SELECT json_object_agg(t.pk, t.jb) FROM (
+            SELECT ol.product_key AS pk, json_build_object(
+              'quantity_value', SUM(COALESCE(ol.quantity_value,0))::numeric,
+              'money_value', SUM(COALESCE(ol.money_value, ol.target_monthly_value, 0))::numeric,
+              'subscriber_count', COUNT(*)::int,
+              'current_step', (SELECT json_build_object('name', s.name) FROM opportunity_steps s
+                                 WHERE s.opportunity_id = o.id AND s.product_key = ol.product_key AND s.completed_at IS NULL
+                                 ORDER BY s.step_order LIMIT 1)
+            ) AS jb
+            FROM opportunity_lines ol
+            WHERE ol.opportunity_id = o.id AND ol.product_key IS NOT NULL
+            GROUP BY ol.product_key) t), '{}') AS products,
+        (SELECT COALESCE(SUM(COALESCE(ol.quantity_value,0)),0)::numeric FROM opportunity_lines ol WHERE ol.opportunity_id = o.id AND ol.product_key IN ${QTY_KEYS}) AS total_lines,
+        (SELECT COALESCE(SUM(COALESCE(ol.money_value, ol.target_monthly_value, 0)),0)::numeric FROM opportunity_lines ol WHERE ol.opportunity_id = o.id AND ol.product_key IN ${MONEY_KEYS}) AS total_money
+      FROM (
+        SELECT DISTINCT ON (so.client_id) so.*
+        FROM sales_opportunities so
+        WHERE so.archived_at IS NULL
+          AND COALESCE(LOWER(so.status),'activa') = 'activa'
+        ORDER BY so.client_id, so.updated_at DESC NULLS LAST, so.created_at DESC NULLS LAST, so.id
+      ) o
+      JOIN clients c ON c.id = o.client_id
+      LEFT JOIN salespeople sp ON sp.id = o.salesperson_id
+      ORDER BY client_name`));
+    res.json(r.rows);
+  } catch (e) {
+    console.error('[asana-real]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// DETALLE: oportunidad + pasos (caminito) + líneas (productos negociados)
+asanaRealRouter.get('/asana-real/:id', requireAuth, async (req, res) => {
+  try {
+    const data = await withPublic(async c => {
+      const o = await c.query(
+        `SELECT o.id, o.title, o.status, o.opportunity_type, o.expected_monthly_value,
+                ${CLIENT_NAME} AS client_name, COALESCE(sp.name,'—') AS salesperson
+           FROM sales_opportunities o
+           JOIN clients c ON c.id = o.client_id
+           LEFT JOIN salespeople sp ON sp.id = o.salesperson_id
+              WHERE o.id = $1`, [req.params.id]);
+      if (!o.rows[0]) return null;
+      await ensureOpportunityWorkflowSteps(c, req.params.id);
+      const steps = await c.query(
+        `SELECT id, product_key, name, step_order, (completed_at IS NOT NULL) AS done
+           FROM opportunity_steps WHERE opportunity_id = $1 ORDER BY product_key NULLS LAST, step_order, created_at`, [req.params.id]);
+      const lines = await c.query(
+        `SELECT id, product_key, phone, COALESCE(quantity_value,1)::int AS qty,
+                COALESCE(money_value, target_monthly_value, 0)::numeric AS amount,
+                current_plan, target_plan, status
+           FROM opportunity_lines WHERE opportunity_id = $1 ORDER BY created_at`, [req.params.id]);
+      await ensureOpportunityNotes(c);
+      const log = await c.query(
+        `SELECT id, opportunity_id, product_key, step_id, step_name,
+                ${logTypeSql('note')} AS type,
+                regexp_replace(note, '^\\[(LLAMADA|NOTA|PASO)\\]\\s*', '', 'i') AS body,
+                COALESCE(created_by_username, 'Sistema') AS user_name,
+                created_at
+           FROM opportunity_notes
+          WHERE opportunity_id = $1
+          ORDER BY created_at DESC, id DESC`, [req.params.id]);
+      return { ...o.rows[0], steps: steps.rows, lines: lines.rows, log: log.rows };
+    });
+    if (!data) return res.status(404).json({ error: 'Oportunidad no existe' });
+    res.json(data);
+  } catch (e) {
+    console.error('[asana-real/:id]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// COMPLETAR paso
+asanaRealRouter.post('/asana-real/:id/steps/:stepId/done', requireAuth, async (req, res) => {
+  try {
+    const r = await withPublic(async c => {
+      const step = await c.query(
+        `UPDATE opportunity_steps SET completed_at = now(), updated_at = now()
+          WHERE id = $1 AND opportunity_id = $2 AND completed_at IS NULL
+          RETURNING id, product_key, name`, [req.params.stepId, req.params.id]);
+      if (!step.rows[0]) return null;
+      await ensureOpportunityNotes(c);
+      await c.query(
+        `INSERT INTO opportunity_notes (
+           id, opportunity_id, product_key, step_id, step_name, note, created_by_username, created_at
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,now())`,
+        [randomUUID(), req.params.id, step.rows[0].product_key || null, step.rows[0].id, step.rows[0].name,
+          `${logPrefix('paso')} Completó el paso: ${step.rows[0].name}`, req.user?.nombre || 'Sistema']);
+      await c.query(`UPDATE sales_opportunities SET updated_at = now() WHERE id = $1`, [req.params.id]);
+      return step;
+    });
+    if (!r?.rows?.[0]) return res.status(404).json({ error: 'Paso no existe' });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// REGISTRAR llamada o nota en la bitácora SOV2 real
+asanaRealRouter.post('/asana-real/:id/log', requireAuth, async (req, res) => {
+  try {
+    const type = cleanText(req.body?.type).toLowerCase();
+    const body = cleanText(req.body?.body || req.body?.note);
+    if (!VALID_LOG_TYPES.has(type)) return res.status(400).json({ error: 'type debe ser llamada o nota' });
+    if (!body) return res.status(400).json({ error: 'Escribe una nota o resumen de llamada' });
+    const row = await withPublic(async c => {
+      const exists = await c.query(
+        `SELECT id FROM sales_opportunities WHERE id = $1 AND archived_at IS NULL`, [req.params.id]);
+      if (!exists.rows[0]) return null;
+      await ensureOpportunityNotes(c);
+      const r = await c.query(
+        `INSERT INTO opportunity_notes (
+           id, opportunity_id, note, created_by_username, created_at
+         ) VALUES ($1,$2,$3,$4,now())
+         RETURNING id, opportunity_id, ${logTypeSql('note')} AS type,
+                   regexp_replace(note, '^\\[(LLAMADA|NOTA|PASO)\\]\\s*', '', 'i') AS body,
+                   COALESCE(created_by_username, 'Sistema') AS user_name, created_at`,
+        [randomUUID(), req.params.id, `${logPrefix(type)} ${body}`, req.user?.nombre || 'Sistema']);
+      await c.query(`UPDATE sales_opportunities SET updated_at = now() WHERE id = $1`, [req.params.id]);
+      return r.rows[0];
+    });
+    if (!row) return res.status(404).json({ error: 'Oportunidad activa no encontrada' });
+    res.status(201).json(row);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// CERRAR → al pool (regla SOV2: archiva oportunidad + cliente sin vendedor)
+asanaRealRouter.post('/asana-real/:id/close', requireAuth, async (req, res) => {
+  try {
+    const done = await withPublic(async c => {
+      const o = await c.query(
+        `UPDATE sales_opportunities SET status='cerrada', archived_at=now(), closed_at=now()
+          WHERE id=$1 AND archived_at IS NULL RETURNING client_id`, [req.params.id]);
+      if (!o.rows[0]) return false;
+      await c.query(`UPDATE clients SET salesperson_id = NULL WHERE id = $1`, [o.rows[0].client_id]);
+      return true;
+    });
+    if (!done) return res.status(404).json({ error: 'Oportunidad activa no encontrada' });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
