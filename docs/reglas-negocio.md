@@ -473,6 +473,40 @@
     Gabriel — pendiente de diseñar). Reemplazaría/ampliaría el módulo "Voz Cliente"
     (que queda pendiente). *(2026-06-23.)*
 
+41. **Comisión del vendedor = MANUAL, arranca en 0, editable.** Tango trae **Empresa$
+    (Comisión Claro)**, NO la comisión del vendedor (en el portal Claro/Tango ese campo
+    viene vacío). Por eso en el módulo Comisiones la **Comisión$** del vendedor empieza en
+    **0** y se carga/edita a mano por línea; **Empresa$ es solo lectura**. *(Gabriel — 2026-06-27.)*
+
+42. **Los vendedores vienen de Tango — también para Metas.** La grilla "Meta por vendedor"
+    lista los vendedores que trae Tango (el campo vendedor de las ventas/comisiones), no una
+    tabla local. *(Confirmado por Gabriel — 2026-06-27. Ver [[feedback_tango_manda]].)*
+
+43. **Metas: del negocio y por vendedor, por producto, con alcance.** Grilla editable con
+    columnas por producto (Fijo Ren, Fijo New, Móvil Ren, Móvil New, Claro TV, Cloud, MPLS),
+    una fila Negocio + una por vendedor. Cada fila tiene **alcance**: Solo este mes / Hasta
+    diciembre / Todo el año (al guardar replica la meta a esos meses). Muestra **Meta $**
+    (cantidad × valor de ingreso del producto). *(Gabriel — 2026-06-27.)*
+
+44. **El caminito de pasos de una oportunidad usa los pasos CONFIGURADOS** (los de
+    "Configurar pasos" por producto), NO plantillas genéricas viejas. Configurar pasos vive
+    por producto; los pasos reales se copiaron de crmproui: Fijo Ren (5), Fijo New (8),
+    Móvil Ren (8), Móvil New (9); Claro TV / Cloud / MPLS en blanco. **Se copian, no se
+    conecta nada al sistema viejo.** *(Gabriel — 2026-06-27.)*
+
+45. **Cliente Voz (en Asana Seg.):** se dicta por voz (navegador), un **parser sin IA**
+    entiende empresa/teléfono/producto/cantidad/$ (Gabriel corrige), y crea **cliente
+    provisional + oportunidad + línea + nota inicial**. Sin clave de IA por ahora; queda la
+    puerta a Claude más adelante. *(Gabriel — 2026-06-27.)*
+
+46. **Modal de cliente = réplica de la ClientModal real (7 tabs).** Al abrir un cliente
+    (fila, flecha o botón Cliente) se abre una **modal** con tabs: Información del Cliente ·
+    BANs y Suscriptores · Historial de Gestiones · Comparativas · Ventas · Pendientes · Notas.
+    En BANs y Suscriptores: tarjeta por BAN (con Subir/Pegar OCR y Editar), sub-tabs
+    Activas / No renueva ahora / Canceladas, filas de suscriptor con acciones Editar / No
+    renueva ahora / Cancelar, + Nuevo BAN y + Agregar Suscriptor; header con Enviar a
+    Seguimiento. *(Pedido por Gabriel — 2026-06-27. Detalle final lo define él.)*
+
 ---
 
 *(Las próximas reglas se irán agregando acá automáticamente.)*

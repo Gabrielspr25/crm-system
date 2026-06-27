@@ -1,90 +1,83 @@
-# Sistema nuevo — Pendientes y decisión de arquitectura
+# Sistema nuevo — Estado, decisiones y pendientes
 
-Actualizado: 2026-06-26.
+Actualizado: 2026-06-27.
 
-## Decisión raíz (Gabriel, 2026-06-26)
+## Decisión raíz (Gabriel)
 
-- El **diseño del sistema viejo estaba bien** → se **copia tal cual** (tarjetas, filtros, columnas).
-- El problema del viejo era el **código sucio** → eso es lo que NO repetimos.
-- El app nuevo debe leer **la base REAL (`crm_pro`)**, NO la base demo (`ventaspro_nuevo`).
-- **Prohibido emparchar:** nada de mezclar data demo con data real.
+- El **diseño del sistema viejo estaba bien** → se **copia tal cual** (estructura, tarjetas, columnas).
+- El problema del viejo era el **código sucio** → eso es lo que NO se repite. **No tolerar ensuciar.**
+- El app nuevo lee la **base REAL `crm_pro` schema `public`**, NO la demo (`ventaspro_nuevo`).
+  Excepción: catálogo/config (productos, categorías, pasos, metas) vive en `ventaspro_nuevo`
+  (es config del sistema nuevo, no data falsa de clientes).
+- **Prohibido emparchar** y **commitear el avance seguido** (solo archivos del sistema nuevo;
+  nunca `server-FINAL.js` ni `src/react-app/**`, que son del programador).
 
-## Problema actual detectado
+## Estado por módulo
 
-- La pantalla **Clientes** del app nuevo muestra solo **4 clientes falsos** (demo) porque
-  lee el schema `ventaspro_nuevo`, no `crm_pro`. El sistema real tiene ~1263 clientes
-  (2656 líneas activas).
-- Solo **Comisiones** está conectada a la data real.
-- Las **comisiones de vendedores demo** siguen apareciendo porque salen del schema demo.
+| Módulo | Estado | Fuente real |
+|---|---|---|
+| **Clientes** (lista + tarjetas KPI + filtros + paginación) | ✅ REAL | `public.clients/bans/subscribers` (`clientsReal.js`) |
+| **Modal de cliente** (datos + BAN y suscriptores) | 🟡 parcial (falta versión 7 tabs) | `GET /api/clients-real/:id` |
+| **Comisiones** (tabla por empresa + líneas, filtros mes/estado) | ✅ REAL | `public.subscriber_reports` |
+| **Asana Seg.** (lista columnas por producto + detalle + cerrar al pool) | ✅ REAL | `sales_opportunities`+`opportunity_lines`+`opportunity_steps` |
+| **Asana · caminito de pasos** | ✅ usa pasos CONFIGURADOS | `ventaspro_nuevo.product_step_templates` |
+| **Cliente Voz** (dictado + parser → crea oportunidad) | ✅ HECHO | `POST /api/asana-real/voz` |
+| **Configurar pasos** (editor por producto) | ✅ HECHO | `ventaspro_nuevo.product_step_templates` |
+| **Configuración** (productos/categorías editables + pasos) | ✅ HECHO | `ventaspro_nuevo` |
+| **Metas** (negocio + por vendedor, por producto, con alcance) | ✅ HECHO | `ventaspro_nuevo.goals` + vendedores de Tango |
+| **Panel General** | ⬜ DEMO — pasar a real | — |
+| **Pendientes Tango / Historial / Comparativa** | ⬜ DEMO — pasar a real | — |
 
-## Pantalla Clientes — qué FALTA (copiar del viejo)
+## Decisiones / reglas confirmadas (recientes)
 
-1. **Traer los clientes reales** de `crm_pro` (no los 4 demo).
-2. **Tarjetas KPI** arriba (como el viejo), cada una con desglose Móvil / Fijo líneas y $$:
-   - **Activos** · **Cancelados** · **Seguimiento** · **Incompletos** · Total.
-3. **Filtros / botones** (ponerlos todos, aunque algunos se cableen después):
-   - Buscar clientes (texto).
-   - Tipo (Todos los tipos) · Vencimiento (Todos los vencimientos) · Orden (Orden por defecto)
-     · Año (2026) · Estado (Todos).
-   - Botones: **Reportes**, **Generar Oferta IA**, **Exportar**, **+ Nuevo Cliente**, **Cliente Voz**.
-4. **Columnas de la tabla** (como el viejo): Empresa · Celular · Última actividad · Tipo BAN ·
-   Base · Estado · Vendedor asignado · Num BAN · Suscriptor · Fecha vencimiento · Acciones.
+- **Comisión del vendedor = MANUAL.** Tango trae **Empresa$ (Comisión Claro)**, NO la del
+  vendedor. El campo arranca en **0** y es **editable** por línea. (Datos locales puestos en 0.)
+- **Vendedores vienen de Tango** (regla). La grilla de Metas por vendedor lista los del
+  campo vendedor de las comisiones (`GET /api/comisiones`/`/api/vendedores`). Hoy: Dayana,
+  Hernán, Gabriel Rodríguez.
+- **Caminito de Asana = pasos CONFIGURADOS** (los de "Configurar pasos"), NO los genéricos
+  viejos de `crm_workflow_templates`. El detalle borra solo los pasos que no estén en la
+  config y siembra los configurados (preserva avance).
+- **Pasos copiados de crmproui** (no conectados, copiados a la tabla propia):
+  Fijo Ren (5), Fijo New (8), Movil Ren (8), Movil New (9). Claro TV / Cloud / MPLS: **en blanco**.
+- **Cliente Voz**: en Asana. Dictado (Chrome) → parser sin IA llena empresa/teléfono/
+  producto/cantidad/$ → crea **cliente provisional + oportunidad + línea + nota**.
+- **Metas**: alcance por fila (Solo este mes / Hasta diciembre / Todo el año); upsert sin
+  duplicar (fix para `salesperson NULL` del negocio).
+- **Categorías**: solo lectura, dentro de Configuración (fuera del menú).
 
-## Categorías (Gabriel, 2026-06-26) — ✅ HECHO
+## PENDIENTE PRINCIPAL — Modal de cliente completo (7 tabs)
 
-- **Categorías NO es editable** y **va DENTRO de Configuración** (sacada del menú lateral).
-- Se muestra como referencia (solo lectura).
-- ✅ Configuración ahora unifica **Productos + Categorías (solo lectura) + Asana Pasos**
-  (como la "Gestión" del sistema viejo). Ítems sueltos Categorías y Asana Pasos
-  sacados del menú.
+Replicar la **ClientModal real** de crmproui (ej. FARMACIA VARGAS) con estilo de marca:
 
-## Aprendizaje técnico (bug evitar repetir)
+- Tabs: **Información del Cliente · BANs y Suscriptores · Historial de Gestiones ·
+  Comparativas · Ventas · Pendientes · Notas**.
+- En **BANs y Suscriptores**: tarjeta por BAN (FIJO/MÓVIL, Activo) con **Subir/Pegar (OCR)**,
+  **Editar**, sub-tabs **Activas / No renueva ahora / Canceladas**, filas de suscriptor con
+  teléfono, plan, $/mes, vencimiento y acciones **Editar / No renueva ahora / Cancelar**,
+  **+ Nuevo BAN** y **+ Agregar Suscriptor**.
+- Header con **Enviar a Seguimiento**.
+- *Gabriel define el detalle final de los tabs (pendiente que lo pase).*
 
-- **No usar `SET search_path` directo en una conexión del pool** y soltarla: queda
-  contaminada y rompe otras pantallas (pasó con Productos/Configuración). Usar
-  `BEGIN` + `SET LOCAL search_path` + `COMMIT` (se revierte solo). Ya aplicado en
-  `clientsReal.js`.
+## Otros pendientes
 
-## Skill de diseño creado
+- **Filtros de Clientes**: Tipo, Vencimiento, Orden, Año, Estado (hoy visuales/placeholder).
+- **Panel General / Pendientes Tango / Historial / Comparativa** → pasar a data real.
+- **Bitácora de Asana** (llamadas/notas): conectar a su tabla real (`opportunity_notes`).
+- **Limpieza**: sacar la data demo de `ventaspro_nuevo` (clientes/oportunidades falsos) una
+  vez que todo lee de `public`.
 
-- `.claude/skills/ventaspro-diseno/SKILL.md`: paleta + componentes (.kpi/.btn/.pill/
-  .card/.inp) + regla "reusar clases, nunca inline". Leer antes de tocar cualquier
-  pantalla del frontend.
+## Aprendizajes técnicos (no repetir)
 
-## Estado pantalla Clientes (2026-06-26)
+- **No usar `SET search_path` directo** en una conexión del pool y soltarla: queda
+  contaminada y rompe otras pantallas. Usar `BEGIN` + `SET LOCAL search_path TO public` +
+  `COMMIT` (se revierte solo). Aplicado en `clientsReal.js` y `asanaReal.js`.
+- **Base local = copia PARCIAL**: `account_type`, `line_kind`, `product_key`, `plan`,
+  `category_id` casi todos NULL local. Las clasificaciones (móvil/fijo, columnas de producto)
+  se ven incompletas local; en **producción** ese dato está lleno y clasifica bien.
 
-- ✅ **Hecho:** lee data REAL de `crm_pro` (endpoint `clients-real.js` reusa la lógica
-  probada del viejo). Trae ~1522 clientes. 4 tarjetas (Activos/Cancelados/Seguimiento/
-  Incompletos) **clicables para filtrar**, Total, buscador por nombre (Enter),
-  paginación 50/pág, y las columnas del viejo (Empresa, Celular, Última actividad,
-  Tipo BAN, Base, Estado, Vendedor, Num BAN, Suscriptor, Fecha vencimiento).
-- ⚠️ **Limitación de la base LOCAL:** los campos de tipo de línea (`account_type`,
-  `line_kind`, `product_type`, `plan`, `category_id`) están **casi todos NULL** en la
-  copia local. Por eso las tarjetas muestran casi todo como "Incompletos". En
-  **producción** ese dato está lleno → la misma lógica clasifica bien (móvil/fijo).
-- ⬜ **Filtros pendientes de cablear:** Tipo, Vencimiento, Orden, Año, Estado (hoy son
-  selects visuales deshabilitados). Botones Reportes / Generar Oferta IA / Exportar /
-  Cliente Voz → placeholders ("próximamente").
+## Skill de diseño
 
-## Demo → REAL por módulo (orden de Gabriel: sacar TODA la demo)
-
-| Módulo | Estado |
-|---|---|
-| Clientes | ✅ REAL (`public` crm_pro) |
-| Comisiones | ✅ REAL (`subscriber_reports`) |
-| Asana Seg. (lista + detalle + cerrar al pool) | ✅ REAL (`sales_opportunities`+`opportunity_lines`+`opportunity_steps`) |
-| Configuración (productos/categorías/pasos) | config nuevo editable (no es data falsa) |
-| **Panel General** | ⬜ DEMO — pasar a real |
-| **Metas** | ⬜ DEMO — pasar a real |
-| **Pendientes Tango** | ⬜ DEMO — pasar a real |
-| **Ficha de cliente** (`viewCliente`/`/api/clients/:id`) | ⬜ DEMO — pasar a real |
-| **Historial** | ⬜ DEMO — pasar a real |
-| **Comparativa** | ⬜ DEMO — pasar a real |
-
-- Asana detalle: la **bitácora** real (llamadas/notas) queda pendiente de conectar a
-  su tabla real (no se usa la demo). Pasos y productos ya son reales.
-
-## Limpieza pendiente
-
-- Sacar la data demo (4 clientes falsos, comisiones demo, oportunidades demo) una vez
-  conectado todo a `crm_pro`.
+- `.claude/skills/ventaspro-diseno/SKILL.md`: paleta dark-first + componentes
+  (.kpi/.btn/.pill/.card/.inp/.modal) + regla "reusar clases, nunca inline; traer la
+  funcionalidad completa del viejo, nunca a mitad". Leer antes de tocar el frontend.
