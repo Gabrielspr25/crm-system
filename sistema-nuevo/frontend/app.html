@@ -112,6 +112,9 @@
   @media(max-width:900px){.asana-kpis{grid-template-columns:1fr 1fr;}.asana-kpis .main{grid-column:1/-1;}}
   @media(max-width:720px){.logbox{grid-template-columns:1fr;}.logbox .btn{width:100%;}}
 </style>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
 </head>
 <body data-theme="dark">
   <aside class="side">
@@ -260,8 +263,65 @@ function tabVentas(c){
 function tabComp(c){
   const a=(c.subscribers||[]).filter(s=>cliAct(s.status)); const total=a.reduce((x,s)=>x+Number(s.monthly_value||0),0);
   const rows=a.map(s=>`<tr><td>${s.ban_number||'—'}</td><td>${s.phone||'—'}</td><td>${s.plan||'—'}</td><td class="r" style="color:var(--green)">${money(s.monthly_value)}</td><td>${cliVenc(s.contract_end_date)}</td></tr>`).join('')||'<tr><td colspan="5" class="empty">Sin líneas activas</td></tr>';
-  return `<div class="card" style="overflow-x:auto;margin-bottom:12px"><table style="min-width:680px"><thead><tr><th>BAN</th><th>Teléfono</th><th>Plan actual</th><th class="r">Costo</th><th>Vencimiento</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><td colspan="3" class="r"><b>Total actual</b></td><td class="r" style="color:var(--green);font-weight:700">${money(total)}</td><td></td></tr></tfoot></table></div>
-  <div class="panel"><h3>Oferta propuesta · Excel / PDF</h3><div class="s">Acá ves el Plan Actual real. El armado de la oferta y la descarga Excel/PDF se conecta en el próximo paso (copiando tu ComparativaModal).</div></div>`;
+  return `<div style="display:flex;justify-content:flex-end;margin-bottom:10px"><button class="btn green" onclick="abrirComparativa('${c.id}')">⇄ Abrir Comparativa (oferta + Excel/PDF)</button></div>
+  <div class="card" style="overflow-x:auto"><table style="min-width:680px"><thead><tr><th>BAN</th><th>Teléfono</th><th>Plan actual</th><th class="r">Costo</th><th>Vencimiento</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><td colspan="3" class="r"><b>Total actual</b></td><td class="r" style="color:var(--green);font-weight:700">${money(total)}</td><td></td></tr></tfoot></table></div>`;
+}
+// ---- Comparativa de Planes (completa: oferta + Excel + PDF) ----
+let compCli=null, compOffer=[];
+function cerrarComp(){ const m=$('compBg'); if(m)m.remove(); }
+function compReadOffer(){ compOffer.forEach((r,i)=>{ ['ban','phone','plan','cost','notes'].forEach(f=>{ const el=$('of_'+i+'_'+f); if(el) r[f]=el.value; }); }); }
+function compAddOffer(){ compReadOffer(); compOffer.push({ban:'',phone:'',plan:'',cost:'',notes:''}); renderComp(); }
+function compDelOffer(i){ compReadOffer(); compOffer.splice(i,1); renderComp(); }
+function compTotals(){ compReadOffer(); const act=(compCli.subscribers||[]).filter(s=>cliAct(s.status)); const totalAct=act.reduce((a,s)=>a+Number(s.monthly_value||0),0); const totalOf=compOffer.reduce((a,r)=>a+(parseFloat(r.cost)||0),0); const diff=totalOf-totalAct; if($('compTotOf'))$('compTotOf').textContent=money(totalOf); if($('compDiff'))$('compDiff').textContent=money(diff); return {totalAct,totalOf,diff}; }
+async function abrirComparativa(id){
+  try{ compCli=(cliM&&cliM.id===id)?cliM:await api('/api/clients-real/'+id); }catch(e){ alert('No se pudo abrir: '+e.message); return; }
+  const act=(compCli.subscribers||[]).filter(s=>cliAct(s.status));
+  compOffer=act.map(s=>({ban:s.ban_number||'',phone:s.phone||'',plan:'',cost:'',notes:''}));
+  document.body.insertAdjacentHTML('beforeend',`<div class="modal-bg" id="compBg" style="z-index:120" onclick="if(event.target===this)cerrarComp()"><div class="modal" id="compModal" style="max-width:1100px;width:97%"></div></div>`);
+  renderComp();
+}
+function renderComp(){
+  const c=compCli; if(!c||!$('compModal'))return;
+  const act=(c.subscribers||[]).filter(s=>cliAct(s.status)); const totalAct=act.reduce((a,s)=>a+Number(s.monthly_value||0),0);
+  const actRows=act.map(s=>`<tr><td>${s.ban_number||'—'}</td><td>${s.phone||'—'}</td><td>${s.plan||'—'}</td><td class="r" style="color:var(--green)">${money(s.monthly_value)}</td><td>${cliVenc(s.contract_end_date)}</td></tr>`).join('')||'<tr><td colspan="5" class="empty">Sin líneas activas</td></tr>';
+  const ofRows=compOffer.map((r,i)=>`<tr>
+    <td><input class="cinp" style="width:90px;text-align:left" id="of_${i}_ban" value="${r.ban||''}"></td>
+    <td><input class="cinp" style="width:104px;text-align:left" id="of_${i}_phone" value="${r.phone||''}"></td>
+    <td><input class="cinp" style="width:130px;text-align:left" id="of_${i}_plan" value="${r.plan||''}" placeholder="Plan nuevo"></td>
+    <td><input class="cinp" style="width:80px" id="of_${i}_cost" value="${r.cost||''}" placeholder="0" oninput="compTotals()"></td>
+    <td><input class="cinp" style="width:170px;text-align:left" id="of_${i}_notes" value="${r.notes||''}" placeholder="Notas"></td>
+    <td><button class="btn" style="padding:4px 8px;font-size:11px;background:var(--red-soft);color:var(--red)" onclick="compDelOffer(${i})">✕</button></td></tr>`).join('')||'<tr><td colspan="6" class="empty">Agregá líneas a la oferta</td></tr>';
+  const totalOf=compOffer.reduce((a,r)=>a+(parseFloat(r.cost)||0),0);
+  $('compModal').innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><div><h2 style="font-size:18px">⇄ Comparativa de Planes</h2><div class="s">${c.name||'—'}</div></div>
+      <div style="display:flex;gap:8px"><button class="btn ghost" onclick="compSave()">✓ Marcar Actualizado</button><button class="btn green" onclick="compExcel()">⬇ Excel</button><button class="btn" style="background:var(--red)" onclick="compPDF()">⬇ PDF</button><button class="btn ghost" style="padding:6px 10px" onclick="cerrarComp()">✕</button></div></div>
+    <div class="panel"><h3>Plan actual del cliente</h3><div class="card" style="overflow-x:auto"><table style="min-width:680px"><thead><tr><th>BAN</th><th>Teléfono</th><th>Plan</th><th class="r">Costo</th><th>Vencimiento</th></tr></thead><tbody>${actRows}</tbody><tfoot><tr><td colspan="3" class="r"><b>Total actual</b></td><td class="r" style="color:var(--green);font-weight:700">${money(totalAct)}</td><td></td></tr></tfoot></table></div></div>
+    <div class="panel"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><h3 style="margin:0">Oferta propuesta</h3><button class="btn" onclick="compAddOffer()">+ Agregar Línea</button></div>
+      <div class="card" style="overflow-x:auto"><table style="min-width:680px"><thead><tr><th>BAN</th><th>Teléfono</th><th>Plan nuevo</th><th class="r">Costo</th><th>Notas</th><th></th></tr></thead><tbody>${ofRows}</tbody></table></div>
+      <div style="display:flex;gap:24px;justify-content:flex-end;margin-top:10px;font-size:14px"><span>Total oferta: <b id="compTotOf" style="color:var(--primary)">${money(totalOf)}</b></span><span>Ahorro/Dif: <b id="compDiff" style="color:var(--green)">${money(totalOf-totalAct)}</b></span></div></div>
+    <div class="panel"><h3>Notas para el PDF</h3><textarea class="inp" id="compNotas" rows="2" placeholder="Observaciones generales…"></textarea></div>`;
+}
+function compExcel(){
+  compReadOffer(); if(typeof XLSX==='undefined'){alert('La librería de Excel no cargó (revisá internet).');return;}
+  const c=compCli, act=(c.subscribers||[]).filter(s=>cliAct(s.status)), t=compTotals();
+  const wsA=XLSX.utils.json_to_sheet(act.map(s=>({BAN:s.ban_number,'Telefono':s.phone,Plan:s.plan,Costo:Number(s.monthly_value||0),Vencimiento:cliVenc(s.contract_end_date)})));
+  const wsO=XLSX.utils.json_to_sheet(compOffer.map(r=>({BAN:r.ban,'Telefono':r.phone,'Plan nuevo':r.plan,Costo:Number(r.cost||0),Notas:r.notes})));
+  const wsR=XLSX.utils.json_to_sheet([{Concepto:'Total actual',Valor:t.totalAct},{Concepto:'Total oferta',Valor:t.totalOf},{Concepto:'Diferencia',Valor:t.diff}]);
+  const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,wsA,'Plan Actual'); XLSX.utils.book_append_sheet(wb,wsO,'Oferta'); XLSX.utils.book_append_sheet(wb,wsR,'Resumen');
+  XLSX.writeFile(wb,'Comparativa_'+String(c.name||'cliente').replace(/[^a-z0-9]/gi,'_')+'.xlsx');
+}
+function compPDF(){
+  compReadOffer(); const J=window.jspdf&&window.jspdf.jsPDF; if(!J){alert('La librería de PDF no cargó (revisá internet).');return;}
+  const c=compCli, act=(c.subscribers||[]).filter(s=>cliAct(s.status)), t=compTotals(), doc=new J();
+  doc.setFontSize(14); doc.text('Comparativa de Planes - '+String(c.name||''),14,16);
+  doc.autoTable({startY:22,head:[['BAN','Telefono','Plan','Costo','Vencimiento']],body:act.map(s=>[s.ban_number||'',s.phone||'',s.plan||'',money(s.monthly_value),cliVenc(s.contract_end_date)]).concat([['','','TOTAL ACTUAL',money(t.totalAct),'']])});
+  let y=doc.lastAutoTable.finalY+8; doc.text('Oferta propuesta',14,y);
+  doc.autoTable({startY:y+4,head:[['BAN','Telefono','Plan nuevo','Costo','Notas']],body:compOffer.map(r=>[r.ban||'',r.phone||'',r.plan||'',money(r.cost),r.notes||'']).concat([['','','TOTAL OFERTA',money(t.totalOf),''],['','','AHORRO/DIF',money(t.diff),'']])});
+  const notas=$('compNotas')?$('compNotas').value:''; if(notas) doc.text('Notas: '+notas,14,doc.lastAutoTable.finalY+8);
+  doc.save('Comparativa_'+String(c.name||'cliente').replace(/[^a-z0-9]/gi,'_')+'.pdf');
+}
+async function compSave(){
+  const t=compTotals(); const notas=$('compNotas')?$('compNotas').value:'';
+  try{ await api('/api/comparativas',{method:'POST',body:{client_id:compCli.id,name:'Comparativa '+String(compCli.name||''),current_total:t.totalAct,offer_total:t.totalOf,lines:compOffer,notes:notas}}); alert('✓ Comparativa guardada'); }catch(e){ alert('No se pudo guardar: '+e.message); }
 }
 async function viewCliente(id){
   const c=await api('/api/clients-real/'+id);
