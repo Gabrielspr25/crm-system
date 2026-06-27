@@ -326,48 +326,14 @@ function compPDF(){
     doc.save('Comparativa_'+String(c.name||'cliente').replace(/[^a-z0-9]/gi,'_')+'.pdf');
   }catch(e){ alert('Error al generar PDF: '+e.message); }
 }
-const PROPUESTA_CSS=`.pp-root{font-family:Inter,Segoe UI,Arial,sans-serif;color:#111827;background:#fff;width:980px;padding:16px}
-.pp-hero{background:linear-gradient(135deg,#e1251b,#a80f10);border-radius:22px;padding:22px;color:#fff;display:flex;gap:22px;align-items:center}
-.pp-logo{background:#050505;border-radius:16px;width:210px;height:120px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:44px;font-weight:900;letter-spacing:-2px;flex-shrink:0}
-.pp-h1{font-size:36px;margin:0 0 6px;letter-spacing:-.8px}.pp-sub{font-size:16px;opacity:.95;margin:0 0 14px}
-.pp-pills{display:flex;flex-wrap:wrap;gap:8px}.pp-pill{background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.28);padding:6px 11px;border-radius:999px;font-weight:700;font-size:12px}
-.pp-cards{display:flex;gap:12px;margin:16px 0}.pp-card{flex:1;background:#fff;border:1px solid #e5e7eb;border-radius:18px;padding:16px}
-.pp-label{color:#6b7280;font-weight:800;font-size:11px;text-transform:uppercase;letter-spacing:.5px}.pp-value{font-size:25px;font-weight:900;margin-top:6px}
-.pp-red{color:#e1251b}.pp-blue{color:#2563eb}.pp-green{color:#0f9f6e}
-.pp-section{background:#fff;border:1px solid #e5e7eb;border-radius:18px;padding:18px;margin:14px 0}
-.pp-shead{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}.pp-h2{margin:0;font-size:21px}.pp-small{color:#6b7280;font-size:13px}
-.pp-table{width:100%;border-collapse:separate;border-spacing:0;border-radius:14px;border:1px solid #e5e7eb;overflow:hidden}
-.pp-table th{background:#111827;color:#fff;text-align:left;padding:10px;font-size:13px}.pp-table td{padding:9px 11px;border-top:1px solid #e5e7eb;font-size:13px}
-.pp-of th{background:#e1251b}.pp-cost{text-align:right;font-weight:800}.pp-totalRow td{font-weight:900;background:#fff7ed}
-.pp-foot{display:flex;justify-content:space-between;align-items:flex-end;margin-top:18px;color:#374151}.pp-sign{font-weight:900;font-size:17px}.pp-role{color:#e1251b;font-weight:800}`;
 function generarPropuesta(){
   try{
-    compReadOffer();
-    if(typeof html2pdf==='undefined'){ alert('La librería de PDF no cargó (revisá internet y reabrí la página).'); return; }
-    const c=compCli, t=compTotals(), act=(c.subscribers||[]).filter(s=>cliAct(s.status)), fecha=new Date().toLocaleDateString('es-PR');
-    const actRows=act.map(s=>`<tr><td>${s.ban_number||''}</td><td>${s.phone||''}</td><td>${s.plan||''}</td><td class="pp-cost">${money(s.monthly_value)}</td><td>${cliVenc(s.contract_end_date)}</td></tr>`).join('')||'<tr><td colspan="5">Sin líneas activas</td></tr>';
-    const ofF=compOffer.filter(r=>r.ban||r.phone||r.plan||r.cost);
-    const ofRows=ofF.map(r=>`<tr><td>${r.phone||r.ban||''}</td><td class="pp-cost">${money(r.cost)}</td><td>${r.plan||'—'}</td><td>${r.notes||''}</td></tr>`).join('')||'<tr><td colspan="4">Sin oferta cargada</td></tr>';
-    const cont=document.createElement('div'); cont.style.cssText='position:fixed;left:-99999px;top:0';
-    cont.innerHTML=`<style>${PROPUESTA_CSS}</style><div class="pp-root">
-      <div class="pp-hero"><div class="pp-logo">claro</div>
-        <div><h1 class="pp-h1">Propuesta Comercial</h1><p class="pp-sub">Optimización de tu plan para <b>${c.name||'tu empresa'}</b></p>
-        <div class="pp-pills"><span class="pp-pill">Claro Empresas</span><span class="pp-pill">${act.length} líneas actuales</span><span class="pp-pill">Fecha: ${fecha}</span></div></div></div>
-      <div class="pp-cards">
-        <div class="pp-card"><div class="pp-label">Costo actual</div><div class="pp-value pp-red">${money(t.totalAct)}</div></div>
-        <div class="pp-card"><div class="pp-label">Oferta propuesta</div><div class="pp-value pp-blue">${money(t.totalOf)}</div></div>
-        <div class="pp-card"><div class="pp-label">Diferencia mensual</div><div class="pp-value ${t.diff<=0?'pp-green':'pp-red'}">${money(t.diff)}</div></div>
-        <div class="pp-card"><div class="pp-label">Líneas incluidas</div><div class="pp-value pp-green">${act.length}</div></div></div>
-      <div class="pp-section"><div class="pp-shead"><h2 class="pp-h2">Plan actual</h2><span class="pp-small">Cuentas y líneas existentes</span></div>
-        <table class="pp-table"><thead><tr><th>BAN</th><th>Teléfono</th><th>Plan</th><th>Costo</th><th>Vencimiento</th></tr></thead><tbody>${actRows}<tr class="pp-totalRow"><td></td><td></td><td>TOTAL</td><td class="pp-cost">${money(t.totalAct)}</td><td></td></tr></tbody></table></div>
-      <div class="pp-section"><div class="pp-shead"><h2 class="pp-h2">Oferta propuesta</h2><span class="pp-small">Plan optimizado</span></div>
-        <table class="pp-table pp-of"><thead><tr><th>Teléfono</th><th>Precio</th><th>Plan nuevo</th><th>Notas</th></tr></thead><tbody>${ofRows}<tr class="pp-totalRow"><td>TOTAL</td><td class="pp-cost">${money(t.totalOf)}</td><td colspan="2"></td></tr></tbody></table></div>
-      <div class="pp-foot"><div><div class="pp-sign">Gabriel Sanchez</div><div class="pp-role">Corporate and retail account Director</div></div><div class="pp-small">Propuesta preparada para ${c.name||''}</div></div>
-    </div>`;
-    document.body.appendChild(cont);
-    const el=cont.querySelector('.pp-root');
-    html2pdf().set({margin:8,filename:'Propuesta_'+String(c.name||'cliente').replace(/[^a-z0-9]/gi,'_')+'.pdf',image:{type:'jpeg',quality:0.98},html2canvas:{scale:2,backgroundColor:'#ffffff'},jsPDF:{unit:'mm',format:'letter',orientation:'portrait'},pagebreak:{mode:['css','legacy']}})
-      .from(el).save().then(()=>cont.remove()).catch(e=>{cont.remove();alert('Error al generar el PDF: '+e.message);});
+    compReadOffer(); const c=compCli, act=(c.subscribers||[]).filter(s=>cliAct(s.status));
+    const current=act.map(s=>[s.ban_number||'', s.phone||'', s.plan||'', Number(s.monthly_value||0), cliVenc(s.contract_end_date), s.equipment||'']);
+    const proposal=compOffer.filter(r=>r.ban||r.phone||r.plan||r.cost).map(r=>[r.phone||r.ban||'', Number(r.cost||0), '', (r.plan?('Plan: '+r.plan+(r.notes?' · ':'')):'')+(r.notes||'')]);
+    const data={cliente:c.name||'Cliente', current, proposal};
+    const url='propuesta-template.html#'+encodeURIComponent(JSON.stringify(data));
+    const w=window.open(url,'_blank'); if(!w) alert('Permití las ventanas emergentes para ver la propuesta.');
   }catch(e){ alert('Error al generar la propuesta: '+e.message); }
 }
 async function compSave(){

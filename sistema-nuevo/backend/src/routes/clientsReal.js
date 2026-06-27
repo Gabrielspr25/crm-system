@@ -161,7 +161,7 @@ clientsRealRouter.get('/clients-real/:id', requireAuth, async (req, res) => {
       `SELECT id, ban_number, account_type, status FROM bans WHERE client_id = $1 ORDER BY ban_number`, [req.params.id]);
     const subs = await conn.query(
       `SELECT s.id, s.phone, s.plan, s.monthly_value, s.status, s.line_kind, s.line_type,
-              s.contract_end_date, b.ban_number, b.id AS ban_id
+              s.contract_end_date, s.equipment, b.ban_number, b.id AS ban_id
          FROM subscribers s JOIN bans b ON b.id = s.ban_id
         WHERE b.client_id = $1 ORDER BY b.ban_number, s.phone`, [req.params.id]);
     // Ventas del cliente = sus comisiones (Tango)
