@@ -150,9 +150,10 @@ clientsRealRouter.get('/clients-real/:id', requireAuth, async (req, res) => {
     await conn.query('BEGIN');
     await conn.query('SET LOCAL search_path TO public');
     const c = await conn.query(
-      `SELECT c.id, c.name, c.business_name, c.email,
-              COALESCE(c.phone, c.mobile, c.cellular) AS phone, c.city,
-              sp.name AS vendor_name
+      `SELECT c.id, c.name, c.business_name, c.company, c.email,
+              c.phone, c.additional_phone, c.mobile, c.cellular,
+              c.address, c.city, c.zip_code, c.source AS base, c.created_at,
+              c.pendiente_validacion, c.salesperson_id, sp.name AS vendor_name
          FROM clients c LEFT JOIN salespeople sp ON sp.id = c.salesperson_id
         WHERE c.id = $1`, [req.params.id]);
     if (!c.rows[0]) { await conn.query('ROLLBACK'); return res.status(404).json({ error: 'Cliente no existe' }); }
@@ -160,11 +161,32 @@ clientsRealRouter.get('/clients-real/:id', requireAuth, async (req, res) => {
       `SELECT id, ban_number, account_type, status FROM bans WHERE client_id = $1 ORDER BY ban_number`, [req.params.id]);
     const subs = await conn.query(
       `SELECT s.id, s.phone, s.plan, s.monthly_value, s.status, s.line_kind, s.line_type,
-              s.contract_end_date, b.ban_number
+              s.contract_end_date, b.ban_number, b.id AS ban_id
          FROM subscribers s JOIN bans b ON b.id = s.ban_id
         WHERE b.client_id = $1 ORDER BY b.ban_number, s.phone`, [req.params.id]);
+    // Ventas del cliente = sus comisiones (Tango)
+    const ventas = await conn.query(
+      `SELECT b.ban_number, s.phone, to_char(sr.report_month,'YYYY-MM') AS mes,
+              s.monthly_value, sr.company_earnings, sr.vendor_commission, sr.validation_status
+         FROM subscriber_reports sr
+         JOIN subscribers s ON s.id = sr.subscriber_id
+         JOIN bans b ON b.id = s.ban_id
+        WHERE b.client_id = $1
+        ORDER BY sr.report_month DESC, b.ban_number`, [req.params.id]);
+    // Historial de gestiones = bitácora de Asana de las oportunidades del cliente
+    let historial = [];
+    const hasNotes = await conn.query(`SELECT to_regclass('public.opportunity_notes') AS t`);
+    if (hasNotes.rows[0].t) {
+      const h = await conn.query(
+        `SELECT n.note, n.product_key, n.step_name, n.created_by_username, n.created_at
+           FROM opportunity_notes n
+           JOIN sales_opportunities o ON o.id = n.opportunity_id
+          WHERE o.client_id = $1
+          ORDER BY n.created_at DESC`, [req.params.id]);
+      historial = h.rows;
+    }
     await conn.query('COMMIT');
-    res.json({ ...c.rows[0], bans: bans.rows, subscribers: subs.rows });
+    res.json({ ...c.rows[0], bans: bans.rows, subscribers: subs.rows, ventas: ventas.rows, historial });
   } catch (e) {
     try { await conn.query('ROLLBACK'); } catch {}
     console.error('[clients-real/:id]', e.message);

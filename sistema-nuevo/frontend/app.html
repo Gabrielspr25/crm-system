@@ -90,6 +90,9 @@
   .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:100;padding:20px;}
   .modal{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px;width:100%;max-width:520px;max-height:90vh;overflow:auto;}
   .flbl{font-size:10.5px;color:var(--txt3);text-transform:uppercase;letter-spacing:.04em;margin-bottom:3px;}
+  .ctabs{display:flex;gap:2px;border-bottom:1px solid var(--line);overflow-x:auto;}
+  .ctab{background:none;border:none;border-bottom:2px solid transparent;color:var(--txt2);padding:10px 14px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;}
+  .ctab.on{color:var(--primary);border-bottom-color:var(--primary);}
   .paso-wrap{display:flex;gap:16px;align-items:flex-start;}
   .paso-side{width:190px;flex-shrink:0;display:flex;flex-direction:column;gap:6px;}
   .paso-prod{padding:11px 14px;border-radius:10px;background:var(--card2);border:1px solid var(--line);cursor:pointer;font-size:13.5px;font-weight:600;color:var(--txt2);}
@@ -192,17 +195,73 @@ async function viewClientes(){
     <th>Empresa</th><th>Celular</th><th>Última actividad</th><th>Tipo BAN</th><th>Base</th><th>Estado</th><th>Vendedor</th><th>Num BAN</th><th>Suscriptor</th><th>Fecha vencimiento</th><th></th>
   </tr></thead><tbody>${rows.map(tr).join('')||'<tr><td colspan="11" class="empty">Sin clientes en este filtro</td></tr>'}</tbody></table></div>`;
 }
+// ---- Modal de cliente (réplica ClientModal real, 5 tabs) ----
+let cliM=null, cliMTab='info', cliMSub='activas';
+const CLI_TABS_M=[['info','Información del Cliente'],['bans','BANs y Suscriptores'],['hist','Historial de Gestiones'],['comp','Comparativas'],['ventas','Ventas']];
+function cliAct(s){return ['a','activo','active','activa'].includes(String(s||'').toLowerCase());}
+function cliCanc(s){const x=String(s||'').toLowerCase();return x.includes('cancel')||x==='c'||x==='inactivo'||x==='inactive';}
+function cliNoren(s){return String(s||'').toLowerCase().includes('no_renueva');}
+function cliVenc(d){if(!d)return 'Sin fecha';const days=Math.floor((new Date(d)-new Date())/86400000);if(isNaN(days))return 'Sin fecha';return days<0?('Vencido hace '+(-days)+'d'):('Vence en '+days+'d');}
+function cliWIP(l){alert(l+': lo conecto en el próximo paso (copiando del viejo).');}
+function setCliMTab(t){cliMTab=t;renderCli();}
+function setCliMSub(f){cliMSub=f;renderCli();}
+async function enviarSeguimientoCli(id){ try{ const r=await api('/api/asana-real/from-client',{method:'POST',body:{client_id:id}}); cerrarModal(); location.hash='#/opp/'+r.opportunity_id; }catch(e){ alert('No se pudo enviar a seguimiento: '+e.message); } }
 async function abrirCliente(id){
   if(!id){ alert('Cliente sin id'); return; }
-  let c; try{ c=await api('/api/clients-real/'+id); }catch(e){ alert('No se pudo abrir el cliente: '+e.message); return; }
-  const act=s=>['a','activo','active'].includes(String(s||'').toLowerCase());
-  const bans=(c.bans||[]).map(b=>`<div class="prow"><b>BAN ${b.ban_number}</b><span class="pill violet">${b.account_type||'—'}</span><span class="pill ${act(b.status)?'green':'red'}">${act(b.status)?'Activo':'Cancelado'}</span></div>`).join('')||'<div class="empty">Sin BANs</div>';
-  const subs=(c.subscribers||[]).map(s=>`<tr><td>${s.phone||'—'}</td><td>${s.plan||'—'}</td><td class="r">${money(s.monthly_value)}</td><td><span class="pill ${act(s.status)?'green':'red'}">${act(s.status)?'Activa':(s.status||'—')}</span></td></tr>`).join('')||'<tr><td colspan="4" class="empty">Sin líneas</td></tr>';
-  document.body.insertAdjacentHTML('beforeend',`<div class="modal-bg" id="modalBg" onclick="if(event.target===this)cerrarModal()"><div class="modal" style="max-width:700px">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><div class="cli"><span class="av" style="width:46px;height:46px;font-size:16px">${ini(c.name||'?')}</span><div><h2 style="font-size:18px">${c.name||'—'}</h2><div class="s">${c.vendor_name?('Vendedor: '+c.vendor_name):'Sin vendedor (pool)'} · ${c.city||'sin ciudad'}</div></div></div><button class="btn ghost" style="padding:6px 10px" onclick="cerrarModal()">✕</button></div>
-    <div class="kpis" style="margin-bottom:14px"><div class="kpi"><div class="l">BANs</div><div class="v">${(c.bans||[]).length}</div></div><div class="kpi"><div class="l">Líneas</div><div class="v">${(c.subscribers||[]).length}</div></div><div class="kpi"><div class="l">Email</div><div class="v" style="font-size:13px">${c.email||'—'}</div></div><div class="kpi"><div class="l">Teléfono</div><div class="v" style="font-size:14px">${c.phone||'—'}</div></div></div>
-    <div class="panel" style="margin-bottom:0"><h3>BAN y suscriptores</h3>${bans}<table style="margin-top:10px"><thead><tr><th>Teléfono</th><th>Plan</th><th class="r">Mensualidad</th><th>Estado</th></tr></thead><tbody>${subs}</tbody></table></div>
-  </div></div>`);
+  try{ cliM=await api('/api/clients-real/'+id); }catch(e){ alert('No se pudo abrir el cliente: '+e.message); return; }
+  cliMTab='info'; cliMSub='activas';
+  document.body.insertAdjacentHTML('beforeend',`<div class="modal-bg" id="modalBg" onclick="if(event.target===this)cerrarModal()"><div class="modal" id="cliModal" style="max-width:1040px;width:96%"></div></div>`);
+  renderCli();
+}
+function renderCli(){
+  const c=cliM; if(!c||!$('cliModal'))return;
+  const tabbar=CLI_TABS_M.map(t=>`<button class="ctab ${cliMTab===t[0]?'on':''}" onclick="setCliMTab('${t[0]}')">${t[1]}</button>`).join('');
+  const body=cliMTab==='bans'?tabBans(c):cliMTab==='hist'?tabHist(c):cliMTab==='comp'?tabComp(c):cliMTab==='ventas'?tabVentas(c):tabInfo(c);
+  const badge=c.pendiente_validacion?'<span class="pill amber">Cliente nuevo</span>':'<span class="pill" style="background:var(--card2);color:var(--txt3)">No está en seguimiento</span>';
+  $('cliModal').innerHTML=`<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
+      <div><div style="display:flex;align-items:center;gap:10px"><h2 style="font-size:20px">${c.name||'—'}</h2>${badge}</div><div class="s">Gestión completa del cliente</div></div>
+      <div style="display:flex;gap:8px"><button class="btn green" onclick="enviarSeguimientoCli('${c.id}')">⤴ Enviar a Seguimiento</button><button class="btn ghost" style="padding:6px 10px" onclick="cerrarModal()">✕</button></div></div>
+    <div class="ctabs">${tabbar}</div><div style="margin-top:14px">${body}</div>`;
+}
+function tabInfo(c){
+  const row=(l,v)=>`<div class="prow" style="border:none;padding:5px 0"><span style="color:var(--txt3);width:130px">${l}</span><b>${v||'No registrado'}</b></div>`;
+  return `<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;margin-bottom:14px">
+    <button class="btn ghost" onclick="cliWIP('Enviar Correo')">✉ Enviar Correo</button>
+    <button class="btn" onclick="cliWIP('Editar Cliente')">✎ Editar Cliente</button>
+    <button class="btn" style="background:var(--violet)" onclick="cliWIP('Enviar a POS')">⇪ Enviar a POS</button>
+    <button class="btn" style="background:var(--red-soft);color:var(--red)" onclick="cliWIP('Eliminar Cliente')">🗑 Eliminar Cliente</button></div>
+  <div class="kpis">
+    <div class="kpi"><div class="l">Datos de contacto</div><div style="margin-top:4px">${row('Nombre',c.name)}${row('Email',c.email)}</div></div>
+    <div class="kpi"><div class="l">Teléfonos</div><div style="margin-top:4px">${row('Principal',c.phone)}${row('Secundario',c.additional_phone)}${row('Móvil',c.mobile||c.cellular)}</div></div>
+    <div class="kpi"><div class="l">Ubicación</div><div style="margin-top:4px">${row('Dirección',c.address)}${row('Ciudad',c.city)}${row('Código postal',c.zip_code)}</div></div>
+    <div class="kpi"><div class="l">Información comercial</div><div style="margin-top:4px">${row('Vendedor',c.vendor_name||'Sin asignar')}${row('Base de datos',c.base||'BD propia')}${row('Cliente desde',c.created_at?new Date(c.created_at).toLocaleDateString('es'):'—')}</div></div>
+    <div class="kpi"><div class="l">Estadísticas</div><div style="margin-top:4px">${row('Total de BANs',(c.bans||[]).length)}${row('Total de suscriptores',(c.subscribers||[]).length)}</div></div>
+  </div>`;
+}
+function tabBans(c){
+  const byBan={}; (c.subscribers||[]).forEach(s=>{(byBan[s.ban_number]=byBan[s.ban_number]||[]).push(s);});
+  const cards=(c.bans||[]).map(b=>{
+    const list=byBan[b.ban_number]||[]; const a=list.filter(s=>cliAct(s.status)),nr=list.filter(s=>cliNoren(s.status)),ca=list.filter(s=>cliCanc(s.status));
+    const sel=cliMSub==='canceladas'?ca:cliMSub==='noren'?nr:a;
+    const rows=sel.map(s=>`<div class="cline"><span style="flex:1;min-width:200px">📞 <b>${s.phone||'—'}</b> <span style="color:var(--txt3)">${s.plan||''}</span> <span style="color:var(--green)">${money(s.monthly_value)}/mes</span> <span class="pill" style="background:var(--card2);color:var(--txt3);font-size:10px">${cliVenc(s.contract_end_date)}</span></span><button class="btn" style="padding:4px 9px;font-size:11px" onclick="cliWIP('Editar suscriptor')">✎ Editar</button><button class="btn" style="padding:4px 9px;font-size:11px;background:var(--amber-soft);color:var(--amber)" onclick="cliWIP('No renueva ahora')">No renueva</button><button class="btn" style="padding:4px 9px;font-size:11px;background:var(--red-soft);color:var(--red)" onclick="cliWIP('Cancelar suscriptor')">✕ Cancelar</button></div>`).join('')||'<div class="empty">Sin líneas en este filtro</div>';
+    return `<div class="ccard open" style="margin-bottom:12px"><div class="chead" style="cursor:default"><b># BAN: ${b.ban_number}</b><span class="pill violet">${b.account_type||'—'}</span><span class="pill ${cliAct(b.status)?'green':'red'}">${cliAct(b.status)?'Activo':'Cancelado'}</span><span style="margin-left:auto;display:flex;gap:6px"><button class="btn" style="padding:5px 10px;font-size:11px;background:var(--violet)" onclick="cliWIP('Subir/Pegar (OCR)')">⇪ Subir/Pegar</button><button class="btn" style="padding:5px 10px;font-size:11px" onclick="cliWIP('Editar BAN')">✎ Editar</button></span></div>
+      <div style="padding:0 14px 12px"><div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap"><button class="btn ${cliMSub==='activas'?'green':'ghost'}" style="padding:5px 10px;font-size:11px" onclick="setCliMSub('activas')">Activas (${a.length})</button><button class="btn ${cliMSub==='noren'?'':'ghost'}" style="padding:5px 10px;font-size:11px" onclick="setCliMSub('noren')">No renueva ahora (${nr.length})</button><button class="btn ${cliMSub==='canceladas'?'':'ghost'}" style="padding:5px 10px;font-size:11px" onclick="setCliMSub('canceladas')">Canceladas (${ca.length})</button></div>${rows}<button class="btn green" style="width:100%;margin-top:10px" onclick="cliWIP('Agregar Suscriptor')">+ Agregar Suscriptor</button></div></div>`;
+  }).join('')||'<div class="empty">Sin BANs</div>';
+  return `<div style="display:flex;justify-content:flex-end;margin-bottom:10px"><button class="btn" onclick="cliWIP('Nuevo BAN')">+ Nuevo BAN</button></div>${cards}`;
+}
+function tabHist(c){
+  const h=(c.historial||[]).map(x=>`<div class="logitem"><span class="lic paso">✅</span><div><div style="font-size:13.5px">${x.note||''}</div><div style="font-size:11.5px;color:var(--txt3)">${x.created_by_username||'—'} · ${x.product_key||''} · ${new Date(x.created_at).toLocaleString('es')}</div></div></div>`).join('')||'<div class="empty">Sin gestiones registradas en Asana todavía.</div>';
+  return `<div class="panel"><h3>Historial de gestiones (Asana)</h3>${h}</div>`;
+}
+function tabVentas(c){
+  const v=(c.ventas||[]).map(x=>`<tr><td>${x.ban_number||'—'}</td><td>${x.phone||'—'}</td><td>${x.mes||'—'}</td><td class="r">${money(x.monthly_value)}</td><td class="r" style="color:var(--green)">${money(x.company_earnings)}</td><td class="r">${money(x.vendor_commission)}</td><td><span class="pill ${x.validation_status==='confirmed'?'green':'amber'}">${x.validation_status||'—'}</span></td></tr>`).join('')||'<tr><td colspan="7" class="empty">Sin ventas (comisiones) para este cliente.</td></tr>';
+  return `<div class="card" style="overflow-x:auto"><table style="min-width:680px"><thead><tr><th>BAN</th><th>Teléfono</th><th>Mes</th><th class="r">Mensualidad</th><th class="r">Empresa$</th><th class="r">Comisión$</th><th>Estado</th></tr></thead><tbody>${v}</tbody></table></div>`;
+}
+function tabComp(c){
+  const a=(c.subscribers||[]).filter(s=>cliAct(s.status)); const total=a.reduce((x,s)=>x+Number(s.monthly_value||0),0);
+  const rows=a.map(s=>`<tr><td>${s.ban_number||'—'}</td><td>${s.phone||'—'}</td><td>${s.plan||'—'}</td><td class="r" style="color:var(--green)">${money(s.monthly_value)}</td><td>${cliVenc(s.contract_end_date)}</td></tr>`).join('')||'<tr><td colspan="5" class="empty">Sin líneas activas</td></tr>';
+  return `<div class="card" style="overflow-x:auto;margin-bottom:12px"><table style="min-width:680px"><thead><tr><th>BAN</th><th>Teléfono</th><th>Plan actual</th><th class="r">Costo</th><th>Vencimiento</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><td colspan="3" class="r"><b>Total actual</b></td><td class="r" style="color:var(--green);font-weight:700">${money(total)}</td><td></td></tr></tfoot></table></div>
+  <div class="panel"><h3>Oferta propuesta · Excel / PDF</h3><div class="s">Acá ves el Plan Actual real. El armado de la oferta y la descarga Excel/PDF se conecta en el próximo paso (copiando tu ComparativaModal).</div></div>`;
 }
 async function viewCliente(id){
   const c=await api('/api/clients-real/'+id);

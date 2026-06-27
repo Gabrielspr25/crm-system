@@ -341,3 +341,30 @@ asanaRealRouter.post('/asana-real/voz', requireAuth, async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
+// ENVIAR A SEGUIMIENTO desde cliente existente (Flujo 3): crea oportunidad si no tiene una activa
+asanaRealRouter.post('/asana-real/from-client', requireAuth, async (req, res) => {
+  const { client_id } = req.body || {};
+  if (!client_id) return res.status(400).json({ error: 'Falta client_id' });
+  try {
+    const out = await withPublic(async c => {
+      const ex = await c.query(
+        `SELECT id FROM sales_opportunities WHERE client_id = $1 AND archived_at IS NULL LIMIT 1`, [client_id]);
+      if (ex.rows[0]) return { opportunity_id: ex.rows[0].id, already: true };
+      const cli = await c.query(
+        `SELECT COALESCE(NULLIF(TRIM(name),''), NULLIF(TRIM(business_name),''), 'Cliente') AS name
+           FROM clients WHERE id = $1`, [client_id]);
+      if (!cli.rows[0]) return null;
+      const opp = await c.query(
+        `INSERT INTO sales_opportunities (client_id, title, opportunity_type, status, source)
+         VALUES ($1,$2,'manual','activa','desde_cliente') RETURNING id`,
+        [client_id, 'Seguimiento · ' + cli.rows[0].name]);
+      return { opportunity_id: opp.rows[0].id, already: false };
+    });
+    if (!out) return res.status(404).json({ error: 'Cliente no existe' });
+    res.json(out);
+  } catch (e) {
+    console.error('[from-client]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
