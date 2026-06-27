@@ -142,3 +142,34 @@ clientsRealRouter.get('/clients-real', requireAuth, async (req, res) => {
     conn.release();
   }
 });
+
+// FICHA del cliente con data REAL (cliente + BANs + suscriptores)
+clientsRealRouter.get('/clients-real/:id', requireAuth, async (req, res) => {
+  const conn = await pool.connect();
+  try {
+    await conn.query('BEGIN');
+    await conn.query('SET LOCAL search_path TO public');
+    const c = await conn.query(
+      `SELECT c.id, c.name, c.business_name, c.email,
+              COALESCE(c.phone, c.mobile, c.cellular) AS phone, c.city,
+              sp.name AS vendor_name
+         FROM clients c LEFT JOIN salespeople sp ON sp.id = c.salesperson_id
+        WHERE c.id = $1`, [req.params.id]);
+    if (!c.rows[0]) { await conn.query('ROLLBACK'); return res.status(404).json({ error: 'Cliente no existe' }); }
+    const bans = await conn.query(
+      `SELECT id, ban_number, account_type, status FROM bans WHERE client_id = $1 ORDER BY ban_number`, [req.params.id]);
+    const subs = await conn.query(
+      `SELECT s.id, s.phone, s.plan, s.monthly_value, s.status, s.line_kind, s.line_type,
+              s.contract_end_date, b.ban_number
+         FROM subscribers s JOIN bans b ON b.id = s.ban_id
+        WHERE b.client_id = $1 ORDER BY b.ban_number, s.phone`, [req.params.id]);
+    await conn.query('COMMIT');
+    res.json({ ...c.rows[0], bans: bans.rows, subscribers: subs.rows });
+  } catch (e) {
+    try { await conn.query('ROLLBACK'); } catch {}
+    console.error('[clients-real/:id]', e.message);
+    res.status(500).json({ error: e.message });
+  } finally {
+    conn.release();
+  }
+});

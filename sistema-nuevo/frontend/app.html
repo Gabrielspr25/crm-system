@@ -87,6 +87,9 @@
   .astep{display:flex;justify-content:space-between;align-items:center;gap:4px;width:100%;background:var(--card2);border:1px solid var(--line);border-radius:7px;padding:5px 8px;font-size:10.5px;color:var(--txt2);cursor:pointer;}
   .astep:hover{border-color:var(--primary);}
   .asubs{font-size:9.5px;color:var(--txt3);}
+  .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:100;padding:20px;}
+  .modal{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px;width:100%;max-width:520px;max-height:90vh;overflow:auto;}
+  .flbl{font-size:10.5px;color:var(--txt3);text-transform:uppercase;letter-spacing:.04em;margin-bottom:3px;}
   .paso-wrap{display:flex;gap:16px;align-items:flex-start;}
   .paso-side{width:190px;flex-shrink:0;display:flex;flex-direction:column;gap:6px;}
   .paso-prod{padding:11px 14px;border-radius:10px;background:var(--card2);border:1px solid var(--line);cursor:pointer;font-size:13.5px;font-weight:600;color:var(--txt2);}
@@ -160,7 +163,7 @@ async function viewClientes(){
     <div style="display:flex;justify-content:space-between;align-items:center"><span class="l">${label}</span><span class="pill ${CLI_PILL[t]}">${counts[t]??0}</span></div>
     <div class="bk">Móvil <b>${m.mobile_lines||0}</b> · Fijo <b>${m.fixed_lines||0}</b> <span style="color:var(--green)">${money(m.fixed_monthly_value)}</span><br>TV <b>${m.claro_tv_lines||0}</b> · MPLS <b>${m.mpls_lines||0}</b> · Cloud <b>${m.cloud_lines||0}</b> · Inc <b>${m.incomplete_lines||0}</b></div></div>`; };
   const all=d.clients||[], per=50, pages=Math.max(1,Math.ceil(all.length/per)); if(cliPage>pages)cliPage=pages; const from=(cliPage-1)*per, rows=all.slice(from,from+per);
-  const tr=c=>{ const bans=(c.ban_numbers||'').split(', ').filter(Boolean); const banShow=bans.length?bans[0]+(bans.length>1?` <span style="color:var(--txt3)">(+${bans.length-1})</span>`:''):'—'; const subN=Number(c.subscriber_count||0); const sub=c.primary_subscriber_phone?(c.primary_subscriber_phone+(subN>1?` <span style="color:var(--txt3)">(+${subN-1})</span>`:'')):'—'; const act=Number(c.active_ban_count||0)>0; const nombre=c.name?`<b>${c.name}</b>`:'<b style="color:var(--txt3)">sin nombre</b>'; return `<tr class="click" onclick="location.hash='#/cliente/${c.id}'">
+  const tr=c=>{ const bans=(c.ban_numbers||'').split(', ').filter(Boolean); const banShow=bans.length?bans[0]+(bans.length>1?` <span style="color:var(--txt3)">(+${bans.length-1})</span>`:''):'—'; const subN=Number(c.subscriber_count||0); const sub=c.primary_subscriber_phone?(c.primary_subscriber_phone+(subN>1?` <span style="color:var(--txt3)">(+${subN-1})</span>`:'')):'—'; const act=Number(c.active_ban_count||0)>0; const nombre=c.name?`<b>${c.name}</b>`:'<b style="color:var(--txt3)">sin nombre</b>'; return `<tr class="click" onclick="abrirCliente('${c.id}')">
     <td><div class="cli"><span class="av">${ini(c.name||'?')}</span>${nombre}</div></td>
     <td>${c.phone||c.mobile||c.cellular||'—'}</td>
     <td style="color:var(--txt2)">${fmtDate(c.last_activity)}</td>
@@ -178,7 +181,6 @@ async function viewClientes(){
       <button class="btn" style="background:var(--violet)" onclick="alert('Generar Oferta IA: próximamente')">✨ Generar Oferta IA</button>
       <button class="btn ghost" onclick="alert('Exportar: próximamente')">⬇ Exportar</button>
       <button class="btn" onclick="nuevoCliente()">+ Nuevo cliente</button>
-      <button class="btn ghost" onclick="alert('Cliente Voz: próximamente')">🎤 Cliente Voz</button>
     </div></div>
   <div class="kpis">${CLI_TABS.map(t=>card(t[0],t[1])).join('')}
     <div class="kpi"><div class="l">Total · ${CLI_TABS.find(t=>t[0]===cliTab)[1]}</div><div class="v">${all.length}</div></div></div>
@@ -190,14 +192,83 @@ async function viewClientes(){
     <th>Empresa</th><th>Celular</th><th>Última actividad</th><th>Tipo BAN</th><th>Base</th><th>Estado</th><th>Vendedor</th><th>Num BAN</th><th>Suscriptor</th><th>Fecha vencimiento</th><th></th>
   </tr></thead><tbody>${rows.map(tr).join('')||'<tr><td colspan="11" class="empty">Sin clientes en este filtro</td></tr>'}</tbody></table></div>`;
 }
+async function abrirCliente(id){
+  if(!id){ alert('Cliente sin id'); return; }
+  let c; try{ c=await api('/api/clients-real/'+id); }catch(e){ alert('No se pudo abrir el cliente: '+e.message); return; }
+  const act=s=>['a','activo','active'].includes(String(s||'').toLowerCase());
+  const bans=(c.bans||[]).map(b=>`<div class="prow"><b>BAN ${b.ban_number}</b><span class="pill violet">${b.account_type||'—'}</span><span class="pill ${act(b.status)?'green':'red'}">${act(b.status)?'Activo':'Cancelado'}</span></div>`).join('')||'<div class="empty">Sin BANs</div>';
+  const subs=(c.subscribers||[]).map(s=>`<tr><td>${s.phone||'—'}</td><td>${s.plan||'—'}</td><td class="r">${money(s.monthly_value)}</td><td><span class="pill ${act(s.status)?'green':'red'}">${act(s.status)?'Activa':(s.status||'—')}</span></td></tr>`).join('')||'<tr><td colspan="4" class="empty">Sin líneas</td></tr>';
+  document.body.insertAdjacentHTML('beforeend',`<div class="modal-bg" id="modalBg" onclick="if(event.target===this)cerrarModal()"><div class="modal" style="max-width:700px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><div class="cli"><span class="av" style="width:46px;height:46px;font-size:16px">${ini(c.name||'?')}</span><div><h2 style="font-size:18px">${c.name||'—'}</h2><div class="s">${c.vendor_name?('Vendedor: '+c.vendor_name):'Sin vendedor (pool)'} · ${c.city||'sin ciudad'}</div></div></div><button class="btn ghost" style="padding:6px 10px" onclick="cerrarModal()">✕</button></div>
+    <div class="kpis" style="margin-bottom:14px"><div class="kpi"><div class="l">BANs</div><div class="v">${(c.bans||[]).length}</div></div><div class="kpi"><div class="l">Líneas</div><div class="v">${(c.subscribers||[]).length}</div></div><div class="kpi"><div class="l">Email</div><div class="v" style="font-size:13px">${c.email||'—'}</div></div><div class="kpi"><div class="l">Teléfono</div><div class="v" style="font-size:14px">${c.phone||'—'}</div></div></div>
+    <div class="panel" style="margin-bottom:0"><h3>BAN y suscriptores</h3>${bans}<table style="margin-top:10px"><thead><tr><th>Teléfono</th><th>Plan</th><th class="r">Mensualidad</th><th>Estado</th></tr></thead><tbody>${subs}</tbody></table></div>
+  </div></div>`);
+}
 async function viewCliente(id){
-  const c=await api('/api/clients/'+id);
-  const lineas=c.subscribers.map(s=>`<tr><td>${s.phone}</td><td>${s.plan_code||'—'}</td><td>${money(s.monthly_value)}</td><td><span class="pill ${s.status==='activa'?'green':'red'}">${s.status}</span></td></tr>`).join('')||'<tr><td colspan="4" class="empty">Sin líneas</td></tr>';
-  return `<div class="crumb"><a href="#/clientes">Clientes</a> / ${c.name}</div>
-  <div class="head"><div class="cli"><span class="av" style="width:48px;height:48px;font-size:16px">${ini(c.name)}</span><div><h1>${c.name}</h1><div class="s">${c.salesperson?('Vendedor: '+c.salesperson):'Sin vendedor (en el pool)'} · ${c.city||'sin ciudad'}</div></div></div><button class="btn green" onclick="enviarSeguimiento('${c.id}')">⤴ Enviar a seguimiento</button></div>
-  <div class="kpis"><div class="kpi"><div class="l">BANs</div><div class="v">${c.bans.length}</div></div><div class="kpi"><div class="l">Líneas</div><div class="v">${c.subscribers.length}</div></div><div class="kpi"><div class="l">Email</div><div class="v" style="font-size:14px">${c.email||'—'}</div></div></div>
-  <div class="panel"><h3>BANs</h3>${c.bans.map(b=>`<div class="prow"><b>BAN ${b.ban_number}</b><span class="pill violet">${b.account_type||'—'}</span><span class="pill ${b.status==='A'?'green':'red'}">${b.status==='A'?'Activo':'Cancelado'}</span></div>`).join('')||'<div class="empty">Sin BANs</div>'}</div>
+  const c=await api('/api/clients-real/'+id);
+  const act=s=>['a','activo','active'].includes(String(s||'').toLowerCase());
+  const lineas=(c.subscribers||[]).map(s=>`<tr><td>${s.phone||'—'}</td><td>${s.plan||'—'}</td><td>${money(s.monthly_value)}</td><td><span class="pill ${act(s.status)?'green':'red'}">${act(s.status)?'Activa':(s.status||'—')}</span></td></tr>`).join('')||'<tr><td colspan="4" class="empty">Sin líneas</td></tr>';
+  return `<div class="crumb"><a href="#/clientes">Clientes</a> / ${c.name||'—'}</div>
+  <div class="head"><div class="cli"><span class="av" style="width:48px;height:48px;font-size:16px">${ini(c.name||'?')}</span><div><h1>${c.name||'—'}</h1><div class="s">${c.vendor_name?('Vendedor: '+c.vendor_name):'Sin vendedor (en el pool)'} · ${c.city||'sin ciudad'}</div></div></div></div>
+  <div class="kpis"><div class="kpi"><div class="l">BANs</div><div class="v">${(c.bans||[]).length}</div></div><div class="kpi"><div class="l">Líneas</div><div class="v">${(c.subscribers||[]).length}</div></div><div class="kpi"><div class="l">Email</div><div class="v" style="font-size:14px">${c.email||'—'}</div></div></div>
+  <div class="panel"><h3>BANs</h3>${(c.bans||[]).map(b=>`<div class="prow"><b>BAN ${b.ban_number}</b><span class="pill violet">${b.account_type||'—'}</span><span class="pill ${act(b.status)?'green':'red'}">${act(b.status)?'Activo':'Cancelado'}</span></div>`).join('')||'<div class="empty">Sin BANs</div>'}</div>
   <div class="card"><table><thead><tr><th>Teléfono</th><th>Plan</th><th>Mensualidad</th><th>Estado</th></tr></thead><tbody>${lineas}</tbody></table></div>`;
+}
+// ---- Cliente Voz (dictado del navegador + parser sin IA) ----
+let vozRec=null, vozRecording=false;
+const VOZ_PRODS=[['','(sin producto)'],['fijo_ren','Fijo Ren'],['fijo_new','Fijo New'],['movil_ren','Movil Ren'],['movil_new','Movil New'],['claro_tv','Claro TV'],['cloud','Cloud'],['mpls','MPLS']];
+function parseVoz(t){
+  const low=(t||'').toLowerCase();
+  const digits=((t||'').match(/\d/g)||[]).join('');
+  const pm=digits.match(/(787|939|989)?\d{7}/); const telefono=pm?pm[0]:'';
+  const prodMap=[['fijo ren','fijo_ren'],['fijo renov','fijo_ren'],['fijo new','fijo_new'],['fijo nuev','fijo_new'],['movil ren','movil_ren'],['móvil ren','movil_ren'],['movil renov','movil_ren'],['móvil renov','movil_ren'],['movil new','movil_new'],['móvil new','movil_new'],['movil nuev','movil_new'],['móvil nuev','movil_new'],['claro tv','claro_tv'],['cloud','cloud'],['mpls','mpls']];
+  let product_key=''; for(const[k,v]of prodMap){ if(low.includes(k)){product_key=v;break;} }
+  let empresa=''; const em=t&&t.match(/(?:empresa|cliente|negocio)\s+([a-zA-ZáéíóúñÑ0-9 .&'-]+?)(?:\s+(?:tel[eé]fono|telefono|fijo|m[oó]vil|movil|claro|cloud|mpls|n[uú]mero|quiere|son|de)\b|[,.]|$)/i); if(em)empresa=em[1].trim();
+  let qty=''; const qm=low.match(/(\d+)\s*(l[ií]neas?|m[oó]viles?|fijos?|tv|equipos?|cuentas?)/); if(qm)qty=qm[1];
+  let monto=''; const mm=t&&t.match(/\$\s*([0-9]+(?:[.,][0-9]+)?)/); if(mm)monto=mm[1].replace(',','');
+  return {empresa,telefono,product_key,qty,monto};
+}
+function vozFields(p){
+  if(p.empresa)$('vz_emp').value=p.empresa;
+  if(p.telefono)$('vz_tel').value=p.telefono;
+  if(p.product_key)$('vz_prod').value=p.product_key;
+  if(p.qty)$('vz_qty').value=p.qty;
+  if(p.monto)$('vz_monto').value=p.monto;
+}
+function vozAnalizar(){ vozFields(parseVoz($('vz_nota').value)); }
+function vozToggleRec(){
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){ alert('Tu navegador no soporta dictado por voz. Usá Chrome, o escribí la nota a mano.'); return; }
+  if(vozRecording){ try{vozRec.stop();}catch(e){} return; }
+  vozRec=new SR(); vozRec.lang='es-PR'; vozRec.continuous=true; vozRec.interimResults=true;
+  const base=$('vz_nota').value?($('vz_nota').value+' '):'';
+  vozRec.onresult=(e)=>{ let txt=''; for(let i=e.resultIndex;i<e.results.length;i++) txt+=e.results[i][0].transcript; $('vz_nota').value=base+txt; };
+  vozRec.onend=()=>{ vozRecording=false; const b=$('vz_mic'); if(b)b.textContent='🎤 Dictar'; vozAnalizar(); };
+  vozRec.onerror=()=>{ vozRecording=false; const b=$('vz_mic'); if(b)b.textContent='🎤 Dictar'; };
+  vozRec.start(); vozRecording=true; $('vz_mic').textContent='⏹ Detener';
+}
+function cerrarModal(){ const m=$('modalBg'); if(m)m.remove(); if(vozRec){try{vozRec.stop();}catch(e){}} }
+function abrirVoz(){
+  const opts=VOZ_PRODS.map(p=>`<option value="${p[0]}">${p[1]}</option>`).join('');
+  document.body.insertAdjacentHTML('beforeend',`<div class="modal-bg" id="modalBg" onclick="if(event.target===this)cerrarModal()"><div class="modal">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><h2 style="font-size:18px">🎤 Cliente Voz</h2><button class="btn ghost" style="padding:6px 10px" onclick="cerrarModal()">✕</button></div>
+    <div class="s" style="margin-bottom:10px">Dictá: "empresa Ferretería Ponce, teléfono 787 555 1234, 2 móviles nuevas". El sistema entiende y llena los campos — vos corregís y creás.</div>
+    <textarea class="inp" id="vz_nota" rows="3" placeholder="Apretá Dictar y hablá… (o escribí acá)" style="resize:vertical;margin-bottom:8px"></textarea>
+    <div style="display:flex;gap:8px;margin-bottom:14px"><button class="btn" id="vz_mic" onclick="vozToggleRec()">🎤 Dictar</button><button class="btn ghost" onclick="vozAnalizar()">🔎 Analizar</button></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+      <div><div class="flbl">Empresa / Nombre</div><input class="inp" id="vz_emp"></div>
+      <div><div class="flbl">Teléfono</div><input class="inp" id="vz_tel"></div>
+      <div><div class="flbl">Producto</div><select class="inp" id="vz_prod">${opts}</select></div>
+      <div><div class="flbl">Cantidad (líneas)</div><input class="inp" id="vz_qty" type="number" min="0"></div>
+      <div><div class="flbl">Monto $ (fijo)</div><input class="inp" id="vz_monto" type="number" min="0"></div>
+    </div>
+    <button class="btn green" style="width:100%" onclick="vozCrear()">✓ Crear oportunidad</button>
+  </div></div>`);
+}
+async function vozCrear(){
+  const body={empresa:$('vz_emp').value.trim(),telefono:$('vz_tel').value.trim(),product_key:$('vz_prod').value,qty:$('vz_qty').value,monto:$('vz_monto').value,nota:$('vz_nota').value.trim()};
+  if(!body.empresa){ alert('Falta la empresa o nombre del cliente'); return; }
+  try{ const r=await api('/api/asana-real/voz',{method:'POST',body}); cerrarModal(); location.hash='#/opp/'+r.opportunity_id; }catch(e){ alert('No se pudo crear: '+e.message); }
 }
 const ASANA_PRODS=[['fijo_ren','Fijo Ren','money','teal'],['fijo_new','Fijo New','money','primary'],['movil_ren','Movil Ren','qty','green'],['movil_new','Movil New','qty','violet'],['claro_tv','Claro TV','qty','amber'],['cloud','Cloud','qty','teal'],['mpls','MPLS','money','red']];
 async function viewAsana(){
@@ -237,9 +308,9 @@ async function viewAsana(){
     <td class="r" style="color:var(--teal);font-weight:700">${Number(o.total_lines||0)}</td>
     <td class="r" style="color:var(--green);font-weight:700">${money(o.total_money)}</td>
     <td><button class="btn ghost" style="padding:6px 10px;font-size:11px" onclick="location.hash='#/opp/${o.id}'">💬 Abrir</button></td>
-    <td><div style="display:flex;flex-direction:column;gap:5px"><button class="btn ghost" style="padding:5px 10px;font-size:11px" onclick="location.hash='#/opp/${o.id}'">Abrir Asana</button><button class="btn ghost" style="padding:5px 10px;font-size:11px" onclick="location.hash='#/cliente/${o.client_id||''}'">👁 Cliente</button><button class="btn" style="padding:5px 10px;font-size:11px;background:var(--red-soft);color:var(--red)" onclick="cerrarOpp('${o.id}')">⤵ Al pool</button></div></td></tr>`;
+    <td><div style="display:flex;flex-direction:column;gap:5px"><button class="btn ghost" style="padding:5px 10px;font-size:11px" onclick="location.hash='#/opp/${o.id}'">Abrir Asana</button><button class="btn ghost" style="padding:5px 10px;font-size:11px" onclick="abrirCliente('${o.client_id||''}')">👁 Cliente</button><button class="btn" style="padding:5px 10px;font-size:11px;background:var(--red-soft);color:var(--red)" onclick="cerrarOpp('${o.id}')">⤵ Al pool</button></div></td></tr>`;
   const head=`<tr><th>Cliente</th><th>Vendedor</th>${ASANA_PRODS.map(p=>`<th class="c" style="color:var(--${p[3]})">${p[1]}</th>`).join('')}<th class="r">Total Líneas</th><th class="r">Total $</th><th>Notas</th><th>Acciones</th></tr>`;
-  return `<div class="head"><div><h1>Asana · Seguimiento</h1><div class="s">${data.length} oportunidades · estructura SOV2 real · cantidad (líneas) y dinero (fijo)</div></div><button class="btn ghost" onclick="location.hash='#/pasos'">⚙ Configurar pasos</button></div>
+  return `<div class="head"><div><h1>Asana · Seguimiento</h1><div class="s">${data.length} oportunidades · estructura SOV2 real · cantidad (líneas) y dinero (fijo)</div></div><button class="btn ghost" onclick="location.hash='#/pasos'">⚙ Configurar pasos</button><button class="btn" style="background:var(--violet)" onclick="abrirVoz()">🎤 Cliente Voz</button></div>
   ${asanaSummary}
   <div class="card" style="overflow-x:auto"><table style="min-width:1380px"><thead>${head}</thead><tbody>${data.map(row).join('')||'<tr><td colspan="13" class="empty">Sin oportunidades en seguimiento.</td></tr>'}</tbody></table></div>`;
 }
@@ -297,7 +368,7 @@ async function viewComisiones(){
     let pcells=''; COLS.forEach(k=>{ pcells+='<td class="c">'+(counts[k]?'<span class="qty">'+counts[k]+'</span>':'<span style="color:var(--txt3)">0</span>')+'</td>'; });
     body+='<tr class="grow" onclick="togg('+gi+')"><td><span class="ar" id="ar'+gi+'">▸</span> <b>'+empName+'</b></td><td style="color:var(--primary)">'+lines[0].vendedor+'</td>'+pcells+'<td class="c">—</td><td class="r">'+money(mens)+'</td><td class="r" style="color:var(--green);font-weight:700">'+money(empc)+'</td><td class="r">'+(comc?money(comc):'—')+'</td><td class="c">—</td><td class="c"><span class="pill green">'+lines.length+'</span></td></tr>';
     lines.forEach(l=>{
-      body+='<tr class="lrow g'+gi+'" style="display:none"><td colspan="2"><div style="display:flex;gap:6px;flex-wrap:wrap;padding-left:18px"><span class="pill" style="background:var(--card2)">BAN '+(l.ban_number||'—')+'</span><span class="pill" style="background:var(--teal-soft);color:var(--teal)">'+(l.phone||'—')+'</span><span class="pill violet">'+(PN[l.product_key]||l.product_key)+'</span></div></td><td colspan="7"></td><td class="c"></td><td class="r">'+money(l.monthly_value)+'</td><td class="r" style="color:var(--green);font-weight:700">'+money(l.company_earnings)+'</td><td class="c"><input class="cinp" style="width:88px" value="'+(l.vendor_commission!=null?l.vendor_commission:'')+'" onchange="editComR(\''+l.subscriber_id+'\',\''+l.report_month+'\',this.value)"></td><td class="c"></td><td class="c"><button class="btn" style="padding:5px 10px;font-size:11px;'+(l.paid?'background:var(--green)':'background:#e0860c')+'" onclick="payR(\''+l.subscriber_id+'\',\''+l.report_month+'\')">'+(l.paid?'✓ Pagado':'Pagar')+'</button></td></tr>';
+      body+='<tr class="lrow g'+gi+'" style="display:none"><td colspan="2"><div style="display:flex;gap:6px;flex-wrap:wrap;padding-left:18px"><span class="pill" style="background:var(--card2)">BAN '+(l.ban_number||'—')+'</span><span class="pill" style="background:var(--teal-soft);color:var(--teal)">'+(l.phone||'—')+'</span><span class="pill violet">'+(PN[l.product_key]||l.product_key)+'</span></div></td><td colspan="7"></td><td class="c"></td><td class="r">'+money(l.monthly_value)+'</td><td class="r" style="color:var(--green);font-weight:700">'+money(l.company_earnings)+'</td><td class="c"><input class="cinp" type="number" min="0" step="0.01" style="width:88px" placeholder="0" value="'+(l.vendor_commission!=null?l.vendor_commission:0)+'" onchange="editComR(\''+l.subscriber_id+'\',\''+l.report_month+'\',this.value)"></td><td class="c"></td><td class="c"><button class="btn" style="padding:5px 10px;font-size:11px;'+(l.paid?'background:var(--green)':'background:#e0860c')+'" onclick="payR(\''+l.subscriber_id+'\',\''+l.report_month+'\')">'+(l.paid?'✓ Pagado':'Pagar')+'</button></td></tr>';
     });
   });
   let head='<tr><th>Empresa</th><th>Vendedor</th>'; COLS.forEach(k=>head+='<th class="c">'+PN[k]+'</th>'); head+='<th class="c">Completado</th><th class="r">Mensualidad</th><th class="r">Empresa$</th><th class="r">Comisión$</th><th class="c">Bono</th><th class="c">Ventas</th></tr>';
@@ -307,12 +378,45 @@ async function viewComisiones(){
     +'<div class="kpis"><div class="kpi"><div class="l">Total ventas</div><div class="v" style="color:var(--violet)">'+rows.length+'</div></div><div class="kpi"><div class="l">Ganancia empresa</div><div class="v" style="color:var(--green)">'+money(emp)+'</div></div><div class="kpi"><div class="l">Comisión vendedores</div><div class="v" style="color:var(--primary)">'+money(ven)+'</div></div><div class="kpi"><div class="l">Pagado</div><div class="v" style="color:var(--amber)">'+money(pag)+'</div></div><div class="kpi"><div class="l">Balance pendiente</div><div class="v" style="color:var(--red)">'+money(emp-pag)+'</div></div></div>'
     +'<div class="card" style="overflow-x:auto"><table style="min-width:1180px"><thead>'+head+'</thead><tbody>'+(body||'<tr><td colspan="16" class="empty">Sin comisiones este mes</td></tr>')+'</tbody></table></div>';
 }
+// ---- Metas: grilla editable (negocio + por vendedor de Tango) ----
+let metaMonth=monthStart();
+async function reMetas(){ $('view').innerHTML=await viewMetas(); }
+function setMetaMonth(m){ metaMonth=m; reMetas(); }
+function metaMonthsList(alcance, base){
+  const d=new Date(base), y=d.getFullYear(), m0=d.getMonth(), out=[];
+  if(alcance==='anio'){ for(let m=0;m<12;m++) out.push(y+'-'+String(m+1).padStart(2,'0')+'-01'); }
+  else if(alcance==='dic'){ for(let m=m0;m<12;m++) out.push(y+'-'+String(m+1).padStart(2,'0')+'-01'); }
+  else out.push(base);
+  return out;
+}
+async function guardarMeta(scope, salesperson, rk){
+  const prods=window.__metaProds||[];
+  const sel=$('sc_'+rk); const meses=metaMonthsList(sel?sel.value:'mes', metaMonth);
+  try{
+    for(const p of prods){
+      const inp=$('m_'+rk+'_'+p.key); const qty=Number(inp?inp.value:0)||0;
+      for(const mo of meses){ await api('/api/goals',{method:'POST',body:{scope, salesperson:salesperson||null, product_key:p.key, month:mo, target_qty:qty}}); }
+    }
+    alert('✓ Meta guardada'+(meses.length>1?(' ('+meses.length+' meses)'):''));
+  }catch(e){ alert('No se pudo guardar: '+e.message); }
+}
 async function viewMetas(){
-  const c=await api('/api/goals/cumplimiento?month='+monthStart());
-  const col=p=>p.pct>=70?'var(--green)':p.pct>=40?'var(--amber)':'var(--red)';
-  return `<div class="head"><div><h1>Panel · Metas y cumplimiento</h1><div class="s">Vendido vs meta del negocio</div></div></div>
-  <div class="panel"><h3>Cumplimiento del negocio</h3><div style="display:flex;align-items:flex-end;gap:12px;margin-bottom:12px"><div style="font-size:38px;font-weight:800;color:var(--green)">${c.pct_total}%</div><div style="margin-left:auto;color:var(--txt2);font-size:13px">Vendido <b>${money(c.vendido_total)}</b> / Meta <b>${money(c.meta_total)}</b> · Falta <b>${money(c.falta)}</b></div></div><div class="bar"><div class="fill" style="width:${Math.min(c.pct_total,100)}%"></div></div></div>
-  <div class="panel"><h3>Por producto</h3>${c.productos.map(p=>`<div class="prow"><span style="width:110px;font-weight:600">${p.name}</span><span class="bar" style="flex:1"><span class="fill" style="width:${Math.min(p.pct,100)}%;background:${col(p)}"></span></span><span style="width:70px;text-align:right;font-weight:600">${p.sold_qty} / ${p.target_qty}</span><span style="width:50px;text-align:right;font-weight:700;color:${col(p)}">${p.pct}%</span></div>`).join('')}</div>`;
+  const prods=await api('/api/products'); window.__metaProds=prods;
+  const goals=await api('/api/goals?month='+metaMonth);
+  let vendedores=[]; try{ vendedores=await api('/api/vendedores'); }catch(e){}
+  const gmap={}; goals.forEach(g=>{ gmap[g.scope+'|'+(g.salesperson||'')+'|'+g.product_key]=g.target_qty; });
+  const val=(sc,sp,pk)=>{ const v=gmap[sc+'|'+(sp||'')+'|'+pk]; return (v===undefined||v===null)?'':v; };
+  const dinero=(sc,sp)=>prods.reduce((a,p)=>a+(Number(val(sc,sp,p.key))||0)*Number(p.income_value||0),0);
+  const inputs=(sc,sp,rk)=>prods.map(p=>`<td class="c"><input class="cinp" inputmode="numeric" style="width:84px;text-align:center" id="m_${rk}_${p.key}" value="${val(sc,sp,p.key)}" placeholder="0"></td>`).join('');
+  const scopeSel=(rk)=>`<select class="inp" id="sc_${rk}" style="width:140px"><option value="mes">Solo este mes</option><option value="dic">Hasta diciembre</option><option value="anio">Todo el año</option></select>`;
+  const head=`<tr><th>Meta</th>${prods.map(p=>`<th class="c">${p.name}</th>`).join('')}<th class="r">Meta $</th><th>Alcance</th><th></th></tr>`;
+  const negRow=`<tr><td><b>NEGOCIO</b></td>${inputs('negocio',null,'negocio')}<td class="r" style="color:var(--green);font-weight:700">${money(dinero('negocio',null))}</td><td>${scopeSel('negocio')}</td><td><button class="btn green" onclick="guardarMeta('negocio',null,'negocio')">Guardar</button></td></tr>`;
+  const venRows=vendedores.map((v,i)=>{const rk='v'+i; return `<tr><td><div class="cli"><span class="av">${ini(v)}</span><b>${v}</b></div></td>${inputs('vendedor',v,rk)}<td class="r" style="color:var(--green);font-weight:600">${money(dinero('vendedor',v))}</td><td>${scopeSel(rk)}</td><td><button class="btn green" onclick='guardarMeta("vendedor",${JSON.stringify(v)},"${rk}")'>Guardar</button></td></tr>`;}).join('');
+  const yr=new Date(metaMonth).getFullYear();
+  const monOpts=Array.from({length:12},(_,m)=>{const mo=yr+'-'+String(m+1).padStart(2,'0')+'-01';return `<option value="${mo}" ${mo===metaMonth?'selected':''}>${mo}</option>`;}).join('');
+  return `<div class="head"><div><h1>Metas</h1><div class="s">Meta del negocio y por vendedor, por producto · vendedores de Tango</div></div><select class="inp" style="max-width:160px" onchange="setMetaMonth(this.value)">${monOpts}</select></div>
+  <div class="panel"><h3>Meta del negocio</h3><div style="overflow-x:auto"><table style="min-width:920px"><thead>${head}</thead><tbody>${negRow}</tbody></table></div></div>
+  <div class="panel"><h3>Meta por vendedor</h3><div style="overflow-x:auto"><table style="min-width:920px"><thead>${head}</thead><tbody>${venRows||'<tr><td colspan="11" class="empty">Sin vendedores de Tango todavía (aparecen cuando tienen ventas).</td></tr>'}</tbody></table></div></div>`;
 }
 
 async function viewPanel(){

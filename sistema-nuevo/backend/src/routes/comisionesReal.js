@@ -49,6 +49,20 @@ comisionesRouter.get('/comisiones/meses', requireAuth, async (_req, res) => {
   res.json(r.rows);
 });
 
+// Vendedores que vienen de Tango (los del campo vendedor de las comisiones) — REGLA: vendedores de Tango
+comisionesRouter.get('/vendedores', requireAuth, async (_req, res) => {
+  const r = await query(
+    `SELECT DISTINCT sp.name
+       FROM public.subscriber_reports sr
+       JOIN public.subscribers s ON s.id = sr.subscriber_id
+       JOIN public.bans b        ON b.id = s.ban_id
+       JOIN public.clients cl     ON cl.id = b.client_id
+       JOIN public.salespeople sp ON sp.id = cl.salesperson_id
+      WHERE NULLIF(TRIM(sp.name),'') IS NOT NULL
+      ORDER BY sp.name`);
+  res.json(r.rows.map((x) => x.name));
+});
+
 // PATCH /api/comisiones/:subId/:month  { vendor_commission }  -> edita SOLO comisión vendedor
 comisionesRouter.patch('/comisiones/:subId/:month', requireAuth, async (req, res) => {
   const { vendor_commission } = req.body || {};

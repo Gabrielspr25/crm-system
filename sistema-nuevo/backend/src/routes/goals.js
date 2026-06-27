@@ -19,13 +19,31 @@ goalsRouter.get('/', requireAuth, async (req, res) => {
 goalsRouter.post('/', requireAuth, requireAdmin, async (req, res) => {
   const { scope, salesperson, product_key, month, target_qty } = req.body || {};
   if (!scope || !product_key || !month) return res.status(400).json({ error: 'Faltan scope, product_key o month' });
+  const qty = Number(target_qty) || 0;
+  const sp = salesperson || null;
+
+  // Meta del negocio (salesperson NULL): el índice único trata los NULL como distintos,
+  // así que el upsert no funciona -> hacemos update-or-insert explícito (sin duplicar).
+  if (sp === null) {
+    const upd = await query(
+      `UPDATE goals SET target_qty = $1, updated_at = now()
+        WHERE scope = $2 AND salesperson IS NULL AND product_key = $3
+          AND date_trunc('month', month) = date_trunc('month', $4::date)
+        RETURNING *`, [qty, scope, product_key, month]);
+    if (upd.rows[0]) return res.json(upd.rows[0]);
+    const ins = await query(
+      `INSERT INTO goals (scope, salesperson, product_key, month, target_qty)
+       VALUES ($1, NULL, $2, $3, $4) RETURNING *`, [scope, product_key, month, qty]);
+    return res.json(ins.rows[0]);
+  }
+
   const r = await query(
     `INSERT INTO goals (scope, salesperson, product_key, month, target_qty)
      VALUES ($1,$2,$3,$4,$5)
      ON CONFLICT (scope, salesperson, product_key, month)
      DO UPDATE SET target_qty = EXCLUDED.target_qty, updated_at = now()
      RETURNING *`,
-    [scope, salesperson || null, product_key, month, Number(target_qty) || 0]);
+    [scope, sp, product_key, month, qty]);
   res.json(r.rows[0]);
 });
 

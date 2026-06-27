@@ -74,18 +74,17 @@ async function ensureOpportunityNotes(c) {
   await c.query(`CREATE INDEX IF NOT EXISTS idx_opportunity_notes_opportunity_created ON opportunity_notes(opportunity_id, created_at DESC)`);
 }
 
+// Caminito = los PASOS CONFIGURADOS del sistema nuevo (product_step_templates),
+// los mismos que se editan en "Configurar pasos". NADA de crm_workflow_templates viejo.
 async function fetchWorkflowTemplateSteps(c, productKey) {
-  const parts = productKeyParts(productKey);
-  if (!parts) return [];
+  if (!productKey) return [];
   const r = await c.query(
-    `SELECT s.step_name AS name, s.step_order
-       FROM crm_workflow_templates t
-       JOIN crm_workflow_template_steps s ON s.template_id = t.id
-      WHERE t.is_active = true
-        AND UPPER(t.product_type) = $1
-        AND UPPER(t.sale_type) = $2
-      ORDER BY s.step_order`,
-    [parts.product_type, parts.sale_type]
+    `SELECT t.name AS name, t.step_order
+       FROM ventaspro_nuevo.product_step_templates t
+       JOIN ventaspro_nuevo.products p ON p.id = t.product_id
+      WHERE p.key = $1 AND t.active = true
+      ORDER BY t.step_order`,
+    [productKey]
   );
   return r.rows;
 }
@@ -102,14 +101,28 @@ async function ensureOpportunityWorkflowSteps(c, opportunityId) {
 
   for (const row of products.rows) {
     const productKey = row.product_key;
-    const templateSteps = await fetchWorkflowTemplateSteps(c, productKey);
-    if (!templateSteps.length) continue;
+    const templateSteps = await fetchWorkflowTemplateSteps(c, productKey); // pasos CONFIGURADOS
+    const configuredNames = templateSteps.map((s) => cleanText(s.name).toLowerCase()).filter(Boolean);
 
+    if (configuredNames.length === 0) {
+      // producto sin pasos configurados -> caminito vacío (borra cualquier paso viejo)
+      await c.query(`DELETE FROM opportunity_steps WHERE opportunity_id = $1 AND product_key = $2`, [opportunityId, productKey]);
+      continue;
+    }
+
+    // Borrar los pasos VIEJOS/genéricos que ya no están en la config actual
+    await c.query(
+      `DELETE FROM opportunity_steps
+        WHERE opportunity_id = $1 AND product_key = $2
+          AND LOWER(TRIM(name)) <> ALL($3::text[])`,
+      [opportunityId, productKey, configuredNames]
+    );
+
+    // Qué pasos configurados ya existen (para no duplicar y preservar avance)
     const existing = await c.query(
       `SELECT LOWER(TRIM(name)) AS name_key
          FROM opportunity_steps
-        WHERE opportunity_id = $1
-          AND product_key = $2`,
+        WHERE opportunity_id = $1 AND product_key = $2`,
       [opportunityId, productKey]
     );
     const existingNames = new Set(existing.rows.map((step) => step.name_key).filter(Boolean));
@@ -117,21 +130,15 @@ async function ensureOpportunityWorkflowSteps(c, opportunityId) {
     for (const [index, step] of templateSteps.entries()) {
       const nameKey = cleanText(step.name).toLowerCase();
       if (!nameKey || existingNames.has(nameKey)) continue;
-      const order = await c.query(
-        `SELECT COALESCE(MAX(step_order), 0) + 1 AS next_order
-           FROM opportunity_steps
-          WHERE opportunity_id = $1`,
-        [opportunityId]
-      );
       await c.query(
         `INSERT INTO opportunity_steps (
            id, opportunity_id, product_key, step_order, name, status, source, created_at, updated_at
-         ) VALUES ($1,$2,$3,$4,$5,$6,'crm_workflow_templates',now(),now())`,
+         ) VALUES ($1,$2,$3,$4,$5,$6,'product_step_templates',now(),now())`,
         [
           randomUUID(),
           opportunityId,
           productKey,
-          Number(order.rows[0]?.next_order || step.step_order || index + 1),
+          Number(step.step_order || index + 1),
           step.name,
           existingNames.size === 0 && index === 0 ? 'en_progreso' : 'pendiente',
         ]
@@ -291,4 +298,46 @@ asanaRealRouter.post('/asana-real/:id/close', requireAuth, async (req, res) => {
     if (!done) return res.status(404).json({ error: 'Oportunidad activa no encontrada' });
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// CLIENTE VOZ: crea cliente provisional + oportunidad + línea + nota (desde el dictado parseado)
+asanaRealRouter.post('/asana-real/voz', requireAuth, async (req, res) => {
+  const { empresa, telefono, product_key, qty, monto, nota } = req.body || {};
+  const name = cleanText(empresa || '');
+  if (!name) return res.status(400).json({ error: 'Falta la empresa o nombre del cliente' });
+  const PK = ['fijo_ren', 'fijo_new', 'movil_ren', 'movil_new', 'claro_tv', 'cloud', 'mpls'];
+  const pk = PK.includes(product_key) ? product_key : null;
+  const isMoney = ['fijo_ren', 'fijo_new', 'mpls'].includes(pk);
+  try {
+    const out = await withPublic(async c => {
+      const cli = await c.query(
+        `INSERT INTO clients (name, phone, pendiente_validacion) VALUES ($1,$2,true) RETURNING id`,
+        [name, telefono ? cleanText(telefono) : null]);
+      const clientId = cli.rows[0].id;
+      const opp = await c.query(
+        `INSERT INTO sales_opportunities (client_id, title, opportunity_type, status, source)
+         VALUES ($1,$2,'manual','activa','cliente_voz') RETURNING id`,
+        [clientId, 'Oportunidad por voz · ' + name]);
+      const oppId = opp.rows[0].id;
+      if (pk) {
+        await c.query(
+          `INSERT INTO opportunity_lines (opportunity_id, client_id, line_mode, product_key, quantity_value, money_value)
+           VALUES ($1,$2,'nueva_sin_numero',$3,$4,$5)`,
+          [oppId, clientId, pk, isMoney ? null : (Number(qty) || null), isMoney ? (Number(monto) || null) : null]);
+      }
+      await ensureOpportunityNotes(c);
+      const notaTxt = cleanText(nota || '');
+      if (notaTxt) {
+        await c.query(
+          `INSERT INTO opportunity_notes (id, opportunity_id, product_key, note, created_by_username, created_at)
+           VALUES ($1,$2,$3,$4,$5,now())`,
+          [randomUUID(), oppId, pk, '[NOTA] ' + notaTxt, req.user?.nombre || 'Cliente Voz']);
+      }
+      return { opportunity_id: oppId, client_id: clientId };
+    });
+    res.status(201).json(out);
+  } catch (e) {
+    console.error('[asana-voz]', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
