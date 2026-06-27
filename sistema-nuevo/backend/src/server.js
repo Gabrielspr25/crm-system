@@ -2,6 +2,8 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { login, requireAuth, devLogin } from './auth.js';
 import { salesRouter } from './routes/sales.js';
 import { clientsRouter } from './routes/clients.js';
@@ -17,6 +19,12 @@ import { asanaRealRouter } from './routes/asanaReal.js';
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Servir el frontend (app.html, propuesta-template.html, etc.) -> http://localhost:4000
+const __dir = path.dirname(fileURLToPath(import.meta.url));
+const FRONT = path.resolve(__dir, '../../frontend');
+app.use(express.static(FRONT));
+app.get('/', (_req, res) => res.sendFile(path.join(FRONT, 'app.html')));
 
 // Salud
 app.get('/api/health', (_req, res) => res.json({ ok: true, service: 'ventaspro-nuevo' }));
