@@ -115,6 +115,7 @@
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.2/dist/html2pdf.bundle.min.js"></script>
 </head>
 <body data-theme="dark">
   <aside class="side">
@@ -325,35 +326,48 @@ function compPDF(){
     doc.save('Comparativa_'+String(c.name||'cliente').replace(/[^a-z0-9]/gi,'_')+'.pdf');
   }catch(e){ alert('Error al generar PDF: '+e.message); }
 }
-const PROPUESTA_CSS=`:root{--claro:#e1251b;--dark:#111827;--muted:#6b7280;--line:#e5e7eb;--green:#0f9f6e;--blue:#2563eb;}*{box-sizing:border-box}body{margin:0;background:linear-gradient(135deg,#f3f4f6,#fff);font-family:Inter,Segoe UI,Arial,sans-serif;color:var(--dark)}.app{max-width:1180px;margin:auto;padding:24px}.hero{background:linear-gradient(135deg,#e1251b,#a80f10);border-radius:28px;padding:28px;color:#fff;box-shadow:0 22px 55px rgba(225,37,27,.25);position:relative;overflow:hidden}.hero:after{content:"";position:absolute;right:-90px;top:-90px;width:280px;height:280px;border-radius:50%;background:rgba(255,255,255,.13)}.logoBox{background:#050505;border-radius:22px;width:250px;height:150px;display:flex;align-items:center;justify-content:center;box-shadow:0 18px 40px rgba(0,0,0,.25)}.heroGrid{display:grid;grid-template-columns:280px 1fr;gap:24px;align-items:center;position:relative;z-index:1}h1{font-size:42px;margin:0 0 8px;letter-spacing:-.8px}.subtitle{font-size:19px;opacity:.95;margin:0 0 20px}.pills{display:flex;flex-wrap:wrap;gap:10px}.pill{background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.25);padding:9px 13px;border-radius:999px;font-weight:700}.toolbar{display:flex;gap:12px;margin:20px 0}button{border:0;border-radius:14px;padding:12px 16px;font-weight:800;cursor:pointer}.primary{background:var(--claro);color:#fff}.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin:20px 0}.card{background:#fff;border:1px solid var(--line);border-radius:22px;padding:20px;box-shadow:0 12px 30px rgba(17,24,39,.06)}.card .label{color:var(--muted);font-weight:800;font-size:13px;text-transform:uppercase;letter-spacing:.6px}.card .value{font-size:30px;font-weight:900;margin-top:8px}.green{color:var(--green)}.red{color:var(--claro)}.blue{color:var(--blue)}.section{background:#fff;border:1px solid var(--line);border-radius:24px;padding:22px;margin:18px 0;box-shadow:0 10px 26px rgba(17,24,39,.055)}.sectionHeader{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px}h2{margin:0;font-size:25px}.small{color:var(--muted);font-size:14px}table{width:100%;border-collapse:separate;border-spacing:0;overflow:hidden;border-radius:16px;border:1px solid var(--line)}th{background:#111827;color:#fff;text-align:left;padding:12px;font-size:14px}td{padding:10px 12px;border-top:1px solid var(--line);font-size:14px}tbody tr:nth-child(even){background:#f8fafc}.cost{text-align:right;font-weight:800}.totalRow td{font-weight:900;background:#fff7ed!important}.proposal th{background:var(--claro)}.footer{display:grid;grid-template-columns:1fr auto;gap:18px;align-items:end;color:#374151;margin-top:22px}.signature{font-weight:900;font-size:18px}.role{color:var(--claro);font-weight:800}@media print{body{background:#fff}.toolbar{display:none}.app{max-width:none;padding:0}.hero,.section,.card{box-shadow:none}}@media(max-width:900px){.heroGrid,.footer{grid-template-columns:1fr}.cards{grid-template-columns:1fr 1fr}}`;
+const PROPUESTA_CSS=`.pp-root{font-family:Inter,Segoe UI,Arial,sans-serif;color:#111827;background:#fff;width:980px;padding:16px}
+.pp-hero{background:linear-gradient(135deg,#e1251b,#a80f10);border-radius:22px;padding:22px;color:#fff;display:flex;gap:22px;align-items:center}
+.pp-logo{background:#050505;border-radius:16px;width:210px;height:120px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:44px;font-weight:900;letter-spacing:-2px;flex-shrink:0}
+.pp-h1{font-size:36px;margin:0 0 6px;letter-spacing:-.8px}.pp-sub{font-size:16px;opacity:.95;margin:0 0 14px}
+.pp-pills{display:flex;flex-wrap:wrap;gap:8px}.pp-pill{background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.28);padding:6px 11px;border-radius:999px;font-weight:700;font-size:12px}
+.pp-cards{display:flex;gap:12px;margin:16px 0}.pp-card{flex:1;background:#fff;border:1px solid #e5e7eb;border-radius:18px;padding:16px}
+.pp-label{color:#6b7280;font-weight:800;font-size:11px;text-transform:uppercase;letter-spacing:.5px}.pp-value{font-size:25px;font-weight:900;margin-top:6px}
+.pp-red{color:#e1251b}.pp-blue{color:#2563eb}.pp-green{color:#0f9f6e}
+.pp-section{background:#fff;border:1px solid #e5e7eb;border-radius:18px;padding:18px;margin:14px 0}
+.pp-shead{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}.pp-h2{margin:0;font-size:21px}.pp-small{color:#6b7280;font-size:13px}
+.pp-table{width:100%;border-collapse:separate;border-spacing:0;border-radius:14px;border:1px solid #e5e7eb;overflow:hidden}
+.pp-table th{background:#111827;color:#fff;text-align:left;padding:10px;font-size:13px}.pp-table td{padding:9px 11px;border-top:1px solid #e5e7eb;font-size:13px}
+.pp-of th{background:#e1251b}.pp-cost{text-align:right;font-weight:800}.pp-totalRow td{font-weight:900;background:#fff7ed}
+.pp-foot{display:flex;justify-content:space-between;align-items:flex-end;margin-top:18px;color:#374151}.pp-sign{font-weight:900;font-size:17px}.pp-role{color:#e1251b;font-weight:800}`;
 function generarPropuesta(){
   try{
-    compReadOffer(); const c=compCli; const t=compTotals();
-    const act=(c.subscribers||[]).filter(s=>cliAct(s.status)); const fecha=new Date().toLocaleDateString('es-PR');
-    const actRows=act.map(s=>`<tr><td>${s.ban_number||''}</td><td>${s.phone||''}</td><td>${s.plan||''}</td><td class="cost">${money(s.monthly_value)}</td><td>${cliVenc(s.contract_end_date)}</td></tr>`).join('')||'<tr><td colspan="5">Sin líneas activas</td></tr>';
+    compReadOffer();
+    if(typeof html2pdf==='undefined'){ alert('La librería de PDF no cargó (revisá internet y reabrí la página).'); return; }
+    const c=compCli, t=compTotals(), act=(c.subscribers||[]).filter(s=>cliAct(s.status)), fecha=new Date().toLocaleDateString('es-PR');
+    const actRows=act.map(s=>`<tr><td>${s.ban_number||''}</td><td>${s.phone||''}</td><td>${s.plan||''}</td><td class="pp-cost">${money(s.monthly_value)}</td><td>${cliVenc(s.contract_end_date)}</td></tr>`).join('')||'<tr><td colspan="5">Sin líneas activas</td></tr>';
     const ofF=compOffer.filter(r=>r.ban||r.phone||r.plan||r.cost);
-    const ofRows=ofF.map(r=>`<tr><td>${r.phone||r.ban||''}</td><td class="cost">${money(r.cost)}</td><td>${r.plan||'—'}</td><td>${r.notes||''}</td></tr>`).join('')||'<tr><td colspan="4">Sin oferta cargada</td></tr>';
-    const html=`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Propuesta Claro - ${c.name||''}</title><style>${PROPUESTA_CSS}</style></head><body>
-      <div class="app">
-        <header class="hero"><div class="heroGrid">
-          <div class="logoBox"><span style="color:#fff;font-size:54px;font-weight:900;letter-spacing:-2px">claro</span></div>
-          <div><h1>Propuesta Comercial</h1><p class="subtitle">Optimización de tu plan para <b>${c.name||'tu empresa'}</b></p>
-          <div class="pills"><span class="pill">Claro Empresas</span><span class="pill">${act.length} líneas actuales</span><span class="pill">Fecha: ${fecha}</span></div></div>
-        </div></header>
-        <div class="toolbar"><button class="primary" onclick="window.print()">Imprimir / Guardar PDF</button></div>
-        <section class="cards">
-          <div class="card"><div class="label">Costo actual</div><div class="value red">${money(t.totalAct)}</div></div>
-          <div class="card"><div class="label">Oferta propuesta</div><div class="value blue">${money(t.totalOf)}</div></div>
-          <div class="card"><div class="label">Diferencia mensual</div><div class="value ${t.diff<=0?'green':''}">${money(t.diff)}</div></div>
-          <div class="card"><div class="label">Líneas incluidas</div><div class="value green">${act.length}</div></div></section>
-        <section class="section"><div class="sectionHeader"><h2>Plan actual</h2><span class="small">Cuentas y líneas existentes</span></div>
-          <table><thead><tr><th>BAN</th><th>Teléfono</th><th>Plan</th><th>Costo</th><th>Vencimiento</th></tr></thead><tbody>${actRows}<tr class="totalRow"><td></td><td></td><td>TOTAL</td><td class="cost">${money(t.totalAct)}</td><td></td></tr></tbody></table></section>
-        <section class="section"><div class="sectionHeader"><h2>Oferta propuesta</h2><span class="small">Plan optimizado</span></div>
-          <table class="proposal"><thead><tr><th>Teléfono</th><th>Precio</th><th>Plan nuevo</th><th>Notas</th></tr></thead><tbody>${ofRows}<tr class="totalRow"><td>TOTAL</td><td class="cost">${money(t.totalOf)}</td><td colspan="2"></td></tr></tbody></table></section>
-        <footer class="footer"><div><div class="signature">Gabriel Sanchez</div><div class="role">Corporate and retail account Director</div></div><div class="small">Propuesta preparada para ${c.name||''}</div></footer>
-      </div></body></html>`;
-    const w=window.open('','_blank'); if(!w){ alert('Permití las ventanas emergentes para ver/guardar el PDF.'); return; }
-    w.document.write(html); w.document.close();
+    const ofRows=ofF.map(r=>`<tr><td>${r.phone||r.ban||''}</td><td class="pp-cost">${money(r.cost)}</td><td>${r.plan||'—'}</td><td>${r.notes||''}</td></tr>`).join('')||'<tr><td colspan="4">Sin oferta cargada</td></tr>';
+    const cont=document.createElement('div'); cont.style.cssText='position:fixed;left:-99999px;top:0';
+    cont.innerHTML=`<style>${PROPUESTA_CSS}</style><div class="pp-root">
+      <div class="pp-hero"><div class="pp-logo">claro</div>
+        <div><h1 class="pp-h1">Propuesta Comercial</h1><p class="pp-sub">Optimización de tu plan para <b>${c.name||'tu empresa'}</b></p>
+        <div class="pp-pills"><span class="pp-pill">Claro Empresas</span><span class="pp-pill">${act.length} líneas actuales</span><span class="pp-pill">Fecha: ${fecha}</span></div></div></div>
+      <div class="pp-cards">
+        <div class="pp-card"><div class="pp-label">Costo actual</div><div class="pp-value pp-red">${money(t.totalAct)}</div></div>
+        <div class="pp-card"><div class="pp-label">Oferta propuesta</div><div class="pp-value pp-blue">${money(t.totalOf)}</div></div>
+        <div class="pp-card"><div class="pp-label">Diferencia mensual</div><div class="pp-value ${t.diff<=0?'pp-green':'pp-red'}">${money(t.diff)}</div></div>
+        <div class="pp-card"><div class="pp-label">Líneas incluidas</div><div class="pp-value pp-green">${act.length}</div></div></div>
+      <div class="pp-section"><div class="pp-shead"><h2 class="pp-h2">Plan actual</h2><span class="pp-small">Cuentas y líneas existentes</span></div>
+        <table class="pp-table"><thead><tr><th>BAN</th><th>Teléfono</th><th>Plan</th><th>Costo</th><th>Vencimiento</th></tr></thead><tbody>${actRows}<tr class="pp-totalRow"><td></td><td></td><td>TOTAL</td><td class="pp-cost">${money(t.totalAct)}</td><td></td></tr></tbody></table></div>
+      <div class="pp-section"><div class="pp-shead"><h2 class="pp-h2">Oferta propuesta</h2><span class="pp-small">Plan optimizado</span></div>
+        <table class="pp-table pp-of"><thead><tr><th>Teléfono</th><th>Precio</th><th>Plan nuevo</th><th>Notas</th></tr></thead><tbody>${ofRows}<tr class="pp-totalRow"><td>TOTAL</td><td class="pp-cost">${money(t.totalOf)}</td><td colspan="2"></td></tr></tbody></table></div>
+      <div class="pp-foot"><div><div class="pp-sign">Gabriel Sanchez</div><div class="pp-role">Corporate and retail account Director</div></div><div class="pp-small">Propuesta preparada para ${c.name||''}</div></div>
+    </div>`;
+    document.body.appendChild(cont);
+    const el=cont.querySelector('.pp-root');
+    html2pdf().set({margin:8,filename:'Propuesta_'+String(c.name||'cliente').replace(/[^a-z0-9]/gi,'_')+'.pdf',image:{type:'jpeg',quality:0.98},html2canvas:{scale:2,backgroundColor:'#ffffff'},jsPDF:{unit:'mm',format:'letter',orientation:'portrait'},pagebreak:{mode:['css','legacy']}})
+      .from(el).save().then(()=>cont.remove()).catch(e=>{cont.remove();alert('Error al generar el PDF: '+e.message);});
   }catch(e){ alert('Error al generar la propuesta: '+e.message); }
 }
 async function compSave(){
