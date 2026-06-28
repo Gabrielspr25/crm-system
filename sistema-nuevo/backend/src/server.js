@@ -23,8 +23,16 @@ app.use(express.json());
 // Servir el frontend (app.html, propuesta-template.html, etc.) -> http://localhost:4000
 const __dir = path.dirname(fileURLToPath(import.meta.url));
 const FRONT = path.resolve(__dir, '../../frontend');
-app.use(express.static(FRONT));
-app.get('/', (_req, res) => res.sendFile(path.join(FRONT, 'app.html')));
+app.use(express.static(FRONT, {
+  etag: false,
+  setHeaders: (res, fp) => {
+    if (fp.endsWith('.html')) res.setHeader('Cache-Control', 'no-store, must-revalidate');
+  },
+}));
+app.get('/', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store, must-revalidate');
+  res.sendFile(path.join(FRONT, 'app.html'));
+});
 
 // Salud
 app.get('/api/health', (_req, res) => res.json({ ok: true, service: 'ventaspro-nuevo' }));
