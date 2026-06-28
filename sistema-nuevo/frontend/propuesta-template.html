@@ -136,10 +136,10 @@ th{background:#111827;color:#fff;text-align:left;padding:12px;font-size:14px}td{
   </footer>
 </div>
 <script>
-const __D=(function(){try{return JSON.parse(decodeURIComponent(location.hash.slice(1)))}catch(e){return null}})();window.__D=__D;const initialCurrent=(__D&&__D.current&&__D.current.length)?__D.current:[
+const __D=(function(){try{return JSON.parse(decodeURIComponent(location.hash.slice(1)))}catch(e){return null}})();window.__D=__D;const initialCurrent=(__D)?(__D.current||[]):[
  ['697503047','7876407848','VILIMI5',0.01,'Invalid Date','GXYS23128GB'],['697503047','7879415414','VILIMI5',0.01,'Invalid Date','IPAD10GN256G'],['697503047','7876486285','VILIMI5',0.01,'Invalid Date','IPAD10GN256G'],['697503047','7872135500','VILIMI5',145.00,'Invalid Date','IPAD10GN256G'],['697503047','9399401043','VILIMI5',0.01,'Invalid Date','IPAD10GN256G'],['711785641','9396426340','VOLCSF70',70.00,'Invalid Date','IPH14128GBES'],['711785641','9393107738','BAIC012',40.00,'Invalid Date','FRANK R717']
 ];
-const initialProposal=(__D&&__D.proposal&&__D.proposal.length)?__D.proposal:[['7876407848',65,'',''],['7879415414',45,'',''],['7876486285',20,'',''],['7872135500',30,'',''],['9399401043',15,'',''],['9396426340',35,'',''],['9393107738',35,'Módem',''],['NEW',35,'','Línea nueva'],['NEW',35,'','Línea nueva']];
+const initialProposal=(__D)?(__D.proposal||[]):[['7876407848',65,'',''],['7879415414',45,'',''],['7876486285',20,'',''],['7872135500',30,'',''],['9399401043',15,'',''],['9396426340',35,'',''],['9393107738',35,'Módem',''],['NEW',35,'','Línea nueva'],['NEW',35,'','Línea nueva']];
 let proposal=JSON.parse(JSON.stringify(initialProposal));
 function money(n){return '$'+Number(n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}
 function equipImg(name){let n=(name||'').toLowerCase(); if(n.includes('módem')||n.includes('modem')) return `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='150' viewBox='0 0 120 150'%3E%3Crect width='120' height='150' rx='18' fill='%23f3f4f6'/%3E%3Crect x='22' y='30' width='76' height='74' rx='12' fill='%23ffffff' stroke='%23111827' stroke-width='4'/%3E%3Ccircle cx='60' cy='88' r='6' fill='%23e1251b'/%3E%3Cpath d='M38 58c12-12 32-12 44 0' fill='none' stroke='%23e1251b' stroke-width='6' stroke-linecap='round'/%3E%3Cpath d='M48 70c7-7 17-7 24 0' fill='none' stroke='%23e1251b' stroke-width='6' stroke-linecap='round'/%3E%3C/svg%3E`; if(n.includes('pro max')) return 'https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-16-pro-max.jpg'; if(n.includes('pro')) return 'https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-16-pro.jpg'; return 'https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-16.jpg';}
@@ -149,8 +149,6 @@ function calc(){let current=initialCurrent.reduce((s,r)=>s+Number(r[3]),0);let p
 function addNewLine(){proposal.push(['NEW',35,'','Nueva línea']);renderProposal();}
 function resetDemo(){proposal=JSON.parse(JSON.stringify(initialProposal));renderProposal();}
 document.getElementById('today').textContent=new Date().toLocaleDateString('es-US');if(__D&&__D.cliente){['ppCliente','ppCliente2'].forEach(function(id){var e=document.getElementById(id);if(e)e.textContent=__D.cliente;});}renderCurrent();renderProposal();
-if(__D&&__D.simple){['#proposalTable','.optionsGrid'].forEach(function(sel){var el=document.querySelector(sel);if(el){var s=el.closest('section');if(s)s.style.display='none';}});var cc=document.querySelectorAll('.cards .card');if(cc[1])cc[1].style.display='none';if(cc[2])cc[2].style.display='none';var tbb=document.querySelectorAll('.toolbar button');for(var i=1;i<tbb.length;i++)tbb[i].style.display='none';}
-window.downloadPDF=function(){if(typeof html2pdf==='undefined'){window.print();return;}html2pdf().set({margin:8,filename:'Propuesta_'+(((__D&&__D.cliente)||'cliente')+'').replace(/[^a-z0-9]/gi,'_')+'.pdf',image:{type:'jpeg',quality:.98},html2canvas:{scale:2,backgroundColor:'#ffffff',useCORS:true},jsPDF:{unit:'mm',format:'letter',orientation:'portrait'},pagebreak:{mode:['css','legacy']}}).from(document.querySelector('.app')).save();};
-if(__D&&__D.pdf){setTimeout(window.downloadPDF,700);}
+if(__D&&__D.pdf){setTimeout(function(){window.print();},800);}
 </script>
 </body></html>

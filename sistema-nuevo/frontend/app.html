@@ -330,8 +330,8 @@ function generarPropuesta(pdf){
   try{
     const c=compCli, act=(c.subscribers||[]).filter(s=>cliAct(s.status));
     const current=act.map(s=>[s.ban_number||'', s.phone||'', s.plan||'', Number(s.monthly_value||0), cliVenc(s.contract_end_date), s.equipment||'']);
-    // Por ahora solo cliente + BAN + suscriptores (Plan Actual). Oferta/equipos = después.
-    const data={cliente:c.name||'Cliente', current, proposal:[], simple:true, pdf:!!pdf};
+    const proposal=act.map(s=>[s.phone||'', '', '', '']); // oferta pre-llenada con las líneas del cliente (precio/equipo se definen luego)
+    const data={cliente:c.name||'Cliente', current, proposal, pdf:!!pdf};
     const url='propuesta-template.html#'+encodeURIComponent(JSON.stringify(data));
     const w=window.open(url,'_blank'); if(!w) alert('Permití las ventanas emergentes para ver la propuesta.');
   }catch(e){ alert('Error al generar la propuesta: '+e.message); }
