@@ -59,6 +59,7 @@ th{background:#111827;color:#fff;text-align:left;padding:12px;font-size:14px}td{
 .totalNote{font-weight:800;color:#7f1d1d}
 @media print{.equipThumb{box-shadow:none}}
 </style>
+<script src="https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.2/dist/html2pdf.bundle.min.js"></script>
 </head>
 <body>
 <div class="app">
@@ -148,5 +149,8 @@ function calc(){let current=initialCurrent.reduce((s,r)=>s+Number(r[3]),0);let p
 function addNewLine(){proposal.push(['NEW',35,'','Nueva línea']);renderProposal();}
 function resetDemo(){proposal=JSON.parse(JSON.stringify(initialProposal));renderProposal();}
 document.getElementById('today').textContent=new Date().toLocaleDateString('es-US');if(__D&&__D.cliente){['ppCliente','ppCliente2'].forEach(function(id){var e=document.getElementById(id);if(e)e.textContent=__D.cliente;});}renderCurrent();renderProposal();
+if(__D&&__D.simple){['#proposalTable','.optionsGrid'].forEach(function(sel){var el=document.querySelector(sel);if(el){var s=el.closest('section');if(s)s.style.display='none';}});var cc=document.querySelectorAll('.cards .card');if(cc[1])cc[1].style.display='none';if(cc[2])cc[2].style.display='none';var tbb=document.querySelectorAll('.toolbar button');for(var i=1;i<tbb.length;i++)tbb[i].style.display='none';}
+window.downloadPDF=function(){if(typeof html2pdf==='undefined'){window.print();return;}html2pdf().set({margin:8,filename:'Propuesta_'+(((__D&&__D.cliente)||'cliente')+'').replace(/[^a-z0-9]/gi,'_')+'.pdf',image:{type:'jpeg',quality:.98},html2canvas:{scale:2,backgroundColor:'#ffffff',useCORS:true},jsPDF:{unit:'mm',format:'letter',orientation:'portrait'},pagebreak:{mode:['css','legacy']}}).from(document.querySelector('.app')).save();};
+if(__D&&__D.pdf){setTimeout(window.downloadPDF,700);}
 </script>
 </body></html>

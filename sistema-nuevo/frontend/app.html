@@ -294,7 +294,7 @@ function renderComp(){
     <td><button class="btn" style="padding:4px 8px;font-size:11px;background:var(--red-soft);color:var(--red)" onclick="compDelOffer(${i})">✕</button></td></tr>`).join('')||'<tr><td colspan="6" class="empty">Agregá líneas a la oferta</td></tr>';
   const totalOf=compOffer.reduce((a,r)=>a+(parseFloat(r.cost)||0),0);
   $('compModal').innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><div><h2 style="font-size:18px">⇄ Comparativa de Planes</h2><div class="s">${c.name||'—'}</div></div>
-      <div style="display:flex;gap:8px"><button class="btn ghost" onclick="compSave()">✓ Marcar Actualizado</button><button class="btn green" onclick="compExcel()">⬇ Excel</button><button class="btn" style="background:var(--red)" onclick="generarPropuesta()">📄 Propuesta PDF</button><button class="btn ghost" style="padding:6px 10px" onclick="cerrarComp()">✕</button></div></div>
+      <div style="display:flex;gap:8px"><button class="btn ghost" onclick="compSave()">✓ Marcar Actualizado</button><button class="btn green" onclick="compExcel()">⬇ Excel</button><button class="btn ghost" onclick="generarPropuesta(false)">🌐 HTML</button><button class="btn" style="background:var(--red)" onclick="generarPropuesta(true)">📄 PDF</button><button class="btn ghost" style="padding:6px 10px" onclick="cerrarComp()">✕</button></div></div>
     <div class="panel"><h3>Plan actual del cliente</h3><div class="card" style="overflow-x:auto"><table style="min-width:680px"><thead><tr><th>BAN</th><th>Teléfono</th><th>Plan</th><th class="r">Costo</th><th>Vencimiento</th></tr></thead><tbody>${actRows}</tbody><tfoot><tr><td colspan="3" class="r"><b>Total actual</b></td><td class="r" style="color:var(--green);font-weight:700">${money(totalAct)}</td><td></td></tr></tfoot></table></div></div>
     <div class="panel"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><h3 style="margin:0">Oferta propuesta</h3><button class="btn" onclick="compAddOffer()">+ Agregar Línea</button></div>
       <div class="card" style="overflow-x:auto"><table style="min-width:680px"><thead><tr><th>BAN</th><th>Teléfono</th><th>Plan nuevo</th><th class="r">Costo</th><th>Notas</th><th></th></tr></thead><tbody>${ofRows}</tbody></table></div>
@@ -326,12 +326,12 @@ function compPDF(){
     doc.save('Comparativa_'+String(c.name||'cliente').replace(/[^a-z0-9]/gi,'_')+'.pdf');
   }catch(e){ alert('Error al generar PDF: '+e.message); }
 }
-function generarPropuesta(){
+function generarPropuesta(pdf){
   try{
-    compReadOffer(); const c=compCli, act=(c.subscribers||[]).filter(s=>cliAct(s.status));
+    const c=compCli, act=(c.subscribers||[]).filter(s=>cliAct(s.status));
     const current=act.map(s=>[s.ban_number||'', s.phone||'', s.plan||'', Number(s.monthly_value||0), cliVenc(s.contract_end_date), s.equipment||'']);
-    const proposal=compOffer.filter(r=>r.ban||r.phone||r.plan||r.cost).map(r=>[r.phone||r.ban||'', Number(r.cost||0), '', (r.plan?('Plan: '+r.plan+(r.notes?' · ':'')):'')+(r.notes||'')]);
-    const data={cliente:c.name||'Cliente', current, proposal};
+    // Por ahora solo cliente + BAN + suscriptores (Plan Actual). Oferta/equipos = después.
+    const data={cliente:c.name||'Cliente', current, proposal:[], simple:true, pdf:!!pdf};
     const url='propuesta-template.html#'+encodeURIComponent(JSON.stringify(data));
     const w=window.open(url,'_blank'); if(!w) alert('Permití las ventanas emergentes para ver la propuesta.');
   }catch(e){ alert('Error al generar la propuesta: '+e.message); }
