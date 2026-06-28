@@ -226,10 +226,14 @@ function renderCli(){
   const c=cliM; if(!c||!$('cliModal'))return;
   const tabbar=CLI_TABS_M.map(t=>`<button class="ctab ${cliMTab===t[0]?'on':''}" onclick="setCliMTab('${t[0]}')">${t[1]}</button>`).join('');
   const body=cliMTab==='bans'?tabBans(c):cliMTab==='hist'?tabHist(c):cliMTab==='comp'?tabComp(c):cliMTab==='ventas'?tabVentas(c):tabInfo(c);
-  const badge=c.pendiente_validacion?'<span class="pill amber">Cliente nuevo</span>':'<span class="pill" style="background:var(--card2);color:var(--txt3)">No está en seguimiento</span>';
+  const enSeg=!!c.opportunity_id;
+  const badge=(enSeg?'<span class="pill green">En seguimiento</span>':'<span class="pill" style="background:var(--card2);color:var(--txt3)">No está en seguimiento</span>')+(c.pendiente_validacion?' <span class="pill amber">Cliente nuevo</span>':'');
+  const segBtn=enSeg
+    ? `<button class="btn" style="background:var(--violet)" onclick="cerrarModal();location.hash='#/opp/${c.opportunity_id}'">↗ Ver en Asana</button>`
+    : `<button class="btn green" onclick="enviarSeguimientoCli('${c.id}')">⤴ Enviar a Seguimiento</button>`;
   $('cliModal').innerHTML=`<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
       <div><div style="display:flex;align-items:center;gap:10px"><h2 style="font-size:20px">${c.name||'—'}</h2>${badge}</div><div class="s">Gestión completa del cliente</div></div>
-      <div style="display:flex;gap:8px"><button class="btn green" onclick="enviarSeguimientoCli('${c.id}')">⤴ Enviar a Seguimiento</button><button class="btn ghost" style="padding:6px 10px" onclick="cerrarModal()">✕</button></div></div>
+      <div style="display:flex;gap:8px">${segBtn}<button class="btn ghost" style="padding:6px 10px" onclick="cerrarModal()">✕</button></div></div>
     <div class="ctabs">${tabbar}</div><div style="margin-top:14px">${body}</div>`;
 }
 function tabInfo(c){

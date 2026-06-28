@@ -153,7 +153,10 @@ clientsRealRouter.get('/clients-real/:id', requireAuth, async (req, res) => {
       `SELECT c.id, c.name, c.business_name, c.company, c.email,
               c.phone, c.additional_phone, c.mobile, c.cellular,
               c.address, c.city, c.zip_code, c.source AS base, c.created_at,
-              c.pendiente_validacion, c.salesperson_id, sp.name AS vendor_name
+              c.pendiente_validacion, c.salesperson_id, sp.name AS vendor_name,
+              (SELECT so.id FROM sales_opportunities so
+                 WHERE so.client_id = c.id AND so.archived_at IS NULL
+                 ORDER BY so.created_at DESC LIMIT 1) AS opportunity_id
          FROM clients c LEFT JOIN salespeople sp ON sp.id = c.salesperson_id
         WHERE c.id = $1`, [req.params.id]);
     if (!c.rows[0]) { await conn.query('ROLLBACK'); return res.status(404).json({ error: 'Cliente no existe' }); }
