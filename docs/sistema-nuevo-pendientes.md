@@ -59,6 +59,16 @@ Replicar la **ClientModal real** de crmproui (ej. FARMACIA VARGAS) con estilo de
 - Header con **Enviar a Seguimiento**.
 - *Gabriel define el detalle final de los tabs (pendiente que lo pase).*
 
+## Propuesta / Comparativa (retomar "más inteligente" — Gabriel 2026-06-27)
+
+- ✅ Andando: Comparativa con Plan Actual + Oferta + Excel; **Propuesta HTML + PDF** con el
+  diseño Claro real (`propuesta-template.html`, copia de Grafict), PDF vía html2pdf,
+  imágenes de equipos locales (`frontend/img`). Hoy solo se inyecta data real en **Plan
+  Actual** (cliente + BAN + suscriptores) y la oferta arranca con las líneas del cliente.
+- ⬜ **Retomar más inteligente** (pedido de Gabriel): de dónde sale la data de **Oferta**,
+  **Opciones de equipo** y **Trade In** (hoy son contenido estático del template); generación
+  más prolija/automática. NO se quitan secciones — solo definir su fuente de datos.
+
 ## Otros pendientes
 
 - **Filtros de Clientes**: Tipo, Vencimiento, Orden, Año, Estado (hoy visuales/placeholder).
