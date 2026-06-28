@@ -145,7 +145,7 @@
   </div>
 
 <script>
-const API='http://localhost:4000';
+const API=''; // mismo origen: funciona en localhost:4000 y en el servidor (sin hardcodear host)
 let token=null;
 const $=(id)=>document.getElementById(id);
 function tog(){const b=document.body,d=b.getAttribute('data-theme')==='day';b.setAttribute('data-theme',d?'dark':'day');$('tgt').textContent=d?'Modo día':'Modo noche';}
