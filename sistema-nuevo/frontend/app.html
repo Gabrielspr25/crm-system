@@ -93,6 +93,11 @@
   .ctabs{display:flex;gap:2px;border-bottom:1px solid var(--line);overflow-x:auto;}
   .ctab{background:none;border:none;border-bottom:2px solid transparent;color:var(--txt2);padding:10px 14px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;}
   .ctab.on{color:var(--primary);border-bottom-color:var(--primary);}
+  .i3{display:grid;grid-template-columns:repeat(3,1fr);gap:30px;}
+  .i3 h4{font-size:12px;font-weight:700;color:var(--txt2);text-transform:uppercase;letter-spacing:.05em;margin:0 0 6px;}
+  .irow{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--line);font-size:13.5px;}
+  .irow span{color:var(--txt3);} .irow b{text-align:right;}
+  @media(max-width:760px){.i3{grid-template-columns:1fr;}}
   .paso-wrap{display:flex;gap:16px;align-items:flex-start;}
   .paso-side{width:190px;flex-shrink:0;display:flex;flex-direction:column;gap:6px;}
   .paso-prod{padding:11px 14px;border-radius:10px;background:var(--card2);border:1px solid var(--line);cursor:pointer;font-size:13.5px;font-weight:600;color:var(--txt2);}
@@ -228,18 +233,15 @@ function renderCli(){
     <div class="ctabs">${tabbar}</div><div style="margin-top:14px">${body}</div>`;
 }
 function tabInfo(c){
-  const row=(l,v)=>`<div class="prow" style="border:none;padding:5px 0"><span style="color:var(--txt3);width:130px">${l}</span><b>${v||'No registrado'}</b></div>`;
-  return `<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;margin-bottom:14px">
+  const row=(l,v)=>`<div class="irow"><span>${l}</span><b>${v||'No registrado'}</b></div>`;
+  return `<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;margin-bottom:16px">
     <button class="btn ghost" onclick="cliWIP('Enviar Correo')">✉ Enviar Correo</button>
     <button class="btn" onclick="cliWIP('Editar Cliente')">✎ Editar Cliente</button>
-    <button class="btn" style="background:var(--violet)" onclick="cliWIP('Enviar a POS')">⇪ Enviar a POS</button>
     <button class="btn" style="background:var(--red-soft);color:var(--red)" onclick="cliWIP('Eliminar Cliente')">🗑 Eliminar Cliente</button></div>
-  <div class="kpis">
-    <div class="kpi"><div class="l">Datos de contacto</div><div style="margin-top:4px">${row('Nombre',c.name)}${row('Email',c.email)}</div></div>
-    <div class="kpi"><div class="l">Teléfonos</div><div style="margin-top:4px">${row('Principal',c.phone)}${row('Secundario',c.additional_phone)}${row('Móvil',c.mobile||c.cellular)}</div></div>
-    <div class="kpi"><div class="l">Ubicación</div><div style="margin-top:4px">${row('Dirección',c.address)}${row('Ciudad',c.city)}${row('Código postal',c.zip_code)}</div></div>
-    <div class="kpi"><div class="l">Información comercial</div><div style="margin-top:4px">${row('Vendedor',c.vendor_name||'Sin asignar')}${row('Base de datos',c.base||'BD propia')}${row('Cliente desde',c.created_at?new Date(c.created_at).toLocaleDateString('es'):'—')}</div></div>
-    <div class="kpi"><div class="l">Estadísticas</div><div style="margin-top:4px">${row('Total de BANs',(c.bans||[]).length)}${row('Total de suscriptores',(c.subscribers||[]).length)}</div></div>
+  <div class="i3">
+    <div><h4>Datos de contacto</h4>${row('Nombre',c.name)}${row('Email',c.email)}${row('Tel. principal',c.phone)}${row('Tel. secundario',c.additional_phone)}${row('Tel. móvil',c.mobile||c.cellular)}</div>
+    <div><h4>Ubicación</h4>${row('Dirección',c.address)}${row('Ciudad',c.city)}${row('Código postal',c.zip_code)}</div>
+    <div><h4>Información comercial</h4>${row('Vendedor',c.vendor_name||'Sin asignar')}</div>
   </div>`;
 }
 function tabBans(c){
