@@ -149,6 +149,6 @@ function calc(){let current=initialCurrent.reduce((s,r)=>s+Number(r[3]),0);let p
 function addNewLine(){proposal.push(['NEW',35,'','Nueva línea']);renderProposal();}
 function resetDemo(){proposal=JSON.parse(JSON.stringify(initialProposal));renderProposal();}
 document.getElementById('today').textContent=new Date().toLocaleDateString('es-US');if(__D&&__D.cliente){['ppCliente','ppCliente2'].forEach(function(id){var e=document.getElementById(id);if(e)e.textContent=__D.cliente;});}renderCurrent();renderProposal();
-if(__D&&__D.pdf){setTimeout(function(){window.print();},800);}
+if(__D&&__D.pdf){window.addEventListener('load',function(){var imgs=Array.prototype.slice.call(document.images);var n=imgs.length;function go(){setTimeout(function(){window.focus();window.print();},500);}if(!n){go();return;}imgs.forEach(function(im){if(im.complete){if(--n===0)go();}else{im.addEventListener('load',function(){if(--n===0)go();});im.addEventListener('error',function(){if(--n===0)go();});}});});}
 </script>
 </body></html>
