@@ -730,8 +730,10 @@ function showLogin(msg){
     <div class="flbl">Usuario</div><input class="inp" id="lg_user" style="margin-bottom:10px">
     <div class="flbl">Contraseña</div><input class="inp" id="lg_pass" type="password" style="margin-bottom:14px" onkeydown="if(event.key==='Enter')doLogin()">
     <div id="lg_err" style="color:var(--red);font-size:12.5px;min-height:16px;margin-bottom:8px">${msg||''}</div>
-    <button class="btn" style="width:100%" onclick="doLogin()">Entrar</button>
-    <div style="text-align:center;margin-top:10px"><a onclick="devEntrar()" style="color:var(--txt3);font-size:11px;cursor:pointer">entrar en modo demo (solo local)</a></div>
+    <button class="btn" style="width:100%" onclick="doLogin()">Entrar con Claro (Tango)</button>
+    <div style="text-align:center;margin:12px 0 6px;color:var(--txt3);font-size:11px">— o para probar en esta PC —</div>
+    <button class="btn ghost" style="width:100%" onclick="devEntrar()">Entrar en modo demo (local)</button>
+    <div class="s" style="text-align:center;margin-top:10px;font-size:11px">El login de Claro funciona en el servidor. En tu PC, Tango bloquea por IP — usá el modo demo.</div>
   </div></div>`);
   setTimeout(()=>{var u=$('lg_user');if(u)u.focus();},60);
 }
