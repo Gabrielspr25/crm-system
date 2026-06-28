@@ -36,11 +36,18 @@ Actualizado: 2026-06-27.
 - `GET /api/health` → `{ok:true}`.
 - Abrir `/#/clientes` → trae clientes reales. `/#/comisiones`, `/#/asana`, `/#/metas`.
 
-## ⛔ PENDIENTE antes de prod REAL (con login de verdad)
+## ✅ Login (Tango V2) — HECHO
 
-- **Falta pantalla de LOGIN.** Hoy el frontend entra con **dev-login** (admin automático). En prod, con `DEV_LOGIN` apagado, **no hay forma de loguearse** desde la UI → hay que construir la **pantalla de login con Tango** (el backend ya tiene `POST /api/auth/login`). **Sin esto, en prod no se puede usar con auth real.**
-- Decidir el **dominio/nginx** para `:4000`.
-- Cargar en prod los **pasos** y revisar permisos por rol (vendedor ve solo lo suyo).
+- Pantalla de **login con Tango** lista: `POST /api/auth/login {usuario, password}` → token (12h).
+  Rechaza inactivos/vencidos. Botón **Salir**. Sesión guardada en el navegador; 401 → re-login.
+- **Local:** Tango bloquea por IP → usar el link **"entrar en modo demo"** (dev-login, solo si `DEV_LOGIN=1`).
+- **Prod:** `DEV_LOGIN` apagado → entra solo con Tango real.
+
+## ⛔ Pendiente antes de prod REAL
+
+- Decidir **dominio/nginx** para `:4000` (el nuevo reemplaza al viejo, misma URL).
+- Migraciones + cargar **pasos** en prod (backup primero).
+- Revisar permisos por rol (vendedor ve solo lo suyo) en los endpoints reales.
 
 ## Resumen
 

@@ -140,19 +140,19 @@
     <a class="nav" href="#/perfil"><span class="d"></span>Perfil</a>
   </aside>
   <div class="main">
-    <div class="topbar"><span id="conn" class="conn bad">conectando…</span><div class="sp"></div><button class="toggle" onclick="tog()"><span id="tgt">Modo día</span></button></div>
+    <div class="topbar"><span id="conn" class="conn bad">conectando…</span><div class="sp"></div><button class="btn ghost" style="padding:9px 13px;margin-right:8px" onclick="logout()">Salir</button><button class="toggle" onclick="tog()"><span id="tgt">Modo día</span></button></div>
     <div class="content" id="view"><div class="empty">Cargando…</div></div>
   </div>
 
 <script>
 const API=''; // mismo origen: funciona en localhost:4000 y en el servidor (sin hardcodear host)
-let token=null;
+let token=null, currentUser=null;
 const $=(id)=>document.getElementById(id);
 function tog(){const b=document.body,d=b.getAttribute('data-theme')==='day';b.setAttribute('data-theme',d?'dark':'day');$('tgt').textContent=d?'Modo día':'Modo noche';}
 function money(n){return '$'+Number(n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});}
 function ini(n){return (n||'?').trim().slice(0,2).toUpperCase();}
 function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
-async function api(p,opts={}){opts.headers={...(opts.headers||{}),Authorization:'Bearer '+token};if(opts.body&&typeof opts.body!=='string'){opts.headers['Content-Type']='application/json';opts.body=JSON.stringify(opts.body);}const r=await fetch(API+p,opts);if(!r.ok&&r.status!==409)throw new Error(p+' -> '+r.status);return r.json();}
+async function api(p,opts={}){opts.headers={...(opts.headers||{}),Authorization:'Bearer '+token};if(opts.body&&typeof opts.body!=='string'){opts.headers['Content-Type']='application/json';opts.body=JSON.stringify(opts.body);}const r=await fetch(API+p,opts);if(r.status===401){clearSession();showLogin('Tu sesión venció, entrá de nuevo');throw new Error('401');}if(!r.ok&&r.status!==409)throw new Error(p+' -> '+r.status);return r.json();}
 function monthStart(){const m=new Date();return m.getFullYear()+'-'+String(m.getMonth()+1).padStart(2,'0')+'-01';}
 
 // ---------------- VIEWS ----------------
@@ -717,9 +717,44 @@ async function router(){
 }
 window.addEventListener('hashchange',router);
 
+// ---------------- SESIÓN / LOGIN (Tango V2) ----------------
+function setSession(t,u){ token=t; currentUser=u; try{localStorage.setItem('vp_token',t);localStorage.setItem('vp_user',JSON.stringify(u||{}));}catch(e){} }
+function clearSession(){ token=null; currentUser=null; try{localStorage.removeItem('vp_token');localStorage.removeItem('vp_user');}catch(e){} }
+function logout(){ clearSession(); showLogin(); }
+function connOk(){ $('conn').className='conn ok'; $('conn').textContent='✓ '+((currentUser&&currentUser.nombre)?currentUser.nombre:'conectado'); }
+function showLogin(msg){
+  if($('loginBg')) return;
+  document.body.insertAdjacentHTML('beforeend',`<div class="modal-bg" id="loginBg" style="z-index:200"><div class="modal" style="max-width:380px">
+    <div class="brand" style="justify-content:center;color:var(--txt);margin-bottom:4px"><span class="logo">V</span> VentasPro</div>
+    <div class="s" style="text-align:center;margin-bottom:16px">Ingresá con tu usuario de Tango</div>
+    <div class="flbl">Usuario</div><input class="inp" id="lg_user" style="margin-bottom:10px">
+    <div class="flbl">Contraseña</div><input class="inp" id="lg_pass" type="password" style="margin-bottom:14px" onkeydown="if(event.key==='Enter')doLogin()">
+    <div id="lg_err" style="color:var(--red);font-size:12.5px;min-height:16px;margin-bottom:8px">${msg||''}</div>
+    <button class="btn" style="width:100%" onclick="doLogin()">Entrar</button>
+    <div style="text-align:center;margin-top:10px"><a onclick="devEntrar()" style="color:var(--txt3);font-size:11px;cursor:pointer">entrar en modo demo (solo local)</a></div>
+  </div></div>`);
+  setTimeout(()=>{var u=$('lg_user');if(u)u.focus();},60);
+}
+async function doLogin(){
+  const usuario=($('lg_user').value||'').trim(), password=$('lg_pass').value||'';
+  if(!usuario||!password){ $('lg_err').textContent='Poné usuario y contraseña'; return; }
+  $('lg_err').textContent='Entrando…';
+  try{
+    const r=await fetch(API+'/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({usuario,password})});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok){ $('lg_err').textContent=d.error||'No se pudo entrar'; return; }
+    setSession(d.token,d.user); var bg=$('loginBg'); if(bg)bg.remove(); connOk(); router();
+  }catch(e){ $('lg_err').textContent='No conecta al backend'; }
+}
+async function devEntrar(){
+  try{ const r=await fetch(API+'/api/auth/dev-login',{method:'POST'}); if(!r.ok){$('lg_err').textContent='Modo demo no disponible (producción)';return;} const d=await r.json(); setSession(d.token,d.user); var bg=$('loginBg'); if(bg)bg.remove(); connOk(); router(); }
+  catch(e){ $('lg_err').textContent='Modo demo no disponible'; }
+}
 async function init(){
-  try{const r=await fetch(API+'/api/auth/dev-login',{method:'POST'});token=(await r.json()).token;$('conn').className='conn ok';$('conn').textContent='✓ conectado al backend';router();}
-  catch(e){$('conn').textContent='✗ backend apagado (puerto 4000)';$('view').innerHTML='<div class="empty">No conecta al backend. ¿Está prendido en el puerto 4000?</div>';}
+  try{ const t=localStorage.getItem('vp_token'); if(t){ token=t; currentUser=JSON.parse(localStorage.getItem('vp_user')||'null'); } }catch(e){}
+  if(!token){ $('conn').textContent='—'; showLogin(); return; }
+  try{ const me=await api('/api/me'); currentUser=me.user; connOk(); router(); }
+  catch(e){ if(e.message!=='401'){ clearSession(); showLogin('Tu sesión venció, entrá de nuevo'); } }
 }
 init();
 </script>
